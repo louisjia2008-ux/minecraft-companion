@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "runnerRevision": 6,
+  "seedPolicyRevision": 1,
+  "observerRevision": 5,
+  "parentRunnerSha256": "8880727e18ccf78dff09ec7f1098776b6a6fb5685e1ed9af456a80a7f07c966d",
+  "files": {
+    "acceptance/natural-public-building-acceptance-v6.cjs": "401495bcb9106dcb67deb333982b698594267e994cf014ae6d1017c3e064a7ba",
+    "acceptance/fresh-seed-allocation-v1.cjs": "ec7c729165a444c302339a20cfa24fdd176f1bef2d0d7b1cf15940975fe74b3f",
+    "acceptance/fresh-seed-allocation-v1.test.cjs": "f409ce11586f141edd9399f736d3b77fab126696373bd9cf628c30fc5e9cfe38",
+    "tools/local-validation/audit-natural-public-building-closed-v2.cjs": "961ef54c351cff09764e4056327df58a9ef08b17c03eff4b3bc6364db99cb34b",
+    "acceptance/natural-public-fresh-seed-v6-edit-proof.json": "3dd1677a879b7ebf1a56ed32898d2821b92aed5c36f26c79b27935cec7bc8c49",
+    "acceptance/natural-public-fresh-seed-closeout-v2-edit-proof.json": "1c2b58d7da25b58b9e85480f1610f48b6b4aefa4f96b701512c590b7e77f0980",
+    "acceptance/FRESH_SEED_V6.md": "4769c49305c222d68c3d9fb90c7dacd3595f4f973a85dcef57536ae202e300eb",
+    "tools/local-validation/prepare-natural-public-fresh-seed-v6-20261014.cjs": "c30d5a8d071ace7e8f6f2d3c3abb960a39a9cf9a953672a26a149fccc1c228aa",
+    "tools/local-validation/prepare-natural-public-fresh-seed-closeout-v2-20261014.cjs": "12d01d616c48d2be1d3d5e63b3d63e84d20533555b772e85b63c0ee5d7fa0d2c"
+  },
+  "evidence": {
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/final-30-test.log": "2728269d49f8532e8b526843a1e0c765e51bd9aa2d9876e7772431d5c86ae03d",
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/first-13-test.log": "aabdaf1fe225c108c47e538d0831e8ccf1bfc8925dee56704578f251cabe7277",
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/first-inverse-tool-failure.json": "f74b11f3d8a53e782fcb1c76e1a5e4cdc9621e0d2cffea6f4200bbdf5b7154ac",
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/fixed23-preflight-source-audit.json": "3dfbdbfa4108d88ba0358d08f36c5a77fc993486dea5df989390a71b767c3c1e",
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/fixed23-unique-preflight.log": "30c9822c9c366f6ddf452c2608c7c276138c2c72c520db8ec7dfd536de2982ab",
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/legacy-seed-dependency-inventory.json": "bd0c3de020b48d57e0a3739e1b405fd4d4b584b259e749417f6812e897bad69f",
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/readiness-report.json": "eda0b74d29d5bd0dda7f3ae5f4212f52fca815a7b3b9706d950f71f88c8bcdd4",
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/second-13-test.log": "9e04c7140beba04fe1a9279803b83fe50a455cbafc7afae3942394376090d285",
+    "./.minecraft-local-test/evidence/estate-20261013/fresh-seed-v6-20261014/third-15-test.log": "48655a15f2044317664b5181b96d9ef8cd26f2963ead64a512abf20d44c7df1c"
+  },
+  "scope": "Only acceptance/tools/new evidence; runtime/PROVENANCE/old campaign/runner/auditor/worlds untouched. New actual preflight registry and seed receipt retained; no Java."
+}

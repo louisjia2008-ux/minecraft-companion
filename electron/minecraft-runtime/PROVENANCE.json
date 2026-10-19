@@ -1,0 +1,560 @@
+{
+  "sourceProject": "live2d-mc-companion",
+  "sourceHead": "f9d45ac3f6f2e9cf991aca7c82937e8e55fb8272",
+  "sourceBranch": "codex/phase2-hardening",
+  "sourceWorkingTree": "dirty; these hashes freeze actual copied working files including untracked modules",
+  "copiedAt": "2026-10-12",
+  "sourceLicense": "No top-level project license was found; migration authorized by project owner. No Cubism SDK/assets, config, env, logs, or private memory copied.",
+  "files": [
+    {
+      "source": "server/minecraftTaskAgent.js",
+      "destination": "vendor/server/minecraftTaskAgent.js",
+      "sha256": "8808c7d7fff4d580ebee0cc073596f3fd5eb6ea31fb92480f55ca8740f0fdba0",
+      "destinationSha256": "48855c334a5951d2012fdba3482a04e0be1686e2e9bf3cec8604dd45b999a7eb"
+    },
+    {
+      "source": "server/minecraftAccessController.js",
+      "destination": "vendor/server/minecraftAccessController.js",
+      "sha256": "365cf1c7d8063013c9941ada852fe06abb4daf5f7d9cfa32d0852e15f0890955",
+      "destinationSha256": "365cf1c7d8063013c9941ada852fe06abb4daf5f7d9cfa32d0852e15f0890955"
+    },
+    {
+      "source": "server/action/actionRegistry.js",
+      "destination": "vendor/server/action/actionRegistry.js",
+      "sha256": "e02c2bfafe3310e581a4c53141ecd443f1bcb820474379de65c178eee0f1dbff",
+      "destinationSha256": "ffaf851ee8a9c154f487a19f6c066065beb23d21669a30bcefdd364103c74533"
+    },
+    {
+      "source": "server/cognitive/brain.js",
+      "destination": "vendor/server/cognitive/brain.js",
+      "sha256": "739eb88943bcab1b075efa8ca1bc59bf1840b5ef39ff052ec4a595646a82a3a5",
+      "destinationSha256": "739eb88943bcab1b075efa8ca1bc59bf1840b5ef39ff052ec4a595646a82a3a5"
+    },
+    {
+      "source": "server/conscious/queryRuntime.js",
+      "destination": "vendor/server/conscious/queryRuntime.js",
+      "sha256": "172813696cdd13ab9cc4b36736d2c40f65e09b46a48e5ae48118547308b21971",
+      "destinationSha256": "172813696cdd13ab9cc4b36736d2c40f65e09b46a48e5ae48118547308b21971"
+    },
+    {
+      "source": "server/minecraft-perception-rules.yaml",
+      "destination": "vendor/server/minecraft-perception-rules.yaml",
+      "sha256": "acc03af1004923c812f3afc49bf9a8ab5705c0da82d6875a476d35f38cf11a64",
+      "destinationSha256": "acc03af1004923c812f3afc49bf9a8ab5705c0da82d6875a476d35f38cf11a64"
+    },
+    {
+      "source": "server/minecraft-reflex-rules.yaml",
+      "destination": "vendor/server/minecraft-reflex-rules.yaml",
+      "sha256": "42d9ca6e9d9068c8f16717b92474ea89ec0178656e82274e4bf4bcd7474a44d3",
+      "destinationSha256": "42d9ca6e9d9068c8f16717b92474ea89ec0178656e82274e4bf4bcd7474a44d3"
+    },
+    {
+      "source": "server/minecraftAgentLearning.test.js",
+      "destination": "vendor/server/minecraftAgentLearning.test.js",
+      "sha256": "d705429047724f7b5951da538ba4c8aaf762254c8e6b3c670b722c29b8dacee3",
+      "destinationSha256": "d705429047724f7b5951da538ba4c8aaf762254c8e6b3c670b722c29b8dacee3"
+    },
+    {
+      "source": "server/minecraftModules.test.js",
+      "destination": "vendor/server/minecraftModules.test.js",
+      "sha256": "c96c888de2950cb4723f5c6eae91001cc07596fa86065bc55ec85544491304da",
+      "destinationSha256": "c96c888de2950cb4723f5c6eae91001cc07596fa86065bc55ec85544491304da"
+    },
+    {
+      "source": "server/minecraft/agentControl.js",
+      "destination": "vendor/server/minecraft/agentControl.js",
+      "sha256": "338be99c8ad280c32186a52fef1b3b510cd0560ee3782314fbebf89aad0aef1a",
+      "destinationSha256": "338be99c8ad280c32186a52fef1b3b510cd0560ee3782314fbebf89aad0aef1a"
+    },
+    {
+      "source": "server/minecraft/autonomyPresentation.js",
+      "destination": "vendor/server/minecraft/autonomyPresentation.js",
+      "sha256": "f89814754b41b89c988899f5841a8929b018331b7e92011433b271b6ac6b5b7e",
+      "destinationSha256": "f89814754b41b89c988899f5841a8929b018331b7e92011433b271b6ac6b5b7e"
+    },
+    {
+      "source": "server/minecraft/buildingBlueprints.js",
+      "destination": "vendor/server/minecraft/buildingBlueprints.js",
+      "sha256": "837c50b21c1de991a98209ce880fdaafac1311801d467f89570681e93d8a03ca",
+      "destinationSha256": "837c50b21c1de991a98209ce880fdaafac1311801d467f89570681e93d8a03ca"
+    },
+    {
+      "source": "server/minecraft/disconnectClassification.js",
+      "destination": "vendor/server/minecraft/disconnectClassification.js",
+      "sha256": "e08b046538de5af49706bf4627581910502eff9953fa99a91b1d0861b7e64fcb",
+      "destinationSha256": "e08b046538de5af49706bf4627581910502eff9953fa99a91b1d0861b7e64fcb"
+    },
+    {
+      "source": "server/minecraft/eventSystem.js",
+      "destination": "vendor/server/minecraft/eventSystem.js",
+      "sha256": "fa153cf48d0062cbb4b584709c5d13af8e5f21ce3062b3a06617a1213f4f58a7",
+      "destinationSha256": "45296906ad736d2c54fec7e19699b8c74e17bcf76a6c31f2a45451269a756603"
+    },
+    {
+      "source": "server/minecraft/learningKeys.js",
+      "destination": "vendor/server/minecraft/learningKeys.js",
+      "sha256": "cba6d3b1bb73f6bbdd336b4a9f4f2c8c582eb489ea7622831d8c4ae13221f9ea",
+      "destinationSha256": "cba6d3b1bb73f6bbdd336b4a9f4f2c8c582eb489ea7622831d8c4ae13221f9ea"
+    },
+    {
+      "source": "server/minecraft/learningState.js",
+      "destination": "vendor/server/minecraft/learningState.js",
+      "sha256": "62f713752d0be76bd048092ba2ee31f46b17265737ef53283ba137692b551baa",
+      "destinationSha256": "62f713752d0be76bd048092ba2ee31f46b17265737ef53283ba137692b551baa"
+    },
+    {
+      "source": "server/minecraft/learningStore.js",
+      "destination": "vendor/server/minecraft/learningStore.js",
+      "sha256": "8076ec7a0a45a91f881881bfc8a47dc89ad15da0672dc85938b230381a3a2369",
+      "destinationSha256": "8076ec7a0a45a91f881881bfc8a47dc89ad15da0672dc85938b230381a3a2369"
+    },
+    {
+      "source": "server/minecraft/plannerPrompts.js",
+      "destination": "vendor/server/minecraft/plannerPrompts.js",
+      "sha256": "996a61b2205376f3fe61441fcf69012bd638523e70dcf49fa8a97f55168b48a9",
+      "destinationSha256": "599283550d36b4242df3609415e4486557de21950f92f76871735c92e97b1b6d"
+    },
+    {
+      "source": "server/minecraft/plannerSafety.js",
+      "destination": "vendor/server/minecraft/plannerSafety.js",
+      "sha256": "1baee6c6974830af0cd55c051794d479fe7985cbc56c364c9a7dea0a755f97ef",
+      "destinationSha256": "1baee6c6974830af0cd55c051794d479fe7985cbc56c364c9a7dea0a755f97ef"
+    },
+    {
+      "source": "server/minecraft/ruleEngine.js",
+      "destination": "vendor/server/minecraft/ruleEngine.js",
+      "sha256": "38764dd08f40f317948d92a830ac7d1a32004d774916489db61b4424ac7be7f2",
+      "destinationSha256": "38764dd08f40f317948d92a830ac7d1a32004d774916489db61b4424ac7be7f2"
+    },
+    {
+      "source": "server/minecraft/ruleReload.js",
+      "destination": "vendor/server/minecraft/ruleReload.js",
+      "sha256": "67dd323344b51c65f2e612cba94052e4711aa8760239d3fa9fc64011cb6df059",
+      "destinationSha256": "67dd323344b51c65f2e612cba94052e4711aa8760239d3fa9fc64011cb6df059"
+    },
+    {
+      "source": "server/minecraft/runtimeDiagnostics.js",
+      "destination": "vendor/server/minecraft/runtimeDiagnostics.js",
+      "sha256": "af60429f236407e974f96f7f4ba79241a23df2c4712253285fbbe264cf0b6694",
+      "destinationSha256": "af60429f236407e974f96f7f4ba79241a23df2c4712253285fbbe264cf0b6694"
+    },
+    {
+      "source": "server/minecraft/taskCatalog.js",
+      "destination": "vendor/server/minecraft/taskCatalog.js",
+      "sha256": "15e61b411bb472ee77f6b0e1809e2340daff8dca8c62a27872c6409a6304d611",
+      "destinationSha256": "15e61b411bb472ee77f6b0e1809e2340daff8dca8c62a27872c6409a6304d611"
+    },
+    {
+      "source": "server/minecraft/taskDiagnostics.js",
+      "destination": "vendor/server/minecraft/taskDiagnostics.js",
+      "sha256": "acd4f0eae9f1d5ea08065da26c956480d3215edef124e14e7617b4f9244c4239",
+      "destinationSha256": "acd4f0eae9f1d5ea08065da26c956480d3215edef124e14e7617b4f9244c4239"
+    },
+    {
+      "source": "server/minecraft/taskLabels.js",
+      "destination": "vendor/server/minecraft/taskLabels.js",
+      "sha256": "00f0a3f499f13f9987ebbae2702a5a40829c465cf47a5160584c467307a409f1",
+      "destinationSha256": "00f0a3f499f13f9987ebbae2702a5a40829c465cf47a5160584c467307a409f1"
+    },
+    {
+      "source": "server/minecraft/taskPublicState.js",
+      "destination": "vendor/server/minecraft/taskPublicState.js",
+      "sha256": "53f612e439972767f4c6be39cd98dda720b97f1065a8db93e8f3fd299584fad0",
+      "destinationSha256": "53f612e439972767f4c6be39cd98dda720b97f1065a8db93e8f3fd299584fad0"
+    },
+    {
+      "source": "server/minecraft/taskRecovery.js",
+      "destination": "vendor/server/minecraft/taskRecovery.js",
+      "sha256": "3553774ad8a0ca9336d692a16745f952ec83e31a0042fab19c9bad105a6cc1ff",
+      "destinationSha256": "82f4d16c5c0ada72e530645b9e434674b20bb3595e1c493407b138fa67b99b5d"
+    },
+    {
+      "source": "server/minecraft/taskState.js",
+      "destination": "vendor/server/minecraft/taskState.js",
+      "sha256": "a57fec730a9c2d7acd96626db9074634c8fb11493b0268853cc9430a31f03b1b",
+      "destinationSha256": "a57fec730a9c2d7acd96626db9074634c8fb11493b0268853cc9430a31f03b1b"
+    },
+    {
+      "source": "server/minecraft/taskUtils.js",
+      "destination": "vendor/server/minecraft/taskUtils.js",
+      "sha256": "ebd0156071fe86296fb7be8c0cde902f40d0b1f085c0024612b65e0de637c2e3",
+      "destinationSha256": "ebd0156071fe86296fb7be8c0cde902f40d0b1f085c0024612b65e0de637c2e3"
+    },
+    {
+      "source": "server/minecraft/worldContextView.js",
+      "destination": "vendor/server/minecraft/worldContextView.js",
+      "sha256": "3561c497173b0500042f38c77d8a3438254f31cee5af80872096dc5d98be2a06",
+      "destinationSha256": "3561c497173b0500042f38c77d8a3438254f31cee5af80872096dc5d98be2a06"
+    },
+    {
+      "source": "server/minecraftVersionCompat.js",
+      "destination": "vendor/archive/minecraftVersionCompat.js",
+      "sha256": "fdbd88896c815d460ce45077295280198d1bb944539b46a30d50aa41103cac96",
+      "status": "archived; not loaded by runtime",
+      "destinationSha256": "fdbd88896c815d460ce45077295280198d1bb944539b46a30d50aa41103cac96"
+    }
+  ],
+  "localAdaptations": [
+    {
+      "path": "vendor/server/minecraftTaskAgent.js",
+      "changes": [
+        "Dispose clears pending status/context timers and movement monitor.",
+        "Optional dependency allowAutonomousMaintenance disables spontaneous maintenance while preserving hybrid AI command planning.",
+        "Planning pause/resume uses generation and cancellation guards; cancellation state precedes awaited cleanup and stale planning cannot overwrite cancelled or paused tasks.",
+        "Stop clears passive escort and physical movement even after the foreground task has ended; later idle ticks cannot restore the cleared escort.",
+        "Entity selection uses registry/name semantics for modern hostile/other types and legacy mob/object identities; distance accepts plain coordinates and Vec3.",
+        "Explicit owner lookup never substitutes another nearby player; optional getPreferredPlayerName callback disables owner guessing and missing owner produces an actionable error.",
+        "Continuous follow/escort uses healthy heartbeat in strict and hybrid modes without a fixed 3-minute deadline; finite return retains its timeout.",
+        "Continuous physical movement monitoring stays active beyond 30 seconds and validates the current target range; previously stable movement cannot mask a later 6.5-second stall.",
+        "Escort readiness uses the existing PICKAXE_ITEM_NAMES instead of an undefined constant.",
+        "Non-reconnecting detach persists the failed foreground snapshot before clearing currentTask, preventing stale planning state after a world transition.",
+        "House playbook budgets only missing blueprint blocks and actual foundation supports, preserves completed structure during site clearing, clears terrain at floor height, and checks each target again before placing.",
+        "Plank/stick bootstrap completes requested output counts in bounded batches; crafting converts output counts to recipe repetitions and tool prerequisites use harvest-grade tools.",
+        "Smelting uses remaining output/input demand, observes active burn time even with an empty fuel slot, replenishes wood fuel, and heartbeats only observed progress or transfers.",
+        "Inventory-aware iron/diamond prerequisites defer fuel acquisition to smelting instead of requiring nearby coal.",
+        "Execution generations prevent paused/cancelled or superseded runs from applying recovery or issuing subsequent steps; physical deadlines are cleared and physical recovery counts do not consume the plan budget twice.",
+        "Recovery keeps untouched suffixes without applying the failed-stage revision to the whole plan; AI repair must retain the failed semantic objective and begins with its repair prerequisites.",
+        "Diamond task completion validates original target inventory rather than treating completion of a tool-only repair as success.",
+        "House completion uses the original objective and verified checkpoint after return-only recovery; later return failures remain eligible for stage recovery.",
+        "Diamond mining objectives run a resumable from-zero expedition with a two-hour hard deadline and physical-progress idle watchdog; known diamond commands use the built-in plan in both strict and hybrid modes.",
+        "Expedition pathfinding disables arbitrary digging, placement, parkour and unsafe drops; navigator goals retain the physical watchdog, cancellation and movement lease.",
+        "Controlled mining safety, resource and budget interruptions park the original task and route for explicit resume; AI recovery cannot override a mining safety stop.",
+        "Bread supply uses a real crafting table for its three-wide recipe.",
+        "Real-server fix: stop/reset clears the goal immediately without queuing pathfinder.stop(), whose deferred flag cancelled the next gathering trip after idle crafting.",
+        "Real-server fix: crafting executes one recipe per closed window, waits for observed inventory growth, and recalculates remaining output from fresh inventory to avoid batch tool-crafting slot races.",
+        "Real-server fix: while the furnace is open, smelting reads its live player-inventory items rather than the stale bot.inventory view, so collected outputs and consumed raw material/fuel determine actual remaining demand.",
+        "Natural survival provisions use bounded reachable-tree candidates, passive-adult hunting, real meat smelting, strict food reserve accounting, confirmed food increases and safe camp return; mature-crop harvesting cannot recurse into food preparation.",
+        "Natural surface movement checks intermediate loaded hazard blocks, waits for real landing before digging/attacking, uses normal sprinting for required resource trips, and propagates low-health hunting stops immediately to camp return.",
+        "Natural hillside placement validates player AABB, loaded safe stance, visibility and real reach, waits for physics landing and rechecks before placing; an already clear stance adds no movement.",
+        "Placement uses Mineflayer native secondary-use sneak input before placing against interactive anchors; finally restores controls/windows only for the same bot, task and execution, preserving pause/cancel and superseding execution cleanup.",
+        "Natural food trips use distance-bounded approach budgets, finite animal retries with cooldown, early camp cooking and real meals, and optional net foodPoints reserves while preserving default strict count contracts.",
+        "Native consume promise may resolve on late held-item updates; confirm real food-level increase inside the same bounded cancellable action before reporting consumption.",
+        "Natural mining self-defense retains checked movement restrictions, captured task cancellation and generation, the original movement deadline, and the exact interrupted goal; only a completed owned survival interrupt may resume twice after validating actual safe position, while pause/cancel, low health, fluids and foreign ownership stop immediately.",
+        "Low-health checks added for survival interrupt recovery do not block the expedition original ordinary navigation and emergency retreat; the existing expedition still stops new excavation at low health.",
+        "Furnished-house native placement awaits the native physics rotation packet before placement, preserves cardinal facing and half-block collision geometry, rounds half-slab pathfinder stance nodes correctly, and uses a task-owned movement profile with safe grounded scaffold dismantling.",
+        "Confirmed placement ownership survives pause/cancel without issuing late actions; superseded executions cannot restore movement or controls.",
+        "Common construction material preparation uses official recipes and bounded reconciliation of simultaneously reserved outputs, protects the entire house and ramp throughout recursive resource gathering and final dig guards, and puts temporary stations outside the footprint.",
+        "Missing rare house materials pause the original phase with exact deficits; completion checks original profile/schema, actual final block states, clearance, furniture use and removal of owned scaffold.",
+        "Furnished-house-only movement validates both actually open door halves and their collision clearance, then corrects the pinned pathfinder panel-top waypoint to the supported clear doorway floor; default task movements and native world physics remain unchanged. The adapter is per bot, idempotent and removed on disconnect.",
+        "Estate public tasks dispatch deterministic original-profile construction, explicit bounded supply-chest access, captured checkpoints, native safe movement and interaction adapters. Structure, permanent routes, furniture, all irrigated farm cells and zero owned temporary blocks must verify before completion; estate safety or material failures pause the original task rather than shrink its goal.",
+        "Self-supply movement records typed shallow-water edges and actual reverse return, preserves wet safety HOLD through pause/cancel/replace, closes only obsolete foreign references, and protects actual route supports at final native dig sends. Camp work records a fresh actual local suffix after returning, rather than replaying stale transport as dry movement. Creeper proximity warnings run on native physics ticks and resume only bounded, completed owned dry escape within the original navigation deadline.",
+        "Exact captured dry move retains a fast failed survival interrupt cause after its lease is released, through the native settlement and graph guard gap; token/client/task/generation/profile/foreign identity changes still refuse it. Never revive a failed work lease.",
+        "Bound optional host whole-house learning authority to the registry and report only currently validated reusable whole scripts; missing authority retains component candidates. Native receipts are not generated by planner or checkpoint JSON.",
+        "Surface defense diagnostics preserve actual float body/vitals, nearby creeper observations and bounded planning/error facts; missing historical facts stay UNKNOWN.",
+        "Observed-coordinate surface exploration captures exact client and task cancellation identity and persists unsettled native probe target, status, yield and budget facts without crediting physical movement.",
+        "House log exploration captures native loaded resource observations, persists resource coordinates separately from actual visited nodes and binds guidance callbacks to the same captured task/bot/client/token/generation. Camp return performs no resource query. Existing global96m material query and physical harvesting guards stay intact.",
+        "Self-supply quarries retain original camp and use an independently fresh stable entry, existing observed-node native transport and actual arrival confirmation. Tool/food/storage work returns to actual camp and then the same entry; no-op stick/tool/food readiness does not force redundant camp trips. Captured global actor/task/generation/client/dimension/token/lease ownership is separate from exact source-context mutation authority. Initial protected-floor tool preparation follows resource tier without recursive attempts to harvest the floor; real digs keep native canHarvest. Nested quarries preserve all actual routes and no stale graph current is fabricated.",
+        "Natural house selection may safely explore an independent original native graph from actual spawn, repeat full site checks at actual nodes, return to a genuinely registered camp and freshly validate it before initializing self supply. Site CP cannot become partial materialSupply.",
+        "Current actual step/profile/pointer/time frame and captured actor/context constrain every site observation and native move continuation. Null AsyncLocalStorage native physics observations use only the still-current actual frame and captured actor; explicit foreign contexts remain denied. Default surface behavior unchanged.",
+        "Canonical advanced finish uses the original full furniture verifier and same-source relative native natural XP/enchant host under its actual watchdog budget; input storage/quarry contracts remain. All natural live/whole criteria remain independently gated."
+      ],
+      "currentSha256": "2c96848a19bd7ce55cb852de4b66e36ce3c076f67179953326007b17b1d6c143"
+    },
+    {
+      "path": "vendor/server/minecraft/eventSystem.js",
+      "changes": [
+        "Nearby-item perception shares registry/name entity classification rather than the legacy object-only filter.",
+        "Item-drop perception decodes versioned metadata through entity.getDroppedItem() instead of fixed metadata index 7."
+      ]
+    },
+    {
+      "path": "vendor/server/action/actionRegistry.js",
+      "changes": [
+        "Craft, stage, and resource recovery splice repair steps into the unfinished original plan while preserving intent, goal, quantities, post-task directives and later steps.",
+        "Diamond recovery identifies the actual diamond objective and prefers the inventory-aware tool progression; fuel preparation can be deferred explicitly.",
+        "House recovery preserves its anchor and dimensions; material or verification failure regenerates repair phases instead of repeating verification alone.",
+        "Learned plans retain current step ordering and targets; old resource/item/action objectives cannot substitute fresh requests.",
+        "Objective keys include semantic resource, item, action, phase, player and coordinates for safe AI repair matching.",
+        "Diamond heuristic tasks explicitly enable the expedition; mining-specific errors retain their actionable code and blocked status.",
+        "Versioned furnished-house phases, recovery anchors and untouched return suffixes preserve the original requested cottage or enchanting-library tier; learned legacy or other-tier objectives cannot replace it.",
+        "Registered bounded schema-1 build_estate actions retain castle/villa profiles, anchors, depot coordinates and supply permissions through learning and recovery, with a finite two-hour hard limit and distinct estate/farm blocking codes.",
+        "Failed script revisions remain candidates; only actual completion of that exact revision can replace an independently preserved lastSuccessfulStep. Legacy polluted templates remain unverified.",
+        "Self-gathered whole-house success, scoring, reload, forced matching and plan reuse require current trusted whole-acceptance proof. Completed structure alone records componentSuccess. Temporary issuer outage revokes derived reuse until unchanged valid proof is restored; legacy counters remain archived without whole acceptance."
+      ]
+    },
+    {
+      "path": "vendor/server/minecraft/taskRecovery.js",
+      "changes": [
+        "Recovery counter clamps match the declared maximum twelve plan revisions rather than silently truncating both to eight."
+      ]
+    },
+    {
+      "path": "vendor/server/minecraft/plannerPrompts.js",
+      "changes": [
+        "House planning describes the complete twelve-stage furnished construction objective and preserves the requested advanced enchanting furnishings."
+      ]
+    }
+  ],
+  "deskpetAdditions": [
+    {
+      "path": "vendor/server/minecraft/miningNavigation.js",
+      "purpose": "Incremental checked excavation, route support protection, safe physical movement/dig guards with physics landing confirmation, bounded dry-cave detour planning, finite budgets and retreat.",
+      "sha256": "7ce6d4b33dcc6287f705a1fa6ed4426426cda54a0e87760cc78255a649f8dfb5"
+    },
+    {
+      "path": "vendor/server/minecraft/diamondExpedition.js",
+      "purpose": "From-zero tools/stations and natural food preparation, iron progression, version-aware staircase descent, branch prospecting, hunger-driven resupply and inventory-confirmed return. Net edible food-point reserves are rechecked after meals; natural obstacles choose harvest-capable tools before preference sorting and remain intact when existing checked route changes are required. Same-level descent detour progress retains actual bounded direction rejection reasons without changing routing or safety decisions.",
+      "sha256": "85f10aaa1cad5f384f212104947197466550ed81bee4e87d4de50fca4c84f001"
+    },
+    {
+      "path": "protocolCompatibility.js",
+      "purpose": "Client-local 1.21.8 chicken metadata VarInt correction, gated by actual negotiated full version and exact defective schema, preserving upstream shared data and non-target protocols. Bot-local exact 1.21.8 bed wake uses the negotiated string action mapper to send leave_bed; native server sleep/wake events remain authoritative, and legacy/other versions retain the original method.",
+      "sha256": "0c50fa76016994a1b3dd3400ea2e19807b89cb3fa54db539f8264e01a7455397"
+    },
+    {
+      "path": "vendor/server/minecraft/furnishedHouseBlueprints.js",
+      "purpose": "Two versioned furnished cottage/library designs with complete pitched roofs, real two-part bed/door states, reachable furnishings, full-power bookshelf gaps, an owned rear roof ramp, and four directly adjacent three-step corner stairs for one-block wall-top ascent/descent.",
+      "sha256": "793815eba767abcb4547b1af8bb70d28c97afa739e68bca56c91087ed9b47837"
+    },
+    {
+      "path": "vendor/server/minecraft/furnishedHouseBuilder.js",
+      "purpose": "Resumable world-confirmed phases, missing-material budgets, pre-frame corner stairs, owned-block recovery and scaffold cleanup including natural dirt-to-grass transformation, protected foreign replacements and actual furniture-window verification; completion never substitutes blueprint expectations for observed server blocks. Scaffold cleanup uses lower supported stances and resumes a world-confirmed complete roof without rebuilding removed ramp blocks or requesting replacement dirt. Door/bed primary and adjacent derived states must all be confirmed, including a resumed already-present primary, before the phase can complete. Verification approaches and opens the door from the current side before attempting exterior/interior traversal, and confirms closure at completion. Owned scaffold cleanup orders each descending layer by distance from the house footprint, outermost first on both front and rear ramps, preserving lower-layer support while preventing outer blocks from hiding inner dig targets. Uses shared natural terrain recognition and freshly rejects any leaf floor/scaffold support before dig/place; original full furniture verifier is exported for production XP precondition without granting final acceptance.",
+      "sha256": "7cb17b09b8deebbdad81ee8e6bf2ccdc55ae1aaa4ff409b5b6a47cf1a6a4641a"
+    },
+    {
+      "path": "vendor/server/minecraft/estateBlueprints.js",
+      "purpose": "Versioned medieval castle and riverside villa manifests with component dependencies, permanent routes, actual furniture and bookshelf states, owned scaffold routes, dry ground requirements and two declared irrigated wheat plots.",
+      "sha256": "a0396e6226c6838ad88f8561ae96061f0ac1ed466f4ff2982ab2673abfa74c23"
+    },
+    {
+      "path": "vendor/server/minecraft/estateBuilder.js",
+      "purpose": "World-confirmed resumable component construction with bounded material batches, site preflight, associated derived furniture, owned scaffold cleanup, native permanent-route and furniture verification, and actual 48 hydrated farmland/crop completion gates.",
+      "sha256": "c48ca6c43ec6005e02d4ca7a036b071964db0f555e5dcffb03e84672f69e24b6"
+    },
+    {
+      "path": "vendor/server/minecraft/estateMaterials.js",
+      "purpose": "Explicit authorized depot inventory transfer with real closed-window inventory confirmation, actual stack capacity, finite batches and actionable missing-stock or full-inventory pauses; never discards player items.",
+      "sha256": "4fd0e50683ae798e1bd153f199920017f84872f0d6f29bd86e836e80189ae264"
+    },
+    {
+      "path": "vendor/server/minecraft/estateFarm.js",
+      "purpose": "Native task-owned bucket, hoe and wheat-seed operations confirmed by actual world and inventory. Separate explicitly requested post-public bone-meal growth, mature harvest, actual pickup and seed-debited replant validation retains resumable checkpoints.",
+      "sha256": "6dcb66e98ea152c4d62022ccd1164ce58f848c197cd75529b5a4f394f9697cda"
+    },
+    {
+      "path": "vendor/server/minecraft/estateNativeAdapter.js",
+      "purpose": "Native estate furniture/windows, actual two-half door travel, dry safe farm interaction against real farmland collision rays, and task-owned farm dependencies. Server world, player physics and inventory remain authoritative.",
+      "sha256": "de58a5a6f66fe60a3aeb2c7896c9bd0bdc70deaaa82279e8c2be01668498afb8"
+    },
+    {
+      "path": "vendor/server/minecraft/estateDoorClosure.js",
+      "purpose": "Explicit side-aware castle/villa door closure preserves upper west stair and final ground exits; actual native movement and click boundary revalidate the declared safe side.",
+      "sha256": "c1a6eedcd798a77d9a2453011fa96ca27b1d88cd0fca14a98248432d0b90b288"
+    },
+    {
+      "path": "vendor/server/minecraft/estateNativeInteractions.js",
+      "purpose": "Bot-local estate-owner interaction packet cancellation guard around native methods; actual final block_place/use_item writes recheck captured ALS ownership, preserving native payloads and all unrelated actors/protocol/physics.",
+      "sha256": "de6c2bfc2d85c494d5a095d3327d0f7a641e0f62532748d05eb54d321d30005d"
+    },
+    {
+      "path": "vendor/server/minecraft/estatePlacement.js",
+      "purpose": "Owned native placement waits for actual selected-slot debit and complete block states before a subsequent stack selection; cancellation prevents late writes.",
+      "sha256": "5c033d4d35de41ccddd799e3bd32b46b1b2f070511113c2793934b0585115238"
+    },
+    {
+      "path": "vendor/server/minecraft/estateDockPlacement.js",
+      "purpose": "Declared riverside dock positions use bounded native sneak-edge physics and real placement rays; preserved source water and confirmed dry return are required.",
+      "sha256": "27d45be46d43dfdcf13ffef87e9c1454565a9b826334d58365701360232db332"
+    },
+    {
+      "path": "vendor/server/minecraft/houseSelfSupplyPolicy.js",
+      "purpose": "The original construction contract controls external-depot permissions; self-gathered tasks cannot recover by adopting supplied stock.",
+      "sha256": "1e60765946face5378230b68925faf4c527efdcf34585df59b732453ffd2acea"
+    },
+    {
+      "path": "vendor/server/minecraft/houseNativeSourceGuard.js",
+      "purpose": "Task-owned final native inventory, dig, placement, use and attack packets recheck cancellation and execution ownership; unrelated actors and physics retain native behavior.",
+      "sha256": "8e83f59af447503e8f55123daf42ec8d30054ebe9b22f05b9bf7b0eecd9d4fc4"
+    },
+    {
+      "path": "vendor/server/minecraft/houseSelfSupplyRuntime.js",
+      "purpose": "Self-built camp stations and owned warehouse compose bounded actual recipe, raw-material, smelting and food preparation. Full normal empty-inventory house acceptance remains pending. Before native crafting, earlier sibling inputs stored by nested capacity work are withdrawn only from self-owned stock, then legitimately prepared only if missing, and freshly confirmed together. Already coexisting inputs require no extra inventory/window action; no synthetic counts, grants or external depots.",
+      "sha256": "2f9dfeccf5ccb33ada132504360ea8ba8889bb5e2d694ced66aa8f3f3dc87e4e"
+    },
+    {
+      "path": "vendor/server/minecraft/houseMaterialRecipes.js",
+      "purpose": "Installed recipes derive material batches with actual input/output reconciliation, cycle and progress limits, concrete acquired wood species and cancellable callbacks. Optional pre-craft input coexistence recovery uses the actual selected recipe delta and repetitions before the original consumption snapshot. Original requirement, operation, depth and owner timeout limits remain; provider contexts cannot reset the captured budget or replace input targets. Missing over-limit recovery targets reject before raw work.",
+      "sha256": "4ced30fc1259e1428ac69a0559249090b0cbdaddbeb843a0a2be2f030d81a616"
+    },
+    {
+      "path": "vendor/server/minecraft/houseOwnedStorage.js",
+      "purpose": "Only task-confirmed freshly placed chests may be used as self-supply warehouses. Native window and closed-inventory transfers are reconciled against owned stock ledgers.",
+      "sha256": "4a9461da483d6f6c579e467659e4ff5a52cda15a1e3183e10b57d41a4376ce5f"
+    },
+    {
+      "path": "vendor/server/minecraft/houseQuarry.js",
+      "purpose": "Dedicated native stair/branch gathering for common ores and cobblestone preserves nested resource routes, protected floors, tool durability, provisions and fixed-camp return. Initial protected-entry tool preparation is explicitly preparationOnly and selects the resource minimum tier without trying to harvest the standing support. Every real clearance/vein tool request remains preparationOnly:false and strict native canHarvest; stable floor, gravity, loaded world, route/owner and protected-dig policies remain intact.",
+      "sha256": "00cfe4881c1ed00e15ecf4da40a5803b359be7a660378678417423ab076a7968"
+    },
+    {
+      "path": "vendor/server/minecraft/houseResourceGatherer.js",
+      "purpose": "Finite actual natural log, sand, seed, cane, wool and leather acquisition requires inventory pickup and safe camp return; search failure preserves original material goals. Previously rejected raw candidates are reopened only after actual accepted inventory count grows following original dig/pickup and ownership/safety rechecks; no-drop or unrelated items confer no retry credit.",
+      "sha256": "af3bddd69e8a2d713b7bf768b6560187321065c5aa3cf4f56d3a98ca4cb08e6a"
+    },
+    {
+      "path": "vendor/server/minecraft/naturalHouseSites.js",
+      "purpose": "Loaded-only furnished-house preflight reads actual terrain heights, original full clearing volume, doorway/ramp routes, foreign blocks and gravity caps before gathering. It never changes terrain. Original loaded native site policy recognizes red_sand, snow_block and pale_oak_leaves at arbitrary coordinates/heights; leaves remain forbidden as floor support. Hazard, gravity caps, foreign blocks, unknowns and full original footprint remain unchanged. Uses the shared exact natural terrain predicate; full original footprint/hazard/foreign/unknown/leaf-floor rules retained.",
+      "sha256": "dd6963647f65276b49882d984b5ee5847a9f897288c41f7bb06a66df8f88f8ef"
+    },
+    {
+      "path": "vendor/server/minecraft/houseSurfaceGraph.js",
+      "purpose": "Loaded-only native dry surface exploration and exact observed parent replay, typed water recovery, dry shore and non-applied descent prediction. Exploration now prioritizes 32m uncovered cells derived only from actual observed nodes, then separation/outward coverage; pending goals survive pause during ancestor replay. No resource coordinates, increased radius/node budgets, or planned movement credit. Whole natural self-supply remains pending. Coordinate-first safe replanning uses only observed camp/resource coordinates and returns to the observed expanded resource node; actual typed parent routes remain a no-path fallback. Bounded native generator probes distinguish partial or timeout from conclusive noPath and reject results after their deadline. Uncovered outward candidates at the actual current node precede distant replay branches. An inconclusive long coordinate probe now tries at most four independently revalidated observed coordinate segments within32m, skipping unnecessary historical nodes; exact typed transport remains a freshly validated fallback. Timeout never means noPath and route/order/visits are not fabricated. Optional freshly confirmed resource observations prioritize improving current-node native-probed frontiers, then other known branches; expired/no improving approaches temporarily defer memory without material or arrival credit. Normal native dry-edge jumps require recent real full-cube AABB contact, original loaded-safe non-applied Physics landing witness within16ticks/512reads and owner/exclusion limits; state predictions never grant actual-grounded or arrival credit. Failure observations preserve real yaw, controls, jump flags and bounded native remaining path; historical missing controls remain UNKNOWN. Stable quarry transport targets only original actually reached nodes through existing guarded coordinate replanning and exact typed water fallback, preserving fixed camp, node/order/visits and original resource resume node. A covered32m cell with exactly one real point may receive one native-probed current-parent outward full-step-separated second point; dense cells retain original coverage priority and planned edges never register visits. Original exploration and initial return probe budget remain100ms, stopped-world counterfactual is not historical control proof. A private recorded-return branch may retry once at500ms/50 original native slices only after100ms UNKNOWN excluding late noPath, when actor/current and target are existing observed nodes within32m, fresh dry full shape support/exclusion and captured owner/profile/vitals/deadlines are valid. Retry consumes the original probe count; original native complete success alone permits goto and actual grounded exact arrival alone updates current. Fresh exploration, far targets, offgraph resource suffixes and typed fluid transport keep their original budgets. Partial or late results never grant movement credit. Successful exact original dry parent-child legs may retain at most128 actual grounded foot/AABB/support state observations. After original100ms and bounded500ms both remain UNKNOWN (never noPath), tiny original-native replans may use only these revalidated actual coordinates within the same original15-second edge deadline and global probes. Failed real prefixes remain uncredited and require explicit reconciliation, including cleanup. Native goto-resolved descent may wait up to5000ms and24 actual physics ticks within its original leg deadline, retaining owner/profile/goal and all survival/hazard guards; only actual grounded exact arrival grants credit. No seed/absolute map coordinate exception.",
+      "sha256": "4440444cb695fcf7317e5188e342aa7d8846d9fcaac7412cb72bb27ab5e23afb",
+      "naturalWalkingRoleRevision": 1,
+      "naturalWalkingScope": "Walking/body/access native proof only; facility AIR, raw ACK/foundation, original actor/context/generation, limits and central below AIR rules remain. No actual Java/whole acceptance from these contracts."
+    },
+    {
+      "path": "vendor/server/minecraft/houseFluidResources.js",
+      "purpose": "Native source-water and bounded shallow lava/obsidian mechanics, real inventory and source readback, protected routes and fixed camp. Controlled component v5 verified; natural full self-supply remains pending. Pure walking/refill support admits a complete loaded sand/red_sand/gravel chain of at most8 onto a stable full base, revalidating actual dry AABB/grounded support and preserving support cells. Mining classification stays unchanged and actual obsidian dig rejects gravity/hazard/UNKNOWN neighbors.",
+      "sha256": "d5bb0d949227850a87d30296fdba077563d4d976792cd9583939e91739ab6165"
+    },
+    {
+      "path": "vendor/server/minecraft/houseFluidNativeBridge.js",
+      "purpose": "Captured-owner native digging/movement bridge with actual 120-second dig, exact synchronous cancel scope, real promise settlement and bounded UNKNOWN cleanup. Production bridge verified by controlled actual fluid06b26criteria; whole natural factory acceptance pending. Missing real water_bucket for obsidian is acquired through the same real recipe source before the provider busy section, preserving only current held obsidian and captured owner/deadline. No ancestor recipe recursion or synthetic inventory.",
+      "sha256": "4f910009f182be9d12809ee2269acdd85edd246450af5d76995a931da516e76b"
+    },
+    {
+      "path": "vendor/server/minecraft/houseShallowWaterTraversal.js",
+      "purpose": "Bounded installed native source-water depth-one transport with captured ownership, actual dry-bank arrival, bounded cancellation retreat and retained safety HOLD. Controlled actual narrow sand bank 4/12 crossings and cancel/timeout verified independently; natural whole building acceptance remains pending.",
+      "sha256": "dd7e6d9c43e8bd48f966d4dfa8646167d4a98520e1043a91519ff331440c38d1"
+    },
+    {
+      "path": "vendor/server/minecraft/houseShallowWaterFinder.js",
+      "purpose": "Finite loaded-only cardinal shallow route discovery and installed dry approach planning. Candidate geometry never grants actual movement credit.",
+      "sha256": "44135003a88243548f5c58631c5276166ca229ee68f49046e72a8103a35f96aa"
+    },
+    {
+      "path": "vendor/server/minecraft/houseCreeperEscape.js",
+      "purpose": "Bounded captured-profile native dry escape with current creeper entities, loaded cardinal +/-1 height surface candidates and original native planner confirmation; finite12m/16step/4s,512node/4096surface-read budgets. Actual safe distance/ground required. Narrow previous-tick native stale-ground one-step descent uses at-most8-tick/512read original Physics prediction without apply or actual-ground credit; old guard/unknown/foreign protection remains. Real20Hz native component regressions do not prove whole natural building acceptance.",
+      "sha256": "5bdd6fc182e9cf5d9894b8d2f2cb021c1e8077da18f7809a5086f104b52ad2c1",
+      "naturalWalkingRoleRevision": 1,
+      "naturalWalkingScope": "Walking/body/access native proof only; facility AIR, raw ACK/foundation, original actor/context/generation, limits and central below AIR rules remain. No actual Java/whole acceptance from these contracts."
+    },
+    {
+      "path": "vendor/server/minecraft/houseNativeDigSession.js",
+      "purpose": "Per-invocation captured owner native digging; guarded look/start/finish, exact synchronous native cancel, real Promise settlement and retained UNKNOWN cleanup guards. Ordinary material digging keeps its original finite timeout.",
+      "sha256": "8f588e3c4d1c794da263b4a9c15865afde1408e5c8e26d91f6152abe1897337e"
+    },
+    {
+      "path": "vendor/server/minecraft/houseBotOxygen.js",
+      "purpose": "Read only player own native air_supply metadata using installed registry keys; never use Mineflayer global oxygen contaminated by other entities. Missing self metadata remains UNKNOWN.",
+      "sha256": "b6086b46976e759fcd9ad38977b37edddf198c6b8ed5a753468e5dfcac297af6"
+    },
+    {
+      "path": "vendor/server/minecraft/houseSurfaceTransport.js",
+      "purpose": "Typed shallow depth1 versus surface_only transport families, exact geometry, explicit native adapter capability, finite width and distinct support protection. Saved descriptors never grant physical arrival credit.",
+      "sha256": "b81f269e1fb2a4ed619088cb8ccfeb8febfe436076781444350a9dedf114ebed"
+    },
+    {
+      "path": "vendor/server/minecraft/houseSurfaceSwim.js",
+      "purpose": "Bounded native look/controls surface-only water travel width1..64, exact owned player air and actual body/eyes/centerline, dry bank confirmation, controlled retreat and exact-owner HOLD. Factory body identical to independently reviewed PRIVATE v2; real controlled component receipts are separate.",
+      "sha256": "d9ba6f3863b6725c511f5edb3aae8765b88c31d1410c97a53f0ee89580986417"
+    },
+    {
+      "path": "vendor/server/minecraft/houseSurfaceSwimFinder.js",
+      "purpose": "Read-only loaded-client surface source-water route discovery with original native dry approach planning, finite total read/probe/time/result budgets, no river-bottom assumption or resource coordinates. Returned routes are plans only.",
+      "sha256": "84f494e86b279561f352a77f91c8aa238383ed41029ed7dece648f8e55dc5a1d"
+    },
+    {
+      "path": "vendor/server/minecraft/houseDryBankAlignment.js",
+      "purpose": "Native bounded same-cell grounded dry bank alignment with original look and axis/crouch controls, actual center and stable physical confirmation, exact-owner cancellation/late-look protection and unexpected unsafe HOLD. No position/velocity/profile edits.",
+      "sha256": "c47295cc08140778c84e5dc66fc0030ee282af36feedfbbebb0eed13e6560a0e"
+    },
+    {
+      "path": "vendor/server/minecraft/houseBankAlignedWaterSession.js",
+      "purpose": "One physical owner frame composes validated dry-bank alignment then the exact typed native water adapter; cached cancellation closes before-entry and between-stage gaps, and HOLD/release follow only the actually used stage.",
+      "sha256": "70421f8c51d76142c67637f96c7a20f833b23999b2c2ea7324a592c6f81f70e8"
+    },
+    {
+      "path": "vendor/server/minecraft/houseWholeAcceptance.js",
+      "purpose": "Durable sealed whole-house acceptance contracts bound to source/task/run/world/plan and independently checked native functional/material evidence. Missing trusted host issuer stays pending; modeled contract tests do not issue game acceptance. Host native receipt publisher not yet implemented.",
+      "sha256": "9ca4090ffb6d66476ba79ed91ff931d40e86da78eacf07ed760af4f44683428b"
+    },
+    {
+      "path": "vendor/server/minecraft/houseObservedResourceMemory.js",
+      "purpose": "Bounded192m native client-loaded log observation, read-only resident-section prefilter then original findBlocks, shared default1000ms budget/max24 new candidates, before-count source exclusion and fresh loaded surface confirmation. Unknown/direct palettes remain candidates, truncated8section batches keep finite cursor, and stale/owner/deep-cave/late noPath facts remain pending. Memory never credits visits/support/materials.",
+      "sha256": "29db7b17b1361d660b0485fb5ac1f540fcde74678abcfc307942586e9db84ac3"
+    },
+    {
+      "path": "vendor/server/minecraft/houseQuarryEntry.js",
+      "purpose": "DeskPet-owned read-only stable quarry entry resolver. Fixed actual camp is separate from original observed graph mining entry; loaded full-cube non-gravity floor, native initial step, protected clearance and owner checks are mandatory. Same stable actual camp needs no fabricated graph; selected coordinates do not grant arrival. Fresh actual dry AABB/grounded support and same-cell pose alone confirm arrival. No bot/world/control writes or synthetic node registration.",
+      "sha256": "5a6ae7294c3ab1ceebae37314a9f037e6153a369d5f732f57ef205299206c20c"
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalTerrain.js",
+      "purpose": "Shared exact natural terrain recognition for site and builder, including red_sand/snow_block/pale_oak_leaves. Recognition is not support or ownership permission.",
+      "sha256": "6b347e860f8dac0050f29e86d438dc0d74a7a981496814c1064bfc8e17548010"
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalSiteSearch.js",
+      "purpose": "Finite independent task.siteSearch graph uses only actual native registered nodes and original full site predicate; actual grounded camp plus10 freshly loaded station/storage stands precedes reservation. No material/owned credit, no unseen coordinates, no seed branches. Real current-step watchdog and absolute TTL/probe/node caps; pending actual prefix/typedwater not bypassed. Second support read must remain original dry support and non-leaf. Native movement and map completion require separate live evidence.",
+      "sha256": "f6180f029616f8842950d5c7dc293b6981483e8817f3ce57814890fe5aaf89e8",
+      "naturalWalkingRoleRevision": 1,
+      "naturalWalkingScope": "Walking/body/access native proof only; facility AIR, raw ACK/foundation, original actor/context/generation, limits and central below AIR rules remain. No actual Java/whole acceptance from these contracts."
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalXPHost.js",
+      "purpose": "Original-task production XP/enchant host with real step budget, same source/context, actual complete furniture first, owned multifurnace and renewable crop binding. Recorded16-cell gravity foundations revalidated at every use/open/placement/window-click and after native ACK before credit. Captured exact owned window objects prevent closing same-id foreign windows; safe owned/null cleanup preserved. Component evidence only; natural live XP30/whole acceptance not established.",
+      "sha256": "d3abbcfea38b5257ff24f5a217c4b691902f6a1110dca55fc06acc6b3fc2a899",
+      "naturalWalkingRoleRevision": 1,
+      "naturalWalkingScope": "Walking/body/access native proof only; facility AIR, raw ACK/foundation, original actor/context/generation, limits and central below AIR rules remain. No actual Java/whole acceptance from these contracts."
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalXPSupport.js",
+      "purpose": "XP-only complete recorded foundation proof: finite contiguous loaded full native cubes, exact recorded name/state, legal gravity layers ending at stable nongravity base, actor/owner checks around each read. Geometry facts do not authorize stock or ownership.",
+      "sha256": "4c290636a5cd160adf2e14e5c9047d27d50293bc3f305fbe81325745f22e6836"
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalXPStagePolicy.js",
+      "purpose": "Canonical original self-gathered library finish4h or original estate6h actual watchdog frame only; real elapsed construction deducted and no CP budget authority. Ordinary cottage/external behavior unchanged.",
+      "sha256": "11963a13ecd76c8d9d4387f29feca9430a47960886182901696e2b6755fc3e78"
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalXPLevelProgressPool.js",
+      "purpose": "Relative-import native XP pool core preserving actual furnace/window/inventory/experience confirmations, level progress and original bounded batch/deferred cleanup contracts. No synthetic XP.",
+      "sha256": "788f81996eae6ac761108bb9ff23215405e44b7d541234667deeed7130efe3bf"
+    },
+    {
+      "path": "vendor/server/minecraft/houseRenewableCactusProvider.js",
+      "purpose": "Relative-import original crop core: true natural seed collection, owned native planting/growth/upper harvest and full foundation proof before action and after delayed ACK. Real growth/XP remains unverified live.",
+      "sha256": "14864e194cac3c22acb2ffe55a873c7240a19a10f8ca5e80605a7c646484b839",
+      "naturalWalkingRoleRevision": 1,
+      "naturalWalkingScope": "Walking/body/access native proof only; facility AIR, raw ACK/foundation, original actor/context/generation, limits and central below AIR rules remain. No actual Java/whole acceptance from these contracts."
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalEnchant.js",
+      "purpose": "Relative-import original native enchant core: actual third offer30, native index2, named inventory/window/server component confirmations, lapis3 and actual level debit. No XP grants or duplicate enchant permission.",
+      "sha256": "bbc35da3989c003c26fa56bbdc81138eef052121ac1e0c2593ed94e71bf50b6d"
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalXPProvider.js",
+      "purpose": "Relative native natural XP base and raw protocol/dig/experience safety contracts used by original renewable/pool helpers; local modeled tests are not real earning proof.",
+      "sha256": "15d876df4ba1eb23c90d95d8e2abc708bfabe38b9cca7d4f4c9e660453022f35"
+    },
+    {
+      "path": "vendor/server/minecraft/houseNaturalWalkingBody.js",
+      "sha256": "e83b15915cd52e97be25730fe4bc2b2f8e0f28554ba4eee67a7cf3975c31a0d8",
+      "purpose": "Map-independent walking/body classification for nine explicit vanilla nonhazard plants only when native loaded state, empty bbox/shapes and no waterlogged state are confirmed. No terrain clearing, material, placement or facility authority. Component/native Physics proof only; arbitrary maps remain unproven."
+    },
+    {
+      "path": "vendor/server/minecraft/houseCampConnector.js",
+      "sha256": "b39cc10f2d45dbbdc6ff233cc5ce9a4a16e18c41cf739c69b0df929b7f7603a2",
+      "purpose": "Unintegrated component connector retained for original Physics tests; one import uses verified natural walking footprint. Engine2c has no import/call to this module. Not a newly enabled production camp bridge.",
+      "status": "COMPONENT_ONLY_NOT_ENGINE_INTEGRATED"
+    },
+    {
+      "path": "test/house-natural-walking-body.test.js",
+      "sha256": "8bd2fdd4b75c74ca7041f613b226e9e8105f1e0055220bc7f6641f44f5351a73",
+      "naturalWalkingRoleRevision": 1,
+      "naturalWalkingScope": "Walking/body/access native proof only; facility AIR, raw ACK/foundation, original actor/context/generation, limits and central below AIR rules remain. No actual Java/whole acceptance from these contracts.",
+      "purpose": "Offline installed Block/pathfinder/Physics walking, plant hazard/unknown/state/shape and role-boundary regression contracts; constructed fixtures are not Java/whole acceptance."
+    },
+    {
+      "path": "test/house-natural-site-search.test.js",
+      "sha256": "b1475e3ec66a01da3df0d8ccb87bcb5b9ce4b06d7f2b868f8ab56ff28804ca33",
+      "naturalWalkingRoleRevision": 1,
+      "naturalWalkingScope": "Walking/body/access native proof only; facility AIR, raw ACK/foundation, original actor/context/generation, limits and central below AIR rules remain. No actual Java/whole acceptance from these contracts.",
+      "purpose": "Original natural site-search contracts; only the explicit old grass walking rejection case calibrated to preserve strict facility AIR and separately prove actual registered grass walking anchor. Other old cases unchanged."
+    }
+  ]
+}

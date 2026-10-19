@@ -1,0 +1,14 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),{Vec3}=require('vec3'),registry=require('prismarine-registry')('1.21.8');
+const {shouldPressHouseRanged}=require('../vendor/server/minecraft/houseRangedCombat');
+const mob=(id,name,x,z)=>({id,name,isValid:true,type:'hostile',entityType:registry.entitiesByName[name].id,position:new Vec3(x,63,z)});
+function fixture(){const target=mob(2,'skeleton',15.5,0),bot={health:20,registry,entity:{position:new Vec3(0,63,0)},inventory:{slots:Array(46).fill(null),items:()=>[{name:'stone_sword'}]},entities:{2:target}};bot.inventory.slots[45]={name:'shield',type:registry.itemsByName.shield.id,count:1};return{bot,target};}
+test('formal07 bare torso shield does not authorize a15m advance into two zombies and two archers',()=>{const{bot,target}=fixture();bot.entities[3]=mob(3,'zombie',11,0);bot.entities[4]=mob(4,'zombie',12,1);bot.entities[5]=mob(5,'skeleton',16,2);assert.equal(shouldPressHouseRanged(bot,target),false);});
+test('single archer retains existing shield engagement; backpack armor never protects a mixed pair',()=>{const{bot,target}=fixture();assert.equal(shouldPressHouseRanged(bot,target),true);bot.entities[3]=mob(3,'zombie',11,0);bot.inventory.items=()=>[{name:'stone_sword'},{name:'iron_chestplate'}];assert.equal(shouldPressHouseRanged(bot,target),false);bot.inventory.slots[6]={name:'iron_chestplate',type:registry.itemsByName.iron_chestplate.id,count:1};assert.equal(shouldPressHouseRanged(bot,target),true);bot.entities[4]=mob(4,'skeleton',16,1);assert.equal(shouldPressHouseRanged(bot,target),false);});
+test('loaded dead and far away mobs do not create a false ranged group; actual contact still permits retaliation',()=>{const{bot,target}=fixture();bot.entities[3]=mob(3,'zombie',80,80);assert.equal(shouldPressHouseRanged(bot,target),true);bot.entities[4]=mob(4,'zombie',10,0);bot.entities[4].isValid=false;assert.equal(shouldPressHouseRanged(bot,target),true);bot.entities[3].position=new Vec3(1,63,0);target.position=new Vec3(2,63,0);assert.equal(shouldPressHouseRanged(bot,target),true);});
+test('saved world58 run114 bare13HP wooden sword cannot charge6.88m while immediate contact retaliation remains admitted',()=>{
+ const {bot,target}=fixture();bot.inventory.slots[45]=null;bot.inventory.items=()=>[{name:'wooden_sword'}];bot.health=13;target.position=new Vec3(6.882072240717851,63,0);
+ assert.equal(shouldPressHouseRanged(bot,target),false);target.position=new Vec3(2.5,63,0);assert.equal(shouldPressHouseRanged(bot,target),true);
+ target.position=new Vec3(6.882072240717851,63,0);bot.health=20;assert.equal(shouldPressHouseRanged(bot,target),true);
+ bot.health=13;bot.inventory.slots[45]={name:'shield',type:registry.itemsByName.shield.id,count:1};assert.equal(shouldPressHouseRanged(bot,target),true);
+});

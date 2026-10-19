@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "parentFile": "tools/local-validation/audit-natural-public-building-closed.cjs",
+  "parentSha256": "7df2f9087b4ce60e5ebe388127debfb2221013a907a7a400e7845209a2a31d2b",
+  "target": "tools/local-validation/audit-natural-public-building-closed-v2.cjs",
+  "targetSha256": "dbd050a6c30fe86f60aef753bb00d2552ea6b6a4016938e8c4078c4773efcefc",
+  "inverseRestoresEveryLegacyAuditByte": true,
+  "edits": [
+    {
+      "before": "  const result = load(path.join(run, 'result.json'));",
+      "after": "  const result = load(path.join(run, 'result.json'));\n  const seedProof = require('../acceptance/fresh-seed-allocation-v1.cjs').inspectSeedAllocation(run);\n  const seedAllocation = seedProof.allocation;\n  report.seedAllocation = seedProof;\n  check('freshSeedAllocationIdentity', result.runnerRevision === 6 && result.seedPolicyRevision === 1 && result.seed === seedAllocation.seed && result.runName === seedAllocation.runName && result.version === seedAllocation.version && seedAllocation.preflightOnly === false, seedProof);\n  check('allocatedRunnerSource', hash(runner) === seedAllocation.runner.sha256 && result.sourceHashes?.started?.['private/natural-public-building-acceptance.cjs'] === seedAllocation.runner.sha256, seedAllocation.runner);\n  const allocatorPath = path.join(path.dirname(runner), 'fresh-seed-allocation-v1.cjs');\n  check('allocatedSeedHelperSource', hash(allocatorPath) === seedAllocation.allocator.sha256 && result.sourceHashes?.started?.['private/fresh-seed-allocation-v1.cjs'] === seedAllocation.allocator.sha256, seedAllocation.allocator);\n  check('allocatedRuntimeSource', seedAllocation.runtime.status === 'RECORDED' && Object.entries(seedAllocation.runtime.files).every(([name, expected]) => result.sourceHashes?.started?.[name] === expected), seedAllocation.runtime);\n  const propertySeed = fs.readFileSync(path.join(run, 'server.properties'), 'utf8').match(/^level-seed=(.*)$/m)?.[1].trim();\n  check('allocatedServerPropertiesSeed', propertySeed === seedAllocation.seed, { propertySeed, allocatedSeed: seedAllocation.seed });"
+    },
+    {
+      "before": "? runner : path.join(path.resolve(values['--private-root'] || '/private/tmp'), path.basename(name))",
+      "after": "? runner : name === 'private/fresh-seed-allocation-v1.cjs' ? path.join(path.dirname(runner), 'fresh-seed-allocation-v1.cjs') : path.join(path.resolve(values['--private-root'] || '/private/tmp'), path.basename(name))"
+    },
+    {
+      "before": "metadata.seed === '6239290801279771110'",
+      "after": "metadata.seed === seedAllocation.seed"
+    }
+  ]
+}

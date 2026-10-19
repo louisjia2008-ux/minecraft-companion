@@ -1,0 +1,15 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),{Vec3}=require('vec3'),{Physics,PlayerState}=require('prismarine-physics');
+const registry=require('prismarine-registry')('1.21.8'),Block=require('prismarine-block')(registry),data=require('../test-support/fixtures/formal14-path-shape-jump.json');
+const {inspectDryJumpSupport,hasGroundedBodySupport,inspectSurfaceBody}=require('../vendor/server/minecraft/houseSurfaceGraph');
+const clone=v=>JSON.parse(JSON.stringify(v));
+function fixture(replacement){const m=data.movement;const bot={version:'1.21.8',registry,jumpTicks:m.jumpTicks,jumpQueued:m.jumpQueued,fireworkRocketDuration:0,controlState:clone(m.controls),inventory:{slots:Array(46).fill(null),items:()=>[]},entity:{position:new Vec3(m.position.x,m.position.y,m.position.z),velocity:new Vec3(m.velocity.x,m.velocity.y,m.velocity.z),onGround:m.onGround,yaw:m.yaw,pitch:m.pitch,height:1.8,width:.6,eyeHeight:1.62,isInWater:false,isInLava:false,isInWeb:false,isCollidedHorizontally:false,isCollidedVertically:false,elytraFlying:false,effects:{},attributes:{}}};
+ bot.blockAt=raw=>{const p=raw.floored(),b=data.bounds;if(p.x<b.minX||p.x>b.maxX||p.y<b.minY||p.y>b.maxY||p.z<b.minZ||p.z>b.maxZ)return null;let s=data.palette[data.states[`${p.x},${p.y},${p.z}`]||0];if(replacement!==undefined&&p.x===313&&p.y===69&&p.z===-188){if(replacement===null)return null;s={name:replacement,properties:{}};}return Object.assign(Block.fromProperties(registry.blocksByName[s.name].id,s.properties,0),{position:p});};bot.physics=Physics(registry,{getBlock:bot.blockAt});return bot;}
+const inspect=(bot,extra={})=>inspectDryJumpSupport(bot,{tick:data.movement.safetyFacts.physicsTick,lastGrounded:clone(data.movement.safetyFacts.shore.lastGrounded),allowSteppedJump:true,...extra});
+test('formal14 exact mixed grass and dirt-path jump observes a bounded native landing without applying prediction',()=>{
+ const bot=fixture(),before=clone(bot.entity),r=inspect(bot);assert.equal(r.accepted,true,JSON.stringify(r));assert.equal(r.predictionApplied,false);assert.deepEqual(clone(bot.entity),before);assert.ok(r.predictions.some(p=>p.onGround&&p.contacts.length));
+ let landed=false;for(let i=0;i<16;i++){bot.physics.simulatePlayer(new PlayerState(bot,bot.controlState),{getBlock:bot.blockAt}).apply(bot);if(bot.entity.onGround){landed=true;break;}}
+ assert.equal(landed,true);assert.equal(hasGroundedBodySupport(bot),true);assert.equal(inspectSurfaceBody(bot).dry,true);
+});
+for(const replacement of [null,'water','lava','air','stone'])test(`the original takeoff support changed to ${replacement} cannot borrow the fractional support permission`,()=>{assert.equal(inspect(fixture(replacement)).accepted,false);});
+test('captured ownership changing during fractional native prediction refuses without moving the original actor',()=>{const bot=fixture(),before=clone(bot.entity);let reads=0;const r=inspect(bot,{isOwnerCurrent:()=>++reads<8});assert.equal(r.accepted,false);assert.equal(r.reason,'dry_graph_movement_preempted');assert.deepEqual(clone(bot.entity),before);});

@@ -1,0 +1,829 @@
+{
+  "schema": 1,
+  "status": "READONLY_SAVED_WORLD_COMPONENT_REPLAY",
+  "seed": "-8585126594492077318",
+  "sourceRun": "natural-public-cottage-self-19",
+  "resultSha256": "6742573a0330a8fbf77ac9e69b22ccf753b39b8f01585418e72f339304f2146c",
+  "sourceModuleSha256": "2381bf362089ab558f4ead078cbcc5ab4e5f210ede8786caea2464dba1b0e12b",
+  "actualSnapshot": {
+    "position": {
+      "x": -90.24410379091697,
+      "y": 61.89663003795072,
+      "z": 57.48735915172207
+    },
+    "velocity": {
+      "x": -0.05229424741639685,
+      "y": -0.002851037923067635,
+      "z": 0
+    },
+    "onGround": false,
+    "health": 20,
+    "food": 20
+  },
+  "facts": [
+    {
+      "position": {
+        "x": -92,
+        "y": 59,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 60,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 61,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 62,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 63,
+        "z": 56
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 64,
+        "z": 56
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 59,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 60,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 61,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 62,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 63,
+        "z": 57
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 64,
+        "z": 57
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 59,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 60,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 61,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 62,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 63,
+        "z": 58
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -92,
+        "y": 64,
+        "z": 58
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 59,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 60,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 61,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 62,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 63,
+        "z": 56
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 64,
+        "z": 56
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 59,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 60,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 61,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 62,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 63,
+        "z": 57
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 64,
+        "z": 57
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 59,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 60,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 61,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 62,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 63,
+        "z": 58
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -91,
+        "y": 64,
+        "z": 58
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 59,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 60,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 61,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 62,
+        "z": 56
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 63,
+        "z": 56
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 64,
+        "z": 56
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 59,
+        "z": 57
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 60,
+        "z": 57
+      },
+      "name": "tall_seagrass",
+      "stateId": 2056,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "half": "lower"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 61,
+        "z": 57
+      },
+      "name": "tall_seagrass",
+      "stateId": 2055,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "half": "upper"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 62,
+        "z": 57
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 63,
+        "z": 57
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 64,
+        "z": 57
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 59,
+        "z": 58
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 60,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 61,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 62,
+        "z": 58
+      },
+      "name": "water",
+      "stateId": 86,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 63,
+        "z": 58
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -90,
+        "y": 64,
+        "z": 58
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    }
+  ],
+  "old": {
+    "passed": false,
+    "code": "water_body_unsafe",
+    "message": "Strict actual body intersects unknown, unsafe fluid or solid",
+    "cells": [
+      {
+        "position": {
+          "x": -91,
+          "y": 61,
+          "z": 57
+        },
+        "name": "water",
+        "level": "0"
+      },
+      {
+        "position": {
+          "x": -91,
+          "y": 62,
+          "z": 57
+        },
+        "name": "water",
+        "level": "0"
+      },
+      {
+        "position": {
+          "x": -91,
+          "y": 63,
+          "z": 57
+        },
+        "name": "air",
+        "level": null
+      },
+      {
+        "position": {
+          "x": -90,
+          "y": 61,
+          "z": 57
+        },
+        "name": "tall_seagrass",
+        "level": null
+      },
+      {
+        "position": {
+          "x": -90,
+          "y": 62,
+          "z": 57
+        },
+        "name": "water",
+        "level": "0"
+      },
+      {
+        "position": {
+          "x": -90,
+          "y": 63,
+          "z": 57
+        },
+        "name": "air",
+        "level": null
+      }
+    ],
+    "position": {
+      "x": -90.24410379091697,
+      "y": 61.89663003795072,
+      "z": 57.48735915172207
+    }
+  },
+  "wholeHouseAcceptance": false,
+  "allOriginalRunBytesUnchanged": true,
+  "limitations": "Saved block-state replay; water flag modeled true from the active surface-swim context; not a fresh historical flag receipt, no Java startup, movement, network or coordinate injection into production.",
+  "domain": "SAVED_WORLD_REPLAY_AT_ACTUAL_HOLD_POSE_NOT_HISTORICAL_LOADED_RECEIPT"
+}

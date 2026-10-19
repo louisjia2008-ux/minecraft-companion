@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "status": "PURE_OBSERVER_V4_OFFLINE_PASS_NOT_LIVE_RUN",
+  "createdAt": "2026-10-14T10:04:36.116641+00:00",
+  "parentRunner": "acceptance/natural-public-building-acceptance-v3.cjs",
+  "parentRunnerSha256": "006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0",
+  "runner": "acceptance/natural-public-building-acceptance-v4.cjs",
+  "runnerSha256": "202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b",
+  "files": {
+    "acceptance/natural-public-building-acceptance-v4.cjs": "202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b",
+    "acceptance/natural-public-dynamic-observer-v4-fragment.cjs": "8a955b29f830009c1d4c01236c1576357a17130fb0349df34b79afc4ddb069b1",
+    "acceptance/natural-public-dynamic-observer-v4.test.cjs": "f3b921095b6d4b3112e2c1ee0fd45768f53335bbd8ca847ed9c46c2eb8e12b68",
+    "acceptance/natural-public-building-v4-to-v3.patch": "dce4da9bb3ceeb94b4106cadc0e3efde2bfd6bc3b9b994e5336e6bc9d2c49bc8",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v4-tests-01.log": "ac7dd911e76ef9b55e0a61d5c60ba54d74d6350d17023de3d26ce1d230079c45",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v4-tests-02.log": "6fcce4dea9ff76514e26fea8d31f12c59ec05b2e9be35bcf2170e4a4837e29c0",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v4-tests-03.log": "cd7898fe05f929746fa9fdc09596650ee0b8f640e2fefcec76215385a8d4e446",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v4-preflight-01.json": "8af13ed254e57ec73735c348d5fad5ff82d59ad822015cca92f63d0bbab4a5cf",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v4-core-proof.json": "6dc9ebcf16152fab4527e3c79cb542470e2541936131a259ff2dbfd9e75a1721",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v4-reverse-patch-proof.json": "8935dac6b5b324fb45d827756f19e8c0134002b2dff81d8a568f63731ed3ba69"
+  },
+  "tests": {
+    "pass": 9,
+    "fail": 0,
+    "nodeExit": 0,
+    "durationMs": 75.87225
+  },
+  "preflight": {
+    "observerRevision": 4,
+    "parentRunnerSha256": "006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0",
+    "profile": "cottage",
+    "commandText": "造一座美观小屋",
+    "actualPublicPlan": {
+      "confirmed": true,
+      "constructionSteps": 12,
+      "injected": false
+    },
+    "javaStarted": false,
+    "implementedRunner": true,
+    "liveAccepted": false,
+    "readiness": "PRIVATE_OFFLINE_VERIFIED_LIVE_NOT_RUN",
+    "typedPendingCapabilities": [
+      "natural_xp_provider",
+      "natural_lapis_provider",
+      "rare_fluid_provider",
+      "natural_riverside_selector"
+    ]
+  },
+  "coreProof": "Exact reverse patch applied only to a /private/tmp copy restores every parent v3 byte;30 nonobserver top-level functions including main except permitted revision/parent metadata are exact; savedAudit/runFurnitureUse/fullAcceptanceDecision unchanged.",
+  "newObservations": [
+    "snapshot yaw/pitch/seven controls/jumpTicks/jumpQueued",
+    "actual path_update with atmost64 copied coordinates,status/nativegoal and actor motion",
+    "actual path_reset and goal_reached",
+    "creeper existing/spawn/movement/gone projections, no usernames; unchanged repeated values suppressed"
+  ],
+  "bounds": {
+    "pathPoints": 64,
+    "creeperCache": 128,
+    "newTimers": 0,
+    "newWorldQueries": 0,
+    "newNativeApiWraps": 0
+  },
+  "faultHandling": "New observer install/read/storage/removal faults trapped without task/cancel/physics/native listener interference; error payload is static and does not contain raw foreign usernames.",
+  "firstOfflineFailure": "tests01 expected main bytes without permitting requested revision/parent metadata. Full reverse-text assertion already passed; corrected test normalization and original failure log retained.",
+  "limits": [
+    "No Java or live dynamic event acceptance.",
+    "Original v3 task/material/server/timeout/furniture/acceptance criteria retained.",
+    "No claim of observed historical whole12 or13 creeper/yaw/controls facts; those UNKNOWN remain preserved.",
+    "Natural XP30 independence gap unchanged; this v4 only adds observation."
+  ]
+}

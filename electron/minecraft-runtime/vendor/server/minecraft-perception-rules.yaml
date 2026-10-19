@@ -1,0 +1,36 @@
+rules:
+  - id: low_health
+    signal: signal.low_health
+    source: perception_tick
+    priority: 95
+    from: self
+    pick: first
+    tags: [health]
+    when:
+      field: health
+      operator: <=
+      value: 8
+
+  - id: hostile_nearby
+    signal: signal.hostile_nearby
+    source: perception_tick
+    priority: 100
+    from: nearbyHostiles
+    pick: first
+    tags: [combat, reflex]
+    when:
+      field: distance
+      operator: <=
+      value: 4.5
+
+  - id: item_nearby
+    signal: signal.item_nearby
+    source: perception_tick
+    priority: 50
+    from: nearbyItems
+    pick: first
+    tags: [item, reflex]
+    when:
+      field: distance
+      operator: <=
+      value: 4.5

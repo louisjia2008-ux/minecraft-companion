@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "status": "PURE_OBSERVER_V5_OFFLINE_PASS_NOT_LIVE_RUN",
+  "createdAt": "2026-10-14T10:50:14.764Z",
+  "parentRunner": "acceptance/natural-public-building-acceptance-v4.cjs",
+  "parentRunnerSha256": "202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b",
+  "runner": "acceptance/natural-public-building-acceptance-v5.cjs",
+  "runnerSha256": "8880727e18ccf78dff09ec7f1098776b6a6fb5685e1ed9af456a80a7f07c966d",
+  "files": {
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v5-core-proof.json": "9f3d154f6f4d2a4d96dff27ce477b1d1c2b4d351cc8df21761368f16ab0fe180",
+    "acceptance/natural-public-building-v5-to-v4.patch": "b391b68df0e06cb00f3e1bb9bdfbac5e1e47e6918a77cdd70c730ed02239376f",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v5-reverse-patch-proof.json": "37168db2205b9d15563018228dace93ee71d0f360637b98c7beddd989d02a924",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v5-tests-01.log": "a6eddcfdcdbf7dfe3d31d052600efced2178a5c9424ca3a3b9ba2b85c7cd57fa",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v5-tests-02.log": "5ccd82d53f67b3e0e54f7b06c2d28711bbbe8acb2c1b31f2522e7ead0a7194f3",
+    "./.minecraft-local-test/evidence/estate-20261013/natural-public-dynamic-observer-v5-preflight-01.json": "ce6d86a6a7c274495c5b302e2bf19df591538414edddb961db2ba2f1f349f589",
+    "acceptance/natural-public-building-acceptance-v5.cjs": "8880727e18ccf78dff09ec7f1098776b6a6fb5685e1ed9af456a80a7f07c966d",
+    "acceptance/natural-public-dynamic-observer-v5-fragment.cjs": "41f494e90988e6b45e39d237b13b2c4cd611fa0791fa7167848730f0a5b7d82d",
+    "acceptance/natural-public-dynamic-observer-v5.test.cjs": "092c5f8a9ba16f876e7ee4c6487e2214debf4eeebfd893c9eaf3ade1c5253ed5"
+  },
+  "tests": {
+    "pass": 15,
+    "fail": 0,
+    "nodeExit": 0,
+    "durationMs": 81.814166,
+    "newCoordinateNamespaceCases": 6
+  },
+  "preflight": {
+    "observerRevision": 5,
+    "parentRunnerSha256": "202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b",
+    "profile": "cottage",
+    "commandText": "造一座美观小屋",
+    "actualPublicPlan": {
+      "confirmed": true,
+      "constructionSteps": 12,
+      "injected": false
+    },
+    "javaStarted": false,
+    "implementedRunner": true,
+    "liveAccepted": false,
+    "readiness": "PRIVATE_OFFLINE_VERIFIED_LIVE_NOT_RUN",
+    "typedPendingCapabilities": [
+      "natural_xp_provider",
+      "natural_lapis_provider",
+      "rare_fluid_provider",
+      "natural_riverside_selector"
+    ]
+  },
+  "coreProof": "System patch applied only to a temporary copy restores every v4 byte; all non-observer functions and full grader/furniture/savedAudit/lifecycle unchanged except revision/parent metadata.",
+  "change": "One projection key: actual creeper entity position now uses creeperPosition, preserving actor position from frame.",
+  "bounds": {
+    "pathPoints": 64,
+    "creeperCache": 128,
+    "newTimers": 0,
+    "newWorldQueries": 0,
+    "newNativeApiWraps": 0
+  },
+  "firstOfflineFailure": "tests01 namespace variable rename altered parent filename to acceptance-current; source runner inverse was already exact. Only the new test parent filename was corrected; first failure log preserved.",
+  "historicalLimit": "Frozen v4 whole14 native_creeper_* position fields were actor positions due to overwritten keys. IDs/name/isValid and actual-change event dedup remain observations, but actual creeper positions/distance/attack attribution cannot be recovered or retroactively accepted.",
+  "limits": [
+    "No Java or v5 live dynamic event acceptance",
+    "No historical v4 corrections",
+    "Original v4 30-level XP and every existing acceptance requirement retained",
+    "Receipt observer/parser remains a separate candidate"
+  ],
+  "productionSourceModified": false,
+  "worldReadOrModifiedByPreparation": false,
+  "javaStarted": false
+}

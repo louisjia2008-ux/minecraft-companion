@@ -1,0 +1,1947 @@
+{
+  "source": "formal32 normal saved MCA; actual fresh native camp arrival with stale original resource graph cursor",
+  "bounds": {
+    "minX": 124,
+    "maxX": 151,
+    "minY": 60,
+    "maxY": 80,
+    "minZ": -34,
+    "maxZ": 0
+  },
+  "palette": [
+    {
+      "name": "stone",
+      "properties": {}
+    },
+    {
+      "name": "dirt",
+      "properties": {}
+    },
+    {
+      "name": "grass_block",
+      "properties": {
+        "snowy": "false"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "1",
+        "facing": "south"
+      }
+    },
+    {
+      "name": "air",
+      "properties": {}
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "4",
+        "facing": "north"
+      }
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "3",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "short_grass",
+      "properties": {}
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "2",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "4",
+        "facing": "east"
+      }
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "4",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "3",
+        "facing": "south"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "2",
+        "facing": "east"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "3",
+        "facing": "east"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "3",
+        "facing": "north"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "1",
+        "facing": "west"
+      }
+    },
+    {
+      "name": "birch_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "6",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "birch_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "5",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "2",
+        "facing": "north"
+      }
+    },
+    {
+      "name": "birch_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "4",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "1",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "4",
+        "facing": "west"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "3",
+        "facing": "west"
+      }
+    },
+    {
+      "name": "birch_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "3",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "2",
+        "facing": "west"
+      }
+    },
+    {
+      "name": "gravel",
+      "properties": {}
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "4",
+        "facing": "south"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "2",
+        "facing": "south"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "1",
+        "facing": "north"
+      }
+    },
+    {
+      "name": "birch_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "2",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "oak_log",
+      "properties": {
+        "axis": "y"
+      }
+    },
+    {
+      "name": "leaf_litter",
+      "properties": {
+        "segment_amount": "1",
+        "facing": "east"
+      }
+    },
+    {
+      "name": "coal_ore",
+      "properties": {}
+    },
+    {
+      "name": "birch_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "1",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "birch_log",
+      "properties": {
+        "axis": "y"
+      }
+    },
+    {
+      "name": "iron_ore",
+      "properties": {}
+    },
+    {
+      "name": "water",
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "name": "copper_ore",
+      "properties": {}
+    },
+    {
+      "name": "furnace",
+      "properties": {
+        "lit": "false",
+        "facing": "north"
+      }
+    },
+    {
+      "name": "sand",
+      "properties": {}
+    },
+    {
+      "name": "chest",
+      "properties": {
+        "waterlogged": "false",
+        "facing": "north",
+        "type": "single"
+      }
+    },
+    {
+      "name": "torch",
+      "properties": {}
+    },
+    {
+      "name": "diorite",
+      "properties": {}
+    },
+    {
+      "name": "crafting_table",
+      "properties": {}
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "5",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "6",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "oak_log",
+      "properties": {
+        "axis": "x"
+      }
+    },
+    {
+      "name": "granite",
+      "properties": {}
+    },
+    {
+      "name": "tall_seagrass",
+      "properties": {
+        "half": "lower"
+      }
+    },
+    {
+      "name": "tall_seagrass",
+      "properties": {
+        "half": "upper"
+      }
+    },
+    {
+      "name": "seagrass",
+      "properties": {}
+    }
+  ],
+  "statesGzipBase64": "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",
+  "actual": {
+    "x": 142.49408671747764,
+    "y": 65,
+    "z": -17.597699993572718
+  },
+  "graph": {
+    "schema": 2,
+    "kind": "loaded_dry_waypoint_graph",
+    "anchor": {
+      "x": 142,
+      "y": 65,
+      "z": -18
+    },
+    "radius": 384,
+    "step": 16,
+    "nodes": {
+      "142,65,-18": {
+        "position": {
+          "x": 142,
+          "y": 65,
+          "z": -18
+        },
+        "parent": null,
+        "expanded": true,
+        "resourceLocalFrontierExpanded": true,
+        "localFrontierObservation": {
+          "testedRanges": [
+            8,
+            4
+          ],
+          "domain": "NATIVE_PLAN_ONLY",
+          "actualMovementConfirmed": false
+        }
+      },
+      "138,67,-18": {
+        "position": {
+          "x": 138,
+          "y": 67,
+          "z": -18
+        },
+        "parent": "142,65,-18",
+        "expanded": false,
+        "supportPositions": [
+          {
+            "x": 142,
+            "y": 64,
+            "z": -18
+          },
+          {
+            "x": 141,
+            "y": 65,
+            "z": -18
+          },
+          {
+            "x": 140,
+            "y": 66,
+            "z": -18
+          },
+          {
+            "x": 139,
+            "y": 65,
+            "z": -18
+          },
+          {
+            "x": 138,
+            "y": 66,
+            "z": -18
+          }
+        ]
+      }
+    },
+    "order": [
+      "142,65,-18",
+      "138,67,-18"
+    ],
+    "frontier": [],
+    "blockedEdges": [
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 158,
+          "y": 64,
+          "z": -18
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 158,
+            "y": 64,
+            "z": -18
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 108,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 158,
+          "y": 64,
+          "z": -14
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 158,
+            "y": 64,
+            "z": -14
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 107,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 158,
+          "y": 63,
+          "z": -22
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 158,
+            "y": 63,
+            "z": -22
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 104,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 158,
+          "y": 66,
+          "z": -10
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 158,
+            "y": 66,
+            "z": -10
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 113,
+          "status": "partial",
+          "pathCount": 3,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 142,
+          "y": 68,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 142,
+            "y": 68,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 102,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 138,
+          "y": 69,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 138,
+            "y": 69,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 102,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 138,
+          "y": 74,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 138,
+            "y": 74,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 101,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 146,
+          "y": 68,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 146,
+            "y": 68,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 103,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 146,
+          "y": 72,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 146,
+            "y": 72,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 102,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 134,
+          "y": 69,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 134,
+            "y": 69,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 102,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 150,
+          "y": 68,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 150,
+            "y": 68,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 105,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 150,
+          "y": 73,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 150,
+            "y": 73,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 104,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 70,
+          "z": -18
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 70,
+            "z": -18
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 118,
+          "status": "partial",
+          "pathCount": 6,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 73,
+          "z": -22
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 73,
+            "z": -22
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 118,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 70,
+          "z": -14
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 70,
+            "z": -14
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 118,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 75,
+          "z": -26
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 75,
+            "z": -26
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 117,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 76,
+          "z": -10
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 76,
+            "z": -10
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 118,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 138,
+          "y": 65,
+          "z": -34
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 138,
+            "y": 65,
+            "z": -34
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 118,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 134,
+          "y": 67,
+          "z": -34
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 134,
+            "y": 67,
+            "z": -34
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 117,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 158,
+          "y": 68,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 158,
+            "y": 68,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 103,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 158,
+          "y": 80,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 158,
+            "y": 80,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 102,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 154,
+          "y": 69,
+          "z": 2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 154,
+            "y": 69,
+            "z": 2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 103,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 162,
+          "y": 68,
+          "z": -6
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 162,
+            "y": 68,
+            "z": -6
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 114,
+          "status": "partial",
+          "pathCount": 3,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 150,
+          "y": 69,
+          "z": 6
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 150,
+            "y": 69,
+            "z": 6
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 103,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 150,
+          "y": 73,
+          "z": 6
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 150,
+            "y": 73,
+            "z": 6
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 106,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 166,
+          "y": 68,
+          "z": -10
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 166,
+            "y": 68,
+            "z": -10
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 118,
+          "status": "partial",
+          "pathCount": 3,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 69,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 69,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 119,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 74,
+          "z": -2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 74,
+            "z": -2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 118,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 122,
+          "y": 69,
+          "z": -6
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 122,
+            "y": 69,
+            "z": -6
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 120,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 130,
+          "y": 68,
+          "z": 2
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 130,
+            "y": 68,
+            "z": 2
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 103,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 118,
+          "y": 71,
+          "z": -10
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 118,
+            "y": 71,
+            "z": -10
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 118,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 118,
+          "y": 77,
+          "z": -10
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 118,
+            "y": 77,
+            "z": -10
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 117,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 134,
+          "y": 67,
+          "z": 6
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 134,
+            "y": 67,
+            "z": 6
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 103,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 134,
+          "y": 73,
+          "z": 6
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 134,
+            "y": 73,
+            "z": 6
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 101,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 70,
+          "z": -34
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 70,
+            "z": -34
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 115,
+          "status": "partial",
+          "pathCount": 2,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 126,
+          "y": 75,
+          "z": -34
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 126,
+            "y": 75,
+            "z": -34
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 115,
+          "status": "partial",
+          "pathCount": 2,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 130,
+          "y": 68,
+          "z": -38
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 130,
+            "y": 68,
+            "z": -38
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 103,
+          "status": "partial",
+          "pathCount": 2,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 122,
+          "y": 71,
+          "z": -30
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 122,
+            "y": 71,
+            "z": -30
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 101,
+          "status": "partial",
+          "pathCount": 2,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 134,
+          "y": 64,
+          "z": -42
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 134,
+            "y": 64,
+            "z": -42
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 104,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 118,
+          "y": 71,
+          "z": -26
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 118,
+            "y": 71,
+            "z": -26
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 113,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 134,
+          "y": 68,
+          "z": -18
+        },
+        "adaptiveLocalRadius": 8,
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 134,
+            "y": 68,
+            "z": -18
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 103,
+          "status": "partial",
+          "pathCount": 5,
+          "slices": 5,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 134,
+          "y": 69,
+          "z": -10
+        },
+        "adaptiveLocalRadius": 8,
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 134,
+            "y": 69,
+            "z": -10
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 114,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      },
+      {
+        "from": "142,65,-18",
+        "target": {
+          "x": 138,
+          "y": 68,
+          "z": -14
+        },
+        "adaptiveLocalRadius": 4,
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 138,
+            "y": 68,
+            "z": -14
+          },
+          "from": {
+            "x": 142,
+            "y": 65,
+            "z": -18
+          },
+          "elapsedMs": 116,
+          "status": "partial",
+          "pathCount": 4,
+          "slices": 6,
+          "settled": false,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial"
+          ]
+        }
+      }
+    ],
+    "current": "138,67,-18",
+    "resumeNode": "138,67,-18",
+    "visits": 2,
+    "probes": 45,
+    "pendingWater": null
+  }
+}

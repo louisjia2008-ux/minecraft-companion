@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "parentFile": "acceptance/natural-public-building-acceptance-v5.cjs",
+  "parentSha256": "8880727e18ccf78dff09ec7f1098776b6a6fb5685e1ed9af456a80a7f07c966d",
+  "runner": "acceptance/natural-public-building-acceptance-v6.cjs",
+  "runnerSha256": "f88bb5c536428f04b61139e99b05bab9dafab25976ceeba8707299e4613bc80d",
+  "inverseRestoresEveryV5Byte": true,
+  "edits": [
+    {
+      "before": "const installed = JSON.parse(fs.readFileSync(path.join(installation, 'installation.json'), 'utf8'));",
+      "after": "const { allocateFreshRun, inspectSeedAllocation } = require('./fresh-seed-allocation-v1.cjs');\nconst runName = argument('--run-name', `natural-public-${argument('--profile', 'cottage')}-${Date.now()}`); assert.match(runName, /^[A-Za-z0-9_-]+$/);\nconst runDir = path.join(installation, 'worlds', runName);\n// Allocation and receipt are durable before runtime loading or any preflight.\nconst campaign = allocateFreshRun({ installation, runtimeRoot, runner: __filename, runName, profile: argument('--profile', 'cottage'), preflightOnly: argv.includes('--preflight') });\nconst campaignFile = path.join(runDir, 'seed-allocation.json');\nconst installed = JSON.parse(fs.readFileSync(path.join(installation, 'installation.json'), 'utf8'));"
+    },
+    {
+      "before": "const runName = argument('--run-name', `natural-public-${profile}-${Date.now()}`); assert.match(runName, /^[A-Za-z0-9_-]+$/);\nconst runDir = path.join(installation, 'worlds', runName);\nconst campaignFile = path.join(installation, 'natural-furnished-house-campaign.json');\n",
+      "after": "// Run identity and immutable seed receipt are allocated before imports above.\n"
+    },
+    {
+      "before": "let sourceBefore, sourceAfter, campaign, initial,",
+      "after": "let sourceBefore, sourceAfter, initial,"
+    },
+    {
+      "before": "  all['private/natural-public-building-acceptance.cjs'] = hash(__filename);",
+      "after": "  all['private/natural-public-building-acceptance.cjs'] = hash(__filename);\n  all['private/fresh-seed-allocation-v1.cjs'] = hash(path.join(__dirname, 'fresh-seed-allocation-v1.cjs'));"
+    },
+    {
+      "before": "relative === 'private/natural-public-building-acceptance.cjs' ? __filename : relative.startsWith('private/')",
+      "after": "relative === 'private/natural-public-building-acceptance.cjs' ? __filename : relative === 'private/fresh-seed-allocation-v1.cjs' ? path.join(__dirname, 'fresh-seed-allocation-v1.cjs') : relative.startsWith('private/')"
+    },
+    {
+      "before": "  assert.ok(!fs.existsSync(runDir), 'Refusing to overwrite existing run'); fs.mkdirSync(runDir); created = true;\n  assert.ok(fs.existsSync(campaignFile),'A precommitted campaign manifest is mandatory; never draw/filter a new seed in the public runner');\n  campaign = JSON.parse(fs.readFileSync(campaignFile, 'utf8')); assert.equal(campaign.seed,'6239290801279771110','Retain the original committed natural-house campaign'); assert.equal(campaign.version, installed.minecraft.version); assert.match(campaign.seed, /^-?\\d+$/);\n  assert.ok(BigInt(campaign.seed) >= -(2n ** 63n) && BigInt(campaign.seed) < 2n ** 63n);",
+      "after": "  assert.ok(!fs.existsSync(path.join(runDir, 'world')), 'Allocated run must still have no preexisting world');\n  const seedProof = inspectSeedAllocation(runDir); assert.equal(seedProof.receiptSha256, hash(campaignFile)); assert.equal(campaign.version, installed.minecraft.version); created = true;"
+    },
+    {
+      "before": "'One fixed random campaign seed; no arbitrary-seed guarantee.'",
+      "after": "'Every attempt keeps a distinct crypto signed64 seed allocated before preflight/start; failed attempts are retained. No arbitrary-map acceptance claim.'"
+    },
+    {
+      "before": "  console.log('Fresh normal Survival empty-inventory public construction with self-obtained functional inputs. Unsupported mandatory capabilities remain PENDING; supplied component fixtures never count.');",
+      "after": "  console.log('Fresh normal Survival empty-inventory public construction with self-obtained functional inputs. Unsupported mandatory capabilities remain PENDING; supplied component fixtures never count.');\n  console.log('v6 reserves a unique crypto signed64 seed and fresh run directory before runtime/Java preflight. --preflight also consumes its UNIQUE run-name/seed; actual execution needs another UNIQUE name. Failed allocation/preflight/start attempts are never deleted, resumed or redrawn.');"
+    },
+    {
+      "before": "observerRevision: 5, parentRunnerSha256: '202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b'",
+      "after": "observerRevision: 5, runnerRevision:6,seedPolicyRevision:1,parentRunnerSha256: '8880727e18ccf78dff09ec7f1098776b6a6fb5685e1ed9af456a80a7f07c966d'",
+      "all": true
+    },
+    {
+      "before": "observerRevision:5,parentRunnerSha256:'202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b'",
+      "after": "observerRevision:5,runnerRevision:6,seedPolicyRevision:1,parentRunnerSha256:'8880727e18ccf78dff09ec7f1098776b6a6fb5685e1ed9af456a80a7f07c966d'",
+      "all": true
+    }
+  ]
+}

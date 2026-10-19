@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "createdAt": "2026-10-14T08:44:40.009456+00:00",
+  "scope": "Exact existing public natural self-supply harness archived for resumption. Not a whole-house success. Natural XP remains PENDING until provider integration and real acceptance.",
+  "files": [
+    {
+      "source": "/private/tmp/natural-public-building-acceptance-v3.cjs",
+      "archive": "acceptance/natural-public-building-acceptance-v3.cjs",
+      "sha256": "006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0"
+    },
+    {
+      "source": "/private/tmp/deskpet-house-natural-enchant.cjs",
+      "archive": "acceptance/deskpet-house-natural-enchant.cjs",
+      "sha256": "d5ec142cc81406c7989856bb66f12e661803a117ea6c46d46dfd4951ee9824b3"
+    }
+  ]
+}

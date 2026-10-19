@@ -1,0 +1,34 @@
+rules:
+  - id: evade_hostile_close
+    kind: event
+    event: signal.hostile_nearby
+    reflex: evade_hostile
+    priority: 100
+    inhibitAI: true
+    requiresNoUserTask: true
+    cooldownMs: 1800
+    when:
+      field: payload.distance
+      operator: <=
+      value: 3.5
+
+  - id: pickup_item_close
+    kind: event
+    event: signal.item_nearby
+    reflex: pickup_item
+    priority: 50
+    inhibitAI: true
+    requiresNoUserTask: true
+    cooldownMs: 1200
+    when:
+      field: payload.distance
+      operator: <=
+      value: 4.5
+
+  - id: follow_player_command
+    kind: command
+    match: 跟着我|跟随我|follow me|跟我走|跟我
+    reflexPlan: follow_player
+    replyText: 我直接跟上你。
+    args:
+      distance: 2

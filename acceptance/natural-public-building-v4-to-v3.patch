@@ -1,0 +1,136 @@
+--- natural-public-building-acceptance.cjs
++++ natural-public-building-acceptance.cjs
+@@ -72,7 +72,7 @@
+ }
+ const actualHeuristicPlan=createHeuristicPlanner({actionRegistry:createMinecraftActionRegistry(),getLearnedSearchRadius:(_name,fallback)=>fallback})(commandText,{});
+ assert.equal(validatePublicPlan(actualHeuristicPlan).confirmed,true,'Current public planner must retain default natural self supply');
+-if(argv.includes('--preflight')){console.log(JSON.stringify({observerRevision:4,parentRunnerSha256:'006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0',profile,commandText,actualPublicPlan:validatePublicPlan(actualHeuristicPlan),javaStarted:false,implementedRunner:true,liveAccepted:false,readiness:'PRIVATE_OFFLINE_VERIFIED_LIVE_NOT_RUN',typedPendingCapabilities:['natural_xp_provider','natural_lapis_provider','rare_fluid_provider','natural_riverside_selector']}));process.exit(0);}
++if(argv.includes('--preflight')){console.log(JSON.stringify({observerRevision:3,parentRunnerSha256:'cc3f9ad75dbf4b6aa4c8dcc8fa44424851d291af1da74a7dc9b1261d98380239',profile,commandText,actualPublicPlan:validatePublicPlan(actualHeuristicPlan),javaStarted:false,implementedRunner:true,liveAccepted:false,readiness:'PRIVATE_OFFLINE_VERIFIED_LIVE_NOT_RUN',typedPendingCapabilities:['natural_xp_provider','natural_lapis_provider','rare_fluid_provider','natural_riverside_selector']}));process.exit(0);}
+ const startedAt = Date.now();
+ const events = [], waiters = new Set(), digTargets = new Map();
+ let created = false, server, serverOutcome, serverExitPromise, serverClosePromise, serverClosed=false, serverOutput = '', bot, agent, task, frozenTask;
+@@ -81,7 +81,6 @@
+ let deaths = 0, disconnected = false, nativeUse = null, lastSignature = '', lastReport = 0, lastFood, stopPromise;
+ let abortError = null, fatalError = null;
+ let releaseChunkObservers = () => {};
+-let releaseDynamicObservers = () => {};
+ const json = (value, indent) => JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item, indent);
+ const clone = value => JSON.parse(json(value));
+ const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+@@ -155,86 +154,12 @@
+     executionGeneration: value.executionGeneration, currentStep: value.currentStep, currentStepIndex: value.currentStepIndex, progressText: value.progressText,
+     plan: value.plan, diagnostics: value.diagnostics, stepCheckpoint: value.stepCheckpoint, materialSupply: value.materialSupply, logs: value.logs });
+ }
+-// Pure observation: no native API replacement, motor/world writes or requests.
+-function nativeMotionEvidence(observedBot) {
+-  const read = (object, name, kind) => {
+-    try { const value = object?.[name]; return kind === 'number' ? Number.isFinite(value) ? value : null
+-      : typeof value === 'boolean' ? value : null; } catch { return null; }
+-  };
+-  let entity, controls;
+-  try { entity = observedBot?.entity; } catch { /* Unknown native entity. */ }
+-  try { controls = observedBot?.controlState; } catch { /* Unknown native controls. */ }
+-  return { yaw: read(entity, 'yaw', 'number'), pitch: read(entity, 'pitch', 'number'),
+-    controls: Object.fromEntries(['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].map(name => [name, read(controls, name, 'boolean')])),
+-    jumpTicks: read(observedBot, 'jumpTicks', 'number'), jumpQueued: read(observedBot, 'jumpQueued', 'boolean') };
+-}
+-function installDynamicObservers(observedBot, emitRecord, duringExecution) {
+-  const seen = new Map();
+-  const point = value => value && ['x', 'y', 'z'].every(name => Number.isFinite(value[name]))
+-    ? { x: value.x, y: value.y, z: value.z } : null;
+-  const frame = () => ({ position: point(observedBot.entity?.position), velocity: point(observedBot.entity?.velocity),
+-    onGround: typeof observedBot.entity?.onGround === 'boolean' ? observedBot.entity.onGround : null,
+-    ...nativeMotionEvidence(observedBot), nativeGoal: goalEvidence(observedBot.pathfinder?.goal), duringExecution: duringExecution() });
+-  const passive = (nativeOrigin, operation) => {
+-    try { operation(); }
+-    catch { try { emitRecord('dynamic_observation_error', { nativeOrigin,
+-      message: 'Native observation read or evidence storage failed' }); } catch { /* Evidence faults never interrupt native listeners. */ } }
+-  };
+-  const pathUpdate = result => passive('bot.path_update', () => {
+-    const path = Array.isArray(result?.path) ? result.path : null;
+-    const points = [];
+-    if (path) for (let i = 0; i < Math.min(64, path.length); i++) points.push(point(path[i]));
+-    emitRecord('native_path_update', { nativeOrigin: 'bot.path_update', status: typeof result?.status === 'string' ? result.status.slice(0, 80) : null,
+-      pathLength: path ? path.length : null, pathTruncated: path ? path.length > 64 : null, points, ...frame() });
+-  });
+-  const pathReset = reason => passive('bot.path_reset', () => emitRecord('native_path_reset', {
+-    nativeOrigin: 'bot.path_reset', reason: typeof reason === 'string' ? reason.slice(0, 80) : null, ...frame() }));
+-  const goalReached = goal => passive('bot.goal_reached', () => emitRecord('native_goal_reached', {
+-    nativeOrigin: 'bot.goal_reached', reachedGoal: goalEvidence(goal), ...frame() }));
+-  function creeper(origin, entity) {
+-    passive(origin, () => {
+-      if (entity?.name !== 'creeper' || !Number.isSafeInteger(entity.id)) return;
+-      const value = { entityId: entity.id, name: 'creeper', isValid: typeof entity.isValid === 'boolean' ? entity.isValid : null, position: point(entity.position) };
+-      const signature = JSON.stringify(value);
+-      if (origin === 'bot.entityGone') {
+-        if (seen.has(entity.id)) { emitRecord('native_creeper_gone', { nativeOrigin: origin, ...value, ...frame() }); seen.delete(entity.id); }
+-        return;
+-      }
+-      if (seen.get(entity.id) === signature) return;
+-      if (!seen.has(entity.id) && seen.size >= 128) seen.delete(seen.keys().next().value);
+-      seen.set(entity.id, signature);
+-      emitRecord(origin === 'bot.entityMoved' ? 'native_creeper_moved' : 'native_creeper_observed', {
+-        nativeOrigin: origin, ...value, ...frame() });
+-    });
+-  }
+-  const spawn = entity => creeper('bot.entitySpawn', entity);
+-  const moved = entity => creeper('bot.entityMoved', entity);
+-  const gone = entity => creeper('bot.entityGone', entity);
+-  const listeners = [['path_update', pathUpdate], ['path_reset', pathReset], ['goal_reached', goalReached],
+-    ['entitySpawn', spawn], ['entityMoved', moved], ['entityGone', gone]];
+-  for (const [event, listener] of listeners) passive('observer.install_listener', () => observedBot.on(event, listener));
+-  passive('observer.install_existing_creepers', () => {
+-    let entities; try { entities = observedBot.entities; } catch { return; }
+-    if (!entities) return;
+-    for (const id of Object.keys(entities)) {
+-      if (seen.size >= 128) break;
+-      const entity = entities[id]; if (entity?.name === 'creeper') creeper('observer.install_existing_creepers', entity);
+-    }
+-  });
+-  return () => {
+-    for (const [event, listener] of listeners) {
+-      try { observedBot.removeListener(event, listener); } catch { /* Own task cleanup remains independent. */ }
+-    }
+-    seen.clear();
+-  };
+-}
+-
+ function snapshot(force = false) {
+   if (!bot?.entity || !agent) return;
+   task = agent.__testGetReconnectTask() || task;
+   if(!publicPlanSnapshot&&task?.intent===profiles[profile].intent&&task?.plan?.steps?.length){publicPlanSnapshot=clone(task.plan);record('original_public_plan_observed',{plan:publicPlanSnapshot,identity:validatePublicPlan(publicPlanSnapshot)});}
+   const supply = task?.materialSupply, house = stateFor(task);
+-  const data = { ...nativeMotionEvidence(bot), position: position(bot.entity.position), velocity: position(bot.entity.velocity), onGround: bot.entity.onGround,
++  const data = { position: position(bot.entity.position), velocity: position(bot.entity.velocity), onGround: bot.entity.onGround,
+     health: bot.health, food: bot.food, saturation: bot.foodSaturation, inventory: inventory(), heldItem: bot.heldItem && { name: bot.heldItem.name, count: bot.heldItem.count },
+     task: { status: task?.status, error: task?.error, currentStep: task?.currentStep, progressText: task?.progressText },
+     pathfinder: { moving: bot.pathfinder?.isMoving?.(), goal: goalEvidence(bot.pathfinder?.goal) },
+@@ -348,7 +273,6 @@
+   };
+ }
+ function installObservers() {
+-  releaseDynamicObservers = installDynamicObservers(bot, record, () => executionStarted != null && executionEnded == null);
+   bot.on('death', () => { deaths++; record('death', { position: position(bot.entity?.position) }); });
+   bot.on('end', reason => { disconnected = true; record('bot_end', { reason }); });
+   bot.on('error', error => record('bot_error', { message: error.message }));
+@@ -692,7 +616,7 @@
+   criteria.nativeStagesAllPassed=nativeUse?.requiredStages?.length>0&&nativeUse.requiredStages.every(name=>nativeUse.checks[name]?.status==='PASS');
+   criteria.noFatalOrInterrupt=!abortError&&!fatalError;
+   if(abortError||fatalError)process.exitCode=1;
+-  result = { schema: 1, observerRevision: 4, parentRunnerSha256: '006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0', mode, profile, runName, verificationStages:stages,fatalError,interruption:abortError&&{code:abortError.code||null,message:abortError.message}, version: installed.minecraft.version, seed: campaign.seed, startedAt: new Date(startedAt).toISOString(), elapsedMs: Date.now() - startedAt,
++  result = { schema: 1, observerRevision: 3, parentRunnerSha256: 'cc3f9ad75dbf4b6aa4c8dcc8fa44424851d291af1da74a7dc9b1261d98380239', mode, profile, runName, verificationStages:stages,fatalError,interruption:abortError&&{code:abortError.code||null,message:abortError.message}, version: installed.minecraft.version, seed: campaign.seed, startedAt: new Date(startedAt).toISOString(), elapsedMs: Date.now() - startedAt,
+     command:commandText,publicPlanSnapshot,
+     initial, task: frozenTask,materialEvidence,  nativeUse, finalReadback, criteria,
+     unmetCriteria: Object.entries(criteria).filter(([, passed]) => passed !== true).map(([name]) => name),
+@@ -717,9 +641,9 @@
+   }
+   try { bot?.quit('Natural harness failure'); } catch { /* Continue owned server cleanup after a closed client. */ }
+   try { await stopServer(); } catch (cleanupError) { record('server_stop_error', { message: cleanupError.message }); }
+-  const failure = { schema: 1, observerRevision: 4, parentRunnerSha256: '006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0', mode, profile, runName, verificationStages:stages, harnessFailure: { message: error.message, code: error.code || null, fatalError }, task: frozenTask || taskEvidence(task), stopped,
++  const failure = { schema: 1, observerRevision: 3, parentRunnerSha256: 'cc3f9ad75dbf4b6aa4c8dcc8fa44424851d291af1da74a7dc9b1261d98380239', mode, profile, runName, verificationStages:stages, harnessFailure: { message: error.message, code: error.code || null, fatalError }, task: frozenTask || taskEvidence(task), stopped,
+     publicBuildingAcceptancePassed: false, sourceHashes: { started: sourceBefore, ended: hashes() } };
+   if (!fs.existsSync(path.join(runDir, 'result.json'))) fs.writeFileSync(path.join(runDir, 'result.json'), json(failure, 2) + '\n', { flag: 'wx' });
+-}).finally(() => { releaseDynamicObservers(); releaseChunkObservers(); for (const waiter of waiters) clearTimeout(waiter.timer); clearInterval(polling);
++}).finally(() => { releaseChunkObservers(); for (const waiter of waiters) clearTimeout(waiter.timer); clearInterval(polling);
+   for (const [signal, handler] of Object.entries(signalHandlers)) process.removeListener(signal, handler);
+   for (const [event, handler] of Object.entries(fatalHandlers)) process.removeListener(event, handler); });

@@ -1,0 +1,38 @@
+--- natural-public-building-acceptance.cjs
++++ natural-public-building-acceptance.cjs
+@@ -72,7 +72,7 @@
+ }
+ const actualHeuristicPlan=createHeuristicPlanner({actionRegistry:createMinecraftActionRegistry(),getLearnedSearchRadius:(_name,fallback)=>fallback})(commandText,{});
+ assert.equal(validatePublicPlan(actualHeuristicPlan).confirmed,true,'Current public planner must retain default natural self supply');
+-if(argv.includes('--preflight')){console.log(JSON.stringify({observerRevision:5,parentRunnerSha256:'202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b',profile,commandText,actualPublicPlan:validatePublicPlan(actualHeuristicPlan),javaStarted:false,implementedRunner:true,liveAccepted:false,readiness:'PRIVATE_OFFLINE_VERIFIED_LIVE_NOT_RUN',typedPendingCapabilities:['natural_xp_provider','natural_lapis_provider','rare_fluid_provider','natural_riverside_selector']}));process.exit(0);}
++if(argv.includes('--preflight')){console.log(JSON.stringify({observerRevision:4,parentRunnerSha256:'006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0',profile,commandText,actualPublicPlan:validatePublicPlan(actualHeuristicPlan),javaStarted:false,implementedRunner:true,liveAccepted:false,readiness:'PRIVATE_OFFLINE_VERIFIED_LIVE_NOT_RUN',typedPendingCapabilities:['natural_xp_provider','natural_lapis_provider','rare_fluid_provider','natural_riverside_selector']}));process.exit(0);}
+ const startedAt = Date.now();
+ const events = [], waiters = new Set(), digTargets = new Map();
+ let created = false, server, serverOutcome, serverExitPromise, serverClosePromise, serverClosed=false, serverOutput = '', bot, agent, task, frozenTask;
+@@ -194,7 +194,7 @@
+   function creeper(origin, entity) {
+     passive(origin, () => {
+       if (entity?.name !== 'creeper' || !Number.isSafeInteger(entity.id)) return;
+-      const value = { entityId: entity.id, name: 'creeper', isValid: typeof entity.isValid === 'boolean' ? entity.isValid : null, creeperPosition: point(entity.position) };
++      const value = { entityId: entity.id, name: 'creeper', isValid: typeof entity.isValid === 'boolean' ? entity.isValid : null, position: point(entity.position) };
+       const signature = JSON.stringify(value);
+       if (origin === 'bot.entityGone') {
+         if (seen.has(entity.id)) { emitRecord('native_creeper_gone', { nativeOrigin: origin, ...value, ...frame() }); seen.delete(entity.id); }
+@@ -692,7 +692,7 @@
+   criteria.nativeStagesAllPassed=nativeUse?.requiredStages?.length>0&&nativeUse.requiredStages.every(name=>nativeUse.checks[name]?.status==='PASS');
+   criteria.noFatalOrInterrupt=!abortError&&!fatalError;
+   if(abortError||fatalError)process.exitCode=1;
+-  result = { schema: 1, observerRevision: 5, parentRunnerSha256: '202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b', mode, profile, runName, verificationStages:stages,fatalError,interruption:abortError&&{code:abortError.code||null,message:abortError.message}, version: installed.minecraft.version, seed: campaign.seed, startedAt: new Date(startedAt).toISOString(), elapsedMs: Date.now() - startedAt,
++  result = { schema: 1, observerRevision: 4, parentRunnerSha256: '006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0', mode, profile, runName, verificationStages:stages,fatalError,interruption:abortError&&{code:abortError.code||null,message:abortError.message}, version: installed.minecraft.version, seed: campaign.seed, startedAt: new Date(startedAt).toISOString(), elapsedMs: Date.now() - startedAt,
+     command:commandText,publicPlanSnapshot,
+     initial, task: frozenTask,materialEvidence,  nativeUse, finalReadback, criteria,
+     unmetCriteria: Object.entries(criteria).filter(([, passed]) => passed !== true).map(([name]) => name),
+@@ -717,7 +717,7 @@
+   }
+   try { bot?.quit('Natural harness failure'); } catch { /* Continue owned server cleanup after a closed client. */ }
+   try { await stopServer(); } catch (cleanupError) { record('server_stop_error', { message: cleanupError.message }); }
+-  const failure = { schema: 1, observerRevision: 5, parentRunnerSha256: '202407974ea7a9f0678c8b475afa866260c6b0cb56c83d8a778268a7a663fe8b', mode, profile, runName, verificationStages:stages, harnessFailure: { message: error.message, code: error.code || null, fatalError }, task: frozenTask || taskEvidence(task), stopped,
++  const failure = { schema: 1, observerRevision: 4, parentRunnerSha256: '006f13270394bce62970cd7eb3f90a5805d0fbad7a59e91c8d70ab48b7a4e5e0', mode, profile, runName, verificationStages:stages, harnessFailure: { message: error.message, code: error.code || null, fatalError }, task: frozenTask || taskEvidence(task), stopped,
+     publicBuildingAcceptancePassed: false, sourceHashes: { started: sourceBefore, ended: hashes() } };
+   if (!fs.existsSync(path.join(runDir, 'result.json'))) fs.writeFileSync(path.join(runDir, 'result.json'), json(failure, 2) + '\n', { flag: 'wx' });
+ }).finally(() => { releaseDynamicObservers(); releaseChunkObservers(); for (const waiter of waiters) clearTimeout(waiter.timer); clearInterval(polling);

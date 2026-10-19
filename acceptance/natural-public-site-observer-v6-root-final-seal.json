@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "status": "SEALED_PURE_OBSERVER_NOT_LIVE_ACCEPTED",
+  "createdAt": "2026-10-14T13:27:47.290657+00:00",
+  "files": {
+    "acceptance/natural-public-building-acceptance-v6-site-observer.cjs": "ab3016277dfd365169bb00c94a4407e9e8d7fefe6614deb0720989f737ca3b7e",
+    "acceptance/natural-public-site-observer-v6.test.cjs": "ac4601137039c81fce136c46e2f8d3ddb098774e2f50cb530f5e7e51fdb744bd",
+    "acceptance/natural-public-site-observer-v6-edit-proof.json": "eb4e805967c584d6a8e0af9a14505c7ae8dbf84821b4a6106ad756945deca093",
+    "acceptance/natural-public-site-observer-v6-manifest.json": "380f87cee29605eb333989d424c26649fb08b93041071f72125e94bc56935188"
+  },
+  "baseRunner": {
+    "path": "acceptance/natural-public-building-acceptance-v6.cjs",
+    "sha256": "401495bcb9106dcb67deb333982b698594267e994cf014ae6d1017c3e064a7ba"
+  },
+  "allocator": {
+    "path": "acceptance/fresh-seed-allocation-v1.cjs",
+    "sha256": "ec7c729165a444c302339a20cfa24fdd176f1bef2d0d7b1cf15940975fe74b3f"
+  },
+  "closedAuditor": {
+    "path": "tools/local-validation/audit-natural-public-building-closed-v2.cjs",
+    "sha256": "961ef54c351cff09764e4056327df58a9ef08b17c03eff4b3bc6364db99cb34b"
+  },
+  "rootReview": {
+    "path": "./.minecraft-local-test/evidence/estate-20261013/site-observer-root-independent-01.json",
+    "sha256": "004f2b99e17bdfceca17fa766b875b6a17657b2ab2baf635fb3642f522bb7f10"
+  },
+  "worldExecution": "NOT_STARTED"
+}

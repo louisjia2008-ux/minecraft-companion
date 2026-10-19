@@ -1,0 +1,14 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),{Vec3}=require('vec3'),{Movements,goals}=require('mineflayer-pathfinder');
+const filename=path.join(__dirname,'house-surface-graph.test.js'),source=fs.readFileSync(filename,'utf8'),native=new Module(filename,module);native.filename=filename;native.paths=Module._nodeModulePaths(__dirname);native._compile(source.slice(0,source.indexOf('\nfor(const unfinished'))+'\nmodule.exports={fixture};',filename);
+const terrain=require('../test-support/fixtures/formal58-run109-cleanup-detour.json'),bytes=require('zlib').gunzipSync(Buffer.from(terrain.statesGzipBase64,'base64'));
+const {naturalWalkingFoot,hasGroundedBodySupport,inspectSurfaceBody,createSurfaceHazardEdgePolicy,runGroundedDryConnectorProbe}=require('../vendor/server/minecraft/houseSurfaceGraph'),{followNativeDryConnector}=require('../vendor/server/minecraft/houseNativeDryConnector');
+test('world58 saved cleanup detour uses separately proven early waypoints rather than rejecting every long suffix',{timeout:12000},async t=>{
+ const b=terrain.bounds,f=native.exports.fixture(t,{initialPosition:new Vec3(terrain.position.x,terrain.position.y,terrain.position.z),worldAt:p=>{
+  if(p.x<b.minX||p.x>b.maxX||p.y<b.minY||p.y>b.maxY||p.z<b.minZ||p.z>b.maxZ)return null;
+  const i=((p.x-b.minX)*(b.maxY-b.minY+1)+p.y-b.minY)*(b.maxZ-b.minZ+1)+p.z-b.minZ;return terrain.palette[bytes.readUInt16LE(i*2)];
+ }}),bot=f.bot,profile=new Movements(bot);Object.assign(profile,{canDig:false,scafoldingBlocks:[],allowParkour:false,allowSprinting:false,allow1by1towers:false,allowFreeMotion:false,maxDropDown:2,infiniteLiquidDropdownDistance:false});profile.getMoveDiagonal=()=>{};const policy=createSurfaceHazardEdgePolicy(bot);profile.exclusionAreasStep.push(b=>policy(b.position)?0:Infinity);bot.pathfinder.setMovements(profile);
+ const records=[],deps={assertActive(){},position:()=>({...bot.entity.position}),safeFoot:p=>naturalWalkingFoot(bot,new Vec3(p.x,p.y,p.z)),grounded:()=>hasGroundedBodySupport(bot),dry:()=>inspectSurfaceBody(bot).dry,wait:ms=>new Promise(r=>setTimeout(r,ms)),probe:p=>runGroundedDryConnectorProbe(bot,profile,new goals.GoalBlock(p.x,p.y,p.z),{observedOrigin:{...bot.entity.position.floored()},assertActive(){},isOwnerCurrent:()=>true}),move:p=>bot.pathfinder.goto(new goals.GoalBlock(p.x,p.y,p.z)),record:r=>records.push(r)};
+ const result=await followNativeDryConnector(deps,terrain.target,{deadline:Date.now()+10000});t.diagnostic(JSON.stringify({result,actual:bot.entity.position,records}));
+ assert.equal(result,true);assert.ok(records.some(r=>r.pathLength>24));assert.ok(records.filter(r=>r.actualMovementPerformed).length>=2);assert.equal(bot.entity.position.floored().equals(new Vec3(terrain.target.x,terrain.target.y,terrain.target.z)),true);assert.equal(bot.entity.onGround,true);
+});

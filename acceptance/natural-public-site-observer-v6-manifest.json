@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "status": "PRIVATE_OBSERVATION_COMPONENT_NOT_LIVE_ACCEPTED",
+  "siteObserverRevision": 1,
+  "observerRevision": 5,
+  "runnerRevision": 6,
+  "seedPolicyRevision": 1,
+  "parentRunnerSHA256": "401495bcb9106dcb67deb333982b698594267e994cf014ae6d1017c3e064a7ba",
+  "sourceFiles": {
+    "natural-public-building-acceptance-v6-site-observer.cjs": "ab3016277dfd365169bb00c94a4407e9e8d7fefe6614deb0720989f737ca3b7e"
+  },
+  "contractFiles": {
+    "natural-public-site-observer-v6.test.cjs": "ac4601137039c81fce136c46e2f8d3ddb098774e2f50cb530f5e7e51fdb744bd"
+  },
+  "proofFile": {
+    "path": "acceptance/natural-public-site-observer-v6-edit-proof.json",
+    "sha256": "eb4e805967c584d6a8e0af9a14505c7ae8dbf84821b4a6106ad756945deca093"
+  },
+  "scope": "Final complete siteSearch plus bounded snapshot/console observations only; CP is no site/arrival/material/ownership authority",
+  "bounds": {
+    "checkedNodeSample": 16,
+    "rejectionReasonSample": 64,
+    "registrationVerification": 256,
+    "strings": 160
+  },
+  "actualObservedFields": [
+    "checkedNodes total",
+    "reads/inspected/advances and rejections",
+    "registered graph order/current/probes/visits/frontier/blocked/pending",
+    "reservation summary"
+  ],
+  "wholeSiteCheckpointPreservedInTaskEvidence": true,
+  "javaStarted": false,
+  "preflightExecuted": false,
+  "originalV6Retained": true
+}

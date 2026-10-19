@@ -1,0 +1,12 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),assert=require('node:assert/strict');
+const base=path.resolve(__dirname,'..'),runtime=path.resolve(base,'../personal-ai-deskpet-electron-work/electron/minecraft-runtime'),req=Module.createRequire(runtime+'/package.json'),{Vec3}=req('vec3'),registry=req('prismarine-registry')('1.21.8'),Block=req('prismarine-block')(registry);
+const data=JSON.parse(fs.readFileSync(base+'/evidence/estate-20261013/development08-saved-airborne.json'));
+const filename=runtime+'/vendor/server/minecraft/houseSurfaceGraph.js',candidate=new Module(filename);candidate.filename=filename;candidate.paths=Module._nodeModulePaths(path.dirname(filename));candidate._compile(fs.readFileSync(base+'/patches/houseSurfaceGraph-stepped-jump.next.cjs','utf8'),filename);
+const {bot}=req(runtime+'/test-support/whole11-saved-dry-jump.cjs').createSavedJumpFixture({controls:data.controls});
+const b=data.bounds,nz=b.maxZ-b.minZ+1,ny=b.maxY-b.minY+1;
+bot.blockAt=q=>{const p=q.floored();if(p.x<b.minX||p.x>b.maxX||p.y<b.minY||p.y>b.maxY||p.z<b.minZ||p.z>b.maxZ)return null;const s=data.palette[data.indices[(p.x-b.minX)*ny*nz+(p.y-b.minY)*nz+p.z-b.minZ]];return Object.assign(Block.fromProperties(registry.blocksByName[s.name.replace(/^minecraft:/,'')].id,s.properties,0),{position:p});};
+bot.entity.position=new Vec3(data.initial.position.x,data.initial.position.y,data.initial.position.z);bot.entity.velocity=new Vec3(data.initial.velocity.x,data.initial.velocity.y,data.initial.velocity.z);Object.assign(bot.entity,{onGround:data.initial.onGround,isInWater:data.initial.isInWater,isInLava:data.initial.isInLava,yaw:data.yaw,pitch:data.pitch});bot.jumpTicks=data.jumpTicks;bot.jumpQueued=data.jumpQueued;
+const options={tick:data.physicsTick,lastGrounded:data.lastGrounded};const before=req(filename).inspectDryJumpSupport(bot,options),after=candidate.exports.inspectDryJumpSupport(bot,{...options,allowSteppedJump:true});
+const result={before:{accepted:before.accepted,reason:before.reason},after:{accepted:after.accepted,reason:after.reason,reads:after.reads,lastPrediction:after.predictions.at(-1)},predictionApplied:after.predictionApplied};
+fs.writeFileSync(base+'/evidence/estate-20261013/development08-stepped-jump-probe.json',JSON.stringify(result,null,2)+'\n',{flag:'wx'});console.log(JSON.stringify(result));

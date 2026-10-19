@@ -1,0 +1,924 @@
+{
+  "schema": 1,
+  "status": "READONLY_SAVED_WORLD_COMPONENT_REPLAY",
+  "seed": "-3224308511878297162",
+  "sourceRun": "natural-public-cottage-self-20",
+  "resultSha256": "507d79723ad5e1028e9c06055efe81e4e2b96d8bb3199c0934271333e7362d8e",
+  "sourceModuleSha256": "174db698e70e0d007435493302a30d67ab48b170194d166841ab186c2a272eed",
+  "actualSnapshot": {
+    "position": {
+      "x": -5.5,
+      "y": 78,
+      "z": -2.5
+    },
+    "velocity": {
+      "x": 0,
+      "y": -0.0784000015258789,
+      "z": 0
+    },
+    "onGround": true,
+    "health": 20,
+    "food": 20
+  },
+  "facts": [
+    {
+      "position": {
+        "x": -7,
+        "y": 76,
+        "z": -4
+      },
+      "name": "grass_block",
+      "stateId": 8,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {
+        "snowy": true
+      }
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 77,
+        "z": -4
+      },
+      "name": "snow",
+      "stateId": 5950,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "layers": "1"
+      }
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 78,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 79,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 80,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 81,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 76,
+        "z": -3
+      },
+      "name": "snow",
+      "stateId": 5950,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "layers": "1"
+      }
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 77,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 78,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 79,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 80,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 81,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 76,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 77,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 78,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 79,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 80,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -7,
+        "y": 81,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 76,
+        "z": -4
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 77,
+        "z": -4
+      },
+      "name": "grass_block",
+      "stateId": 9,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {
+        "snowy": false
+      }
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 78,
+        "z": -4
+      },
+      "name": "short_grass",
+      "stateId": 2048,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 79,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 80,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 81,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 76,
+        "z": -3
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 77,
+        "z": -3
+      },
+      "name": "grass_block",
+      "stateId": 8,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {
+        "snowy": true
+      }
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 78,
+        "z": -3
+      },
+      "name": "snow",
+      "stateId": 5950,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "layers": "1"
+      }
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 79,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 80,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 81,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 76,
+        "z": -2
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 77,
+        "z": -2
+      },
+      "name": "grass_block",
+      "stateId": 8,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {
+        "snowy": true
+      }
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 78,
+        "z": -2
+      },
+      "name": "snow",
+      "stateId": 5950,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "layers": "1"
+      }
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 79,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 80,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -6,
+        "y": 81,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 76,
+        "z": -4
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 77,
+        "z": -4
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 78,
+        "z": -4
+      },
+      "name": "grass_block",
+      "stateId": 8,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {
+        "snowy": true
+      }
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 79,
+        "z": -4
+      },
+      "name": "snow",
+      "stateId": 5950,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "layers": "1"
+      }
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 80,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 81,
+        "z": -4
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 76,
+        "z": -3
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 77,
+        "z": -3
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 78,
+        "z": -3
+      },
+      "name": "grass_block",
+      "stateId": 9,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {
+        "snowy": false
+      }
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 79,
+        "z": -3
+      },
+      "name": "short_grass",
+      "stateId": 2048,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 80,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 81,
+        "z": -3
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 76,
+        "z": -2
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 77,
+        "z": -2
+      },
+      "name": "dirt",
+      "stateId": 10,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 78,
+        "z": -2
+      },
+      "name": "grass_block",
+      "stateId": 8,
+      "boundingBox": "block",
+      "shapes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "properties": {
+        "snowy": true
+      }
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 79,
+        "z": -2
+      },
+      "name": "snow",
+      "stateId": 5950,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {
+        "layers": "1"
+      }
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 80,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    },
+    {
+      "position": {
+        "x": -5,
+        "y": 81,
+        "z": -2
+      },
+      "name": "air",
+      "stateId": 0,
+      "boundingBox": "empty",
+      "shapes": [],
+      "properties": {}
+    }
+  ],
+  "old": {
+    "passed": false,
+    "code": "water_body_unsafe",
+    "message": "Strict actual body intersects unknown, unsafe fluid or solid",
+    "cells": [
+      {
+        "position": {
+          "x": -6,
+          "y": 78,
+          "z": -3
+        },
+        "name": "snow",
+        "level": null,
+        "stateId": 5950,
+        "boundingBox": "empty",
+        "shapes": [],
+        "waterlogged": null
+      },
+      {
+        "position": {
+          "x": -6,
+          "y": 79,
+          "z": -3
+        },
+        "name": "air",
+        "level": null,
+        "stateId": 0,
+        "boundingBox": "empty",
+        "shapes": [],
+        "waterlogged": null
+      }
+    ],
+    "position": {
+      "x": -5.5,
+      "y": 78,
+      "z": -2.5
+    }
+  },
+  "surface": {
+    "body": {
+      "dry": false,
+      "isInWater": false,
+      "isInLava": false,
+      "cells": [
+        {
+          "position": {
+            "x": -6,
+            "y": 78,
+            "z": -3
+          },
+          "loaded": true,
+          "name": "snow",
+          "stateId": 5950,
+          "waterlogged": null,
+          "level": null,
+          "boundingBox": "empty",
+          "shapes": []
+        },
+        {
+          "position": {
+            "x": -6,
+            "y": 79,
+            "z": -3
+          },
+          "loaded": true,
+          "name": "air",
+          "stateId": 0,
+          "waterlogged": null,
+          "level": null,
+          "boundingBox": "empty",
+          "shapes": []
+        }
+      ]
+    },
+    "walkingFoot": false,
+    "grounded": false
+  },
+  "wholeHouseAcceptance": false,
+  "allOriginalRunBytesUnchanged": true,
+  "limitations": "Saved block-state replay; water flags configured dry from unchanged grounded final pose, no Java startup, movement, network or coordinate injection into production.",
+  "domain": "OFFLINE_REPLAY_OF_SAVED_NATIVE_SNOW1_NO_PRODUCTION_COORDINATE_INPUT"
+}

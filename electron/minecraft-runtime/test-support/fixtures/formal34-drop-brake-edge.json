@@ -1,0 +1,1598 @@
+{
+  "source": "formal34 normally saved MCA; original graph before failed leg and recorded native grounded brake",
+  "bounds": {
+    "minX": -21,
+    "maxX": 27,
+    "minY": 60,
+    "maxY": 116,
+    "minZ": -61,
+    "maxZ": -10
+  },
+  "palette": [
+    {
+      "name": "water",
+      "properties": {
+        "level": "0"
+      }
+    },
+    {
+      "name": "air",
+      "properties": {}
+    },
+    {
+      "name": "tall_seagrass",
+      "properties": {
+        "half": "upper"
+      }
+    },
+    {
+      "name": "dirt",
+      "properties": {}
+    },
+    {
+      "name": "seagrass",
+      "properties": {}
+    },
+    {
+      "name": "stone",
+      "properties": {}
+    },
+    {
+      "name": "grass_block",
+      "properties": {
+        "snowy": "false"
+      }
+    },
+    {
+      "name": "short_grass",
+      "properties": {}
+    },
+    {
+      "name": "tall_grass",
+      "properties": {
+        "half": "lower"
+      }
+    },
+    {
+      "name": "tall_grass",
+      "properties": {
+        "half": "upper"
+      }
+    },
+    {
+      "name": "gravel",
+      "properties": {}
+    },
+    {
+      "name": "coal_ore",
+      "properties": {}
+    },
+    {
+      "name": "granite",
+      "properties": {}
+    },
+    {
+      "name": "copper_ore",
+      "properties": {}
+    },
+    {
+      "name": "diorite",
+      "properties": {}
+    },
+    {
+      "name": "iron_ore",
+      "properties": {}
+    },
+    {
+      "name": "tall_seagrass",
+      "properties": {
+        "half": "lower"
+      }
+    },
+    {
+      "name": "dripstone_block",
+      "properties": {}
+    },
+    {
+      "name": "andesite",
+      "properties": {}
+    },
+    {
+      "name": "glow_lichen",
+      "properties": {
+        "east": "false",
+        "waterlogged": "false",
+        "south": "false",
+        "north": "false",
+        "west": "false",
+        "up": "true",
+        "down": "false"
+      }
+    },
+    {
+      "name": "lapis_ore",
+      "properties": {}
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "4",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "3",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "2",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "acacia_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "3",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "acacia_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "2",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "oak_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "1",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "acacia_leaves",
+      "properties": {
+        "waterlogged": "false",
+        "distance": "1",
+        "persistent": "false"
+      }
+    },
+    {
+      "name": "oak_log",
+      "properties": {
+        "axis": "y"
+      }
+    },
+    {
+      "name": "acacia_log",
+      "properties": {
+        "axis": "y"
+      }
+    },
+    {
+      "name": "water",
+      "properties": {
+        "level": "2"
+      }
+    },
+    {
+      "name": "water",
+      "properties": {
+        "level": "1"
+      }
+    },
+    {
+      "name": "water",
+      "properties": {
+        "level": "8"
+      }
+    },
+    {
+      "name": "water",
+      "properties": {
+        "level": "3"
+      }
+    },
+    {
+      "name": "poppy",
+      "properties": {}
+    },
+    {
+      "name": "glow_lichen",
+      "properties": {
+        "east": "false",
+        "waterlogged": "false",
+        "south": "false",
+        "north": "false",
+        "west": "true",
+        "up": "false",
+        "down": "false"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "up",
+        "thickness": "tip_merge"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "down",
+        "thickness": "tip_merge"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "down",
+        "thickness": "frustum"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "up",
+        "thickness": "tip"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "down",
+        "thickness": "tip"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "up",
+        "thickness": "frustum"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "up",
+        "thickness": "base"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "up",
+        "thickness": "middle"
+      }
+    },
+    {
+      "name": "pointed_dripstone",
+      "properties": {
+        "waterlogged": "false",
+        "vertical_direction": "down",
+        "thickness": "base"
+      }
+    },
+    {
+      "name": "dandelion",
+      "properties": {}
+    }
+  ],
+  "statesGzipBase64": "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",
+  "landed": {
+    "x": -3.494536743235538,
+    "y": 99,
+    "z": -32.08488053373761
+  },
+  "start": {
+    "x": -4.504689680720294,
+    "y": 103,
+    "z": -27.226159678744565
+  },
+  "velocity": {
+    "x": 0.0005603244447952534,
+    "y": -0.0784000015258789,
+    "z": -0.11784318230003711
+  },
+  "target": {
+    "x": 10,
+    "y": 70,
+    "z": -43
+  },
+  "graph": {
+    "schema": 2,
+    "kind": "loaded_dry_waypoint_graph",
+    "anchor": {
+      "x": -9,
+      "y": 107,
+      "z": -8
+    },
+    "radius": 384,
+    "step": 16,
+    "nodes": {
+      "-9,107,-8": {
+        "position": {
+          "x": -9,
+          "y": 107,
+          "z": -8
+        },
+        "parent": null,
+        "expanded": true
+      },
+      "7,113,-8": {
+        "position": {
+          "x": 7,
+          "y": 113,
+          "z": -8
+        },
+        "parent": "-9,107,-8",
+        "expanded": true,
+        "supportPositions": [
+          {
+            "x": -9,
+            "y": 106,
+            "z": -8
+          },
+          {
+            "x": -8,
+            "y": 107,
+            "z": -8
+          },
+          {
+            "x": -7,
+            "y": 107,
+            "z": -8
+          },
+          {
+            "x": -6,
+            "y": 106,
+            "z": -8
+          },
+          {
+            "x": -5,
+            "y": 105,
+            "z": -8
+          },
+          {
+            "x": -4,
+            "y": 104,
+            "z": -8
+          },
+          {
+            "x": -3,
+            "y": 105,
+            "z": -8
+          },
+          {
+            "x": -2,
+            "y": 106,
+            "z": -8
+          },
+          {
+            "x": -1,
+            "y": 107,
+            "z": -8
+          },
+          {
+            "x": 0,
+            "y": 108,
+            "z": -8
+          },
+          {
+            "x": 1,
+            "y": 109,
+            "z": -8
+          },
+          {
+            "x": 2,
+            "y": 110,
+            "z": -8
+          },
+          {
+            "x": 3,
+            "y": 111,
+            "z": -8
+          },
+          {
+            "x": 4,
+            "y": 111,
+            "z": -8
+          },
+          {
+            "x": 5,
+            "y": 112,
+            "z": -8
+          },
+          {
+            "x": 6,
+            "y": 112,
+            "z": -8
+          },
+          {
+            "x": 7,
+            "y": 112,
+            "z": -8
+          }
+        ],
+        "dryParentTrail": {
+          "schema": 1,
+          "kind": "actual_successful_dry_parent_edge",
+          "complete": true,
+          "from": "-9,107,-8",
+          "to": "7,113,-8",
+          "points": [
+            {
+              "position": {
+                "x": -9,
+                "y": 107,
+                "z": -8
+              },
+              "actual": {
+                "x": -8.5,
+                "y": 107,
+                "z": -7.5
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": -9,
+                    "y": 106,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": -8,
+                "y": 108,
+                "z": -8
+              },
+              "actual": {
+                "x": -7.511315938834191,
+                "y": 108,
+                "z": -7.500000000000071
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": -8,
+                    "y": 107,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": -7,
+                "y": 108,
+                "z": -8
+              },
+              "actual": {
+                "x": -6.841079234283119,
+                "y": 108,
+                "z": -7.500000000000156
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": -8,
+                    "y": 107,
+                    "z": -8
+                  },
+                  "stateId": 9
+                },
+                {
+                  "position": {
+                    "x": -7,
+                    "y": 107,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": -5,
+                "y": 106,
+                "z": -8
+              },
+              "actual": {
+                "x": -4.216894423250487,
+                "y": 106,
+                "z": -7.5000000000004166
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": -5,
+                    "y": 105,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": -4,
+                "y": 105,
+                "z": -8
+              },
+              "actual": {
+                "x": -3.3,
+                "y": 105,
+                "z": -7.500000000000552
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": -4,
+                    "y": 104,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": -3,
+                "y": 106,
+                "z": -8
+              },
+              "actual": {
+                "x": -2.839635859104076,
+                "y": 106,
+                "z": -7.500000000000623
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": -3,
+                    "y": 105,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": -2,
+                "y": 107,
+                "z": -8
+              },
+              "actual": {
+                "x": -1.4474077278531425,
+                "y": 107,
+                "z": -7.500000000000694
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": -2,
+                    "y": 106,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": -1,
+                "y": 108,
+                "z": -8
+              },
+              "actual": {
+                "x": -0.8396358591040765,
+                "y": 108,
+                "z": -7.500000000000765
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": -1,
+                    "y": 107,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": 0,
+                "y": 109,
+                "z": -8
+              },
+              "actual": {
+                "x": 0.5525922721468564,
+                "y": 109,
+                "z": -7.500000000000836
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": 0,
+                    "y": 108,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": 1,
+                "y": 110,
+                "z": -8
+              },
+              "actual": {
+                "x": 1.1603641408959235,
+                "y": 110,
+                "z": -7.500000000000907
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": 1,
+                    "y": 109,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": 2,
+                "y": 111,
+                "z": -8
+              },
+              "actual": {
+                "x": 2.552592272146856,
+                "y": 111,
+                "z": -7.500000000000978
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": 2,
+                    "y": 110,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": 3,
+                "y": 112,
+                "z": -8
+              },
+              "actual": {
+                "x": 3.160364140895924,
+                "y": 112,
+                "z": -7.500000000001049
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": 3,
+                    "y": 111,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": 4,
+                "y": 112,
+                "z": -8
+              },
+              "actual": {
+                "x": 4.19336049346435,
+                "y": 112,
+                "z": -7.500000000001191
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": 3,
+                    "y": 111,
+                    "z": -8
+                  },
+                  "stateId": 9
+                },
+                {
+                  "position": {
+                    "x": 4,
+                    "y": 111,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": 5,
+                "y": 113,
+                "z": -8
+              },
+              "actual": {
+                "x": 5.674162090740962,
+                "y": 113,
+                "z": -7.500000000001262
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": 5,
+                    "y": 112,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": 6,
+                "y": 113,
+                "z": -8
+              },
+              "actual": {
+                "x": 6.171234973604319,
+                "y": 113,
+                "z": -7.500000000001319
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": 5,
+                    "y": 112,
+                    "z": -8
+                  },
+                  "stateId": 9
+                },
+                {
+                  "position": {
+                    "x": 6,
+                    "y": 112,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            },
+            {
+              "position": {
+                "x": 7,
+                "y": 113,
+                "z": -8
+              },
+              "actual": {
+                "x": 7.5,
+                "y": 113,
+                "z": -7.500000000001461
+              },
+              "supports": [
+                {
+                  "position": {
+                    "x": 7,
+                    "y": 112,
+                    "z": -8
+                  },
+                  "stateId": 9
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "-5,103,-28": {
+        "position": {
+          "x": -5,
+          "y": 103,
+          "z": -28
+        },
+        "parent": "7,113,-8",
+        "expanded": true,
+        "supportPositions": [
+          {
+            "x": 7,
+            "y": 112,
+            "z": -8
+          },
+          {
+            "x": 6,
+            "y": 112,
+            "z": -8
+          },
+          {
+            "x": 6,
+            "y": 112,
+            "z": -9
+          },
+          {
+            "x": 4,
+            "y": 111,
+            "z": -9
+          },
+          {
+            "x": 5,
+            "y": 111,
+            "z": -9
+          },
+          {
+            "x": 3,
+            "y": 111,
+            "z": -9
+          },
+          {
+            "x": 2,
+            "y": 110,
+            "z": -9
+          },
+          {
+            "x": 0,
+            "y": 109,
+            "z": -9
+          },
+          {
+            "x": 1,
+            "y": 109,
+            "z": -9
+          },
+          {
+            "x": -1,
+            "y": 107,
+            "z": -9
+          },
+          {
+            "x": -2,
+            "y": 106,
+            "z": -9
+          },
+          {
+            "x": -3,
+            "y": 105,
+            "z": -9
+          },
+          {
+            "x": -4,
+            "y": 104,
+            "z": -9
+          },
+          {
+            "x": -4,
+            "y": 104,
+            "z": -10
+          },
+          {
+            "x": -4,
+            "y": 104,
+            "z": -11
+          },
+          {
+            "x": -5,
+            "y": 104,
+            "z": -11
+          },
+          {
+            "x": -5,
+            "y": 104,
+            "z": -12
+          },
+          {
+            "x": -5,
+            "y": 104,
+            "z": -13
+          },
+          {
+            "x": -6,
+            "y": 104,
+            "z": -13
+          },
+          {
+            "x": -6,
+            "y": 104,
+            "z": -14
+          },
+          {
+            "x": -6,
+            "y": 104,
+            "z": -15
+          },
+          {
+            "x": -6,
+            "y": 104,
+            "z": -16
+          },
+          {
+            "x": -6,
+            "y": 103,
+            "z": -18
+          },
+          {
+            "x": -6,
+            "y": 103,
+            "z": -17
+          },
+          {
+            "x": -6,
+            "y": 103,
+            "z": -19
+          },
+          {
+            "x": -6,
+            "y": 103,
+            "z": -20
+          },
+          {
+            "x": -6,
+            "y": 103,
+            "z": -21
+          },
+          {
+            "x": -6,
+            "y": 103,
+            "z": -22
+          },
+          {
+            "x": -6,
+            "y": 103,
+            "z": -23
+          },
+          {
+            "x": -6,
+            "y": 103,
+            "z": -24
+          },
+          {
+            "x": -5,
+            "y": 102,
+            "z": -24
+          },
+          {
+            "x": -4,
+            "y": 102,
+            "z": -24
+          },
+          {
+            "x": -5,
+            "y": 102,
+            "z": -25
+          },
+          {
+            "x": -4,
+            "y": 102,
+            "z": -25
+          },
+          {
+            "x": -5,
+            "y": 102,
+            "z": -26
+          },
+          {
+            "x": -5,
+            "y": 102,
+            "z": -27
+          },
+          {
+            "x": -5,
+            "y": 102,
+            "z": -28
+          }
+        ]
+      }
+    },
+    "order": [
+      "-9,107,-8",
+      "7,113,-8",
+      "-5,103,-28"
+    ],
+    "frontier": [
+      {
+        "parent": "-5,103,-28",
+        "target": {
+          "x": -21,
+          "y": 72,
+          "z": -28
+        },
+        "plannedSteps": 20
+      },
+      {
+        "parent": "-5,103,-28",
+        "target": {
+          "x": 10,
+          "y": 70,
+          "z": -43
+        },
+        "plannedSteps": 30,
+        "nativeReachableHint": {
+          "failedGoal": {
+            "x": 11,
+            "y": 71,
+            "z": -44
+          },
+          "endpointSeparatelyProbed": true,
+          "actualArrivalConfirmed": false
+        }
+      },
+      {
+        "parent": "-5,103,-28",
+        "target": {
+          "x": -25,
+          "y": 82,
+          "z": -16
+        },
+        "plannedSteps": 36
+      },
+      {
+        "parent": "-5,103,-28",
+        "target": {
+          "x": 11,
+          "y": 108,
+          "z": -28
+        },
+        "plannedSteps": 16
+      },
+      {
+        "parent": "-5,103,-28",
+        "target": {
+          "x": -5,
+          "y": 105,
+          "z": -12
+        },
+        "plannedSteps": 18
+      },
+      {
+        "parent": "-5,103,-28",
+        "target": {
+          "x": 1,
+          "y": 113,
+          "z": -16
+        },
+        "plannedSteps": 18,
+        "nativeReachableHint": {
+          "failedGoal": {
+            "x": 11,
+            "y": 114,
+            "z": -12
+          },
+          "endpointSeparatelyProbed": true,
+          "actualArrivalConfirmed": false
+        }
+      },
+      {
+        "parent": "7,113,-8",
+        "target": {
+          "x": 23,
+          "y": 118,
+          "z": -8
+        },
+        "plannedSteps": 16
+      },
+      {
+        "parent": "7,113,-8",
+        "target": {
+          "x": 15,
+          "y": 118,
+          "z": 1
+        },
+        "plannedSteps": 17,
+        "nativeReachableHint": {
+          "failedGoal": {
+            "x": 23,
+            "y": 122,
+            "z": 8
+          },
+          "endpointSeparatelyProbed": true,
+          "actualArrivalConfirmed": false
+        }
+      },
+      {
+        "parent": "7,113,-8",
+        "target": {
+          "x": 16,
+          "y": 113,
+          "z": -20
+        },
+        "plannedSteps": 21,
+        "nativeReachableHint": {
+          "failedGoal": {
+            "x": 23,
+            "y": 109,
+            "z": -24
+          },
+          "endpointSeparatelyProbed": true,
+          "actualArrivalConfirmed": false
+        }
+      },
+      {
+        "parent": "7,113,-8",
+        "target": {
+          "x": 7,
+          "y": 112,
+          "z": 8
+        },
+        "plannedSteps": 18
+      },
+      {
+        "parent": "7,113,-8",
+        "target": {
+          "x": 7,
+          "y": 111,
+          "z": -24
+        },
+        "plannedSteps": 16
+      },
+      {
+        "parent": "7,113,-8",
+        "target": {
+          "x": -13,
+          "y": 102,
+          "z": 4
+        },
+        "plannedSteps": 32
+      },
+      {
+        "parent": "7,113,-8",
+        "target": {
+          "x": -9,
+          "y": 102,
+          "z": -12
+        },
+        "plannedSteps": 20
+      },
+      {
+        "parent": "-9,107,-8",
+        "target": {
+          "x": -25,
+          "y": 75,
+          "z": -24
+        },
+        "plannedSteps": 32
+      },
+      {
+        "parent": "-9,107,-8",
+        "target": {
+          "x": -23,
+          "y": 100,
+          "z": 5
+        },
+        "plannedSteps": 27,
+        "nativeReachableHint": {
+          "failedGoal": {
+            "x": -25,
+            "y": 102,
+            "z": 8
+          },
+          "endpointSeparatelyProbed": true,
+          "actualArrivalConfirmed": false
+        }
+      },
+      {
+        "parent": "-9,107,-8",
+        "target": {
+          "x": 4,
+          "y": 112,
+          "z": 4
+        },
+        "plannedSteps": 25,
+        "nativeReachableHint": {
+          "failedGoal": {
+            "x": 7,
+            "y": 112,
+            "z": 8
+          },
+          "endpointSeparatelyProbed": true,
+          "actualArrivalConfirmed": false
+        }
+      },
+      {
+        "parent": "-9,107,-8",
+        "target": {
+          "x": -9,
+          "y": 103,
+          "z": 8
+        },
+        "plannedSteps": 18
+      },
+      {
+        "parent": "-9,107,-8",
+        "target": {
+          "x": -25,
+          "y": 85,
+          "z": -8
+        },
+        "plannedSteps": 18
+      },
+      {
+        "parent": "-9,107,-8",
+        "target": {
+          "x": -9,
+          "y": 103,
+          "z": -24
+        },
+        "plannedSteps": 16
+      },
+      {
+        "parent": "-9,107,-8",
+        "target": {
+          "x": 1,
+          "y": 111,
+          "z": -18
+        },
+        "plannedSteps": 20,
+        "nativeReachableHint": {
+          "failedGoal": {
+            "x": 7,
+            "y": 111,
+            "z": -24
+          },
+          "endpointSeparatelyProbed": true,
+          "actualArrivalConfirmed": false
+        }
+      }
+    ],
+    "blockedEdges": [
+      {
+        "from": "-9,107,-8",
+        "target": {
+          "x": 7,
+          "y": 112,
+          "z": 8
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 7,
+            "y": 112,
+            "z": 8
+          },
+          "from": {
+            "x": -9,
+            "y": 107,
+            "z": -8
+          },
+          "elapsedMs": 101,
+          "status": "timeout",
+          "pathCount": 25,
+          "slices": 10,
+          "settled": true,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "timeout"
+          ]
+        }
+      },
+      {
+        "from": "-9,107,-8",
+        "target": {
+          "x": -25,
+          "y": 102,
+          "z": 8
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": -25,
+            "y": 102,
+            "z": 8
+          },
+          "from": {
+            "x": -9,
+            "y": 107,
+            "z": -8
+          },
+          "elapsedMs": 101,
+          "status": "timeout",
+          "pathCount": 27,
+          "slices": 10,
+          "settled": true,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "timeout"
+          ]
+        }
+      },
+      {
+        "from": "-9,107,-8",
+        "target": {
+          "x": 7,
+          "y": 111,
+          "z": -24
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 7,
+            "y": 111,
+            "z": -24
+          },
+          "from": {
+            "x": -9,
+            "y": 107,
+            "z": -8
+          },
+          "elapsedMs": 101,
+          "status": "timeout",
+          "pathCount": 20,
+          "slices": 10,
+          "settled": true,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "timeout"
+          ]
+        }
+      },
+      {
+        "from": "7,113,-8",
+        "target": {
+          "x": 23,
+          "y": 122,
+          "z": 8
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 23,
+            "y": 122,
+            "z": 8
+          },
+          "from": {
+            "x": 7,
+            "y": 113,
+            "z": -8
+          },
+          "elapsedMs": 100,
+          "status": "timeout",
+          "pathCount": 17,
+          "slices": 10,
+          "settled": true,
+          "conclusive": false,
+          "stopReason": null,
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "timeout"
+          ]
+        }
+      },
+      {
+        "from": "7,113,-8",
+        "target": {
+          "x": 23,
+          "y": 109,
+          "z": -24
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 23,
+            "y": 109,
+            "z": -24
+          },
+          "from": {
+            "x": 7,
+            "y": 113,
+            "z": -8
+          },
+          "elapsedMs": 100,
+          "status": "timeout",
+          "pathCount": 21,
+          "slices": 10,
+          "settled": true,
+          "conclusive": false,
+          "stopReason": null,
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "timeout"
+          ]
+        }
+      },
+      {
+        "from": "-5,103,-28",
+        "target": {
+          "x": 11,
+          "y": 114,
+          "z": -12
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 11,
+            "y": 114,
+            "z": -12
+          },
+          "from": {
+            "x": -5,
+            "y": 103,
+            "z": -28
+          },
+          "elapsedMs": 101,
+          "status": "timeout",
+          "pathCount": 18,
+          "slices": 10,
+          "settled": true,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "timeout"
+          ]
+        }
+      },
+      {
+        "from": "-5,103,-28",
+        "target": {
+          "x": -21,
+          "y": 87,
+          "z": -12
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": -21,
+            "y": 87,
+            "z": -12
+          },
+          "from": {
+            "x": -5,
+            "y": 103,
+            "z": -28
+          },
+          "elapsedMs": 101,
+          "status": "timeout",
+          "pathCount": 34,
+          "slices": 10,
+          "settled": true,
+          "conclusive": false,
+          "stopReason": "wall_deadline",
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "timeout"
+          ]
+        }
+      },
+      {
+        "from": "-5,103,-28",
+        "target": {
+          "x": 11,
+          "y": 71,
+          "z": -44
+        },
+        "reason": "native_probe_inconclusive",
+        "observedProbe": {
+          "target": {
+            "x": 11,
+            "y": 71,
+            "z": -44
+          },
+          "from": {
+            "x": -5,
+            "y": 103,
+            "z": -28
+          },
+          "elapsedMs": 100,
+          "status": "timeout",
+          "pathCount": 30,
+          "slices": 10,
+          "settled": true,
+          "conclusive": false,
+          "stopReason": null,
+          "yieldStatuses": [
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "partial",
+            "timeout"
+          ]
+        }
+      }
+    ],
+    "current": "-5,103,-28",
+    "resumeNode": "-5,103,-28",
+    "visits": 3,
+    "probes": 33,
+    "pendingWater": null
+  }
+}

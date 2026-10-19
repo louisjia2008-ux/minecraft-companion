@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "scope": "Explicit new observation additions only; original v6 bytes recovered exactly",
+  "parent": {
+    "path": "acceptance/natural-public-building-acceptance-v6.cjs",
+    "sha256": "401495bcb9106dcb67deb333982b698594267e994cf014ae6d1017c3e064a7ba"
+  },
+  "current": {
+    "path": "acceptance/natural-public-building-acceptance-v6-site-observer.cjs",
+    "sha256": "ab3016277dfd365169bb00c94a4407e9e8d7fefe6614deb0720989f737ca3b7e"
+  },
+  "explicitAdditions": {
+    "inlineHelperMarkers": [
+      "// SITE_OBSERVER_REVISION_1_BEGIN",
+      "// SITE_OBSERVER_REVISION_1_END"
+    ],
+    "taskEvidenceLine": "siteSearch: value.siteSearch",
+    "snapshotLine": "siteSearch: siteSearchObservation(task?.siteSearch)",
+    "consoleLine": "siteSearch: data.siteSearch",
+    "siteObserverRevisionMetadataOccurrences": 3
+  },
+  "inverse": {
+    "exactParentBytes": true,
+    "sha256": "401495bcb9106dcb67deb333982b698594267e994cf014ae6d1017c3e064a7ba"
+  },
+  "unchangedInvariants": [
+    "All original main execution, server lifecycle, CLI/seed parameters and allocations",
+    "All original grader/fullAcceptanceDecision/stages/savedAudit behavior",
+    "Original native dynamic observerRevision5 and runnerRevision6/seedPolicyRevision1",
+    "No extra native listener, timer, client API, world query or actor operation",
+    "No original v6, allocator, world or campaign files changed"
+  ],
+  "tests": {
+    "path": "acceptance/natural-public-site-observer-v6.test.cjs",
+    "sha256": "ac4601137039c81fce136c46e2f8d3ddb098774e2f50cb530f5e7e51fdb744bd",
+    "cases": 12,
+    "passed": 12,
+    "failed": 0,
+    "exitCode": 0,
+    "durationMs": 75.86325,
+    "syntaxChecks": 2,
+    "scope": "Pure checkpoint and existing snapshot contract fixtures; no runtime import/start or seed allocation"
+  },
+  "javaStarted": false,
+  "preflightExecuted": false,
+  "seedAllocated": false
+}
