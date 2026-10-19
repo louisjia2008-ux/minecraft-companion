@@ -84,8 +84,8 @@ function createBrain({
     }
     goal.stalls += 1;
     if (!result.ok) goal.reasons.push(result.reason);
-    if (goal.stalls >= noProgressLimit) {
-      emit('goal_failed', { goal: goal.def.name, progress, reasons: goal.reasons.slice(-noProgressLimit) });
+    if (goal.stalls >= (goal.def.noProgressLimit ?? noProgressLimit)) {
+      emit('goal_failed', { goal: goal.def.name, progress, reasons: goal.reasons.slice(-goal.stalls) });
       goal = null;
     }
   }
@@ -186,6 +186,11 @@ function createBrain({
       goal = null;
       if (running?.behavior.isGoal) await preempt(reason);
       emit('goal_cleared', { goal: name, reason });
+    },
+    /** Aborts whatever runs now but keeps the goal; the next tick re-plans. */
+    async interrupt(reason = 'interrupted') {
+      emit('interrupted', { reason, behavior: running?.behavior.name || null });
+      await preempt(reason);
     },
     async stop(reason = 'stopped') {
       goal = null;

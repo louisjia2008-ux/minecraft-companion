@@ -7,6 +7,7 @@ const { createBrain } = require('./brain');
 const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
+const { createHomesteadGoal } = require('./goals/homestead');
 const { haltBody } = require('./actions');
 
 // Never build scaffolding, pillar up, parkour or wade: the bot must not leave
@@ -24,6 +25,8 @@ function configureMovements(bot) {
   const water = bot.registry.blocksByName.water;
   if (water) movements.blocksToAvoid.add(water.id);
   bot.pathfinder.setMovements(movements);
+  // Mining paths through stone need more search time than surface walks.
+  bot.pathfinder.thinkTimeout = 10000;
   return movements;
 }
 
@@ -39,7 +42,9 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
   });
   const timer = setInterval(() => { brain.tick().catch(() => {}); }, tickMs);
   timer.unref?.();
-  const onDeath = () => { brain.stop('death').catch(() => {}); };
+  // Death interrupts the current action only: progress lives in the world, so
+  // after respawning the goal simply re-plans from what is left.
+  const onDeath = () => { brain.interrupt('death').catch(() => {}); };
   bot.on('death', onDeath);
 
   return {
@@ -47,6 +52,11 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
     gatherLogs(count) {
       brain.setGoal(createGatherLogsGoal({ bot, count }));
       return brain.tick();
+    },
+    homestead(options = {}) {
+      const goal = createHomesteadGoal({ bot, ...options });
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
     },
     setGoal(goal) {
       brain.setGoal(goal);

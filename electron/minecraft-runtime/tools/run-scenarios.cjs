@@ -86,13 +86,26 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     },
   });
   const startedAt = Date.now();
-  await scenario.start(companion);
+  const goal = await scenario.start(companion);
+  // A heartbeat every minute so long runs can be followed live.
+  const heartbeat = setInterval(() => {
+    const inv = {};
+    for (const item of bot.inventory.items()) inv[item.name] = (inv[item.name] || 0) + item.count;
+    const status = companion.status();
+    const line = { minute: Math.round((Date.now() - startedAt) / 60000), running: status.running,
+      steps: status.goal?.progress, health: bot.health, food: bot.food, deaths,
+      position: bot.entity?.position?.floored?.(), inventory: inv };
+    write('heartbeat', line);
+    console.log(`    [${line.minute}m] ${line.running || 'idle'} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
+      + ` food=${bot.food} deaths=${deaths} ${Object.entries(inv).map(([k, n]) => `${k}:${n}`).join(' ')}`);
+  }, 60000);
   const timedOut = await Promise.race([finished.then(() => false), sleep(scenario.timeoutMs).then(() => true)]);
+  clearInterval(heartbeat);
   await companion.dispose();
   bot.removeListener('death', onDeath);
   const durationMs = Date.now() - startedAt;
   await sleep(500);
-  const verdict = await scenario.verify({ server, username, bot });
+  const verdict = await scenario.verify({ server, username, bot, goal });
   const reason = verdict.pass ? null
     : timedOut ? 'timeout'
       : outcome?.type === 'goal_failed' ? `goal_failed:${(outcome.reasons || []).at(-1) || 'unknown'}`
@@ -129,17 +142,18 @@ async function main() {
   const version = option('--version', installed.minecraft?.version || '1.21.8');
   const runs = Number(option('--runs', 20));
   const seed = Number(option('--seed', Date.now() % 1_000_000));
-  const difficulty = option('--difficulty', 'peaceful');
+  const difficultyOption = option('--difficulty', null);
   const names = option('--scenario', 'collect-logs-flat').split(',');
   if (!fs.existsSync(jar)) usage(`Server jar not found: ${jar}`);
   if (!Number.isSafeInteger(runs) || runs < 1) usage('--runs must be a positive integer');
-  if (!['peaceful', 'easy', 'normal', 'hard'].includes(difficulty)) usage('Unknown --difficulty');
+  if (difficultyOption && !['peaceful', 'easy', 'normal', 'hard'].includes(difficultyOption)) usage('Unknown --difficulty');
   for (const name of names) if (!SCENARIOS[name]) usage(`Unknown scenario: ${name}`);
 
   const batch = new Date().toISOString().replace(/[:.]/g, '-');
   const summaries = [];
   for (const name of names) {
     const scenario = SCENARIOS[name];
+    const difficulty = difficultyOption || scenario.defaultDifficulty || 'peaceful';
     const batchDir = path.join(installation, 'scenario-runs', batch, name);
     fs.mkdirSync(batchDir, { recursive: true });
     console.log(`\n▶ ${name}: ${scenario.description}\n  runs=${runs} seed=${seed} difficulty=${difficulty}\n  output=${batchDir}`);
@@ -160,7 +174,9 @@ async function main() {
         results.push(result);
         console.log(`  run ${String(run + 1).padStart(2)}: ${result.pass ? 'PASS' : 'FAIL'}`
           + ` ${Math.round(result.durationMs / 1000)}s${result.reason ? ` (${result.reason})` : ''}`
-          + `${result.logsOnServer !== undefined ? ` logs=${result.logsOnServer}` : ''}`);
+          + `${result.logsOnServer !== undefined ? ` logs=${result.logsOnServer}` : ''}`
+          + `${result.placed !== undefined ? ` house=${result.placed}/${result.total} furniture=${JSON.stringify(result.furniture)}`
+            + ` gear=${JSON.stringify(result.gear)} chest=${result.chestUsed} bed=${result.bedUsed}` : ''}`);
       }
     } finally {
       bot.quit();

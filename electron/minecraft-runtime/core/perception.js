@@ -44,6 +44,8 @@ function perceive(bot, { hostileRange = 16, now = Date.now } = {}) {
     position: position.clone(),
     onGround: self.onGround === true,
     inWater: self.isInWater === true,
+    oxygen: Number.isFinite(bot.oxygenLevel) ? bot.oxygenLevel : null,
+    isDay: Number.isFinite(bot.time?.timeOfDay) ? bot.time.timeOfDay < 12542 || bot.time.timeOfDay > 23460 : null,
     inventory: countInventory(bot.inventory?.items?.()),
     hostiles,
   };

@@ -51,7 +51,7 @@ function goToDig(bot, ctx, block, options = {}) {
 }
 
 function withinReach(bot, position, reach = 4.5) {
-  const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+  const eye = bot.entity.position.offset(0, 1.62, 0);
   return eye.distanceTo(position.offset(0.5, 0.5, 0.5)) <= reach;
 }
 
@@ -209,6 +209,6 @@ async function fleeFrom(bot, ctx, from, { distance = 16, timeoutMs = 8000 } = {}
 }
 
 module.exports = {
-  goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, RISKY_FOODS,
 };
