@@ -8,7 +8,9 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "start": "node index.js",
-    "test": "node --test test/*.test.js vendor/server/minecraftModules.test.js vendor/server/minecraftAgentLearning.test.js"
+    "test": "node --test test/*.test.js vendor/server/minecraftModules.test.js vendor/server/minecraftAgentLearning.test.js",
+    "test:core": "node --test test/core-*.test.js",
+    "scenario": "node tools/run-scenarios.cjs"
   },
   "dependencies": {
     "mineflayer": "4.37.1",
