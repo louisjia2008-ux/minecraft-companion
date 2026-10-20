@@ -18,7 +18,8 @@ const isSolid = (block) => Boolean(block) && block.boundingBox === 'block' && !L
 function groundAt(blockAt, x, z, top, bottom) {
   for (let y = top; y >= bottom; y -= 1) {
     const block = blockAt(x, y, z);
-    if (!block || isSoft(block)) continue;
+    if (!block) return { unloaded: true }; // unknown is not air
+    if (isSoft(block)) continue;
     if (LIQUID.has(block.name)) return { liquid: true };
     if (TREE(block.name)) return { tree: true };
     if (!GROUND.has(block.name)) return { other: block.name };
@@ -52,10 +53,13 @@ function evaluateSite(blockAt, corner, around) {
   }
   const anchor = { x: corner.x, y: mode + 1, z: corner.z };
   const house = createStarterHouse(anchor);
+  // Every solid block left in the shell's space is digging work too.
+  digs = 0;
   for (const p of house.clearance) {
     const block = blockAt(p.x, p.y, p.z);
-    if (block && TREE(block.name)) return null;
-    if (block && LIQUID.has(block.name)) return null;
+    if (!block) return null;
+    if (TREE(block.name) || LIQUID.has(block.name)) return null;
+    if (!isSoft(block)) digs += 1;
   }
   const doorstep = blockAt(house.entrance.x, house.entrance.y - 1, house.entrance.z);
   if (!isSolid(doorstep) && !isSoft(blockAt(house.entrance.x, house.entrance.y - 2, house.entrance.z))) {

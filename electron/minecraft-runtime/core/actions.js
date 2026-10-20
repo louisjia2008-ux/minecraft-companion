@@ -36,14 +36,23 @@ async function withClimbing(bot, targetY, run) {
   }
 }
 
-/** Solid rock or soil (not leaves) somewhere in the 8 blocks over the bot's head. */
+const solidGround = (block) => block && block.boundingBox === 'block' && !block.name.endsWith('_leaves')
+  && !block.name.endsWith('_log');
+
+/**
+ * Below ground: rock or soil over the head, or standing in a pit whose sides
+ * rise above head height. Under a tree canopy does not count.
+ */
 function underground(bot) {
-  const head = bot.entity.position.floored().offset(0, 2, 0);
-  for (let dy = 0; dy < 8; dy += 1) {
-    const block = bot.blockAt(head.offset(0, dy, 0));
-    if (block && block.boundingBox === 'block' && !block.name.endsWith('_leaves')) return true;
+  const feet = bot.entity.position.floored();
+  for (let dy = 2; dy < 10; dy += 1) if (solidGround(bot.blockAt(feet.offset(0, dy, 0)))) return true;
+  let walledSides = 0;
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    for (const reach of [1, 2]) {
+      if (solidGround(bot.blockAt(feet.offset(dx * reach, 2, dz * reach)))) { walledSides += 1; break; }
+    }
   }
-  return false;
+  return walledSides >= 3;
 }
 
 async function goTo(bot, ctx, goal, { timeoutMs = 30000, arrived, targetY } = {}) {

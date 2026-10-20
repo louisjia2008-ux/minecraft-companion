@@ -83,6 +83,14 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return () => false;
   }
 
+  // Nothing is mined under the house at any depth: a pit there ends up below
+  // the protected foundation with no way back up.
+  function nearHouseColumn(p) {
+    const a = memory.house?.anchor;
+    if (!a) return false;
+    return p.x >= a.x - 2 && p.x <= a.x + 8 && p.z >= a.z - 2 && p.z <= a.z + 8 && p.y <= a.y + 5;
+  }
+
   function insideHouse(p) {
     const a = memory.house?.anchor;
     if (!a) return false;
@@ -146,7 +154,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       }
       case 'gather': {
         const result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match,
-          blacklist, exclude: insideHouse });
+          blacklist, exclude: nearHouseColumn });
         if (result.reason === 'no_target_in_range') {
           if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
           return explore(ctx, step.key);
@@ -190,7 +198,18 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const work = siteWork((x, y, z) => bot.blockAt(new Vec3(x, y, z)), memory.house, (p, block) => expectedAt(p)(block.name));
     work.digs = work.digs.filter((d) => !blacklist.has(`site:${posKey(d.position)}`));
     work.fills = work.fills.filter((d) => !blacklist.has(`site:${posKey(d.position)}`));
+    // A site that keeps needing digging was misjudged; pick another while nothing stands on it yet.
+    if (work.digs.length && memory.siteDigs > 40 && nameAt(memory.house.furniture.crafting_table.position) !== 'crafting_table') {
+      ctx.record('site_abandoned', { anchor: memory.house.anchor, digs: memory.siteDigs });
+      const movements = bot.pathfinder?.movements;
+      if (movements && memory.protect) movements.exclusionAreasBreak = movements.exclusionAreasBreak.filter((f) => f !== memory.protect);
+      memory.house = null;
+      memory.protect = null;
+      memory.siteDigs = 0;
+      return { ok: true, abandoned: true };
+    }
     if (work.digs.length) {
+      memory.siteDigs = (memory.siteDigs || 0) + 1;
       const target = work.digs[0];
       const block = blockAt(target.position);
       ctx.record('site_dig', { position: posKey(target.position), block: target.name });
@@ -253,9 +272,16 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         continue;
       }
       const have = countKey(task.material, inventory, kb);
-      if (have <= 0 || (whenBatchReady && have < task.batch)) { waiting[task.material] = (waiting[task.material] || 0) + 1; continue; }
+      // Once a batch is started it continues until that material runs out.
+      const continuing = memory.batch === task.material;
+      if (have <= 0 || (whenBatchReady && !continuing && have < task.batch)) {
+        waiting[task.material] = (waiting[task.material] || 0) + 1;
+        continue;
+      }
+      memory.batch = task.batch > 1 ? task.material : null;
       return placeRecorded(ctx, task.position, task.match, task.what, task.options);
     }
+    memory.batch = null;
     if (!whenBatchReady && Object.keys(waiting).length) ctx.record('build_waiting', waiting);
     // The blacklist only defers a failed placement while other work exists.
     // With nothing else to do, retry the earliest one that has material.
