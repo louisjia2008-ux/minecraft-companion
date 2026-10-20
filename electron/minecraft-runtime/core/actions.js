@@ -61,6 +61,16 @@ async function goTo(bot, ctx, goal, { timeoutMs = 30000, arrived, targetY } = {}
   if (Number.isFinite(targetY) && targetY - bot.entity.position.y > 3 && underground(bot)) {
     return withClimbing(bot, targetY, () => goTo(bot, ctx, goal, { timeoutMs, arrived }));
   }
+  // Watchdog: the pathfinder can replan forever without taking a step from
+  // some start cells. No movement for 12 s (longer than a full plan, 10 s) ends it early.
+  let stalled = false;
+  let last = bot.entity.position.clone();
+  let lastMoveAt = Date.now();
+  const watchdog = setInterval(() => {
+    const now = bot.entity.position;
+    if (now.distanceTo(last) > 0.5 || bot.targetDigBlock) { last = now.clone(); lastMoveAt = Date.now(); return; }
+    if (Date.now() - lastMoveAt > 12000) { stalled = true; haltBody(bot); }
+  }, 1000);
   try {
     await runCancellable(() => bot.pathfinder.goto(goal), {
       signal: ctx.signal, timeoutMs, timeoutCode: 'path_timeout', cancel: () => haltBody(bot),
@@ -68,7 +78,10 @@ async function goTo(bot, ctx, goal, { timeoutMs = 30000, arrived, targetY } = {}
   } catch (error) {
     if (isAbort(error)) throw error;
     haltBody(bot);
+    if (stalled) return fail('no_progress');
     return fail(error?.code || error?.name || 'path_failed');
+  } finally {
+    clearInterval(watchdog);
   }
   // Pathfinder can "finish" with an empty path; arrival must be checked.
   const at = bot.entity.position;
@@ -283,7 +296,25 @@ async function fleeFrom(bot, ctx, from, { distance = 16, timeoutMs = 8000 } = {}
  * walk out with a generous drop limit, then dig straight down. Restores the
  * movement settings afterwards.
  */
+/** Walks one block by hand toward any open neighbouring cell. */
+async function nudge(bot, ctx) {
+  const start = bot.entity.position.clone();
+  const feet = start.floored();
+  const open = (b) => b && b.boundingBox === 'empty' && b.name !== 'water' && b.name !== 'lava';
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const cell = feet.offset(dx, 0, dz);
+    if (!open(bot.blockAt(cell)) || !open(bot.blockAt(cell.offset(0, 1, 0)))) continue;
+    if (bot.blockAt(cell.offset(0, -1, 0))?.boundingBox !== 'block') continue;
+    await bot.lookAt(cell.offset(0.5, 1.6, 0.5), true);
+    bot.setControlState('forward', true);
+    try { await sleep(450, ctx.signal); } finally { bot.setControlState('forward', false); }
+    if (bot.entity.position.distanceTo(start) > 0.7) return true;
+  }
+  return false;
+}
+
 async function unstick(bot, ctx) {
+  if (await nudge(bot, ctx)) return { ok: true, moved: 'nudged' };
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;
   // Down in a pit or a mine: pillar straight back up to ground level.
