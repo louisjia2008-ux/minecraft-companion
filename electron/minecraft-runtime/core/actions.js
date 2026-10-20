@@ -222,7 +222,7 @@ function pickFood(bot) {
   const foods = bot.registry.foodsByName || {};
   const candidates = bot.inventory.items().filter((item) => foods[item.name]);
   const safe = candidates.filter((item) => !RISKY_FOODS.has(item.name));
-  const pool = safe.length ? safe : (bot.food <= 6 ? candidates : []);
+  const pool = safe.length ? safe : (bot.food <= 6 || bot.health <= 8 ? candidates : []);
   pool.sort((a, b) => (foods[b.name].foodPoints || 0) - (foods[a.name].foodPoints || 0));
   return pool[0] || null;
 }

@@ -298,7 +298,11 @@ async function huntOne(bot, ctx, { mobs, dropMatch, radius = 48, blacklist }) {
     blacklist?.add(`mob:${target.id}`, result.reason, 60000);
     return result;
   }
-  return actions.collectDrops(bot, ctx, last, dropMatch, { radius: 8 });
+  // Pick up everything it dropped: a sheep killed for mutton also gives the wool a bed needs.
+  const before = actions.countItems(bot, dropMatch);
+  const picked = await actions.collectDrops(bot, ctx, last, () => true, { radius: 8 });
+  const wanted = actions.countItems(bot, dropMatch) - before;
+  return picked.ok ? { ok: true, gained: wanted } : picked;
 }
 
 /** Picks a ripe sweet berry bush (taiga food when no animals are around). */

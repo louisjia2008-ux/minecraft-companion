@@ -60,7 +60,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     want(state) {
       if (state.hostiles.some((h) => h.distance <= t.eatQuietRange)) return 0;
       const hungry = state.food <= t.eatFood || (state.health < 16 && state.food < 20);
-      return hungry && hasSafeFood(state, state.food <= 6) ? 1 : 0;
+      // Risky food (rotten flesh, raw chicken) only when starving or nearly dead.
+      return hungry && hasSafeFood(state, state.food <= 6 || state.health <= 8) ? 1 : 0;
     },
     run: (ctx) => actions.eat(bot, ctx),
   };
@@ -87,9 +88,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.MAINTENANCE,
     want(state) {
       if (state.food > t.provisionFood || hasSafeFood(state, true)) return 0;
-      // Chasing animals at low health is how the bot gets killed far from home.
-      if (state.health < t.provisionHealth && state.food > 6) return 0;
       if (state.hostiles.some((h) => h.distance <= 8)) return 0;
+      // Chasing animals at low health gets the bot killed at night; by day with
+      // nothing hostile around it is the only way back to regenerating.
+      if (state.health < t.provisionHealth && state.food > 6
+        && (state.isDay === false || state.hostiles.some((h) => h.distance <= 16))) return 0;
       return 0.5;
     },
     async run(ctx) {
