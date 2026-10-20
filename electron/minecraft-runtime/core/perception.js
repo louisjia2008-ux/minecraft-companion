@@ -14,6 +14,14 @@ function isHostile(entity) {
   return entity.type === 'hostile' || HOSTILE_NAMES.has(entity.name);
 }
 
+/** Main inventory plus armor and off-hand, which inventory.items() leaves out. */
+function ownedItems(bot) {
+  const items = [...(bot?.inventory?.items?.() || [])];
+  const slots = bot?.inventory?.slots || [];
+  for (const slot of [5, 6, 7, 8, 45]) if (slots[slot]) items.push(slots[slot]);
+  return items;
+}
+
 function countInventory(items) {
   const counts = {};
   for (const item of items || []) {
@@ -46,7 +54,7 @@ function perceive(bot, { hostileRange = 16, now = Date.now } = {}) {
     inWater: self.isInWater === true,
     oxygen: Number.isFinite(bot.oxygenLevel) ? bot.oxygenLevel : null,
     isDay: Number.isFinite(bot.time?.timeOfDay) ? bot.time.timeOfDay < 12542 || bot.time.timeOfDay > 23460 : null,
-    inventory: countInventory(bot.inventory?.items?.()),
+    inventory: countInventory(ownedItems(bot)),
     hostiles,
   };
 }
@@ -58,4 +66,4 @@ function countMatching(inventory, match) {
   return total;
 }
 
-module.exports = { perceive, isHostile, countInventory, countMatching, HOSTILE_NAMES };
+module.exports = { perceive, isHostile, ownedItems, countInventory, countMatching, HOSTILE_NAMES };

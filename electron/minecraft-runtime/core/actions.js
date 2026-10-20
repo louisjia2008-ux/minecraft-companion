@@ -8,6 +8,7 @@
 
 const { goals } = require('mineflayer-pathfinder');
 const { waitUntil, runCancellable, sleep } = require('./confirm');
+const { ownedItems } = require('./perception');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -94,7 +95,7 @@ function nearbyDrops(bot, origin, radius, matchName) {
 
 function countItems(bot, matchName) {
   let total = 0;
-  for (const item of bot.inventory.items()) if (matchName(item.name)) total += item.count;
+  for (const item of ownedItems(bot)) if (matchName(item.name)) total += item.count;
   return total;
 }
 
@@ -173,6 +174,11 @@ async function equipBestWeapon(bot) {
   if (best && bot.heldItem?.name !== best.item.name) {
     try { await bot.equip(best.item, 'hand'); } catch (_) { /* fight with whatever is held */ }
   }
+  const shield = bot.inventory.items().find((item) => item.name === 'shield');
+  const offhand = bot.inventory.slots?.[45];
+  if (shield && offhand?.name !== 'shield') {
+    try { await bot.equip(shield, 'off-hand'); } catch (_) { /* optional */ }
+  }
 }
 
 /** Fights one entity until it is gone, the timeout passes, or the signal aborts. */
@@ -208,7 +214,37 @@ async function fleeFrom(bot, ctx, from, { distance = 16, timeoutMs = 8000 } = {}
   return result;
 }
 
+/**
+ * Gets the bot off a spot it cannot path away from (a tree top, a pit): first
+ * walk out with a generous drop limit, then dig straight down. Restores the
+ * movement settings afterwards.
+ */
+async function unstick(bot, ctx) {
+  const start = bot.entity.position.clone();
+  const movements = bot.pathfinder.movements;
+  const saved = movements.maxDropDown;
+  try {
+    if (bot.health > 8) movements.maxDropDown = 12;
+    for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+      const goal = new goals.GoalNearXZ(start.x + Math.cos(angle) * 8, start.z + Math.sin(angle) * 8, 2);
+      await goTo(bot, ctx, goal, { timeoutMs: 15000, arrived: () => true });
+      if (bot.entity.position.distanceTo(start) > 3) return { ok: true, moved: 'walked' };
+    }
+  } finally {
+    movements.maxDropDown = saved;
+  }
+  for (let i = 0; i < 8; i += 1) {
+    const below = bot.blockAt(bot.entity.position.offset(0, -1, 0));
+    if (!below || below.boundingBox !== 'block' || !bot.canDigBlock(below)) break;
+    const dug = await digBlock(bot, ctx, below);
+    if (!dug.ok) break;
+    await waitUntil(() => bot.entity.onGround, { timeoutMs: 2000, signal: ctx.signal });
+    if (start.y - bot.entity.position.y >= 2) return { ok: true, moved: 'dug_down' };
+  }
+  return bot.entity.position.distanceTo(start) > 2 ? { ok: true, moved: 'partial' } : fail('stuck');
+}
+
 module.exports = {
-  goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  unstick, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, RISKY_FOODS,
 };

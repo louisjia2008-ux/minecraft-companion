@@ -35,6 +35,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     furnace: { item: null, input: 0, output: 0 },
     explore: {},
     exploreStreak: 0,
+    pathFailures: 0,
     verified: { crafting_table: false, furnace: false, chest: false, bed: false },
     steps: 0,
   };
@@ -155,6 +156,11 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         return result;
       }
       case 'hunt': {
+        // Optional food runs wait until the bot is healthy again.
+        if (requirement?.optional && ctx.perceive().health < 12) {
+          skipped.add(requirement.key, 'low_health', 60000);
+          return { ok: true, skipped: requirement.key };
+        }
         const result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist });
         if (result.reason === 'no_mob_in_range') {
           if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
@@ -299,10 +305,19 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     isDone: (state) => complete(state),
     progress: () => memory.steps,
     async run(ctx) {
+      // Several "no path" results in a row usually mean the bot itself is stuck.
+      if (memory.pathFailures >= 3) {
+        memory.pathFailures = 0;
+        ctx.record('unstick', { at: bot.entity.position.floored() });
+        return actions.unstick(bot, ctx);
+      }
       const result = await runOnce(ctx);
       if (result.ok) {
         memory.steps += 1;
+        memory.pathFailures = 0;
         if (!result.moved) memory.exploreStreak = 0;
+      } else if (['NoPath', 'Timeout', 'path_timeout', 'not_arrived'].includes(result.reason)) {
+        memory.pathFailures += 1;
       }
       return result;
     },
@@ -330,9 +345,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const hs = houseState();
     const inventory = plannerInventory(state);
     const stations = { crafting_table: hs.placed.crafting_table, furnace: hs.placed.furnace };
-    // Gear first: it keeps the bot alive for everything else.
-    const gearStep = planNext({ requirements: gear.map((key) => ({ key, count: 1 })), inventory, stations, kb });
-    if (gearStep) return runPlannerStep(ctx, gearStep, null);
+    // Gear first: it keeps the bot alive for everything else. A few pieces of
+    // food come right after stone tools, so lost health can be eaten back.
+    const gearReqs = gear.map((key) => ({ key, count: 1 }));
+    if (!skipped.has('food')) gearReqs.splice(Math.min(2, gearReqs.length), 0, { key: 'food', count: 4, optional: true });
+    const gearStep = planNext({ requirements: gearReqs, inventory, stations, kb });
+    if (gearStep) return runPlannerStep(ctx, gearStep, gearReqs.find((r) => r.key === gearStep.for));
     // Then build whatever a full batch of carried material allows.
     const ready = await buildStep(ctx, hs, state.inventory, { whenBatchReady: true });
     if (ready) return ready;

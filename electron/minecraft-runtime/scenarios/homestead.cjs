@@ -5,7 +5,7 @@
 // server: blocks in the world, items on the player, chest contents and the
 // player's respawn point.
 
-const { FLAT_GENERATOR, plantTrees } = require('./collectLogs.cjs');
+const { FLAT_GENERATOR, GROUND, plantTrees, resetArea } = require('./collectLogs.cjs');
 const { createStarterHouse } = require('../core/blueprints/starterHouse');
 
 const GEAR = ['iron_sword', 'iron_pickaxe', 'shield'];
@@ -47,7 +47,7 @@ async function verifyHomestead({ server, username, goal }) {
   const chestUsed = /block data: \[\{/.test(chestData[1]);
   // Sleeping or using the bed sets the respawn point to the bed itself.
   const respawn = await server.query(`data get entity ${username} respawn.pos`,
-    /(has the following entity data: .*|Found no elements matching respawn\.pos)/, 5000);
+    /(has the following entity data: .*|Found no elements matching respawn(?:\.pos)?|No entity was found)/, 5000);
   const pos = (respawn[1].match(/\[I;\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\]/) || []).slice(1).map(Number);
   const atBed = (p) => pos.length === 3 && pos[0] === p.x && pos[1] === p.y && pos[2] === p.z;
   const bedUsed = atBed(f.bed.position) || atBed(f.bed.head);
@@ -87,16 +87,18 @@ const homesteadFlat = {
     const trees = plantTrees(rng, 14);
     const commands = [
       ...living(username, difficulty),
-      'fill -25 1 -25 25 12 25 air',
-      'fill -25 -3 -25 25 -1 25 dirt', 'fill -25 0 -25 25 0 25 grass_block',
+      ...resetArea(),
       ...trees.commands,
     ];
     // Buried ore a few blocks under the dirt: coal near the surface, iron deeper.
-    for (const [x, z] of [[14, 14], [-16, 12]]) commands.push(`fill ${x} -6 ${z} ${x + 1} -5 ${z + 1} coal_ore`);
-    for (const [x, z] of [[-14, -15], [16, -12], [0, 18]]) commands.push(`fill ${x} -12 ${z} ${x + 1} -11 ${z + 1} iron_ore`);
-    for (let i = 0; i < 6; i += 1) commands.push(`summon sheep ${Math.round(rng() * 40 - 20)} 1 ${Math.round(rng() * 40 - 20)}`);
-    for (let i = 0; i < 4; i += 1) commands.push(`summon cow ${Math.round(rng() * 40 - 20)} 1 ${Math.round(rng() * 40 - 20)}`);
-    commands.push(`tp ${username} 0.5 1 0.5 0 0`);
+    for (const [x, z] of [[14, 14], [-16, 12]]) commands.push(`fill ${x} ${GROUND - 7} ${z} ${x + 1} ${GROUND - 6} ${z + 1} coal_ore`);
+    for (const [x, z] of [[-14, -15], [16, -12], [0, 18]]) {
+      commands.push(`fill ${x} ${GROUND - 13} ${z} ${x + 1} ${GROUND - 12} ${z + 1} iron_ore`);
+    }
+    const spot = () => `${Math.round(rng() * 40 - 20)} ${GROUND} ${Math.round(rng() * 40 - 20)}`;
+    for (let i = 0; i < 6; i += 1) commands.push(`summon sheep ${spot()}`);
+    for (let i = 0; i < 4; i += 1) commands.push(`summon cow ${spot()}`);
+    commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`);
     return { commands, details: { trees: trees.trees.length } };
   },
   start: (companion) => companion.homestead(),

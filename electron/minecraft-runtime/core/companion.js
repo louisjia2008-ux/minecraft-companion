@@ -19,7 +19,7 @@ function configureMovements(bot) {
   movements.scafoldingBlocks = [];
   movements.allowParkour = false;
   movements.allowSprinting = true;
-  movements.maxDropDown = 3;
+  movements.maxDropDown = 4; // a 4-block drop costs one heart; 3 strands the bot on tree tops
   movements.infiniteLiquidDropdownDistance = false;
   movements.canOpenDoors = true;
   const water = bot.registry.blocksByName.water;

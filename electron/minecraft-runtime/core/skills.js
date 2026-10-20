@@ -8,6 +8,7 @@ const actions = require('./actions');
 const { waitUntil, runCancellable, sleep } = require('./confirm');
 const { posKey } = require('./blacklist');
 const { FUELS } = require('./knowledge');
+const { ownedItems } = require('./perception');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -16,7 +17,7 @@ const AIR = new Set(['air', 'cave_air', 'void_air']);
 
 function inventoryCounts(bot) {
   const counts = {};
-  for (const item of bot.inventory.items()) counts[item.name] = (counts[item.name] || 0) + item.count;
+  for (const item of ownedItems(bot)) counts[item.name] = (counts[item.name] || 0) + item.count;
   return counts;
 }
 

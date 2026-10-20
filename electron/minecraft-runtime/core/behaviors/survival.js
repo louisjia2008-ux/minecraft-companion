@@ -17,7 +17,8 @@ const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, thresholds = {} } = {}) {
   const t = { escapeHealth: 6, escapeRange: 6, defendRange: 5, rangedRange: 14, rangedHealth: 10, eatFood: 14,
-    eatQuietRange: 8, provisionFood: 12, oxygen: 8, ...thresholds };
+    eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, oxygen: 8, dropsTtlMs: 270000,
+    ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
   const foodCheck = isFood || ((name) => Boolean(bot.registry.foodsByName?.[name]));
   const hasSafeFood = (state, desperate) => Object.entries(state.inventory)
@@ -85,13 +86,51 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.MAINTENANCE,
     want(state) {
       if (state.food > t.provisionFood || hasSafeFood(state, true)) return 0;
-      if (state.hostiles.some((h) => h.distance <= t.eatQuietRange)) return 0;
+      // Chasing animals at low health is how the bot gets killed far from home.
+      if (state.health < t.provisionHealth && state.food > 6) return 0;
+      if (state.hostiles.some((h) => h.distance <= 8)) return 0;
       return 0.5;
     },
-    run: (ctx) => skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 40, blacklist: huntBlacklist }),
+    run: (ctx) => skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 24, blacklist: huntBlacklist }),
   };
 
-  return [escape, breathe, defend, eat, provision];
+  // Low health with a full stomach: stand still a few seconds and let it regenerate.
+  const recover = {
+    name: 'recover',
+    band: BAND.MAINTENANCE,
+    want: (state) => (state.health < t.recoverHealth && state.food >= 18
+      && !state.hostiles.some((h) => h.distance <= 8) ? 0.3 : 0),
+    async run(ctx) {
+      actions.haltBody(bot);
+      await sleep(3000, ctx.signal);
+      return { ok: true };
+    },
+  };
+
+  // Items dropped on death stay for five minutes: go back for them once it is safe.
+  let lastDeath = null;
+  bot.on?.('death', () => { lastDeath = { position: bot.entity.position.clone(), at: Date.now(), tries: 0 }; });
+  const recoverDrops = {
+    name: 'recover_drops',
+    band: BAND.MAINTENANCE,
+    want(state) {
+      if (!lastDeath || Date.now() - lastDeath.at > t.dropsTtlMs || lastDeath.tries >= 3) return 0;
+      if (state.health < 10 || state.hostiles.some((h) => h.distance <= 8)) return 0;
+      return state.position.distanceTo(lastDeath.position) < 160 ? 0.8 : 0;
+    },
+    async run(ctx) {
+      const target = lastDeath;
+      target.tries += 1;
+      ctx.record('recover_drops', { position: target.position.floored(), try: target.tries });
+      const moved = await actions.goNear(bot, ctx, target.position, 2, { timeoutMs: 60000 });
+      if (!moved.ok) return moved;
+      const result = await actions.collectDrops(bot, ctx, target.position, () => true, { radius: 8, timeoutMs: 15000 });
+      if (result.ok || target.tries >= 3) lastDeath = null;
+      return result;
+    },
+  };
+
+  return [escape, breathe, defend, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };

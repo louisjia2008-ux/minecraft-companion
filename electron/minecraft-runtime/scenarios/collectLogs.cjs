@@ -5,11 +5,13 @@
 
 const TARGET = 10;
 
-// bedrock y=-64, stone to y=-4, dirt to y=-1, grass at y=0; players stand at y=1.
+// Players stand at y=64 on grass, like ordinary terrain. A surface below
+// y=40 would make every slime chunk spawn slimes day and night.
+const GROUND = 64;
 const FLAT_GENERATOR = {
   layers: [
     { block: 'minecraft:bedrock', height: 1 },
-    { block: 'minecraft:stone', height: 60 },
+    { block: 'minecraft:stone', height: 123 },
     { block: 'minecraft:dirt', height: 3 },
     { block: 'minecraft:grass_block', height: 1 },
   ],
@@ -38,11 +40,23 @@ function plantTrees(rng, count = 8) {
     if (placed.some((p) => Math.abs(p.x - x) < 5 && Math.abs(p.z - z) < 5)) continue;
     const height = 4 + Math.floor(rng() * 3);
     placed.push({ x, z, height });
-    commands.push(`fill ${x - 2} ${height - 1} ${z - 2} ${x + 2} ${height} ${z + 2} oak_leaves[persistent=true] keep`);
-    commands.push(`fill ${x - 1} ${height + 1} ${z - 1} ${x + 1} ${height + 1} ${z + 1} oak_leaves[persistent=true] keep`);
-    commands.push(`fill ${x} 1 ${z} ${x} ${height} ${z} oak_log`);
+    const top = GROUND + height - 1;
+    commands.push(`fill ${x - 2} ${top - 1} ${z - 2} ${x + 2} ${top} ${z + 2} oak_leaves[persistent=true] keep`);
+    commands.push(`fill ${x - 1} ${top + 1} ${z - 1} ${x + 1} ${top + 1} ${z + 1} oak_leaves[persistent=true] keep`);
+    commands.push(`fill ${x} ${GROUND} ${z} ${x} ${top} ${z} oak_log`);
   }
   return { commands, trees: placed };
+}
+
+/** Clears the 51x51 test area back to grass; each fill stays under the 32768-block limit. */
+function resetArea() {
+  return [
+    `fill -25 ${GROUND} -25 25 ${GROUND + 11} 25 air`,
+    `fill -25 ${GROUND - 4} -25 25 ${GROUND - 2} 25 dirt`,
+    `fill -25 ${GROUND - 1} -25 25 ${GROUND - 1} 25 grass_block`,
+    // Respawn on open ground, never on a tree top or inside the house site.
+    'gamerule spawnRadius 0', `setworldspawn 0 ${GROUND} 23`,
+  ];
 }
 
 async function countLogsOnServer(server, username) {
@@ -64,10 +78,9 @@ const collectLogsFlat = {
     return {
       commands: [
         ...commonSetup(username, difficulty),
-        'fill -25 1 -25 25 12 25 air', // stays under the 32768-block fill limit
-        'fill -25 -3 -25 25 -1 25 dirt', 'fill -25 0 -25 25 0 25 grass_block',
+        ...resetArea(),
         ...trees.commands,
-        `tp ${username} 0.5 1 0.5 0 0`,
+        `tp ${username} 0.5 ${GROUND} 0.5 0 0`,
       ],
       details: { trees: trees.trees },
     };
@@ -101,4 +114,4 @@ const collectLogsNatural = {
   },
 };
 
-module.exports = { collectLogsFlat, collectLogsNatural, plantTrees, FLAT_GENERATOR };
+module.exports = { collectLogsFlat, collectLogsNatural, plantTrees, resetArea, FLAT_GENERATOR, GROUND };
