@@ -101,8 +101,22 @@ async function craft(bot, ctx, { item, times = 1, tablePosition = null }) {
       crafted += 1;
     } else break;
   }
-  if (crafted === 0) return fail(bot.recipesFor(info.id, null, 1, table).length ? 'craft_unconfirmed' : 'no_recipe');
+  if (crafted === 0) {
+    if (bot.recipesFor(info.id, null, 1, table).length) return fail('craft_unconfirmed');
+    // Say exactly what is short (the bot's count can drift from the server's).
+    const have = inventoryCounts(bot);
+    const recipe = bot.recipesAll(info.id, null, table)
+      .map((r) => r.delta.filter((d) => d.count < 0).map((d) => ({ name: bot.registry.items[d.id]?.name, need: -d.count })))
+      .sort((a, b) => shortBy(a, have) - shortBy(b, have))[0] || [];
+    const missing = recipe.filter((d) => (have[d.name] || 0) < d.need)
+      .map((d) => ({ name: d.name, short: d.need - (have[d.name] || 0) }));
+    return fail('missing_ingredients', { missing });
+  }
   return { ok: true, crafted, gained: actions.countItems(bot, (n) => n === item) - before, usedTable: Boolean(table) };
+}
+
+function shortBy(ingredients, have) {
+  return ingredients.reduce((sum, d) => sum + Math.max(0, d.need - (have[d.name] || 0)), 0);
 }
 
 /**

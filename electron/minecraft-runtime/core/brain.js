@@ -16,6 +16,7 @@ function createBrain({
   noProgressLimit = 6,
   failureCooldownMs = 2000,
   maxCooldownMs = 30000,
+  goalRetryDelayMs = 250,
 } = {}) {
   if (typeof perceive !== 'function') throw new TypeError('perceive is required');
   const permanent = behaviors.map(validateBehavior);
@@ -95,9 +96,16 @@ function createBrain({
       failures.delete(behavior.name);
       return;
     }
-    // Goals are bounded by the no-progress budget; other behaviors back off so a
-    // failing reflex cannot monopolize the body.
-    if (behavior.isGoal) return;
+    // Goals are bounded by the no-progress budget and pause briefly between
+    // failures, so a step that fails instantly cannot burn the budget in a
+    // second; other behaviors back off so a failing reflex cannot monopolize the body.
+    if (behavior.isGoal) {
+      const stalls = goal?.stalls || 0;
+      if (goalRetryDelayMs > 0) {
+        failures.set(behavior.name, { count: stalls, until: now() + Math.min(3000, goalRetryDelayMs * (stalls + 1)) });
+      }
+      return;
+    }
     const previous = failures.get(behavior.name);
     const count = (previous?.count || 0) + 1;
     const delay = Math.min(maxCooldownMs, failureCooldownMs * 2 ** (count - 1));

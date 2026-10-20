@@ -47,7 +47,7 @@ test('gathers nearest low logs first and finishes at the target count', async ()
   const forest = makeForest([new Vec3(5, 66, 0), new Vec3(5, 64, 0), new Vec3(5, 65, 0), new Vec3(30, 64, 0)]);
   const goal = createGatherLogsGoal({ bot: null, count: 3, baseline: 0, actions: forest.actions, findTargets: forest.findTargets });
   const events = [];
-  const brain = createBrain({ perceive: forest.perceive, onEvent: (e) => events.push(e) });
+  const brain = createBrain({ perceive: forest.perceive, goalRetryDelayMs: 0, onEvent: (e) => events.push(e) });
   brain.setGoal(goal);
   await drive(brain, () => events.some((e) => e.type === 'goal_done'));
   assert.deepEqual(forest.attempts, ['5,64,0', '5,65,0', '5,66,0']);
@@ -58,7 +58,7 @@ test('an unreachable log is blacklisted and another tree is chosen', async () =>
   const forest = makeForest([new Vec3(3, 64, 0), new Vec3(10, 64, 0), new Vec3(12, 64, 0)], new Set(['3,64,0']));
   const goal = createGatherLogsGoal({ bot: null, count: 2, baseline: 0, actions: forest.actions, findTargets: forest.findTargets });
   const events = [];
-  const brain = createBrain({ perceive: forest.perceive, onEvent: (e) => events.push(e) });
+  const brain = createBrain({ perceive: forest.perceive, goalRetryDelayMs: 0, onEvent: (e) => events.push(e) });
   brain.setGoal(goal);
   await drive(brain, () => events.some((e) => e.type === 'goal_done'));
   assert.deepEqual(forest.attempts, ['3,64,0', '10,64,0', '12,64,0']);
@@ -68,7 +68,7 @@ test('no reachable logs ends in goal_failed, not an endless loop', async () => {
   const forest = makeForest([new Vec3(3, 64, 0)], new Set(['3,64,0']));
   const goal = createGatherLogsGoal({ bot: null, count: 2, baseline: 0, actions: forest.actions, findTargets: forest.findTargets });
   const events = [];
-  const brain = createBrain({ perceive: forest.perceive, noProgressLimit: 4, onEvent: (e) => events.push(e) });
+  const brain = createBrain({ perceive: forest.perceive, noProgressLimit: 4, goalRetryDelayMs: 0, onEvent: (e) => events.push(e) });
   brain.setGoal(goal);
   await drive(brain, () => events.some((e) => e.type === 'goal_failed'));
   const failed = events.find((e) => e.type === 'goal_failed');

@@ -17,7 +17,7 @@ const { Vec3 } = require('vec3');
 const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const { planNext } = require('../planner');
-const { KNOWLEDGE, countKey } = require('../knowledge');
+const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { createStarterHouse } = require('../blueprints/starterHouse');
 const { chooseSite, siteWork } = require('../site');
 const { createBlacklist, posKey } = require('../blacklist');
@@ -39,6 +39,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     explore: {},
     exploreStreak: 0,
     pathFailures: 0,
+    shortfall: {},
     verified: { crafting_table: false, furnace: false, chest: false, bed: false },
     steps: 0,
   };
@@ -100,6 +101,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   // House materials only; gear is planned separately before and after the house.
   function requirements(state, hs) {
     const reqs = [];
+    for (const [key, entry] of Object.entries(memory.shortfall)) {
+      if (entry.until < Date.now()) { delete memory.shortfall[key]; continue; }
+      reqs.push({ key, count: countKey(key, state.inventory, kb) + entry.extra });
+    }
     const work = siteWork((x, y, z) => bot.blockAt(new Vec3(x, y, z)), memory.house, (p, block) => expectedAt(p)(block.name));
     const stair = memory.scaffoldActive ? memory.house.scaffold.filter((p) => !FILLERS.has(nameAt(p))).length : 0;
     if (work.fills.length + stair) reqs.push({ key: 'dirt', count: work.fills.length + stair });
@@ -150,6 +155,11 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         const result = await skills.craft(bot, ctx, { item: step.item, times: step.times,
           tablePosition: step.table ? house.furniture.crafting_table.position : null });
         if (result.ok && result.usedTable) memory.verified.crafting_table = true;
+        // Short of something the plan thought was there: plan for it explicitly for a while.
+        for (const m of result.missing || []) {
+          const family = familyOf(m.name, kb);
+          if (family) memory.shortfall[family] = { extra: m.short, until: Date.now() + 120000 };
+        }
         return result;
       }
       case 'gather': {

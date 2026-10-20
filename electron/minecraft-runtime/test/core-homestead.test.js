@@ -128,7 +128,7 @@ function simulate({ seed = 1, failRate = 0.15, deathAtStep = null } = {}) {
 async function runHomestead(sim, limit = 20000) {
   const goal = createHomesteadGoal({ bot: sim.bot, skills: sim.skills, actions: sim.actions });
   const events = [];
-  const brain = createBrain({ perceive: sim.perceive, onEvent: (e) => events.push(e) });
+  const brain = createBrain({ perceive: sim.perceive, goalRetryDelayMs: 0, onEvent: (e) => events.push(e) });
   brain.setGoal(goal);
   let i = 0;
   for (; i < limit; i += 1) {
