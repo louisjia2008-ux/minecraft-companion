@@ -21,6 +21,7 @@ function createBlacklist({ ttlMs = 120000, now = Date.now } = {}) {
       for (const key of [...entries.keys()]) this.has(key);
       return entries.size;
     },
+    delete: (key) => entries.delete(String(key)),
     clear: () => entries.clear(),
   };
 }

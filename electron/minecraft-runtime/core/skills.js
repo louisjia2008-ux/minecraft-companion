@@ -159,6 +159,11 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
   }
   const item = bot.inventory.items().find((i) => itemMatch(i.name));
   if (!item) return fail('no_material');
+  // Standing in the very cell to fill (a foundation hole): climb out first.
+  if (bot.entity.position.floored().equals(target) || bot.entity.position.floored().offset(0, 1, 0).equals(target)) {
+    const away = new goals.GoalInvert(new goals.GoalNear(target.x, target.y, target.z, 1));
+    await actions.goTo(bot, ctx, away, { timeoutMs: 10000, arrived: () => !overlaps(bot.entity, target) });
+  }
 
   let ref;
   let face;

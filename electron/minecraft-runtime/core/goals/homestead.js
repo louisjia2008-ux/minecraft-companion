@@ -155,8 +155,17 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     const house = memory.house;
     switch (step.kind) {
-      case 'place_station':
-        return skills.placeAt(bot, ctx, house.furniture[step.station].position, (n) => n === step.station, { faces: DOWN });
+      case 'place_station': {
+        // A station needs its foundation; if that hole is still open, fill it first.
+        const spot = house.furniture[step.station].position;
+        const below = { x: spot.x, y: spot.y - 1, z: spot.z };
+        if (blockAt(below)?.boundingBox !== 'block') {
+          blacklist.delete(`site:${posKey(below)}`);
+          ctx.record('station_needs_foundation', { station: step.station });
+          return skills.placeAt(bot, ctx, below, (n) => FILLERS.has(n));
+        }
+        return skills.placeAt(bot, ctx, spot, (n) => n === step.station, { faces: DOWN });
+      }
       case 'craft': {
         const result = await skills.craft(bot, ctx, { item: step.item, times: step.times,
           tablePosition: step.table ? house.furniture.crafting_table.position : null });
