@@ -45,6 +45,8 @@ const solidGround = (block) => block && block.boundingBox === 'block' && !block.
  */
 function underground(bot) {
   const feet = bot.entity.position.floored();
+  // A goal that knows the local ground level (the house site) says so directly.
+  if (Number.isFinite(bot.companionSurfaceY) && feet.y < bot.companionSurfaceY - 1) return true;
   for (let dy = 2; dy < 10; dy += 1) if (solidGround(bot.blockAt(feet.offset(0, dy, 0)))) return true;
   let walledSides = 0;
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -270,6 +272,13 @@ async function fleeFrom(bot, ctx, from, { distance = 16, timeoutMs = 8000 } = {}
 async function unstick(bot, ctx) {
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;
+  // Down in a pit or a mine: pillar straight back up to ground level.
+  if (underground(bot)) {
+    const surface = Number.isFinite(bot.companionSurfaceY) ? bot.companionSurfaceY : start.y + 6;
+    await withClimbing(bot, surface + 4, () => goTo(bot, ctx, new goals.GoalY(Math.floor(surface)), { timeoutMs: 30000,
+      arrived: () => true }));
+    if (bot.entity.position.y - start.y >= 2) return { ok: true, moved: 'climbed' };
+  }
   const saved = movements.maxDropDown;
   try {
     if (bot.health > 8) movements.maxDropDown = 12;

@@ -303,6 +303,30 @@ async function huntOne(bot, ctx, { mobs, dropMatch, radius = 48, blacklist }) {
   return actions.collectDrops(bot, ctx, last, dropMatch, { radius: 8 });
 }
 
+/** Picks a ripe sweet berry bush (taiga food when no animals are around). */
+async function pickBerries(bot, ctx, { radius = 32, blacklist } = {}) {
+  const bush = bot.registry.blocksByName.sweet_berry_bush;
+  if (!bush) return fail('no_berries');
+  const ripe = bot.findBlocks({ matching: bush.id, maxDistance: radius, count: 16,
+    useExtraInfo: (b) => Number(b.getProperties?.().age) >= 2 })
+    .filter((p) => !blacklist?.has(`berry:${posKey(p)}`))
+    .map((p) => bot.blockAt(p)).filter(Boolean);
+  if (!ripe.length) return fail('no_berries');
+  const block = ripe[0];
+  const before = actions.countItems(bot, (n) => n === 'sweet_berries');
+  const moved = await actions.goToDig(bot, ctx, block, { timeoutMs: 30000 });
+  if (!moved.ok) { blacklist?.add(`berry:${posKey(block.position)}`, moved.reason); return moved; }
+  try {
+    await bot.activateBlock(bot.blockAt(block.position));
+  } catch (error) {
+    if (isAbort(error)) throw error;
+  }
+  await actions.collectDrops(bot, ctx, block.position.offset(0.5, 0.5, 0.5), (n) => n === 'sweet_berries', { radius: 4, timeoutMs: 4000 });
+  const gained = actions.countItems(bot, (n) => n === 'sweet_berries') - before;
+  blacklist?.add(`berry:${posKey(block.position)}`, 'picked', 120000);
+  return gained > 0 ? { ok: true, gained } : fail('berries_unconfirmed');
+}
+
 /** Walks ~32 blocks in a direction not tried recently. */
 async function explore(bot, ctx, memory) {
   memory.tried = memory.tried || [];
@@ -375,4 +399,4 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, smelt, huntOne, explore, useChest, useBed, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, smelt, huntOne, pickBerries, explore, useChest, useBed, inventoryCounts, entityInside };

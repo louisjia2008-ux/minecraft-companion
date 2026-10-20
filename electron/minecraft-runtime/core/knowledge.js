@@ -19,7 +19,7 @@ const exact = (...names) => { const set = new Set(names); return (n) => set.has(
 
 // Raw meats are fine early; risky foods are handled by the eat action itself.
 const MEATS = ['beef', 'porkchop', 'mutton', 'chicken', 'rabbit', 'cooked_beef', 'cooked_porkchop',
-  'cooked_mutton', 'cooked_chicken', 'cooked_rabbit', 'bread', 'apple', 'baked_potato', 'carrot'];
+  'cooked_mutton', 'cooked_chicken', 'cooked_rabbit', 'bread', 'apple', 'baked_potato', 'carrot', 'sweet_berries'];
 
 function byMost(inventory, names) {
   let best = null;

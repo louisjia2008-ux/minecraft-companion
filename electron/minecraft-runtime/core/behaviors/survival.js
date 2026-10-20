@@ -94,8 +94,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 32, blacklist: huntBlacklist });
-      // Nothing to hunt in sight: look further afield instead of waiting to starve.
-      if (result.reason === 'no_mob_in_range') return skills.explore(bot, ctx, exploreMemory);
+      // Nothing to hunt in sight: berries, else look further afield instead of waiting to starve.
+      if (result.reason === 'no_mob_in_range') {
+        const berries = await skills.pickBerries(bot, ctx, { blacklist: huntBlacklist });
+        if (berries.ok || berries.reason !== 'no_berries') return berries;
+        return skills.explore(bot, ctx, exploreMemory);
+      }
       return result;
     },
   };

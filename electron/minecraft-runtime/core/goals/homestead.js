@@ -190,6 +190,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   function protectSite() {
     const movements = bot.pathfinder?.movements;
     if (!movements || !memory.house) return;
+    bot.companionSurfaceY = memory.house.anchor.y;
     if (!memory.protect) memory.protect = (block) => (insideHouse(block.position) ? 100 : 0);
     if (!movements.exclusionAreasBreak.includes(memory.protect)) movements.exclusionAreasBreak.push(memory.protect);
   }
