@@ -190,7 +190,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
           skipped.add(requirement.key, 'low_health', 60000);
           return { ok: true, skipped: requirement.key };
         }
-        const result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist });
+        const result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist, radius: 96 });
         if (result.reason === 'no_mob_in_range') {
           if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
           return explore(ctx, step.key);

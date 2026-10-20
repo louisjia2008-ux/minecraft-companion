@@ -306,6 +306,12 @@ async function huntOne(bot, ctx, { mobs, dropMatch, radius = 48, blacklist }) {
     .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0];
   if (!target) return fail('no_mob_in_range');
   ctx.record('hunt_target', { mob: target.name, distance: Math.round(target.position.distanceTo(here)) });
+  // Far animals: walk over first; the fight itself has a short timeout.
+  if (target.position.distanceTo(here) > 12) {
+    const near = await actions.goNear(bot, ctx, target.position.clone(), 4, { timeoutMs: 60000 });
+    if (!near.ok && !bot.entities[target.id]) return near;
+    if (!bot.entities[target.id]) return fail('mob_gone');
+  }
   let last = target.position.clone();
   const tracker = setInterval(() => { if (bot.entities[target.id]) last = bot.entities[target.id].position.clone(); }, 100);
   let result;

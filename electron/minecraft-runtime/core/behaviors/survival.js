@@ -100,7 +100,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       return 0.5;
     },
     async run(ctx) {
-      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 32, blacklist: huntBlacklist });
+      // Animals are visible out to about 100 blocks; go for the nearest one seen.
+      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 96, blacklist: huntBlacklist });
       // Nothing to hunt in sight: berries, else look further afield instead of waiting to starve.
       if (result.reason === 'no_mob_in_range') {
         const berries = await skills.pickBerries(bot, ctx, { blacklist: huntBlacklist });
