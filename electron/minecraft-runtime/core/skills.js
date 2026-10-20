@@ -261,6 +261,13 @@ async function smelt(bot, ctx, { input, count, furnacePosition, memory }) {
       }
     };
     await takeAll();
+    // A different item left in the input slot (meat from an earlier cooking
+    // run) blocks putInput; take it back first.
+    const leftover = furnace.inputItem();
+    if (leftover && leftover.name !== input) {
+      await furnace.takeInput();
+      await sleep(250, ctx.signal);
+    }
     const inputInfo = bot.registry.itemsByName[input];
     const inside = furnace.inputItem()?.count || 0;
     const carried = actions.countItems(bot, (n) => n === input);
