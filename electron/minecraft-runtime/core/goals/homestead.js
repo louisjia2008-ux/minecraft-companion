@@ -321,9 +321,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   }
 
   async function surfaceFirst(ctx) {
-    if (typeof actions.surface !== 'function') return null;
+    if (typeof actions.surface !== 'function' || blacklist.has('surface')) return null;
     const result = await actions.surface(bot, ctx);
     if (result) ctx.record('surface', { ok: result.ok });
+    // A climb that failed should not hold up every other step: carry on
+    // where the bot is and try again later.
+    if (result && !result.ok) blacklist.add('surface', result.reason, 60000);
     return result;
   }
 

@@ -39,6 +39,15 @@ async function withClimbing(bot, targetY, run) {
 const solidGround = (block) => block && block.boundingBox === 'block' && !block.name.endsWith('_leaves')
   && !block.name.endsWith('_log');
 
+function openSky(bot, feet) {
+  for (let dy = 2; dy < 48; dy += 1) {
+    const block = bot.blockAt(feet.offset(0, dy, 0));
+    if (!block) return true;
+    if (block.boundingBox === 'block' && !block.name.endsWith('_leaves')) return false;
+  }
+  return true;
+}
+
 /**
  * Below ground: rock or soil over the head, or standing in a pit whose sides
  * rise above head height. Under a tree canopy does not count.
@@ -46,8 +55,10 @@ const solidGround = (block) => block && block.boundingBox === 'block' && !block.
 function underground(bot) {
   const feet = bot.entity.position.floored();
   // A goal that knows the local ground level (the house site) says so directly.
-  if (Number.isFinite(bot.companionSurfaceY) && feet.y < bot.companionSurfaceY - 1) return true;
   for (let dy = 2; dy < 10; dy += 1) if (solidGround(bot.blockAt(feet.offset(0, dy, 0)))) return true;
+  // Below the site's ground level only counts with something overhead: a
+  // valley floor under open sky is just lower ground.
+  if (Number.isFinite(bot.companionSurfaceY) && feet.y < bot.companionSurfaceY - 1 && !openSky(bot, feet)) return true;
   let walledSides = 0;
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     for (const reach of [1, 2]) {
@@ -428,6 +439,7 @@ async function unstick(bot, ctx) {
 /** Climbs back to the surface reference level if the bot is below it. */
 async function surface(bot, ctx) {
   if (!Number.isFinite(bot.companionSurfaceY) || bot.entity.position.y >= bot.companionSurfaceY - 1) return null;
+  if (!underground(bot)) return null;
   const target = Math.floor(bot.companionSurfaceY);
   await withClimbing(bot, target + 4, () => goTo(bot, ctx, new goals.GoalY(target), { timeoutMs: 30000, arrived: () => true }));
   return bot.entity.position.y >= target - 1 ? { ok: true, surfaced: true } : fail('still_below_surface');
