@@ -376,19 +376,43 @@ async function useChest(bot, ctx, { position, itemMatch }) {
  * head with a block. Nothing can reach the bot in a sealed 1x1 shaft. Returns
  * the bunker so digOut can undo it exactly.
  */
-async function digIn(bot, ctx, { sealMatch }) {
-  const top = bot.entity.position.floored();
-  for (let dy = 1; dy <= 4; dy += 1) {
+const SOLID = (b) => b && b.boundingBox === 'block' && !/water|lava|gravel|sand/.test(b.name);
+const SIDES4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+/** A spot where a sealed shaft can be dug: solid soil or rock all around, nothing that falls or flows. */
+function bunkerSpot(bot, top) {
+  if (bot.blockAt(top)?.boundingBox !== 'empty' || bot.blockAt(top.offset(0, 1, 0))?.boundingBox !== 'empty') return false;
+  for (let dy = 1; dy <= 3; dy += 1) {
     const b = bot.blockAt(top.offset(0, -dy, 0));
-    if (!b || b.boundingBox !== 'block' || !bot.canDigBlock(b) || /water|lava/.test(b.name)) return fail('cannot_dig_in');
+    if (!SOLID(b) || !b.diggable) return false;
+    for (const [dx, dz] of SIDES4) if (!SOLID(bot.blockAt(top.offset(dx, -dy, dz)))) return false;
   }
-  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    for (let dy = 1; dy <= 3; dy += 1) {
-      const side = bot.blockAt(top.offset(dx, -dy, dz));
-      if (!side || side.boundingBox !== 'block') return fail('bunker_walls_open');
-    }
-  }
+  return SOLID(bot.blockAt(top.offset(0, -4, 0)));
+}
+
+async function digIn(bot, ctx, { sealMatch, avoid = () => false }) {
   if (!bot.inventory.items().some((i) => sealMatch(i.name))) return fail('no_seal_block');
+  let top = bot.entity.position.floored();
+  if (!bunkerSpot(bot, top) || avoid(top)) {
+    // Look for a suitable spot close by and walk there first.
+    let best = null;
+    for (let dx = -8; dx <= 8; dx += 1) {
+      for (let dz = -8; dz <= 8; dz += 1) {
+        for (let dy = -2; dy <= 2; dy += 1) {
+          const p = top.offset(dx, dy, dz);
+          if (avoid(p) || !bunkerSpot(bot, p)) continue;
+          const d = Math.abs(dx) + Math.abs(dz) + Math.abs(dy) * 2;
+          if (!best || d < best.d) best = { p, d };
+        }
+      }
+    }
+    if (!best) return fail('no_bunker_spot');
+    const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(best.p.x, best.p.y, best.p.z), { timeoutMs: 20000 });
+    if (!moved.ok) return moved;
+    top = bot.entity.position.floored();
+    if (!bunkerSpot(bot, top)) return fail('bunker_spot_changed');
+    await actions.recentre(bot, ctx);
+  }
   for (let dy = 1; dy <= 3; dy += 1) {
     const below = bot.blockAt(top.offset(0, -dy, 0));
     const dug = await actions.digBlock(bot, ctx, below);

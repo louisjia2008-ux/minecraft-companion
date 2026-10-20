@@ -335,6 +335,14 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       return { ok: true, waited: true };
     }
     const shellDone = !hs.missing.length && hs.placed.door;
+    // A bed still in the bag goes down at its spot before dark.
+    if (!hs.placed.bed && countKey('bed', state.inventory, kb) > 0 && !blacklist.has('night:bed')) {
+      const f = house.furniture;
+      const placed = await placeRecorded(ctx, f.bed.position, (n) => matches('bed', n), 'bed',
+        { stand: f.bed.stand, verify: () => matches('bed', nameAt(f.bed.head)) });
+      if (!placed.ok) blacklist.add('night:bed', placed.reason, 60000);
+      return placed;
+    }
     if (hs.placed.bed && !memory.bedRefusedAt) {
       const bed = house.furniture.bed.position;
       const centre = new Vec3(bed.x + 0.5, bed.y, bed.z + 0.5);
@@ -364,7 +372,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     if (state.timeOfDay < 12542) return null; // still light enough to keep working
     ctx.record('night', { action: 'dig_in' });
-    const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => FILLERS.has(n) });
+    const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => FILLERS.has(n), avoid: nearHouseColumn });
     if (dug.ok) { memory.bunker = dug.bunker; bot.companionSheltered = true; }
     return dug;
   }

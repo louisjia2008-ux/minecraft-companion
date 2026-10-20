@@ -99,13 +99,18 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     console.log(`    [${line.minute}m] ${line.running || 'idle'} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
       + ` food=${bot.food} deaths=${deaths} ${Object.entries(inv).map(([k, n]) => `${k}:${n}`).join(' ')}`);
   }, 60000);
-  const timedOut = await Promise.race([finished.then(() => false), sleep(scenario.timeoutMs).then(() => true)]);
+  // Scenarios may also end on a world condition (e.g. the next morning).
+  const condition = scenario.finishWhen ? (async () => {
+    for (;;) { await sleep(2000); if (scenario.finishWhen({ bot })) return false; }
+  })() : new Promise(() => {});
+  const timedOut = await Promise.race([finished.then(() => false), condition,
+    sleep(scenario.timeoutMs).then(() => true)]);
   clearInterval(heartbeat);
   await companion.dispose();
   bot.removeListener('death', onDeath);
   const durationMs = Date.now() - startedAt;
   await sleep(500);
-  const verdict = await scenario.verify({ server, username, bot, goal });
+  const verdict = await scenario.verify({ server, username, bot, goal, deaths });
   const reason = verdict.pass ? null
     : timedOut ? 'timeout'
       : outcome?.type === 'goal_failed' ? `goal_failed:${(outcome.reasons || []).at(-1) || 'unknown'}`

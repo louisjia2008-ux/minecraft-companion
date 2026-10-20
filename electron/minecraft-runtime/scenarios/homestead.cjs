@@ -124,4 +124,36 @@ const homesteadNatural = {
   verify: verifyHomestead,
 };
 
-module.exports = { homesteadFlat, homesteadNatural, verifyHomestead };
+// Starts at dusk with basic tools: the bot must get through one night (bed if it
+// has one, otherwise a sealed bunker) and be back on the surface by morning.
+function nightScenario({ name, withBed }) {
+  return {
+    name,
+    description: `Dusk start, easy, mobs on, flat plains; ${withBed ? 'a bed in the inventory' : 'no bed'}.`
+      + ' Survive the night without dying and be back on the surface after dawn.',
+    serverProperties: homesteadFlat.serverProperties,
+    defaultDifficulty: 'easy',
+    timeoutMs: 15 * 60 * 1000,
+    setup({ username, rng, difficulty = 'easy' }) {
+      const trees = plantTrees(rng, 6);
+      const commands = [...living(username, difficulty), ...resetArea(), ...trees.commands,
+        `give ${username} stone_sword`, `give ${username} stone_pickaxe`, `give ${username} dirt 32`,
+        `give ${username} cooked_beef 8`];
+      if (withBed) commands.push(`give ${username} white_bed`);
+      commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`, 'time set 11400');
+      return { commands, details: { withBed } };
+    },
+    start: (companion) => companion.homestead(),
+    finishWhen: ({ bot }) => Number.isFinite(bot.time?.timeOfDay) && bot.time.timeOfDay > 1500 && bot.time.timeOfDay < 11000,
+    async verify({ bot, deaths }) {
+      const surfaced = bot.entity.position.y >= GROUND - 1;
+      return { pass: deaths === 0 && surfaced, details: { deaths, y: Math.floor(bot.entity.position.y),
+        timeOfDay: bot.time?.timeOfDay } };
+    },
+  };
+}
+
+const nightBunkerFlat = nightScenario({ name: 'night-bunker-flat', withBed: false });
+const nightBedFlat = nightScenario({ name: 'night-bed-flat', withBed: true });
+
+module.exports = { homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat, verifyHomestead };
