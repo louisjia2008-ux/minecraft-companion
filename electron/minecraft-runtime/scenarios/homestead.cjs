@@ -95,9 +95,12 @@ const homesteadFlat = {
     for (const [x, z] of [[-14, -15], [16, -12], [0, 18]]) {
       commands.push(`fill ${x} ${GROUND - 13} ${z} ${x + 1} ${GROUND - 12} ${z + 1} iron_ore`);
     }
-    const spot = () => `${Math.round(rng() * 40 - 20)} ${GROUND} ${Math.round(rng() * 40 - 20)}`;
-    for (let i = 0; i < 6; i += 1) commands.push(`summon sheep ${spot()}`);
-    for (let i = 0; i < 4; i += 1) commands.push(`summon cow ${spot()}`);
+    // Roughly the livestock of a plains area: enough wool for one bed (white
+    // sheep, as most natural sheep are) and food for about an hour of work.
+    const spot = () => `${Math.round(rng() * 46 - 23)} ${GROUND} ${Math.round(rng() * 46 - 23)}`;
+    for (let i = 0; i < 12; i += 1) commands.push(`summon sheep ${spot()} {Color:0b}`);
+    for (let i = 0; i < 8; i += 1) commands.push(`summon cow ${spot()}`);
+    for (let i = 0; i < 6; i += 1) commands.push(`summon pig ${spot()}`);
     commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`);
     return { commands, details: { trees: trees.trees.length } };
   },
