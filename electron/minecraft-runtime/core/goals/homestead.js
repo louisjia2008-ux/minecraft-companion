@@ -21,8 +21,11 @@ const { KNOWLEDGE, countKey } = require('../knowledge');
 const { createStarterHouse } = require('../blueprints/starterHouse');
 const { chooseSite, siteWork } = require('../site');
 const { createBlacklist, posKey } = require('../blacklist');
+const { sleep } = require('../confirm');
 
 const DEFAULT_GEAR = ['stone_sword', 'stone_tier_pickaxe', 'iron_sword', 'iron_pickaxe', 'shield'];
+// Stone tools come before the house; iron waits until there is a bed to sleep in.
+const EARLY_GEAR = new Set(['stone_sword', 'stone_tier_pickaxe', 'pickaxe', 'wooden_pickaxe']);
 const DOWN = [new Vec3(0, -1, 0)];
 const FILLERS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const BATCH = 16;
@@ -85,9 +88,9 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return p.x >= a.x - 1 && p.x <= a.x + 7 && p.z >= a.z - 1 && p.z <= a.z + 7 && p.y >= a.y - 3 && p.y <= a.y + 5;
   }
 
+  // House materials only; gear is planned separately before and after the house.
   function requirements(state, hs) {
-    const reqs = gear.map((key) => ({ key, count: 1 }));
-    if (!skipped.has('food')) reqs.push({ key: 'food', count: 3, optional: true });
+    const reqs = [];
     const work = siteWork((x, y, z) => bot.blockAt(new Vec3(x, y, z)), memory.house, (p, block) => expectedAt(p)(block.name));
     if (work.fills.length) reqs.push({ key: 'dirt', count: work.fills.length });
     const remaining = {};
@@ -263,6 +266,26 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return result;
   }
 
+  async function nightStep(ctx, hs) {
+    const house = memory.house;
+    if (hs.placed.bed) {
+      ctx.record('night', { action: 'sleep' });
+      const slept = await skills.useBed(bot, ctx, { position: house.furniture.bed.position });
+      if (slept.ok) { memory.verified.bed = true; return slept; }
+    }
+    // Without a usable bed, a finished shell is still the safest place to be.
+    const shellDone = !hs.missing.length && hs.placed.door;
+    if (!shellDone) return null;
+    const centre = new Vec3(house.interiorCenter.x + 0.5, house.interiorCenter.y, house.interiorCenter.z + 0.5);
+    if (bot.entity.position.distanceTo(centre) > 2) {
+      ctx.record('night', { action: 'shelter' });
+      return actions.goNear(bot, ctx, centre, 1, { timeoutMs: 40000 });
+    }
+    ctx.record('night', { action: 'wait' });
+    await sleep(3000, ctx.signal);
+    return { ok: true, waited: true };
+  }
+
   async function verifyStep(ctx) {
     const f = memory.house.furniture;
     if (!memory.verified.chest) {
@@ -306,7 +329,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     progress: () => memory.steps,
     async run(ctx) {
       // Several "no path" results in a row usually mean the bot itself is stuck.
-      if (memory.pathFailures >= 3) {
+      if (memory.pathFailures >= 2) {
         memory.pathFailures = 0;
         ctx.record('unstick', { at: bot.entity.position.floored() });
         return actions.unstick(bot, ctx);
@@ -345,13 +368,17 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const hs = houseState();
     const inventory = plannerInventory(state);
     const stations = { crafting_table: hs.placed.crafting_table, furnace: hs.placed.furnace };
-    // Gear first: it keeps the bot alive for everything else. A few pieces of
-    // food come right after stone tools, so lost health can be eaten back.
-    const gearReqs = gear.map((key) => ({ key, count: 1 }));
-    if (!skipped.has('food')) gearReqs.splice(Math.min(2, gearReqs.length), 0, { key: 'food', count: 4, optional: true });
-    const gearStep = planNext({ requirements: gearReqs, inventory, stations, kb });
-    if (gearStep) return runPlannerStep(ctx, gearStep, gearReqs.find((r) => r.key === gearStep.for));
-    // Then build whatever a full batch of carried material allows.
+    // Nights are slept through in the bed, or waited out inside the house.
+    if (state.isDay === false) {
+      const night = await nightStep(ctx, hs);
+      if (night) return night;
+    }
+    // Stone tools first, then a few pieces of food so lost health can be eaten back.
+    const early = gear.filter((key) => EARLY_GEAR.has(key)).map((key) => ({ key, count: 1 }));
+    if (!skipped.has('food')) early.push({ key: 'food', count: 4, optional: true });
+    const earlyStep = planNext({ requirements: early, inventory, stations, kb });
+    if (earlyStep) return runPlannerStep(ctx, earlyStep, early.find((r) => r.key === earlyStep.for));
+    // Then the house: build whatever a full batch of carried material allows.
     const ready = await buildStep(ctx, hs, state.inventory, { whenBatchReady: true });
     if (ready) return ready;
     const reqs = requirements(state, hs);
@@ -361,6 +388,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (build) return build;
     // Furniture is only tried out once the whole house stands.
     if (buildTasks(hs).length) return { ok: false, reason: 'build_blocked' };
+    // Iron gear once the house is up.
+    const late = gear.filter((key) => !EARLY_GEAR.has(key)).map((key) => ({ key, count: 1 }));
+    const lateStep = planNext({ requirements: late, inventory, stations, kb });
+    if (lateStep) return runPlannerStep(ctx, lateStep, null);
     const verify = await verifyStep(ctx);
     if (verify) return verify;
     return { ok: true, idle: true };

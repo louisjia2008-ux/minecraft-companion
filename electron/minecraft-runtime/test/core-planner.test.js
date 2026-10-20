@@ -136,7 +136,7 @@ test('site work is derived from the world: bumps to dig, holes to fill', () => {
   const house = createStarterHouse({ x: 0, y: 1, z: 0 });
   const world = voxelWorld({ '2,1,2': 'dirt', '4,0,4': 'air', '3,1,3': 'short_grass' });
   const work = siteWork(world, house, () => false);
-  assert.deepEqual(work.digs.map((d) => d.name).sort(), ['dirt', 'short_grass']);
+  assert.deepEqual(work.digs.map((d) => d.name).sort(), ['dirt']);
   assert.deepEqual(work.fills.map((f) => f.position), [{ x: 4, y: 0, z: 4 }]);
 });
 

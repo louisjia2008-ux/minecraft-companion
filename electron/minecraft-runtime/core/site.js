@@ -90,7 +90,8 @@ function siteWork(blockAt, house, isCorrect) {
   const digs = [];
   for (const p of house.clearance) {
     const block = blockAt(p.x, p.y, p.z);
-    if (isAir(block) || isCorrect(p, block)) continue;
+    // Plants are simply replaced when a block is placed into them.
+    if (isSoft(block) || isCorrect(p, block)) continue;
     digs.push({ position: p, name: block.name });
   }
   const fills = [];

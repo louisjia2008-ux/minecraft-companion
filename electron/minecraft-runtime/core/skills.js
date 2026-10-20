@@ -159,8 +159,7 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify } =
 }
 
 function goToGoal(bot, ctx, goal, arrived) {
-  // actions.goNear wraps GoalNear only; reuse its machinery for any goal.
-  return actions.goTo(bot, ctx, goal, { timeoutMs: 30000, arrived });
+  return actions.goTo(bot, ctx, goal, { timeoutMs: 15000, arrived, targetY: goal.pos?.y });
 }
 
 async function recentre(bot, ctx) {

@@ -18,7 +18,38 @@ function haltBody(bot) {
   try { bot.clearControlStates?.(); } catch (_) { /* ignore */ }
 }
 
-async function goTo(bot, ctx, goal, { timeoutMs = 30000, arrived } = {}) {
+// Climbing out of a mine needs pillaring: allow it, with dirt or cobblestone,
+// only while the destination lies well above the bot. Pillars left in a shaft
+// are harmless; on the surface the bot never pillars.
+const CLIMB_BLOCKS = ['dirt', 'cobblestone', 'cobbled_deepslate'];
+async function withClimbing(bot, targetY, run) {
+  const movements = bot.pathfinder?.movements;
+  if (!movements || !Number.isFinite(targetY) || targetY - bot.entity.position.y <= 3 || !underground(bot)) return run();
+  const saved = { towers: movements.allow1by1towers, scaffold: movements.scafoldingBlocks };
+  movements.allow1by1towers = true;
+  movements.scafoldingBlocks = CLIMB_BLOCKS.map((name) => bot.registry.itemsByName[name]?.id).filter(Number.isInteger);
+  try {
+    return await run();
+  } finally {
+    movements.allow1by1towers = saved.towers;
+    movements.scafoldingBlocks = saved.scaffold;
+  }
+}
+
+/** Solid rock or soil (not leaves) somewhere in the 8 blocks over the bot's head. */
+function underground(bot) {
+  const head = bot.entity.position.floored().offset(0, 2, 0);
+  for (let dy = 0; dy < 8; dy += 1) {
+    const block = bot.blockAt(head.offset(0, dy, 0));
+    if (block && block.boundingBox === 'block' && !block.name.endsWith('_leaves')) return true;
+  }
+  return false;
+}
+
+async function goTo(bot, ctx, goal, { timeoutMs = 30000, arrived, targetY } = {}) {
+  if (Number.isFinite(targetY) && targetY - bot.entity.position.y > 3 && underground(bot)) {
+    return withClimbing(bot, targetY, () => goTo(bot, ctx, goal, { timeoutMs, arrived }));
+  }
   try {
     await runCancellable(() => bot.pathfinder.goto(goal), {
       signal: ctx.signal, timeoutMs, timeoutCode: 'path_timeout', cancel: () => haltBody(bot),
@@ -37,6 +68,7 @@ async function goTo(bot, ctx, goal, { timeoutMs = 30000, arrived } = {}) {
 function goNear(bot, ctx, position, range = 2, options = {}) {
   const goal = new goals.GoalNear(position.x, position.y, position.z, range);
   return goTo(bot, ctx, goal, {
+    targetY: position.y,
     ...options,
     arrived: (at) => at.distanceTo(position) <= range + 1.5,
   });
@@ -44,8 +76,15 @@ function goNear(bot, ctx, position, range = 2, options = {}) {
 
 /** Moves to any spot from which `block` can be seen and dug. */
 function goToDig(bot, ctx, block, options = {}) {
+  // Plants have no collision shape, so a line-of-sight goal can never be met.
+  if (block.boundingBox === 'empty') {
+    return goTo(bot, ctx, new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2), {
+      targetY: block.position.y, ...options, arrived: () => withinReach(bot, block.position),
+    });
+  }
   const goal = new goals.GoalLookAtBlock(block.position, bot.world, { reach: 4 });
   return goTo(bot, ctx, goal, {
+    targetY: block.position.y - 1,
     ...options,
     arrived: () => withinReach(bot, block.position),
   });
