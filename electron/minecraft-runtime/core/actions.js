@@ -57,10 +57,45 @@ function underground(bot) {
   return walledSides >= 3;
 }
 
-async function goTo(bot, ctx, goal, { timeoutMs = 30000, arrived, targetY } = {}) {
-  if (Number.isFinite(targetY) && targetY - bot.entity.position.y > 3 && underground(bot)) {
-    return withClimbing(bot, targetY, () => goTo(bot, ctx, goal, { timeoutMs, arrived }));
+/**
+ * Steps to the middle of the bot's own block. Off-centre, the bot's body can
+ * snag on a wall corner during the pathfinder's first diagonal move, which
+ * then replans the same move forever.
+ */
+async function recentre(bot, ctx) {
+  const centre = bot.entity.position.floored().offset(0.5, 0, 0.5);
+  const distance = () => Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z);
+  try {
+    for (let i = 0; i < 20 && distance() > 0.15; i += 1) {
+      await bot.lookAt(centre.offset(0, bot.entity.position.y - centre.y + 1.6, 0), true);
+      bot.setControlState('sprint', false);
+      bot.setControlState('forward', true);
+      await sleep(Math.min(150, distance() * 250), ctx.signal);
+    }
+  } finally {
+    bot.setControlState('forward', false);
   }
+}
+
+function offCentre(bot) {
+  const p = bot.entity.position;
+  return Math.hypot(p.x - (Math.floor(p.x) + 0.5), p.z - (Math.floor(p.z) + 0.5)) > 0.2;
+}
+
+async function goTo(bot, ctx, goal, options = {}) {
+  const { targetY } = options;
+  if (Number.isFinite(targetY) && targetY - bot.entity.position.y > 3 && underground(bot)) {
+    return withClimbing(bot, targetY, () => goTo(bot, ctx, goal, { ...options, targetY: undefined }));
+  }
+  if (offCentre(bot) && !goal.isEnd(bot.entity.position.floored())) await recentre(bot, ctx);
+  const first = await goToOnce(bot, ctx, goal, options);
+  if (first.reason !== 'no_progress') return first;
+  // Stuck at the start: step into an open neighbouring cell and try once more.
+  await nudge(bot, ctx);
+  return goToOnce(bot, ctx, goal, options);
+}
+
+async function goToOnce(bot, ctx, goal, { timeoutMs = 30000, arrived } = {}) {
   // Watchdog: the pathfinder can replan forever without taking a step from
   // some start cells. No movement for 12 s (longer than a full plan, 10 s) ends it early.
   let stalled = false;
@@ -355,6 +390,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  surface, underground, unstick, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, RISKY_FOODS,
 };

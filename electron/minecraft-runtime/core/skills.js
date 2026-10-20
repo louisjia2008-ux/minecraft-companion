@@ -153,7 +153,7 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify } =
     const head = () => bot.entity.position.floored().offset(0.5, 1.6, 0.5);
     const usable = () => goal.getFaceAndRef(head()) !== null && !overlaps(bot.entity, target);
     // Straddling the target cell's edge: step to the middle of our own cell first.
-    if (overlaps(bot.entity, target) && !bot.entity.position.floored().equals(target)) await recentre(bot, ctx);
+    if (overlaps(bot.entity, target) && !bot.entity.position.floored().equals(target)) await actions.recentre(bot, ctx);
     if (!usable()) {
       // Also taken when the bot itself stands in (or straddles) the target cell.
       const result = await goToGoal(bot, ctx, goal, usable);
@@ -185,22 +185,6 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify } =
 
 function goToGoal(bot, ctx, goal, arrived) {
   return actions.goTo(bot, ctx, goal, { timeoutMs: 15000, arrived, targetY: goal.pos?.y });
-}
-
-async function recentre(bot, ctx) {
-  const centre = bot.entity.position.floored().offset(0.5, 0, 0.5);
-  try {
-    for (let i = 0; i < 12; i += 1) {
-      const p = bot.entity.position;
-      if (Math.hypot(p.x - centre.x, p.z - centre.z) < 0.12) break;
-      await bot.lookAt(centre.offset(0, bot.entity.height * 0.9, 0), true);
-      bot.setControlState('forward', true);
-      await sleep(50, ctx.signal);
-      bot.setControlState('forward', false);
-    }
-  } finally {
-    bot.setControlState('forward', false);
-  }
 }
 
 function overlaps(entity, target) {
