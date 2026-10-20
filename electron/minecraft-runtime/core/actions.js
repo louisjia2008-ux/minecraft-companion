@@ -361,7 +361,8 @@ async function unstick(bot, ctx) {
   }
   const saved = movements.maxDropDown;
   try {
-    if (bot.health > 8) movements.maxDropDown = 12;
+    // Fall damage is (height - 3); keep at least 5 health after any drop.
+    movements.maxDropDown = Math.max(saved, Math.min(12, Math.floor(bot.health) - 2));
     for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
       const goal = new goals.GoalNearXZ(start.x + Math.cos(angle) * 8, start.z + Math.sin(angle) * 8, 2);
       await goTo(bot, ctx, goal, { timeoutMs: 15000, arrived: () => true });
