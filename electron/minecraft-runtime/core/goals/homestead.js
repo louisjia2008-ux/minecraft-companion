@@ -327,24 +327,46 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return result;
   }
 
-  async function nightStep(ctx, hs) {
+  async function nightStep(ctx, hs, state) {
     const house = memory.house;
-    if (hs.placed.bed) {
-      ctx.record('night', { action: 'sleep' });
-      const slept = await skills.useBed(bot, ctx, { position: house.furniture.bed.position });
-      if (slept.ok) { memory.verified.bed = true; return slept; }
+    if (memory.bunker) {
+      bot.companionSheltered = true;
+      await sleep(3000, ctx.signal);
+      return { ok: true, waited: true };
     }
-    // Without a usable bed, a finished shell is still the safest place to be.
     const shellDone = !hs.missing.length && hs.placed.door;
-    if (!shellDone) return null;
-    const centre = new Vec3(house.interiorCenter.x + 0.5, house.interiorCenter.y, house.interiorCenter.z + 0.5);
-    if (bot.entity.position.distanceTo(centre) > 2) {
-      ctx.record('night', { action: 'shelter' });
-      return actions.goNear(bot, ctx, centre, 1, { timeoutMs: 40000 });
+    if (hs.placed.bed && !memory.bedRefusedAt) {
+      const bed = house.furniture.bed.position;
+      const centre = new Vec3(bed.x + 0.5, bed.y, bed.z + 0.5);
+      if (bot.entity.position.distanceTo(centre) > 4) {
+        ctx.record('night', { action: 'go_home' });
+        return actions.goNear(bot, ctx, centre, 2, { timeoutMs: 60000 });
+      }
+      if (state.timeOfDay < 12542) {
+        await sleep(2000, ctx.signal); // sleeping becomes possible at dusk
+        return { ok: true, waited: true };
+      }
+      ctx.record('night', { action: 'sleep' });
+      const slept = await skills.useBed(bot, ctx, { position: bed });
+      if (slept.ok) { memory.verified.bed = true; return slept; }
+      // Monsters too close to sleep: do not keep trying all night.
+      if (!shellDone) memory.bedRefusedAt = Date.now();
     }
-    ctx.record('night', { action: 'wait' });
-    await sleep(3000, ctx.signal);
-    return { ok: true, waited: true };
+    if (shellDone) {
+      const centre = new Vec3(house.interiorCenter.x + 0.5, house.interiorCenter.y, house.interiorCenter.z + 0.5);
+      if (bot.entity.position.distanceTo(centre) > 2) {
+        ctx.record('night', { action: 'shelter' });
+        return actions.goNear(bot, ctx, centre, 1, { timeoutMs: 40000 });
+      }
+      bot.companionSheltered = true;
+      await sleep(3000, ctx.signal);
+      return { ok: true, waited: true };
+    }
+    if (state.timeOfDay < 12542) return null; // still light enough to keep working
+    ctx.record('night', { action: 'dig_in' });
+    const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => FILLERS.has(n) });
+    if (dug.ok) { memory.bunker = dug.bunker; bot.companionSheltered = true; }
+    return dug;
   }
 
   async function verifyStep(ctx) {
@@ -439,9 +461,18 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const hs = houseState();
     const inventory = plannerInventory(state);
     const stations = { crafting_table: hs.placed.crafting_table, furnace: hs.placed.furnace };
-    // Nights are slept through in the bed, or waited out inside the house.
-    if (state.isDay === false) {
-      const night = await nightStep(ctx, hs);
+    // Evenings: home before dark, into bed at dusk, else a sealed bunker.
+    const evening = Number.isFinite(state.timeOfDay) && state.timeOfDay >= 11800 && state.timeOfDay < 23400;
+    if (!evening) memory.bedRefusedAt = null;
+    bot.companionSheltered = false;
+    if (memory.bunker && !evening) {
+      ctx.record('night', { action: 'dig_out' });
+      const out = await skills.digOut(bot, ctx, memory.bunker);
+      if (out.ok) memory.bunker = null;
+      return out;
+    }
+    if (evening) {
+      const night = await nightStep(ctx, hs, state);
       if (night) return night;
     }
     // Stone tools first, then a few pieces of food so lost health can be eaten back.

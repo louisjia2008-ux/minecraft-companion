@@ -54,6 +54,9 @@ function perceive(bot, { hostileRange = 16, now = Date.now } = {}) {
     inWater: self.isInWater === true,
     oxygen: Number.isFinite(bot.oxygenLevel) ? bot.oxygenLevel : null,
     isDay: Number.isFinite(bot.time?.timeOfDay) ? bot.time.timeOfDay < 12542 || bot.time.timeOfDay > 23460 : null,
+    timeOfDay: Number.isFinite(bot.time?.timeOfDay) ? bot.time.timeOfDay : null,
+    // Set by a goal while the bot waits out the night in a sealed bunker or the finished house.
+    sheltered: bot.companionSheltered === true,
     inventory: countInventory(ownedItems(bot)),
     hostiles,
   };

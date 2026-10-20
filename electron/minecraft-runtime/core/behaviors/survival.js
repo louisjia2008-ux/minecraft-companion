@@ -26,16 +26,20 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     .some(([name, count]) => count > 0 && foodCheck(name) && (desperate || !RISKY_FOODS.has(name)));
   const nearest = (state) => state.hostiles[0] || null;
   // Melee anything close; go after archers only while healthy enough to close in.
-  const target = (state) => state.hostiles.find((h) => h.name !== 'creeper'
-    && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
-      || (RANGED.has(h.name) && h.distance <= t.rangedRange && state.health > t.rangedHealth))) || null;
+  const target = (state) => {
+    // In shelter only something that got right next to the bot is fought.
+    if (state.sheltered) return state.hostiles.find((h) => h.distance <= 2) || null;
+    return state.hostiles.find((h) => h.name !== 'creeper'
+      && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
+        || (RANGED.has(h.name) && h.distance <= t.rangedRange && state.health > t.rangedHealth))) || null;
+  };
 
   const escape = {
     name: 'escape',
     band: BAND.ESCAPE,
     want(state) {
       const threat = nearest(state);
-      if (!threat) return 0;
+      if (!threat || state.sheltered) return 0;
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
       return state.health <= t.escapeHealth && threat.distance <= t.escapeRange ? 1 : 0;
     },
@@ -87,7 +91,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     name: 'provision',
     band: BAND.MAINTENANCE,
     want(state) {
-      if (state.food > t.provisionFood || hasSafeFood(state, true)) return 0;
+      if (state.sheltered || state.food > t.provisionFood || hasSafeFood(state, true)) return 0;
       if (state.hostiles.some((h) => h.distance <= 8)) return 0;
       // Chasing animals at low health gets the bot killed at night; by day with
       // nothing hostile around it is the only way back to regenerating.
@@ -127,7 +131,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     name: 'recover_drops',
     band: BAND.MAINTENANCE,
     want(state) {
-      if (!lastDeath || Date.now() - lastDeath.at > t.dropsTtlMs || lastDeath.tries >= 3) return 0;
+      if (state.sheltered || !lastDeath || Date.now() - lastDeath.at > t.dropsTtlMs || lastDeath.tries >= 3) return 0;
       if (state.health < 10 || state.hostiles.some((h) => h.distance <= 8)) return 0;
       return state.position.distanceTo(lastDeath.position) < 160 ? 0.8 : 0;
     },

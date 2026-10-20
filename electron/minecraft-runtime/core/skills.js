@@ -371,6 +371,56 @@ async function useChest(bot, ctx, { position, itemMatch }) {
   }
 }
 
+/**
+ * Night bunker: dig three blocks straight down and seal the opening above the
+ * head with a block. Nothing can reach the bot in a sealed 1x1 shaft. Returns
+ * the bunker so digOut can undo it exactly.
+ */
+async function digIn(bot, ctx, { sealMatch }) {
+  const top = bot.entity.position.floored();
+  for (let dy = 1; dy <= 4; dy += 1) {
+    const b = bot.blockAt(top.offset(0, -dy, 0));
+    if (!b || b.boundingBox !== 'block' || !bot.canDigBlock(b) || /water|lava/.test(b.name)) return fail('cannot_dig_in');
+  }
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    for (let dy = 1; dy <= 3; dy += 1) {
+      const side = bot.blockAt(top.offset(dx, -dy, dz));
+      if (!side || side.boundingBox !== 'block') return fail('bunker_walls_open');
+    }
+  }
+  if (!bot.inventory.items().some((i) => sealMatch(i.name))) return fail('no_seal_block');
+  for (let dy = 1; dy <= 3; dy += 1) {
+    const below = bot.blockAt(top.offset(0, -dy, 0));
+    const dug = await actions.digBlock(bot, ctx, below);
+    if (!dug.ok) return dug;
+    await waitUntil(() => bot.entity.position.y <= top.y - dy + 0.1 && bot.entity.onGround, { timeoutMs: 2000, signal: ctx.signal });
+  }
+  // Seal the old ground block above the head, resting on the shaft wall beside it.
+  const seal = top.offset(0, -1, 0);
+  const sealed = await placeAt(bot, ctx, seal, sealMatch,
+    { faces: [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)] });
+  if (!sealed.ok) return sealed;
+  return { ok: true, bunker: { top: { x: top.x, y: top.y, z: top.z } } };
+}
+
+/** Opens the seal and climbs back up, filling the shaft behind the bot. */
+async function digOut(bot, ctx, bunker) {
+  const top = new Vec3(bunker.top.x, bunker.top.y, bunker.top.z);
+  const seal = bot.blockAt(top.offset(0, -1, 0));
+  if (seal && seal.boundingBox === 'block' && bot.entity.position.y < top.y - 1) {
+    const dug = await actions.digBlock(bot, ctx, seal);
+    if (!dug.ok) return dug;
+  }
+  const saved = bot.companionSurfaceY;
+  bot.companionSurfaceY = top.y;
+  try {
+    const up = await actions.surface(bot, ctx);
+    return up || { ok: true };
+  } finally {
+    bot.companionSurfaceY = saved;
+  }
+}
+
 /** Uses the bed: sleeps at night, otherwise sets the respawn point by interacting. */
 async function useBed(bot, ctx, { position }) {
   const moved = await goToBlock(bot, ctx, position);
@@ -401,4 +451,4 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, smelt, huntOne, pickBerries, explore, useChest, useBed, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, smelt, huntOne, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };
