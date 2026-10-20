@@ -186,12 +186,14 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
   }
 
-  // Paths elsewhere must never tunnel through the site; only our own site work digs there.
+  // Paths should not tunnel through the site. A hard ban can wall the bot into
+  // a pit next to it, so digging there is only made expensive; anything that
+  // does get dug shows up as missing foundation or wall and is rebuilt.
   function protectSite() {
     const movements = bot.pathfinder?.movements;
     if (!movements || !memory.house) return;
     bot.companionSurfaceY = memory.house.anchor.y;
-    if (!memory.protect) memory.protect = (block) => (insideHouse(block.position) ? 100 : 0);
+    if (!memory.protect) memory.protect = (block) => (insideHouse(block.position) ? 40 : 0);
     if (!movements.exclusionAreasBreak.includes(memory.protect)) movements.exclusionAreasBreak.push(memory.protect);
   }
 
@@ -402,7 +404,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       // The top wall row and the roof both rest on faces above eye level from
       // the floor, so the stair stands from the third row until the roof is done.
       const dy = (b) => b.position.y - memory.house.anchor.y;
-      memory.scaffoldActive = !hs0.missing.some((b) => b.phase === 'walls' && dy(b) < 2) && hs0.missing.length > 0;
+      // Once up it stays until the whole shell stands, even if a lower block
+      // has to be put back meanwhile; otherwise it is torn down and rebuilt.
+      const lowerRowsDone = !hs0.missing.some((b) => b.phase === 'walls' && dy(b) < 2);
+      memory.scaffoldActive = (memory.scaffoldActive || lowerRowsDone) && hs0.missing.length > 0;
     }
     const site = await siteStep(ctx);
     if (site) return site;
