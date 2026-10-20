@@ -147,6 +147,11 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
 
   async function runPlannerStep(ctx, step, requirement) {
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
+    // Everything except mining happens up top: climb out of the pit first.
+    if (step.kind !== 'gather') {
+      const up = await surfaceFirst(ctx);
+      if (up) return up;
+    }
     const house = memory.house;
     switch (step.kind) {
       case 'place_station':
@@ -305,7 +310,16 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return null;
   }
 
+  async function surfaceFirst(ctx) {
+    if (typeof actions.surface !== 'function') return null;
+    const result = await actions.surface(bot, ctx);
+    if (result) ctx.record('surface', { ok: result.ok });
+    return result;
+  }
+
   async function placeRecorded(ctx, position, match, what, options) {
+    const up = await surfaceFirst(ctx);
+    if (up) return up;
     ctx.record('build', { what, position: posKey(position) });
     const result = await skills.placeAt(bot, ctx, position, match, options);
     // A mob in the way moves on quickly; other failures wait a little longer.

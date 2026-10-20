@@ -250,7 +250,7 @@ async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3 } = {})
   const deadline = Date.now() + timeoutMs;
   // Chasing something up on the surface from a pit needs the same climbing allowance.
   const first = bot.entities[entityId];
-  if (first && first.position.y - bot.entity.position.y > 2 && underground(bot)) {
+  if (first && first.position.y - bot.entity.position.y >= 1.5 && underground(bot)) {
     return withClimbing(bot, first.position.y + 4, () => attackLoop(bot, ctx, entityId, deadline, reach));
   }
   return attackLoop(bot, ctx, entityId, deadline, reach);
@@ -346,7 +346,15 @@ async function unstick(bot, ctx) {
   return bot.entity.position.distanceTo(start) > 2 ? { ok: true, moved: 'partial' } : fail('stuck');
 }
 
+/** Climbs back to the surface reference level if the bot is below it. */
+async function surface(bot, ctx) {
+  if (!Number.isFinite(bot.companionSurfaceY) || bot.entity.position.y >= bot.companionSurfaceY - 1) return null;
+  const target = Math.floor(bot.companionSurfaceY);
+  await withClimbing(bot, target + 4, () => goTo(bot, ctx, new goals.GoalY(target), { timeoutMs: 30000, arrived: () => true }));
+  return bot.entity.position.y >= target - 1 ? { ok: true, surfaced: true } : fail('still_below_surface');
+}
+
 module.exports = {
-  unstick, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  surface, underground, unstick, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, RISKY_FOODS,
 };
