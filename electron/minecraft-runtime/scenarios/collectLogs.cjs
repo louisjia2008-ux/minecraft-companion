@@ -47,7 +47,7 @@ function plantTrees(rng, count = 8) {
 
 async function countLogsOnServer(server, username) {
   const match = await server.query(`clear ${username} #minecraft:logs 0`,
-    new RegExp(`(?:Found (\\d+) matching items? on player ${username}|No items were found on player ${username})`));
+    new RegExp(`(?:Found (\\d+) matching item(?:\\(s\\)|s)? on player ${username}|No items were found on player ${username})`));
   return match[1] ? Number(match[1]) : 0;
 }
 

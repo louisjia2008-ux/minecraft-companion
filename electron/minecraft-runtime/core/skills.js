@@ -150,7 +150,11 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify } =
     const block = bot.blockAt(target);
     return block && itemMatch(block.name) && (!verify || verify());
   }, { timeoutMs: 1500, signal: ctx.signal });
-  return placed ? { ok: true } : fail('place_unconfirmed');
+  if (placed) return { ok: true };
+  ctx.record('place_failed', { target: posKey(target), ref: posKey(ref.position), refBlock: ref.name,
+    face: `${face.x},${face.y},${face.z}`, at: posKey(bot.entity.position), now: bot.blockAt(target)?.name || null,
+    holding: bot.heldItem?.name || null });
+  return fail('place_unconfirmed');
 }
 
 function goToGoal(bot, ctx, goal, arrived) {
@@ -213,15 +217,17 @@ async function smelt(bot, ctx, { input, count, furnacePosition, memory }) {
     if (isAbort(error)) throw error;
     return fail('furnace_open_failed');
   }
+  // bot.inventory is only resynced when the window closes, so what was taken
+  // is measured against a snapshot from before opening.
+  const before = inventoryCounts(bot);
+  const outputs = new Set();
   let taken = 0;
   try {
     const takeAll = async () => {
       const out = furnace.outputItem();
       if (out) {
-        const before = actions.countItems(bot, (n) => n === out.name);
+        outputs.add(out.name);
         await furnace.takeOutput();
-        await waitUntil(() => actions.countItems(bot, (n) => n === out.name) > before, { timeoutMs: 1500, signal: ctx.signal });
-        taken += actions.countItems(bot, (n) => n === out.name) - before;
       }
     };
     await takeAll();
@@ -251,10 +257,14 @@ async function smelt(bot, ctx, { input, count, furnacePosition, memory }) {
     memory.output = furnace.outputItem()?.count || 0;
   } catch (error) {
     if (isAbort(error)) throw error;
-    return fail('smelt_failed', { taken });
+    return fail('smelt_failed');
   } finally {
     try { furnace.close(); } catch (_) { /* ignore */ }
   }
+  const gained = () => [...outputs].reduce((sum, name) => sum + Math.max(0,
+    actions.countItems(bot, (n) => n === name) - (before[name] || 0)), 0);
+  await waitUntil(() => gained() > 0, { timeoutMs: 2000, signal: ctx.signal });
+  taken = gained();
   return taken > 0 ? { ok: true, taken } : fail('smelt_no_output');
 }
 

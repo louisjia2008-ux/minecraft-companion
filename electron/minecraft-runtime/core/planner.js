@@ -61,7 +61,8 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
     if (depth > MAX_DEPTH) return { kind: 'unplannable', key, reason: 'depth' };
     const entry = kb[key];
     if (!entry) return { kind: 'unplannable', key, reason: 'unknown' };
-    const deficit = count - take(key, count);
+    // Tools are kept, not used up: one pickaxe serves every requirement that names it.
+    const deficit = count - (entry.tool ? Math.min(count, countKey(key, virt, kb)) : take(key, count));
     if (deficit <= 0) return null;
     for (const source of entry.sources) {
       if (source.kind === 'alias') return need(source.key, deficit, depth + 1);

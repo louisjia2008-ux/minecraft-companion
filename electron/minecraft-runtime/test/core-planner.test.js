@@ -139,3 +139,14 @@ test('site work is derived from the world: bumps to dig, holes to fill', () => {
   assert.deepEqual(work.digs.map((d) => d.name).sort(), ['dirt', 'short_grass']);
   assert.deepEqual(work.fills.map((f) => f.position), [{ x: 4, y: 0, z: 4 }]);
 });
+
+test('satisfied gear requirements do not use up the tool for later requirements', () => {
+  // The stone-tier requirement and the iron ore's tool requirement share one pickaxe;
+  // the stone sword requirement is met by the iron sword, which still counts for itself.
+  const step = planNext({
+    requirements: [{ key: 'stone_sword', count: 1 }, { key: 'stone_tier_pickaxe', count: 1 },
+      { key: 'iron_sword', count: 1 }, { key: 'iron_pickaxe', count: 1 }],
+    inventory: { iron_sword: 1, stone_pickaxe: 1, stick: 2 }, stations: { crafting_table: true, furnace: true },
+  });
+  assert.deepEqual([step.kind, step.key, step.for], ['gather', 'raw_iron', 'iron_pickaxe']);
+});

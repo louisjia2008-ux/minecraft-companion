@@ -52,6 +52,7 @@ const KNOWLEDGE = {
   },
   wooden_pickaxe: {
     match: exact('wooden_pickaxe'),
+    tool: true,
     sources: [{ kind: 'craft', yields: 1, needs: { planks: 3, stick: 2 }, table: true, pick: () => 'wooden_pickaxe' }],
   },
   // Tool tiers: a better tool satisfies a lower requirement.
@@ -71,6 +72,7 @@ const KNOWLEDGE = {
   },
   stone_pickaxe: {
     match: exact('stone_pickaxe'),
+    tool: true,
     sources: [{ kind: 'craft', yields: 1, needs: { cobblestone: 3, stick: 2 }, table: true, pick: () => 'stone_pickaxe' }],
   },
   stone_sword: {

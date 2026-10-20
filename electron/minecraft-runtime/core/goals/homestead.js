@@ -167,22 +167,35 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
   }
 
+  // Paths elsewhere must never tunnel through the site; only our own site work digs there.
+  function protectSite() {
+    const movements = bot.pathfinder?.movements;
+    if (!movements || !memory.house) return;
+    if (!memory.protect) memory.protect = (block) => (insideHouse(block.position) ? 100 : 0);
+    if (!movements.exclusionAreasBreak.includes(memory.protect)) movements.exclusionAreasBreak.push(memory.protect);
+  }
+
   async function siteStep(ctx) {
     const work = siteWork((x, y, z) => bot.blockAt(new Vec3(x, y, z)), memory.house, (p, block) => expectedAt(p)(block.name));
+    work.digs = work.digs.filter((d) => !blacklist.has(`site:${posKey(d.position)}`));
+    work.fills = work.fills.filter((d) => !blacklist.has(`site:${posKey(d.position)}`));
     if (work.digs.length) {
       const target = work.digs[0];
       const block = blockAt(target.position);
       ctx.record('site_dig', { position: posKey(target.position), block: target.name });
       const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 30000 });
-      if (!reach.ok) return reach;
+      if (!reach.ok) { blacklist.add(`site:${posKey(target.position)}`, reach.reason, 20000); return reach; }
       const dug = await actions.digBlock(bot, ctx, block);
+      if (!dug.ok) blacklist.add(`site:${posKey(target.position)}`, dug.reason, 20000);
       // Pick up whatever it dropped: dirt for filling, or a misplaced bed or door.
       if (dug.ok) await actions.collectDrops(bot, ctx, block.position.offset(0.5, 0.5, 0.5), () => true, { timeoutMs: 3000 });
       return dug;
     }
     if (work.fills.length && Object.keys(ctx.perceive().inventory).some((n) => FILLERS.has(n))) {
       ctx.record('site_fill', { position: posKey(work.fills[0].position) });
-      return skills.placeAt(bot, ctx, work.fills[0].position, (n) => FILLERS.has(n));
+      const filled = await skills.placeAt(bot, ctx, work.fills[0].position, (n) => FILLERS.has(n));
+      if (!filled.ok) blacklist.add(`site:${posKey(work.fills[0].position)}`, filled.reason, 20000);
+      return filled;
     }
     return null;
   }
@@ -310,6 +323,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       return actions.goNear(bot, ctx, new Vec3(memory.house.entrance.x, memory.house.entrance.y, memory.house.entrance.z), 3,
         { timeoutMs: 60000 });
     }
+    protectSite();
     const site = await siteStep(ctx);
     if (site) return site;
 

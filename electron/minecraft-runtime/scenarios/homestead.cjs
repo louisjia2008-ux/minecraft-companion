@@ -17,7 +17,7 @@ async function testBlock(server, p, predicate) {
 
 async function countOnPlayer(server, username, item) {
   const match = await server.query(`clear ${username} ${item} 0`,
-    new RegExp(`(?:Found (\\d+) matching items? on player ${username}|No items were found on player ${username})`));
+    new RegExp(`(?:Found (\\d+) matching item(?:\\(s\\)|s)? on player ${username}|No items were found on player ${username})`));
   return match[1] ? Number(match[1]) : 0;
 }
 
@@ -25,9 +25,14 @@ async function verifyHomestead({ server, username, goal }) {
   const anchor = goal?.memory?.house?.anchor;
   if (!anchor) return { pass: false, details: { reason: 'no_site' } };
   const house = createStarterHouse(anchor);
-  const predicates = { cobblestone: '#minecraft:stone_crafting_materials', planks: '#minecraft:planks' };
+  // Block tags only; cobbled deepslate also counts as wall stone.
+  const accept = { cobblestone: ['minecraft:cobblestone', 'minecraft:cobbled_deepslate'], planks: ['#minecraft:planks'] };
   let placed = 0;
-  for (const block of house.blocks) if (await testBlock(server, block.position, predicates[block.family])) placed += 1;
+  for (const block of house.blocks) {
+    for (const predicate of accept[block.family]) {
+      if (await testBlock(server, block.position, predicate)) { placed += 1; break; }
+    }
+  }
   const f = house.furniture;
   const furniture = {
     crafting_table: await testBlock(server, f.crafting_table.position, 'minecraft:crafting_table'),
