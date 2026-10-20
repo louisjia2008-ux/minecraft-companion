@@ -30,7 +30,9 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     .filter((p) => !blacklist.has(posKey(p)) && !exclude(p))
     .map((p) => bot.blockAt(p))
     .filter(Boolean)
-    .sort((a, b) => cost(here, a.position) - cost(here, b.position));
+    // Exposed blocks first: keeps mining inside one open pit instead of
+    // digging a fresh hole through the soil for every single stone.
+    .sort((a, b) => cost(here, a.position) + buried(bot, a.position) - cost(here, b.position) - buried(bot, b.position));
   if (candidates.length === 0) return fail('no_target_in_range');
   const block = candidates[0];
   const key = posKey(block.position);
@@ -50,6 +52,15 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     return dig;
   }
   return actions.collectDrops(bot, ctx, block.position.offset(0.5, 0.5, 0.5), dropMatch);
+}
+
+const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+function buried(bot, p) {
+  for (const [dx, dy, dz] of SIDES) {
+    const n = bot.blockAt(p.offset(dx, dy, dz));
+    if (n && n.boundingBox === 'empty' && n.name !== 'water' && n.name !== 'lava') return 0;
+  }
+  return 12;
 }
 
 function cost(from, to) {

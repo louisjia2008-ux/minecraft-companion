@@ -180,3 +180,18 @@ test('homestead completes across 12 random seeds with 25% failures and a death',
   const bad = outcomes.filter((o) => !o.done);
   assert.deepEqual(bad, [], JSON.stringify(bad));
 });
+
+test('the roof stair is placed for the roof and removed once the roof is done', async () => {
+  const sim = simulate({ seed: 5, failRate: 0 });
+  const placedStair = [];
+  const place = sim.skills.placeAt;
+  sim.skills.placeAt = async (bot, ctx, position, match, options) => {
+    const result = await place(bot, ctx, position, match, options);
+    if (result.ok && !result.already && sim.blockAt(position).name === 'dirt') placedStair.push(position);
+    return result;
+  };
+  const { goal, events } = await runHomestead(sim);
+  assert.ok(events.some((e) => e.type === 'goal_done'));
+  assert.equal(placedStair.length, 3);
+  for (const p of goal.memory.house.scaffold) assert.equal(sim.blockAt(p).name, 'air');
+});

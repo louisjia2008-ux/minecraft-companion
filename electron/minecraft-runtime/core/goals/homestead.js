@@ -79,6 +79,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     if (posKey(f.door.position) === key || posKey(f.door.upper) === key) return (n) => matches('door', n);
     if (f.torches.some((t) => posKey(t) === key)) return (n) => n === 'torch';
+    if (house.scaffold.some((p2) => posKey(p2) === key)) return (n) => memory.scaffoldActive && FILLERS.has(n);
     return () => false;
   }
 
@@ -92,7 +93,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   function requirements(state, hs) {
     const reqs = [];
     const work = siteWork((x, y, z) => bot.blockAt(new Vec3(x, y, z)), memory.house, (p, block) => expectedAt(p)(block.name));
-    if (work.fills.length) reqs.push({ key: 'dirt', count: work.fills.length });
+    const stair = memory.scaffoldActive ? memory.house.scaffold.filter((p) => !FILLERS.has(nameAt(p))).length : 0;
+    if (work.fills.length + stair) reqs.push({ key: 'dirt', count: work.fills.length + stair });
     const remaining = {};
     for (const block of hs.missing) remaining[block.family] = (remaining[block.family] || 0) + 1;
     for (const [family, count] of Object.entries(remaining)) reqs.push({ key: family, count });
@@ -228,7 +230,13 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     if (!hs.placed.furnace) piece('furnace', f.furnace.position, 'furnace', (n) => n === 'furnace');
     const roof = hs.missing.filter((b) => b.phase === 'roof');
-    // The roof goes on only after the walls hold it up.
+    // The roof goes on only after the walls hold it up, and from the stair.
+    if (!walls.length && roof.length) {
+      for (const p of memory.house.scaffold) {
+        if (!FILLERS.has(nameAt(p))) tasks.push({ what: 'scaffold', position: p, material: 'dirt',
+          match: (n) => FILLERS.has(n), options: { faces: DOWN }, batch: 1 });
+      }
+    }
     if (!walls.length) {
       for (const b of roof) tasks.push({ what: 'roof', position: b.position, material: 'planks',
         match: (n) => matches('planks', n), batch: Math.min(roof.length, BATCH) });
@@ -362,6 +370,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         { timeoutMs: 60000 });
     }
     protectSite();
+    {
+      const hs0 = houseState();
+      memory.scaffoldActive = !hs0.missing.some((b) => b.phase === 'walls') && hs0.missing.some((b) => b.phase === 'roof');
+    }
     const site = await siteStep(ctx);
     if (site) return site;
 

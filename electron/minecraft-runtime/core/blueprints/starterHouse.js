@@ -9,8 +9,8 @@
 //   z=0  W W W D W W W
 //   z=1  W t . . . B W      t torch, B bed (head z=1, foot z=2)
 //   z=2  W . . . . B W
-//   z=3  W . . . . . W
-//   z=4  W . . . . . W
+//   z=3  W . . S . . W      S two-step stair, only while the roof is laid
+//   z=4  W . . S . . W
 //   z=5  W C F . H t W      C crafting table, F furnace, H chest
 //   z=6  W W W W W W W
 
@@ -53,6 +53,12 @@ function createStarterHouse(anchor) {
     door: { position: at(door.dx, 0, door.dz), upper: at(door.dx, 1, door.dz), family: 'door' },
   };
 
+  // The first roof ring sits on the wall tops, whose upper faces are above eye
+  // level from the ground. A two-step stair in the middle of the room lets the
+  // bot stand high enough; it exists only while the roof is being laid and is
+  // then removed like any other obstacle inside the shell.
+  const scaffold = [at(3, 0, 3), at(3, 1, 3), at(3, 0, 4)];
+
   // Everything inside the shell and one block of headroom above the roof must be clear.
   const clearance = [];
   for (let dx = 0; dx < SIZE; dx += 1) {
@@ -68,6 +74,7 @@ function createStarterHouse(anchor) {
     size: SIZE,
     blocks,
     furniture,
+    scaffold,
     clearance,
     foundation,
     // Doorstep outside the door; the bot must be able to reach it.
