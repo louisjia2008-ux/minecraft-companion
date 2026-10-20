@@ -21,7 +21,7 @@ const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { createStarterHouse } = require('../blueprints/starterHouse');
 const { chooseSite, siteWork } = require('../site');
 const { createBlacklist, posKey } = require('../blacklist');
-const { sleep } = require('../confirm');
+const { sleep, waitUntil } = require('../confirm');
 
 const DEFAULT_GEAR = ['stone_sword', 'stone_tier_pickaxe', 'iron_sword', 'iron_pickaxe', 'shield'];
 // Stone tools come before the house; iron waits until there is a bed to sleep in.
@@ -328,6 +328,36 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return result;
   }
 
+  // The door stays open by day so paths walk straight through (the
+  // pathfinder's own door opening is unreliable), and is shut at night once
+  // the bot is inside.
+  function doorOpen() {
+    const door = blockAt(memory.house.furniture.door.position);
+    if (!door || !matches('door', door.name) || typeof door.getProperties !== 'function') return null;
+    const open = door.getProperties().open;
+    return open === true || open === 'true';
+  }
+
+  function insideRoom(p) {
+    const a = memory.house.anchor;
+    return p.x >= a.x + 1 && p.x < a.x + 6 && p.z >= a.z + 1 && p.z < a.z + 6 && Math.abs(p.y - a.y) < 2;
+  }
+
+  async function setDoor(ctx, open) {
+    const state = doorOpen();
+    if (state === null || state === open) return null;
+    const position = memory.house.furniture.door.position;
+    const door = blockAt(position);
+    if (!actions.withinReach(bot, door.position)) {
+      const moved = await actions.goNear(bot, ctx, door.position, 2, { timeoutMs: 30000 });
+      if (!moved.ok && !actions.withinReach(bot, door.position)) return moved;
+    }
+    ctx.record('door', { open });
+    try { await bot.activateBlock(blockAt(position)); } catch (_) { /* checked below */ }
+    const done = await waitUntil(() => doorOpen() === open, { timeoutMs: 1500, signal: ctx.signal });
+    return done ? { ok: true } : { ok: false, reason: 'door_unchanged' };
+  }
+
   async function nightStep(ctx, hs, state) {
     const house = memory.house;
     if (memory.bunker) {
@@ -366,6 +396,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       if (bot.entity.position.distanceTo(centre) > 2) {
         ctx.record('night', { action: 'shelter' });
         return actions.goNear(bot, ctx, centre, 1, { timeoutMs: 40000 });
+      }
+      if (insideRoom(bot.entity.position.floored())) {
+        const shut = await setDoor(ctx, false);
+        if (shut) return shut;
       }
       bot.companionSheltered = true;
       await sleep(3000, ctx.signal);
@@ -483,6 +517,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (evening) {
       const night = await nightStep(ctx, hs, state);
       if (night) return night;
+    } else if (hs.placed.door && doorOpen() === false && !blacklist.has('door')) {
+      const opened = await setDoor(ctx, true);
+      if (opened && !opened.ok) blacklist.add('door', opened.reason, 30000);
+      if (opened) return opened;
     }
     // Stone tools first, then a few pieces of food so lost health can be eaten back.
     const early = gear.filter((key) => EARLY_GEAR.has(key)).map((key) => ({ key, count: 1 }));
