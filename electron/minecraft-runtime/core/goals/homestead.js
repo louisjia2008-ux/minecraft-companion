@@ -157,6 +157,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       case 'place_station':
         return skills.placeAt(bot, ctx, house.furniture[step.station].position, (n) => n === step.station, { faces: DOWN });
       case 'craft': {
+        await sleep(200, ctx.signal); // settle between consecutive crafts
         const result = await skills.craft(bot, ctx, { item: step.item, times: step.times,
           tablePosition: step.table ? house.furniture.crafting_table.position : null });
         if (result.ok && result.usedTable) memory.verified.crafting_table = true;

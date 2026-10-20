@@ -75,9 +75,25 @@ async function goToBlock(bot, ctx, position, reach = 4) {
   return result.ok ? fail('station_out_of_reach') : result;
 }
 
+/**
+ * Items left in the 2x2 crafting grid or on the cursor are invisible to
+ * inventory.items() and get mixed into the next recipe (two leftover planks
+ * plus new ones made a pressure plate). Closing the inventory makes the
+ * server hand them back.
+ */
+async function clearCraftingLeftovers(bot, ctx) {
+  const grid = bot.inventory.slots.slice(0, 5).some(Boolean);
+  const cursor = bot.inventory.selectedItem;
+  if (!grid && !cursor && !bot.currentWindow) return;
+  try { bot.closeWindow(bot.currentWindow || bot.inventory); } catch (_) { /* ignore */ }
+  await waitUntil(() => !bot.inventory.slots.slice(0, 5).some(Boolean) && !bot.inventory.selectedItem,
+    { timeoutMs: 1500, signal: ctx.signal });
+}
+
 async function craft(bot, ctx, { item, times = 1, tablePosition = null }) {
   const info = bot.registry.itemsByName[item];
   if (!info) return fail('unknown_item');
+  await clearCraftingLeftovers(bot, ctx);
   let table = null;
   if (tablePosition) {
     const moved = await goToBlock(bot, ctx, tablePosition);
@@ -100,7 +116,11 @@ async function craft(bot, ctx, { item, times = 1, tablePosition = null }) {
     if (await waitUntil(() => actions.countItems(bot, (n) => n === item) > count, { timeoutMs: 1500, signal: ctx.signal })) {
       crafted += 1;
     } else break;
+    // Let the window's slot updates settle before the next set of clicks;
+    // back-to-back crafts under server load put ingredients in the wrong slots.
+    await sleep(250, ctx.signal);
   }
+  await clearCraftingLeftovers(bot, ctx);
   if (crafted === 0) {
     if (bot.recipesFor(info.id, null, 1, table).length) return fail('craft_unconfirmed');
     // Say exactly what is short (the bot's count can drift from the server's).
