@@ -145,10 +145,12 @@ function nightScenario({ name, withBed }) {
     },
     start: (companion) => companion.homestead(),
     finishWhen: ({ bot }) => Number.isFinite(bot.time?.timeOfDay) && bot.time.timeOfDay > 1500 && bot.time.timeOfDay < 11000,
-    async verify({ bot, deaths }) {
-      const surfaced = bot.entity.position.y >= GROUND - 1;
-      return { pass: deaths === 0 && surfaced, details: { deaths, y: Math.floor(bot.entity.position.y),
-        timeOfDay: bot.time?.timeOfDay } };
+    // After dawn the bot goes straight back to work (often mining), so the
+    // check is: no death, and not still sealed in its bunker.
+    async verify({ bot, deaths, goal }) {
+      const stillInBunker = Boolean(goal?.memory?.bunker);
+      return { pass: deaths === 0 && !stillInBunker, details: { deaths, stillInBunker,
+        slept: Boolean(goal?.memory?.verified?.bed), y: Math.floor(bot.entity.position.y), timeOfDay: bot.time?.timeOfDay } };
     },
   };
 }
