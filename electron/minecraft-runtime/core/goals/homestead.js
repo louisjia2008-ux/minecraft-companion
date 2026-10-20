@@ -238,6 +238,13 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const piece = (what, position, material, match, options = { faces: DOWN }) =>
       tasks.push({ what, position, material, match, options, batch: 1 });
     if (!hs.placed.crafting_table) piece('crafting_table', f.crafting_table.position, 'crafting_table', (n) => n === 'crafting_table');
+    // The top wall row and the roof are laid from the stair.
+    if (memory.scaffoldActive) {
+      for (const p of memory.house.scaffold) {
+        if (!FILLERS.has(nameAt(p))) tasks.push({ what: 'scaffold', position: p, material: 'dirt',
+          match: (n) => FILLERS.has(n), options: { faces: DOWN }, batch: 1 });
+      }
+    }
     const walls = hs.missing.filter((b) => b.phase === 'walls');
     for (const b of walls) tasks.push({ what: 'wall', position: b.position, material: 'cobblestone',
       match: (n) => matches('cobblestone', n), batch: Math.min(walls.length, BATCH) });
@@ -249,13 +256,6 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     if (!hs.placed.furnace) piece('furnace', f.furnace.position, 'furnace', (n) => n === 'furnace');
     const roof = hs.missing.filter((b) => b.phase === 'roof');
-    // The roof goes on only after the walls hold it up, and from the stair.
-    if (!walls.length && roof.length) {
-      for (const p of memory.house.scaffold) {
-        if (!FILLERS.has(nameAt(p))) tasks.push({ what: 'scaffold', position: p, material: 'dirt',
-          match: (n) => FILLERS.has(n), options: { faces: DOWN }, batch: 1 });
-      }
-    }
     if (!walls.length) {
       for (const b of roof) tasks.push({ what: 'roof', position: b.position, material: 'planks',
         match: (n) => matches('planks', n), batch: Math.min(roof.length, BATCH) });
@@ -398,7 +398,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     protectSite();
     {
       const hs0 = houseState();
-      memory.scaffoldActive = !hs0.missing.some((b) => b.phase === 'walls') && hs0.missing.some((b) => b.phase === 'roof');
+      // The top wall row and the roof both rest on faces above eye level from
+      // the floor, so the stair stands from the third row until the roof is done.
+      const dy = (b) => b.position.y - memory.house.anchor.y;
+      memory.scaffoldActive = !hs0.missing.some((b) => b.phase === 'walls' && dy(b) < 2) && hs0.missing.length > 0;
     }
     const site = await siteStep(ctx);
     if (site) return site;
@@ -416,6 +419,22 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (!skipped.has('food')) early.push({ key: 'food', count: 4, optional: true });
     const earlyStep = planNext({ requirements: early, inventory, stations, kb });
     if (earlyStep) return runPlannerStep(ctx, earlyStep, early.find((r) => r.key === earlyStep.for));
+    // Then the bed, placed at its spot in the future house: from the first
+    // night on, the bot sleeps through the dark and respawns at home.
+    if (!hs.placed.bed && !skipped.has('wool')) {
+      if (countKey('bed', state.inventory, kb) > 0) {
+        const f = memory.house.furniture;
+        return placeRecorded(ctx, f.bed.position, (n) => matches('bed', n), 'bed',
+          { stand: f.bed.stand, verify: () => matches('bed', nameAt(f.bed.head)) });
+      }
+      const bedReq = [{ key: 'bed', count: 1, optional: true }];
+      const bedStep = planNext({ requirements: bedReq, inventory, stations, kb });
+      if (bedStep) {
+        // Wool needs sheep; if none can be found, build on and try again later.
+        const result = await runPlannerStep(ctx, bedStep, bedStep.key === 'wool' ? { key: 'wool', optional: true } : null);
+        return result;
+      }
+    }
     // Then the house: build whatever a full batch of carried material allows.
     const ready = await buildStep(ctx, hs, state.inventory, { whenBatchReady: true });
     if (ready) return ready;

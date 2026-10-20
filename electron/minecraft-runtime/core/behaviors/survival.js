@@ -20,6 +20,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, oxygen: 8, dropsTtlMs: 270000,
     ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
+  const exploreMemory = {};
   const foodCheck = isFood || ((name) => Boolean(bot.registry.foodsByName?.[name]));
   const hasSafeFood = (state, desperate) => Object.entries(state.inventory)
     .some(([name, count]) => count > 0 && foodCheck(name) && (desperate || !RISKY_FOODS.has(name)));
@@ -91,7 +92,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (state.hostiles.some((h) => h.distance <= 8)) return 0;
       return 0.5;
     },
-    run: (ctx) => skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 24, blacklist: huntBlacklist }),
+    async run(ctx) {
+      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 32, blacklist: huntBlacklist });
+      // Nothing to hunt in sight: look further afield instead of waiting to starve.
+      if (result.reason === 'no_mob_in_range') return skills.explore(bot, ctx, exploreMemory);
+      return result;
+    },
   };
 
   // Low health with a full stomach: stand still a few seconds and let it regenerate.
