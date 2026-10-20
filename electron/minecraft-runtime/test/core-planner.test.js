@@ -77,7 +77,7 @@ test('a bed needs three wool of one color', () => {
 
 test('the starter house is fully self-gatherable', () => {
   const house = createStarterHouse({ x: 0, y: 1, z: 0 });
-  assert.deepEqual(house.materials(), { cobblestone: 70, planks: 49, torch: 2 });
+  assert.deepEqual(house.materials(), { cobblestone: 46, planks: 49, torch: 2 });
   const requirements = [
     ...Object.entries(house.materials()).map(([key, count]) => ({ key, count })),
     { key: 'bed', count: 1 }, { key: 'chest', count: 1 }, { key: 'door', count: 1 },

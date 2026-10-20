@@ -208,7 +208,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const movements = bot.pathfinder?.movements;
     if (!movements || !memory.house) return;
     bot.companionSurfaceY = memory.house.anchor.y;
-    if (!memory.protect) memory.protect = (block) => (insideHouse(block.position) ? 40 : 0);
+    if (!memory.protect) memory.protect = (block) => (insideHouse(block.position) ? 90 : 0);
     if (!movements.exclusionAreasBreak.includes(memory.protect)) movements.exclusionAreasBreak.push(memory.protect);
   }
 
@@ -455,8 +455,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     protectSite();
     {
       const hs0 = houseState();
-      // The top wall row and the roof both rest on faces above eye level from
-      // the floor, so the stair stands from the third row until the roof is done.
+      // The roof rests on faces above eye level from the floor, so the step
+      // stands once the walls are up and until the roof is done.
       const dy = (b) => b.position.y - memory.house.anchor.y;
       // Once up it stays until the whole shell stands, even if a lower block
       // has to be put back meanwhile; otherwise it is torn down and rebuilt.
