@@ -235,13 +235,27 @@ async function equipBestWeapon(bot) {
 async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3 } = {}) {
   await equipBestWeapon(bot);
   const deadline = Date.now() + timeoutMs;
+  // Chasing something up on the surface from a pit needs the same climbing allowance.
+  const first = bot.entities[entityId];
+  if (first && first.position.y - bot.entity.position.y > 2 && underground(bot)) {
+    return withClimbing(bot, first.position.y + 4, () => attackLoop(bot, ctx, entityId, deadline, reach));
+  }
+  return attackLoop(bot, ctx, entityId, deadline, reach);
+}
+
+async function attackLoop(bot, ctx, entityId, deadline, reach) {
   try {
     while (Date.now() < deadline) {
       const target = bot.entities[entityId];
       if (!target || !target.isValid) return { ok: true };
       const distance = target.position.distanceTo(bot.entity.position);
       if (distance > reach) {
-        bot.pathfinder.setGoal(new goals.GoalFollow(target, 1.5), true);
+        // Set once: GoalFollow tracks the target itself, and resetting it every
+        // tick restarts path planning before any path is found.
+        const current = bot.pathfinder.goal;
+        if (!(current instanceof goals.GoalFollow) || current.entity !== target) {
+          bot.pathfinder.setGoal(new goals.GoalFollow(target, 1.5), true);
+        }
       } else {
         bot.pathfinder.setGoal(null);
         await bot.lookAt(target.position.offset(0, (target.height || 1.6) * 0.8, 0), true);
