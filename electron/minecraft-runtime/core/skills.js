@@ -145,7 +145,7 @@ function shortBy(ingredients, have) {
  *   stand  - exact cell to stand in (orientation-sensitive blocks like beds)
  *   verify - extra check after placing (e.g. both bed halves)
  */
-async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify } = {}) {
+async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, alsoClear = [] } = {}) {
   const target = v(position);
   const current = bot.blockAt(target);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
@@ -185,7 +185,8 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify } =
     face = found.face.scaled(-1);
   }
   if (!ref || ref.boundingBox !== 'block') return fail('no_support');
-  if (entityInside(bot, target)) return fail('cell_occupied_by_entity');
+  // Multi-block items (a bed's head) need their other cells free of creatures too.
+  if (entityInside(bot, target) || alsoClear.some((p) => entityInside(bot, v(p)))) return fail('cell_occupied_by_entity');
   try {
     await bot.equip(item, 'hand');
     await runCancellable(() => bot.placeBlock(ref, face), { signal: ctx.signal, timeoutMs: 6000, timeoutCode: 'place_timeout' });

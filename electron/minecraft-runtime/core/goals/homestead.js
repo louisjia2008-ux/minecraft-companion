@@ -271,7 +271,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (!hs.placed.chest) piece('chest', f.chest.position, 'chest', (n) => n === 'chest');
     if (!hs.placed.bed) {
       piece('bed', f.bed.position, 'bed', (n) => matches('bed', n),
-        { stand: f.bed.stand, verify: () => matches('bed', nameAt(f.bed.head)) });
+        { stand: f.bed.stand, verify: () => matches('bed', nameAt(f.bed.head)), alsoClear: [f.bed.head] });
     }
     if (!hs.placed.furnace) piece('furnace', f.furnace.position, 'furnace', (n) => n === 'furnace');
     const roof = hs.missing.filter((b) => b.phase === 'roof');
@@ -544,11 +544,14 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     // Then the bed, placed at its spot in the future house: from the first
     // night on, the bot sleeps through the dark and respawns at home.
-    if (!hs.placed.bed && !skipped.has('wool')) {
+    if (!hs.placed.bed && !skipped.has('wool') && !blacklist.has('early_bed')) {
       if (countKey('bed', state.inventory, kb) > 0) {
         const f = memory.house.furniture;
-        return placeRecorded(ctx, f.bed.position, (n) => matches('bed', n), 'bed',
-          { stand: f.bed.stand, verify: () => matches('bed', nameAt(f.bed.head)) });
+        const placed = await placeRecorded(ctx, f.bed.position, (n) => matches('bed', n), 'bed',
+          { stand: f.bed.stand, verify: () => matches('bed', nameAt(f.bed.head)), alsoClear: [f.bed.head] });
+        // An animal in the way or uneven ground: build on and come back to it.
+        if (!placed.ok) blacklist.add('early_bed', placed.reason, 120000);
+        return placed;
       }
       const bedReq = [{ key: 'bed', count: 1, optional: true }];
       const bedStep = planNext({ requirements: bedReq, inventory, stations, kb });

@@ -11,7 +11,10 @@ const { createStarterHouse } = require('../core/blueprints/starterHouse');
 const GEAR = ['iron_sword', 'iron_pickaxe', 'shield'];
 
 async function testBlock(server, p, predicate) {
-  const match = await server.query(`execute if block ${p.x} ${p.y} ${p.z} ${predicate}`, /Test (passed|failed)/, 5000);
+  // An unloaded chunk answers "That position is not loaded"; the verifier
+  // force-loads the house area first, so this only guards against hangs.
+  const match = await server.query(`execute if block ${p.x} ${p.y} ${p.z} ${predicate}`,
+    /Test (passed|failed)|(not loaded)/, 5000);
   return match[1] === 'passed';
 }
 
@@ -25,6 +28,10 @@ async function verifyHomestead({ server, username, goal }) {
   const anchor = goal?.memory?.house?.anchor;
   if (!anchor) return { pass: false, details: { reason: 'no_site' } };
   const house = createStarterHouse(anchor);
+  // The bot may have wandered off: keep the house chunks loaded while checking.
+  await server.query(`forceload add ${anchor.x - 2} ${anchor.z - 2} ${anchor.x + 9} ${anchor.z + 9}`,
+    /(Marked|already|forceloaded|loaded)/i, 10000).catch(() => null);
+  await new Promise((resolve) => setTimeout(resolve, 2000));
   // Block tags only; cobbled deepslate also counts as wall stone.
   const accept = { cobblestone: ['minecraft:cobblestone', 'minecraft:cobbled_deepslate'], planks: ['#minecraft:planks'] };
   let placed = 0;
