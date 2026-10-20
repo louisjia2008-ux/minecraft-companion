@@ -21,6 +21,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
   const exploreMemory = {};
+  let stuckStreak = 0;
   const foodCheck = isFood || ((name) => Boolean(bot.registry.foodsByName?.[name]));
   const hasSafeFood = (state, desperate) => Object.entries(state.inventory)
     .some(([name, count]) => count > 0 && foodCheck(name) && (desperate || !RISKY_FOODS.has(name)));
@@ -103,6 +104,13 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // Animals are visible out to about 100 blocks; go for the nearest one seen.
       const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 96, blacklist: huntBlacklist });
       // Nothing to hunt in sight: berries, else look further afield instead of waiting to starve.
+      // Could not reach anything: the bot itself is probably stuck (tree top, ledge).
+      if (['NoPath', 'Timeout', 'path_timeout', 'no_progress', 'not_arrived', 'chase_stuck'].includes(result.reason)) {
+        stuckStreak += 1;
+        if (stuckStreak >= 2) { stuckStreak = 0; return actions.unstick(bot, ctx); }
+        return result;
+      }
+      stuckStreak = 0;
       if (result.reason === 'no_mob_in_range') {
         const berries = await skills.pickBerries(bot, ctx, { blacklist: huntBlacklist });
         if (berries.ok || berries.reason !== 'no_berries') return berries;

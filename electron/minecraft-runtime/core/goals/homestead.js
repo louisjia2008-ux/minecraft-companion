@@ -474,7 +474,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         memory.steps += 1;
         memory.pathFailures = 0;
         if (!result.moved) memory.exploreStreak = 0;
-      } else if (['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress'].includes(result.reason)) {
+      } else if (['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck'].includes(result.reason)) {
         memory.pathFailures += 1;
       }
       return result;

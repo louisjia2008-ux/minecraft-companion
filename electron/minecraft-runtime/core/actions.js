@@ -124,13 +124,31 @@ async function goToOnce(bot, ctx, goal, { timeoutMs = 30000, arrived } = {}) {
   return reached ? { ok: true } : fail('not_arrived');
 }
 
-function goNear(bot, ctx, position, range = 2, options = {}) {
+async function goNear(bot, ctx, position, range = 2, options = {}) {
   const goal = new goals.GoalNear(position.x, position.y, position.z, range);
-  return goTo(bot, ctx, goal, {
+  const direct = () => goTo(bot, ctx, goal, {
     targetY: position.y,
     ...options,
     arrived: (at) => at.distanceTo(position) <= range + 1.5,
   });
+  const result = await direct();
+  if (result.ok || !['Timeout', 'no_progress', 'NoPath'].includes(result.reason)) return result;
+  // Long trips over rough ground (hills, cliffs, foliage) can exhaust the
+  // planner before a full path is found. Walk in legs of ~16 blocks instead.
+  const deadline = Date.now() + (options.timeoutMs ?? 30000);
+  for (let leg = 0; leg < 6 && Date.now() < deadline; leg += 1) {
+    const here = bot.entity.position;
+    const dx = position.x - here.x;
+    const dz = position.z - here.z;
+    const flat = Math.hypot(dx, dz);
+    if (flat <= 20) return direct();
+    const step = 16 / flat;
+    const waypoint = new goals.GoalNearXZ(here.x + dx * step, here.z + dz * step, 3);
+    const before = here.clone();
+    const moved = await goTo(bot, ctx, waypoint, { timeoutMs: Math.min(20000, deadline - Date.now()), arrived: () => true });
+    if (bot.entity.position.distanceTo(before) < 4) return moved.ok ? fail('leg_blocked') : moved;
+  }
+  return direct();
 }
 
 /** Moves to any spot from which `block` can be seen and dug. */
@@ -292,11 +310,16 @@ async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3 } = {})
 }
 
 async function attackLoop(bot, ctx, entityId, deadline, reach) {
+  // A chase that has not closed in for 8 s is not going to (cliff, water, canopy).
+  let closest = Infinity;
+  let closestAt = Date.now();
   try {
     while (Date.now() < deadline) {
       const target = bot.entities[entityId];
       if (!target || !target.isValid) return { ok: true };
       const distance = target.position.distanceTo(bot.entity.position);
+      if (distance < closest - 0.5) { closest = distance; closestAt = Date.now(); }
+      if (distance > reach && Date.now() - closestAt > 8000) return fail('chase_stuck');
       if (distance > reach) {
         // Set once: GoalFollow tracks the target itself, and resetting it every
         // tick restarts path planning before any path is found.
@@ -348,7 +371,27 @@ async function nudge(bot, ctx) {
   return false;
 }
 
+/** On a tree canopy: break the leaves underfoot until standing on real ground. */
+async function dropThroughLeaves(bot, ctx) {
+  const start = bot.entity.position.clone();
+  for (let i = 0; i < 10; i += 1) {
+    const below = bot.blockAt(bot.entity.position.offset(0, -1, 0));
+    if (!below) break;
+    if (below.boundingBox === 'empty') {
+      await waitUntil(() => bot.entity.onGround, { timeoutMs: 2000, signal: ctx.signal });
+      continue;
+    }
+    if (!below.name.endsWith('_leaves')) break;
+    const dug = await digBlock(bot, ctx, below, { timeoutMs: 4000 });
+    if (!dug.ok) break;
+    await waitUntil(() => bot.entity.onGround && bot.entity.position.y < below.position.y + 1.5, { timeoutMs: 2000, signal: ctx.signal });
+  }
+  return start.y - bot.entity.position.y >= 1;
+}
+
 async function unstick(bot, ctx) {
+  const under = bot.blockAt(bot.entity.position.offset(0, -1, 0));
+  if (under && under.name.endsWith('_leaves') && await dropThroughLeaves(bot, ctx)) return { ok: true, moved: 'off_canopy' };
   if (await nudge(bot, ctx)) return { ok: true, moved: 'nudged' };
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;

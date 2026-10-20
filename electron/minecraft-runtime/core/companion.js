@@ -10,7 +10,7 @@ const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { haltBody } = require('./actions');
 
-// Never build scaffolding, pillar up, parkour or wade: the bot must not leave
+// Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
 function configureMovements(bot) {
   const movements = new Movements(bot);
@@ -22,8 +22,17 @@ function configureMovements(bot) {
   movements.maxDropDown = 4; // a 4-block drop costs one heart; 3 strands the bot on tree tops
   movements.infiniteLiquidDropdownDistance = false;
   movements.canOpenDoors = true;
-  const water = bot.registry.blocksByName.water;
-  if (water) movements.blocksToAvoid.add(water.id);
+  // Water is allowed but costly: banning it left the bot unable to reach
+  // anything across a lake (all the animals on the far shore).
+  movements.liquidCost = 5;
+  // Walking across tree canopies strands the bot on leaves with long drops on
+  // every side; stepping onto leaves is allowed but costly.
+  const leaves = new Set(Object.values(bot.registry.blocksByName).filter((b) => b.name.endsWith('_leaves')).map((b) => b.id));
+  movements.exclusionAreasStep.push((block) => {
+    if (!block?.position) return 0;
+    const below = bot.blockAt(block.position.offset(0, -1, 0));
+    return below && leaves.has(below.type) ? 25 : 0;
+  });
   bot.pathfinder.setMovements(movements);
   // Mining paths through stone need more search time than surface walks.
   bot.pathfinder.thinkTimeout = 10000;
