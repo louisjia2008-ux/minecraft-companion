@@ -91,7 +91,8 @@ function simulate({ seed = 1, failRate = 0.15, deathAtStep = null } = {}) {
       if (!fuel) return { ok: false, reason: 'no_fuel' };
       take(fuel);
       take(input, n);
-      add(input === 'raw_iron' ? 'iron_ingot' : 'charcoal', n);
+      const cooked = { beef: 'cooked_beef', mutton: 'cooked_mutton', porkchop: 'cooked_porkchop', chicken: 'cooked_chicken' };
+      add(input === 'raw_iron' ? 'iron_ingot' : cooked[input] || 'charcoal', n);
       memory.input = 0;
       memory.output = 0;
       return { ok: true, taken: n };

@@ -29,6 +29,7 @@ const EARLY_GEAR = new Set(['stone_sword', 'stone_tier_pickaxe', 'pickaxe', 'woo
 const DOWN = [new Vec3(0, -1, 0)];
 const FILLERS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const BATCH = 16;
+const RAW_MEATS = ['beef', 'porkchop', 'mutton', 'chicken', 'rabbit'];
 const STORABLE = ['dirt', 'cobblestone', 'cobbled_deepslate', 'stick', 'rotten_flesh', 'feather', 'leather'];
 
 function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills = defaultSkills, actions = defaultActions,
@@ -488,6 +489,21 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (!skipped.has('food')) early.push({ key: 'food', count: 4, optional: true });
     const earlyStep = planNext({ requirements: early, inventory, stations, kb });
     if (earlyStep) return runPlannerStep(ctx, earlyStep, early.find((r) => r.key === earlyStep.for));
+    // Raw meat is worth two to three times as much cooked: once the furnace
+    // stands, a few pieces in the bag go into it before anything else.
+    if (hs.placed.furnace) {
+      const raw = RAW_MEATS.map((name) => [name, state.inventory[name] || 0]).sort((x, y) => y[1] - x[1])[0];
+      const fuel = Object.keys(state.inventory).some((n) => n === 'coal' || n === 'charcoal' || kb.planks.match(n) || kb.log.match(n));
+      if (raw[1] >= 3 && fuel && !blacklist.has('cook')) {
+        ctx.record('cook', { item: raw[0], count: raw[1] });
+        const cooked = await skills.smelt(bot, ctx, { input: raw[0], count: Math.min(raw[1], 8),
+          furnacePosition: memory.house.furniture.furnace.position, memory: memory.furnace });
+        memory.furnace.item = raw[0];
+        if (cooked.ok) memory.verified.furnace = true;
+        else blacklist.add('cook', cooked.reason, 120000);
+        return cooked;
+      }
+    }
     // Then the bed, placed at its spot in the future house: from the first
     // night on, the bot sleeps through the dark and respawns at home.
     if (!hs.placed.bed && !skipped.has('wool')) {
