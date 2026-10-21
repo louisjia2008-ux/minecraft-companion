@@ -61,6 +61,18 @@ function evaluateSite(blockAt, corner, around) {
     if (TREE(block.name) || LIQUID.has(block.name)) return null;
     if (!isSoft(block)) digs += 1;
   }
+  // Under a closed canopy (dark oak, pale garden) it is dark enough for
+  // monsters all day: move on to open ground instead.
+  let covered = 0;
+  for (const dx of [0, 3, 6]) {
+    for (const dz of [0, 3, 6]) {
+      for (let dy = WALL_HEIGHT + 2; dy <= 16; dy += 1) {
+        const above = blockAt(anchor.x + dx, anchor.y + dy, anchor.z + dz);
+        if (above && (above.name.endsWith('_leaves') || TREE(above.name))) { covered += 1; break; }
+      }
+    }
+  }
+  if (covered >= 5) return null;
   const doorstep = blockAt(house.entrance.x, house.entrance.y - 1, house.entrance.z);
   if (!isSolid(doorstep) && !isSoft(blockAt(house.entrance.x, house.entrance.y - 2, house.entrance.z))) {
     // A missing doorstep is fine only if there is something to stand on below.

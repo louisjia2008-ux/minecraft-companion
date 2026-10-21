@@ -27,6 +27,7 @@ const DEFAULT_GEAR = ['stone_sword', 'stone_tier_pickaxe', 'iron_sword', 'iron_p
 // Stone tools come before the house; iron waits until there is a bed to sleep in.
 const EARLY_GEAR = new Set(['stone_sword', 'stone_tier_pickaxe', 'pickaxe', 'wooden_pickaxe']);
 const DOWN = [new Vec3(0, -1, 0)];
+const FOOD_MOBS = new Set(['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom']);
 const FILLERS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const BATCH = 16;
 const RAW_MEATS = ['beef', 'porkchop', 'mutton', 'chicken', 'rabbit'];
@@ -616,6 +617,18 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         if (cooked.ok) memory.verified.furnace = true;
         else blacklist.add('cook', cooked.reason, 120000);
         return cooked;
+      }
+    }
+    // Animals close by are food in the bag for later: on mountains and in
+    // forests the next one may be a long, failing chase away once hunger hits.
+    if (!evening && state.health >= 12 && countKey('food', state.inventory, kb) < 10 && !blacklist.has('stockpile')) {
+      const near = Object.values(bot.entities || {}).some((e) => FOOD_MOBS.has(e.name) && e.position
+        && e.position.distanceTo(bot.entity.position) <= 16 && !blacklist.has(`mob:${e.id}`));
+      if (near) {
+        ctx.record('stockpile_food', {});
+        const hunted = await skills.huntOne(bot, ctx, { mobs: [...FOOD_MOBS], dropMatch: kb.food.match, blacklist, radius: 16 });
+        if (!hunted.ok) blacklist.add('stockpile', hunted.reason, 60000);
+        return hunted;
       }
     }
     // Then the bed, placed at its spot in the future house: from the first

@@ -132,6 +132,12 @@ test('site selection picks flat ground near the bot and skips trees and water', 
   assert.ok(!covers(avoided, 0, 0));
 });
 
+test('site selection rejects ground under a closed canopy', () => {
+  const canopy = {};
+  for (let x = -20; x <= 20; x += 1) for (let z = -20; z <= 20; z += 1) canopy[`${x},9,${z}`] = 'dark_oak_leaves';
+  assert.equal(chooseSite(voxelWorld(canopy), { x: 0.5, y: 1, z: 0.5 }, { radius: 6 }), null);
+});
+
 test('site work is derived from the world: bumps to dig, holes to fill', () => {
   const house = createStarterHouse({ x: 0, y: 1, z: 0 });
   const world = voxelWorld({ '2,1,2': 'dirt', '4,0,4': 'air', '3,1,3': 'short_grass' });
