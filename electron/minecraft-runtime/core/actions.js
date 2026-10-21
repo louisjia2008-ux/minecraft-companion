@@ -329,11 +329,19 @@ async function attackLoop(bot, ctx, entityId, deadline, reach) {
   // A chase that has not closed in for 8 s is not going to (cliff, water, canopy).
   let closest = Infinity;
   let closestAt = Date.now();
+  // Vanishing is not dying: an animal that wanders out of tracking range also
+  // disappears. Only a seen death, or vanishing next to the bot after hits, counts.
+  let died = false;
+  let hits = 0;
+  let lastDistance = Infinity;
+  const onDead = (entity) => { if (entity?.id === entityId) died = true; };
+  bot.on?.('entityDead', onDead);
   try {
     while (Date.now() < deadline) {
       const target = bot.entities[entityId];
-      if (!target || !target.isValid) return { ok: true };
+      if (!target || !target.isValid) return died || (hits > 0 && lastDistance <= reach + 2) ? { ok: true } : fail('target_lost');
       const distance = target.position.distanceTo(bot.entity.position);
+      lastDistance = distance;
       if (distance < closest - 0.5) { closest = distance; closestAt = Date.now(); }
       if (distance > reach && Date.now() - closestAt > 8000) return fail('chase_stuck');
       if (distance > reach) {
@@ -347,11 +355,13 @@ async function attackLoop(bot, ctx, entityId, deadline, reach) {
         bot.pathfinder.setGoal(null);
         await bot.lookAt(target.position.offset(0, (target.height || 1.6) * 0.8, 0), true);
         bot.attack(target);
+        hits += 1;
       }
       await sleep(distance > reach ? 150 : 625, ctx.signal); // sword attack cooldown
     }
     return fail('combat_timeout');
   } finally {
+    bot.removeListener?.('entityDead', onDead);
     haltBody(bot);
   }
 }
