@@ -69,7 +69,16 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   // `list` is processed after every queued command, so its reply is a barrier.
   await server.query('list', /players online/, 15000);
   await sleep(2000);
-  await bot.waitForChunksToLoad();
+  // A teleport into ungenerated terrain can take longer than Mineflayer's
+  // fixed 10 s, especially with two servers generating at once.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await bot.waitForChunksToLoad();
+      break;
+    } catch (error) {
+      if (attempt >= 6) throw error;
+    }
+  }
 
   let deaths = 0;
   const onDeath = () => { deaths += 1; write('death', { position: bot.entity?.position }); };
