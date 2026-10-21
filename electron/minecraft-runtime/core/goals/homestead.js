@@ -334,6 +334,13 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const up = await surfaceFirst(ctx);
     if (up) return up;
     ctx.record('build', { what, position: posKey(position) });
+    // From far away (hunting, mining in the valley below a hilltop site) the
+    // short placement path times out: walk back as one long trip first.
+    if (bot.entity.position.distanceTo(new Vec3(position.x + 0.5, position.y, position.z + 0.5)) > 12) {
+      ctx.record('return_home', { for: what });
+      const back = await actions.goNear(bot, ctx, new Vec3(position.x, position.y, position.z), 4, { timeoutMs: 90000 });
+      if (!back.ok) return back;
+    }
     const result = await skills.placeAt(bot, ctx, position, match, options);
     // A mob in the way moves on quickly; other failures wait a little longer.
     if (!result.ok) blacklist.add(`build:${posKey(position)}`, result.reason, result.reason === 'cell_occupied_by_entity' ? 4000 : 15000);
@@ -461,7 +468,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
 
   return {
     name: 'homestead',
-    noProgressLimit: 25,
+    noProgressLimit: 40,
     memory,
     isDone: (state) => complete(state),
     progress: () => memory.steps,
