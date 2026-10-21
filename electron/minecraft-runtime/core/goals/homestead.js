@@ -433,7 +433,11 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       if (!placed.ok) blacklist.add('night:bed', placed.reason, 60000);
       return placed;
     }
-    if (hs.placed.bed && !memory.bedRefusedAt) {
+    // Already dark and far from home: the walk back is where nights kill.
+    // Dig in where the bot is instead.
+    const homeDistance = bot.entity.position.distanceTo(new Vec3(house.interiorCenter.x + 0.5, house.interiorCenter.y, house.interiorCenter.z + 0.5));
+    const strandedFar = state.timeOfDay >= 12542 && homeDistance > 64;
+    if (hs.placed.bed && !memory.bedRefusedAt && !strandedFar) {
       const bed = house.furniture.bed.position;
       const centre = new Vec3(bed.x + 0.5, bed.y, bed.z + 0.5);
       if (bot.entity.position.distanceTo(centre) > 4) {
@@ -450,7 +454,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       // Monsters too close to sleep: do not keep trying all night.
       if (!shellDone) memory.bedRefusedAt = Date.now();
     }
-    if (shellDone) {
+    if (shellDone && !strandedFar) {
       const centre = new Vec3(house.interiorCenter.x + 0.5, house.interiorCenter.y, house.interiorCenter.z + 0.5);
       if (bot.entity.position.distanceTo(centre) > 2) {
         ctx.record('night', { action: 'shelter' });
