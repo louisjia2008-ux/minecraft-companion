@@ -27,13 +27,16 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const hasSafeFood = (state, desperate) => Object.entries(state.inventory)
     .some(([name, count]) => count > 0 && foodCheck(name) && (desperate || !RISKY_FOODS.has(name)));
   const nearest = (state) => state.hostiles[0] || null;
+  // Chasing an archer bare-handed, or down into the cave it shoots from, loses.
+  const armed = (state) => Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'));
   // Melee anything close; go after archers only while healthy enough to close in.
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return state.hostiles.find((h) => h.distance <= 2) || null;
     return state.hostiles.find((h) => h.name !== 'creeper'
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
-        || (RANGED.has(h.name) && h.distance <= t.rangedRange && state.health > t.rangedHealth))) || null;
+        || (RANGED.has(h.name) && h.distance <= t.rangedRange && state.health > t.rangedHealth && armed(state)
+          && Math.abs(h.position.y - state.position.y) <= 4))) || null;
   };
 
   const escape = {

@@ -414,8 +414,14 @@ async function explore(bot, ctx, memory) {
   memory.tried = memory.tried || [];
   const here = bot.entity.position;
   const directions = Array.from({ length: 8 }, (_, i) => (i * Math.PI) / 4);
-  const fresh = directions.filter((a) => !memory.tried.slice(-4).includes(a));
-  const angle = (fresh.length ? fresh : directions)[Math.floor(Math.random() * (fresh.length || directions.length))];
+  // Keep one heading while it works: random legs wander in circles around the
+  // same treeless hilltop. Turn only after a blocked leg.
+  if (memory.heading === undefined || memory.blocked) {
+    const fresh = directions.filter((a) => !memory.tried.slice(-4).includes(a));
+    memory.heading = (fresh.length ? fresh : directions)[Math.floor(Math.random() * (fresh.length || directions.length))];
+    memory.blocked = false;
+  }
+  const angle = memory.heading;
   memory.tried.push(angle);
   const distance = 32;
   const x = Math.round(here.x + Math.cos(angle) * distance);
@@ -424,6 +430,7 @@ async function explore(bot, ctx, memory) {
   const goal = new goals.GoalNearXZ(x, z, 4);
   const result = await actions.goTo(bot, ctx, goal, { timeoutMs: 40000, arrived: () => true });
   const moved = bot.entity.position.distanceTo(here);
+  if (moved < 10) memory.blocked = true;
   return moved >= 10 ? { ok: true, moved: Math.round(moved) } : fail(result.ok ? 'explore_blocked' : result.reason);
 }
 

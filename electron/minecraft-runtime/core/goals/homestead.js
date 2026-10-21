@@ -585,6 +585,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const evening = Number.isFinite(state.timeOfDay) && state.timeOfDay >= 11800 && state.timeOfDay < 23400;
     if (!evening) { memory.bedRefusedAt = null; memory.doorPlug = false; }
     bot.companionSheltered = false;
+    // After a death the bot is no longer in its bunker: forget it.
+    if (memory.bunker) {
+      const top = memory.bunker.top;
+      const at = bot.entity.position;
+      if (Math.hypot(at.x - (top.x + 0.5), at.z - (top.z + 0.5)) > 1.5 || at.y > top.y + 0.5 || at.y < top.y - 5) memory.bunker = null;
+    }
     if (memory.bunker && !evening) {
       ctx.record('night', { action: 'dig_out' });
       const out = await skills.digOut(bot, ctx, memory.bunker);
