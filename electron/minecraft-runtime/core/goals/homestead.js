@@ -79,7 +79,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (posKey(f.bed.position) === key || posKey(f.bed.head) === key) {
       return (n) => matches('bed', n) && matches('bed', nameAt(f.bed.position)) && matches('bed', nameAt(f.bed.head));
     }
-    if (posKey(f.door.position) === key || posKey(f.door.upper) === key) return (n) => matches('door', n);
+    // No door yet: at night the doorway is plugged with dirt or stone, dug out again by day.
+    if (posKey(f.door.position) === key || posKey(f.door.upper) === key) return (n) => matches('door', n) || (memory.doorPlug && FILLERS.has(n));
     if (f.torches.some((t) => posKey(t) === key)) return (n) => n === 'torch';
     if (house.scaffold.some((p2) => posKey(p2) === key)) return (n) => memory.scaffoldActive && FILLERS.has(n);
     return () => false;
@@ -384,7 +385,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       await sleep(3000, ctx.signal);
       return { ok: true, waited: true };
     }
-    const shellDone = !hs.missing.length && hs.placed.door;
+    // Walls and roof are enough to spend the night in: without a door yet, the doorway gets plugged.
+    const shellDone = !hs.missing.length;
     // A bed still in the bag goes down at its spot before dark.
     if (!hs.placed.bed && countKey('bed', state.inventory, kb) > 0 && !blacklist.has('night:bed')) {
       const f = house.furniture;
@@ -417,8 +419,20 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         return actions.goNear(bot, ctx, centre, 1, { timeoutMs: 40000 });
       }
       if (insideRoom(bot.entity.position.floored())) {
-        const shut = await setDoor(ctx, false);
-        if (shut) return shut;
+        if (hs.placed.door) {
+          const shut = await setDoor(ctx, false);
+          if (shut) return shut;
+        } else {
+          const door = house.furniture.door;
+          const open = [door.position, door.upper].find((p) => blockAt(p)?.boundingBox !== 'block');
+          if (open && Object.keys(state.inventory).some((n) => FILLERS.has(n)) && !blacklist.has('plug')) {
+            memory.doorPlug = true;
+            ctx.record('night', { action: 'plug_doorway' });
+            const plugged = await skills.placeAt(bot, ctx, open, (n) => FILLERS.has(n));
+            if (!plugged.ok) blacklist.add('plug', plugged.reason, 20000);
+            return plugged;
+          }
+        }
       }
       bot.companionSheltered = true;
       await sleep(3000, ctx.signal);
@@ -426,8 +440,11 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     if (state.timeOfDay < 12542) return null; // still light enough to keep working
     ctx.record('night', { action: 'dig_in' });
+    if (blacklist.has('bunker')) return null;
     const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => FILLERS.has(n), avoid: nearHouseColumn });
     if (dug.ok) { memory.bunker = dug.bunker; bot.companionSheltered = true; }
+    // Nowhere to dig in (sand, water): keep working through the night instead of retrying.
+    else if (['no_bunker_spot', 'no_seal_block'].includes(dug.reason)) blacklist.add('bunker', dug.reason, 60000);
     return dug;
   }
 
@@ -525,7 +542,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const stations = { crafting_table: hs.placed.crafting_table, furnace: hs.placed.furnace };
     // Evenings: home before dark, into bed at dusk, else a sealed bunker.
     const evening = Number.isFinite(state.timeOfDay) && state.timeOfDay >= 11800 && state.timeOfDay < 23400;
-    if (!evening) memory.bedRefusedAt = null;
+    if (!evening) { memory.bedRefusedAt = null; memory.doorPlug = false; }
     bot.companionSheltered = false;
     if (memory.bunker && !evening) {
       ctx.record('night', { action: 'dig_out' });
