@@ -558,6 +558,23 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       ctx.record('site_chosen', { anchor: site.anchor, fills: site.fills, digs: site.digs });
       return { ok: true };
     }
+    // Respawned far away from a site that barely stands and has no bed yet:
+    // starting over here is cheaper than the long walk back.
+    {
+      const a = memory.house.anchor;
+      const far = Math.hypot(bot.entity.position.x - a.x, bot.entity.position.z - a.z) > 150;
+      if (far && !memory.houseBed && (memory.houseBuilt || 0) < memory.house.blocks.length * 0.3) {
+        ctx.record('site_abandoned', { anchor: a, reason: 'far', built: memory.houseBuilt || 0 });
+        const movements = bot.pathfinder?.movements;
+        if (movements && memory.protect) movements.exclusionAreasBreak = movements.exclusionAreasBreak.filter((f) => f !== memory.protect);
+        memory.house = null;
+        memory.protect = null;
+        memory.siteDigs = 0;
+        memory.houseBuilt = 0;
+        memory.furnace = { item: null, input: 0, output: 0 }; // whatever is smelting stays behind
+        return { ok: true, abandoned: true };
+      }
+    }
     // Unloaded chunks read as missing blocks; go home before judging the house.
     if (!blockAt(memory.house.anchor) || !blockAt(memory.house.furniture.chest.position)) {
       ctx.record('return_home', {});
@@ -579,6 +596,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (site) return site;
 
     const hs = houseState();
+    memory.houseBuilt = memory.house.blocks.length - hs.missing.length;
+    memory.houseBed = hs.placed.bed;
     const inventory = plannerInventory(state);
     const stations = { crafting_table: hs.placed.crafting_table, furnace: hs.placed.furnace };
     // Evenings: home before dark, into bed at dusk, else a sealed bunker.
