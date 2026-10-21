@@ -39,6 +39,9 @@ const KNOWLEDGE = {
   log: { match: isLog, sources: [{ kind: 'gather', blocks: isLog }] },
   planks: {
     match: isPlanks,
+    // Every recipe takes one kind of planks (3 birch + 1 oak make no chest),
+    // so only the most plentiful kind counts.
+    count: (inv) => Math.max(0, ...WOODS.map((w) => inv[`${w}_planks`] || 0)),
     sources: [{
       kind: 'craft', yields: 4, needs: { log: 1 }, table: false,
       // Craft planks from whatever log is most plentiful.

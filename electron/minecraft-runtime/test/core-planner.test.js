@@ -132,6 +132,12 @@ test('site selection picks flat ground near the bot and skips trees and water', 
   assert.ok(!covers(avoided, 0, 0));
 });
 
+test('mixed planks do not add up: a bed from 2 birch and 1 oak planks needs more of one kind', () => {
+  const step = planNext({ requirements: [{ key: 'bed', count: 1 }], inventory: { white_wool: 3, birch_planks: 2, oak_planks: 1, birch_log: 1 },
+    stations: { crafting_table: true } });
+  assert.deepEqual([step.kind, step.item], ['craft', 'birch_planks']);
+});
+
 test('four string become white wool for the bed; without string the bot hunts sheep', () => {
   const step = planNext({ requirements: [{ key: 'wool', count: 3 }], inventory: { string: 4, white_wool: 2 } });
   assert.deepEqual([step.kind, step.item], ['craft', 'white_wool']);
