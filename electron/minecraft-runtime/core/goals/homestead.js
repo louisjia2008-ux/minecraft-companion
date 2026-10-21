@@ -200,7 +200,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
           skipped.add(requirement.key, 'low_health', 60000);
           return { ok: true, skipped: requirement.key };
         }
-        const result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist, radius: 96 });
+        const result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist, radius: 96,
+          ...(step.key === 'wool' ? woolPreference(ctx.perceive().inventory) : {}) });
         if (result.reason === 'no_mob_in_range') {
           if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
           return explore(ctx, step.key);
@@ -319,6 +320,26 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       if (retry) return placeRecorded(ctx, retry.position, retry.match, retry.what, retry.options);
     }
     return null;
+  }
+
+  // A bed takes three wool of one color: go for sheep of the color most within
+  // reach (already owned plus visible), and never for sheared ones.
+  function woolPreference(inventory) {
+    if (typeof skills.sheepWool !== 'function') return {};
+    const sheep = Object.values(bot.entities || {}).filter((e) => e.name === 'sheep' && e.position
+      && e.position.distanceTo(bot.entity.position) <= 96);
+    const fleece = new Map(sheep.map((e) => [e.id, skills.sheepWool(bot, e)]));
+    const score = {};
+    for (const wool of fleece.values()) if (wool && !wool.sheared) score[wool.color] = (score[wool.color] || 0) + 1;
+    for (const [name, n] of Object.entries(inventory)) {
+      const color = name.endsWith('_wool') ? name.slice(0, -5) : null;
+      if (color && color in score) score[color] += n * 2;
+    }
+    const best = Object.keys(score).sort((a, b) => score[b] - score[a])[0];
+    return {
+      accept: (e) => !fleece.get(e.id)?.sheared,
+      penalty: (e) => (best && fleece.get(e.id)?.color !== best ? 200 : 0),
+    };
   }
 
   async function surfaceFirst(ctx) {

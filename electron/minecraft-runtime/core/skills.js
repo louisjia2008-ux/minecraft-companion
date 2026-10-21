@@ -7,7 +7,7 @@ const { goals } = require('mineflayer-pathfinder');
 const actions = require('./actions');
 const { waitUntil, runCancellable, sleep } = require('./confirm');
 const { posKey } = require('./blacklist');
-const { FUELS } = require('./knowledge');
+const { FUELS, COLORS } = require('./knowledge');
 const { ownedItems } = require('./perception');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
@@ -338,12 +338,22 @@ async function smelt(bot, ctx, { input, count, furnacePosition, memory }) {
 }
 
 /** Kills the nearest matching animal and collects its drops. */
-async function huntOne(bot, ctx, { mobs, dropMatch, radius = 48, blacklist }) {
+/** A sheep's fleece from its metadata: color name and whether it has been sheared. */
+function sheepWool(bot, entity) {
+  const index = bot.registry.entitiesByName?.sheep?.metadataKeys?.indexOf('wool') ?? -1;
+  if (index < 0) return null;
+  // The server leaves out default values: no entry means a white, unsheared sheep.
+  const value = typeof entity.metadata?.[index] === 'number' ? entity.metadata[index] : 0;
+  return { color: COLORS[value & 15], sheared: Boolean(value & 16) };
+}
+
+async function huntOne(bot, ctx, { mobs, dropMatch, radius = 48, blacklist, accept = () => true, penalty = () => 0 }) {
   const here = bot.entity.position;
+  const score = (e) => e.position.distanceTo(here) + penalty(e);
   const target = Object.values(bot.entities)
     .filter((e) => mobs.includes(e.name) && e.position && e.position.distanceTo(here) <= radius
-      && !blacklist?.has(`mob:${e.id}`))
-    .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0];
+      && !blacklist?.has(`mob:${e.id}`) && accept(e))
+    .sort((a, b) => score(a) - score(b))[0];
   if (!target) return fail('no_mob_in_range');
   ctx.record('hunt_target', { mob: target.name, distance: Math.round(target.position.distanceTo(here)) });
   // Far animals: walk over first; the fight itself has a short timeout.
@@ -552,4 +562,4 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, smelt, huntOne, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };
