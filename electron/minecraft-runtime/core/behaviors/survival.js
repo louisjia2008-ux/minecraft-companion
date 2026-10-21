@@ -79,7 +79,15 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       bot.pathfinder?.setGoal(null);
       bot.setControlState('jump', true);
       try {
-        for (let i = 0; i < 40 && bot.oxygenLevel < 20 && bot.entity.isInWater; i += 1) await sleep(100, ctx.signal);
+        for (let i = 0; i < 40 && bot.oxygenLevel < 20 && bot.entity.isInWater; i += 1) {
+          // Swimming up into a ceiling (a flooded pit or tunnel): dig it open.
+          const above = bot.blockAt(bot.entity.position.offset(0, 2, 0).floored());
+          if (above && above.boundingBox === 'block' && bot.canDigBlock(above)) {
+            await actions.digBlock(bot, ctx, above, { timeoutMs: 4000 });
+            bot.setControlState('jump', true);
+          }
+          await sleep(100, ctx.signal);
+        }
       } finally {
         bot.setControlState('jump', false);
       }

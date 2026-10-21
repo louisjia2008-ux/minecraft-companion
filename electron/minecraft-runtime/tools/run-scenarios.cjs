@@ -53,6 +53,9 @@ async function connectBot({ port, username, version }) {
   await Promise.race([once(bot, 'spawn'), sleep(60000).then(() => { throw new Error('spawn timeout'); })]);
   await acknowledgePlayerLoaded(bot);
   await bot.waitForChunksToLoad();
+  // A respawn needs the same acknowledgement, as the desktop runtime does on
+  // every spawn; until then the server ignores the player's digging.
+  bot.on('spawn', () => { acknowledgePlayerLoaded(bot).catch(() => {}); });
   return bot;
 }
 

@@ -194,6 +194,11 @@ async function digBlock(bot, ctx, block, { timeoutMs = 12000 } = {}) {
   const current = bot.blockAt(position);
   if (!current || current.name !== originalName) return fail('block_changed');
   if (!bot.canDigBlock(current)) return fail('cannot_dig');
+  // Mid-air digging is five times slower on the server than the client's
+  // timing assumes, and the break is rejected. Wait to land (not in water).
+  if (!bot.entity.onGround && !bot.entity.isInWater) {
+    await waitUntil(() => bot.entity.onGround, { timeoutMs: 1500, signal: ctx.signal });
+  }
   try {
     await runCancellable(() => bot.dig(current, true), {
       signal: ctx.signal, timeoutMs, timeoutCode: 'dig_timeout', cancel: () => bot.stopDigging(),

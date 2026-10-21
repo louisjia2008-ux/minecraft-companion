@@ -29,7 +29,8 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
   const candidates = bot.findBlocks({ matching: ids, maxDistance: radius, count: 64 })
     .filter((p) => !blacklist.has(posKey(p)) && !exclude(p))
     .map((p) => bot.blockAt(p))
-    .filter(Boolean)
+    // Digging next to water or lava floods the pit the bot is standing in.
+    .filter((b) => b && !touchesLiquid(bot, b.position))
     // Exposed blocks first: keeps mining inside one open pit instead of
     // digging a fresh hole through the soil for every single stone.
     .sort((a, b) => cost(here, a.position) + buried(bot, a.position) - cost(here, b.position) - buried(bot, b.position));
@@ -61,6 +62,10 @@ function buried(bot, p) {
     if (n && n.boundingBox === 'empty' && n.name !== 'water' && n.name !== 'lava') return 0;
   }
   return 12;
+}
+
+function touchesLiquid(bot, p) {
+  return SIDES.some(([dx, dy, dz]) => /^(water|lava)$/.test(bot.blockAt(p.offset(dx, dy, dz))?.name || ''));
 }
 
 function cost(from, to) {
@@ -434,22 +439,27 @@ function bunkerSpot(bot, top) {
 }
 
 async function digIn(bot, ctx, { sealMatch, avoid = () => false }) {
-  if (!bot.inventory.items().some((i) => sealMatch(i.name))) return fail('no_seal_block');
+  const hasSeal = () => bot.inventory.items().some((i) => sealMatch(i.name));
+  // With nothing to seal with (just respawned), the shaft itself supplies it:
+  // its dirt drops by hand, its stone with a pickaxe.
+  const yieldsSeal = (b) => b && (/^(dirt|grass_block|coarse_dirt|podzol|rooted_dirt|mycelium)$/.test(b.name)
+    || (/^(stone|cobblestone|deepslate|cobbled_deepslate)$/.test(b.name) && bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))));
   let top = bot.entity.position.floored();
-  if (!bunkerSpot(bot, top) || avoid(top)) {
+  const shaftYieldsSeal = (p) => [1, 2, 3].some((dy) => yieldsSeal(bot.blockAt(p.offset(0, -dy, 0))));
+  if (!bunkerSpot(bot, top) || avoid(top) || (!hasSeal() && !shaftYieldsSeal(top))) {
     // Look for a suitable spot close by and walk there first.
     let best = null;
     for (let dx = -8; dx <= 8; dx += 1) {
       for (let dz = -8; dz <= 8; dz += 1) {
         for (let dy = -2; dy <= 2; dy += 1) {
           const p = top.offset(dx, dy, dz);
-          if (avoid(p) || !bunkerSpot(bot, p)) continue;
+          if (avoid(p) || !bunkerSpot(bot, p) || (!hasSeal() && !shaftYieldsSeal(p))) continue;
           const d = Math.abs(dx) + Math.abs(dz) + Math.abs(dy) * 2;
           if (!best || d < best.d) best = { p, d };
         }
       }
     }
-    if (!best) return fail('no_bunker_spot');
+    if (!best) return fail(hasSeal() ? 'no_bunker_spot' : 'no_seal_block');
     const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(best.p.x, best.p.y, best.p.z), { timeoutMs: 20000 });
     if (!moved.ok) return moved;
     top = bot.entity.position.floored();
@@ -462,6 +472,8 @@ async function digIn(bot, ctx, { sealMatch, avoid = () => false }) {
     if (!dug.ok) return dug;
     await waitUntil(() => bot.entity.position.y <= top.y - dy + 0.1 && bot.entity.onGround, { timeoutMs: 2000, signal: ctx.signal });
   }
+  if (!hasSeal()) await waitUntil(hasSeal, { timeoutMs: 2000, signal: ctx.signal });
+  if (!hasSeal()) return fail('no_seal_block');
   // Seal the old ground block above the head, resting on the shaft wall beside it.
   const seal = top.offset(0, -1, 0);
   const sealed = await placeAt(bot, ctx, seal, sealMatch,
