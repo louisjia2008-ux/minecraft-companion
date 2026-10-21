@@ -86,6 +86,15 @@ function createBrain({
     goal.stalls += 1;
     if (!result.ok) goal.reasons.push(result.reason);
     if (goal.stalls >= (goal.def.noProgressLimit ?? noProgressLimit)) {
+      // A long goal may know a reset (forget blacklists, go home) worth a few
+      // more rounds before giving up for good.
+      if (typeof goal.def.recover === 'function' && goal.recoveries < (goal.def.maxRecoveries ?? 0)) {
+        goal.recoveries += 1;
+        emit('goal_recovering', { goal: goal.def.name, progress, attempt: goal.recoveries, reasons: goal.reasons.slice(-goal.stalls) });
+        goal.def.recover();
+        goal.stalls = 0;
+        return;
+      }
       emit('goal_failed', { goal: goal.def.name, progress, reasons: goal.reasons.slice(-goal.stalls) });
       goal = null;
     }
@@ -185,7 +194,7 @@ function createBrain({
     setGoal(def) {
       validateGoal(def);
       const state = safePerceive();
-      goal = { def, best: state ? safeProgress(def, state) : -Infinity, stalls: 0, reasons: [] };
+      goal = { def, best: state ? safeProgress(def, state) : -Infinity, stalls: 0, recoveries: 0, reasons: [] };
       emit('goal_set', { goal: def.name });
     },
     async clearGoal(reason = 'cleared') {

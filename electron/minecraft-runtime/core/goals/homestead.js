@@ -507,6 +507,15 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   return {
     name: 'homestead',
     noProgressLimit: 40,
+    // Out of budget: forget every failed target, get unstuck and walk home,
+    // then start the budget over (deaths far away and pits are the usual cause).
+    maxRecoveries: 6,
+    recover() {
+      blacklist.clear();
+      skipped.clear();
+      memory.pathFailures = 0;
+      memory.recovery = true;
+    },
     memory,
     isDone: (state) => complete(state),
     progress: () => memory.steps,
@@ -516,6 +525,16 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         memory.pathFailures = 0;
         ctx.record('unstick', { at: bot.entity.position.floored() });
         return actions.unstick(bot, ctx);
+      }
+      if (memory.recovery) {
+        memory.recovery = false;
+        ctx.record('recovery', { at: bot.entity.position.floored() });
+        await actions.unstick(bot, ctx);
+        const entrance = memory.house?.entrance;
+        if (entrance && bot.entity.position.distanceTo(new Vec3(entrance.x, entrance.y, entrance.z)) > 16) {
+          return actions.goNear(bot, ctx, new Vec3(entrance.x, entrance.y, entrance.z), 3, { timeoutMs: 120000 });
+        }
+        return { ok: true };
       }
       const result = await runOnce(ctx);
       if (result.ok) {

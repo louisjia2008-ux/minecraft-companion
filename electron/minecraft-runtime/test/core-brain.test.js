@@ -89,6 +89,19 @@ test('a goal that makes no progress fails with its reasons instead of retrying f
   await brain.dispose();
 });
 
+test('a goal with a recovery gets that many fresh budgets before failing', async () => {
+  const { world, perceive } = makeWorld();
+  const events = [];
+  const brain = createBrain({ perceive, noProgressLimit: 2, onEvent: (e) => events.push(e) });
+  let recovered = 0;
+  brain.setGoal({ ...logGoal(world, 2, { fail: true, stepMs: 1 }), maxRecoveries: 2, recover: () => { recovered += 1; } });
+  await runUntil(brain, () => events.some((e) => e.type === 'goal_failed'));
+  assert.equal(recovered, 2);
+  assert.equal(events.filter((e) => e.type === 'goal_recovering').length, 2);
+  assert.equal(events.filter((e) => e.type === 'behavior_started').length, 6);
+  await brain.dispose();
+});
+
 test('a failing reflex backs off so it cannot monopolize the body', async () => {
   const { world, perceive } = makeWorld();
   let now = 0;
