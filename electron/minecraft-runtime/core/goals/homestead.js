@@ -203,6 +203,11 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         }
         const result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist, radius: 96,
           ...(step.key === 'wool' ? woolPreference(ctx.perceive().inventory) : {}) });
+        // No sheep anywhere near: spiders drop string, four of which make wool.
+        if (result.reason === 'no_mob_in_range' && step.key === 'wool') {
+          const spider = await skills.huntOne(bot, ctx, { mobs: ['spider', 'cave_spider'], dropMatch: (n) => n === 'string', blacklist, radius: 48 });
+          if (spider.reason !== 'no_mob_in_range') return spider;
+        }
         if (result.reason === 'no_mob_in_range') {
           if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
           return explore(ctx, step.key);

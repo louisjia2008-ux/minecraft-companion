@@ -116,8 +116,13 @@ const KNOWLEDGE = {
     match: (n) => n.endsWith('_wool') && COLORS.some((c) => n === `${c}_wool`),
     // A bed needs three wool of one color, so only the most common color counts.
     count: (inv) => Math.max(0, ...COLORS.map((c) => inv[`${c}_wool`] || 0)),
-    sources: [{ kind: 'hunt', mobs: ['sheep'] }],
+    // Four string make a white wool: where there are no sheep, spiders still are.
+    sources: [
+      { kind: 'craft', yields: 1, needs: { string: 4 }, table: false, pick: () => 'white_wool', when: (inv) => (inv.string || 0) >= 4 },
+      { kind: 'hunt', mobs: ['sheep'] },
+    ],
   },
+  string: { match: exact('string'), sources: [{ kind: 'hunt', mobs: ['spider', 'cave_spider'] }] },
   bed: {
     match: (n) => n.endsWith('_bed'),
     sources: [{

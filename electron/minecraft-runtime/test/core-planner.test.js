@@ -132,6 +132,13 @@ test('site selection picks flat ground near the bot and skips trees and water', 
   assert.ok(!covers(avoided, 0, 0));
 });
 
+test('four string become white wool for the bed; without string the bot hunts sheep', () => {
+  const step = planNext({ requirements: [{ key: 'wool', count: 3 }], inventory: { string: 4, white_wool: 2 } });
+  assert.deepEqual([step.kind, step.item], ['craft', 'white_wool']);
+  const hunt = planNext({ requirements: [{ key: 'wool', count: 3 }], inventory: { white_wool: 2 } });
+  assert.deepEqual([hunt.kind, hunt.mobs], ['hunt', ['sheep']]);
+});
+
 test('site selection rejects ground under a closed canopy', () => {
   const canopy = {};
   for (let x = -20; x <= 20; x += 1) for (let z = -20; z <= 20; z += 1) canopy[`${x},9,${z}`] = 'dark_oak_leaves';

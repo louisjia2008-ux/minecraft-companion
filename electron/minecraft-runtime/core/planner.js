@@ -65,6 +65,7 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
     const deficit = count - (entry.tool ? Math.min(count, countKey(key, virt, kb)) : take(key, count));
     if (deficit <= 0) return null;
     for (const source of entry.sources) {
+      if (source.when && !source.when(virt)) continue;
       if (source.kind === 'alias') return need(source.key, deficit, depth + 1);
       if (source.kind === 'craft') {
         const times = Math.ceil(deficit / source.yields);

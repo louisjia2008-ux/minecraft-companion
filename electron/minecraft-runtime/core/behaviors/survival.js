@@ -61,7 +61,19 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const threat = target(ctx.perceive());
       if (!threat) return { ok: true };
       ctx.record('defend_target', { mob: threat.name, distance: Math.round(threat.distance) });
-      return actions.attack(bot, ctx, threat.id);
+      let last = threat.position.clone();
+      const tracker = setInterval(() => { const e = bot.entities?.[threat.id]; if (e) last = e.position.clone(); }, 100);
+      let result;
+      try {
+        result = await actions.attack(bot, ctx, threat.id);
+      } finally {
+        clearInterval(tracker);
+      }
+      // Spiders drop string (wool where there are no sheep); pick up what fell.
+      if (result.ok && typeof actions.collectDrops === 'function') {
+        await actions.collectDrops(bot, ctx, last, (n) => n === 'string', { radius: 6, timeoutMs: 4000 });
+      }
+      return result;
     },
   };
 
