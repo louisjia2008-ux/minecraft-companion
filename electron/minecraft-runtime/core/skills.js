@@ -167,6 +167,8 @@ function shortBy(ingredients, have) {
  *   stand  - exact cell to stand in (orientation-sensitive blocks like beds)
  *   verify - extra check after placing (e.g. both bed halves)
  */
+const INTERACTIVE = /(_door|_trapdoor|_fence_gate|_bed|_button|chest|barrel|crafting_table|furnace|smoker|anvil|lever|hopper|dispenser|dropper|lectern|loom|_table|enchanting|shulker_box|stonecutter|grindstone|cartography|brewing|beacon|bell|_sign|note_block|jukebox|composter|cauldron)$/;
+
 async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, alsoClear = [] } = {}) {
   const target = v(position);
   const current = bot.blockAt(target);
@@ -195,7 +197,10 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
     ref = bot.blockAt(target.offset(0, -1, 0));
     face = new Vec3(0, 1, 0);
   } else {
-    const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces });
+    // Clicking a door, chest or bed uses it instead of placing against it.
+    const allFaces = faces || [new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(0, 0, -1), new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(1, 0, 0)];
+    const usableFaces = allFaces.filter((f) => !INTERACTIVE.test(bot.blockAt(target.plus(f))?.name || ''));
+    const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces: usableFaces });
     // Same eye point the goal itself uses, so "arrived" agrees with the pathfinder.
     const head = () => bot.entity.position.floored().offset(0.5, 1.6, 0.5);
     const usable = () => goal.getFaceAndRef(head()) !== null && !overlaps(bot.entity, target);
