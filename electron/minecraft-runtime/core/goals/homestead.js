@@ -180,8 +180,14 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         return result;
       }
       case 'gather': {
-        const result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match,
+        // Nothing within the usual 48 blocks: look as far as the loaded world
+        // reaches before walking off to explore (a felled plain, a treeless hill).
+        let result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match,
           blacklist, exclude: nearHouseColumn });
+        if (result.reason === 'no_target_in_range') {
+          result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match,
+            blacklist, exclude: nearHouseColumn, radius: 128 });
+        }
         if (result.reason === 'no_target_in_range') {
           if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
           return explore(ctx, step.key);

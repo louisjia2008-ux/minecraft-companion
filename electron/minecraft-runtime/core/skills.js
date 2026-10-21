@@ -45,6 +45,14 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     blacklist.add(key, 'no_tool', 30000);
     return fail('no_tool');
   }
+  // Far targets: walk most of the way in legs first, then the precise approach.
+  if (block.position.distanceTo(here) > 32) {
+    const near = await actions.goNear(bot, ctx, block.position.offset(0.5, 0, 0.5), 6, { timeoutMs: 90000 });
+    if (!near.ok && block.position.distanceTo(bot.entity.position) > 24) {
+      blacklist.add(key, near.reason);
+      return near;
+    }
+  }
   const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 45000 });
   if (!reach.ok) {
     // The rest of the same tree or vein is almost always just as unreachable.
