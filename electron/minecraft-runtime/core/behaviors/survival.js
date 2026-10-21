@@ -13,6 +13,7 @@ const { RISKY_FOODS } = defaultActions;
 const RANGED = new Set(['skeleton', 'stray', 'bogged', 'pillager']);
 // Neutral mobs are left alone unless they are right next to us.
 const NEUTRAL = new Set(['enderman', 'zombified_piglin', 'piglin', 'spider', 'cave_spider']);
+const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, thresholds = {} } = {}) {
@@ -164,7 +165,41 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
 
-  return [escape, breathe, defend, eat, provision, recover, recoverDrops];
+  // An angry enderman out-damages a stone or iron sword and teleports out of
+  // reach, but cannot follow into a sealed 1x1 hole: hide there until it calms
+  // down or wanders off, then climb out.
+  const creepyIndex = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
+  const angryEnderman = (state, range) => state.hostiles.find((h) => h.name === 'enderman' && h.distance <= range
+    && creepyIndex >= 0 && bot.entities?.[h.id]?.metadata?.[creepyIndex] === true);
+  let hidden = null;
+  const hide = {
+    name: 'hide',
+    band: BAND.ESCAPE,
+    want(state) {
+      if (hidden) return 1;
+      return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
+    },
+    async run(ctx) {
+      if (!hidden) {
+        ctx.record('hide', { from: 'enderman' });
+        const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => SEALS.has(n) });
+        if (!dug.ok) return dug;
+        hidden = { bunker: dug.bunker, since: Date.now() };
+        return { ok: true };
+      }
+      const waited = Date.now() - hidden.since;
+      if (waited < 90000 && (waited < 25000 || angryEnderman(ctx.perceive(), 24))) {
+        await sleep(2000, ctx.signal);
+        return { ok: true, waited: true };
+      }
+      const out = await skills.digOut(bot, ctx, hidden.bunker);
+      hidden = null;
+      return out;
+    },
+  };
+  bot.on?.('death', () => { hidden = null; });
+
+  return [escape, breathe, hide, defend, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };
