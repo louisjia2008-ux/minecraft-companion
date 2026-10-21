@@ -33,7 +33,10 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     .filter((b) => b && !touchesLiquid(bot, b.position))
     // Exposed blocks first: keeps mining inside one open pit instead of
     // digging a fresh hole through the soil for every single stone.
-    .sort((a, b) => cost(here, a.position) + buried(bot, a.position) - cost(here, b.position) - buried(bot, b.position));
+    // Logs left hanging in a tall canopy need climbing: try anything else first.
+    .map((b) => ({ b, score: cost(here, b.position) + buried(bot, b.position) + (aboveGround(bot, b.position) > 4 ? 40 : 0) }))
+    .sort((a, b) => a.score - b.score)
+    .map(({ b }) => b);
   if (candidates.length === 0) return fail('no_target_in_range');
   const block = candidates[0];
   const key = posKey(block.position);
@@ -44,6 +47,10 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
   }
   const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 45000 });
   if (!reach.ok) {
+    // The rest of the same tree or vein is almost always just as unreachable.
+    for (const other of candidates) {
+      if (other.name === block.name && other.position.distanceTo(block.position) <= 4) blacklist.add(posKey(other.position), reach.reason);
+    }
     blacklist.add(key, reach.reason);
     return reach;
   }
@@ -60,6 +67,16 @@ function buried(bot, p) {
   for (const [dx, dy, dz] of SIDES) {
     const n = bot.blockAt(p.offset(dx, dy, dz));
     if (n && n.boundingBox === 'empty' && n.name !== 'water' && n.name !== 'lava') return 0;
+  }
+  return 12;
+}
+
+/** Height of a block over the first solid ground below it (logs and leaves are not ground). */
+function aboveGround(bot, p) {
+  for (let dy = 1; dy <= 12; dy += 1) {
+    const b = bot.blockAt(p.offset(0, -dy, 0));
+    if (!b) return 0;
+    if (b.boundingBox === 'block' && !b.name.endsWith('_log') && !b.name.endsWith('_leaves')) return dy - 1;
   }
   return 12;
 }
