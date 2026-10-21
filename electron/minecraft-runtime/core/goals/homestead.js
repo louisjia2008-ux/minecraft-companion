@@ -343,6 +343,11 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     };
   }
 
+  // Raiders (an outpost) seen near a spot: no house there.
+  function nearDanger(p) {
+    return (bot.companionDanger || []).some((d) => Math.hypot(d.x - p.x, d.z - p.z) < 80);
+  }
+
   async function surfaceFirst(ctx) {
     if (typeof actions.surface !== 'function' || blacklist.has('surface')) return null;
     const result = await actions.surface(bot, ctx);
@@ -552,7 +557,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   async function runOnce(ctx) {
     const state = ctx.perceive();
     if (!memory.house) {
-      const site = chooseSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), state.position);
+      const site = chooseSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), state.position, { avoid: nearDanger });
       if (!site) return explore(ctx, 'site');
       memory.house = createStarterHouse(site.anchor);
       ctx.record('site_chosen', { anchor: site.anchor, fills: site.fills, digs: site.digs });
@@ -563,8 +568,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     {
       const a = memory.house.anchor;
       const far = Math.hypot(bot.entity.position.x - a.x, bot.entity.position.z - a.z) > 150;
-      if (far && !memory.houseBed && (memory.houseBuilt || 0) < memory.house.blocks.length * 0.3) {
-        ctx.record('site_abandoned', { anchor: a, reason: 'far', built: memory.houseBuilt || 0 });
+      if ((far || nearDanger(a)) && !memory.houseBed && (memory.houseBuilt || 0) < memory.house.blocks.length * 0.3) {
+        ctx.record('site_abandoned', { anchor: a, reason: far ? 'far' : 'raiders', built: memory.houseBuilt || 0 });
         const movements = bot.pathfinder?.movements;
         if (movements && memory.protect) movements.exclusionAreasBreak = movements.exclusionAreasBreak.filter((f) => f !== memory.protect);
         memory.house = null;

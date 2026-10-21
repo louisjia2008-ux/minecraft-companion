@@ -10,7 +10,9 @@ const { sleep } = require('../confirm');
 const { createBlacklist } = require('../blacklist');
 
 const { RISKY_FOODS } = defaultActions;
-const RANGED = new Set(['skeleton', 'stray', 'bogged', 'pillager']);
+const RANGED = new Set(['skeleton', 'stray', 'bogged']);
+// Pillagers come in groups from outposts that keep spawning them: keep away.
+const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 // Neutral mobs are left alone unless they are right next to us.
 const NEUTRAL = new Set(['enderman', 'zombified_piglin', 'piglin', 'spider', 'cave_spider']);
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
@@ -33,7 +35,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return state.hostiles.find((h) => h.distance <= 2) || null;
-    return state.hostiles.find((h) => h.name !== 'creeper'
+    return state.hostiles.find((h) => h.name !== 'creeper' && !(AVOIDED.has(h.name) && h.distance > 2.5)
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || (RANGED.has(h.name) && h.distance <= t.rangedRange && state.health > t.rangedHealth && armed(state)
           && Math.abs(h.position.y - state.position.y) <= 4))) || null;
@@ -174,6 +176,25 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const creepyIndex = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
   const angryEnderman = (state, range) => state.hostiles.find((h) => h.name === 'enderman' && h.distance <= range
     && creepyIndex >= 0 && bot.entities?.[h.id]?.metadata?.[creepyIndex] === true);
+  // Remember where raiders were seen; the homestead keeps its site away from there.
+  const danger = (bot.companionDanger = bot.companionDanger || []);
+  const avoid = {
+    name: 'avoid',
+    band: BAND.DEFENSE,
+    want(state) {
+      const raider = state.hostiles.find((h) => AVOIDED.has(h.name) && h.distance <= 24);
+      if (raider && !danger.some((d) => Math.hypot(d.x - raider.position.x, d.z - raider.position.z) < 32)) {
+        danger.push({ x: Math.round(raider.position.x), z: Math.round(raider.position.z) });
+      }
+      return raider && !state.sheltered && raider.distance > 2.5 ? 1 : 0;
+    },
+    async run(ctx) {
+      const raider = ctx.perceive().hostiles.find((h) => AVOIDED.has(h.name));
+      if (!raider) return { ok: true };
+      ctx.record('avoid', { mob: raider.name, distance: Math.round(raider.distance) });
+      return actions.fleeFrom(bot, ctx, raider.position, { distance: 32, timeoutMs: 15000 });
+    },
+  };
   let hidden = null;
   const hide = {
     name: 'hide',
@@ -202,7 +223,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
   bot.on?.('death', () => { hidden = null; });
 
-  return [escape, breathe, hide, defend, eat, provision, recover, recoverDrops];
+  return [escape, breathe, hide, defend, avoid, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };

@@ -83,14 +83,14 @@ function evaluateSite(blockAt, corner, around) {
 }
 
 /** Best nearby site within `radius` of `around`, or null. */
-function chooseSite(blockAt, around, { radius = 32, step = 3, maxWork = 12 } = {}) {
+function chooseSite(blockAt, around, { radius = 32, step = 3, maxWork = 12, avoid = () => false } = {}) {
   let best = null;
   const center = { x: Math.floor(around.x), y: Math.floor(around.y), z: Math.floor(around.z) };
   for (let dx = -radius; dx <= radius; dx += step) {
     for (let dz = -radius; dz <= radius; dz += step) {
       const corner = { x: center.x + dx - Math.floor(SIZE / 2), z: center.z + dz - Math.floor(SIZE / 2) };
       const site = evaluateSite(blockAt, corner, center);
-      if (!site || site.fills + site.digs > maxWork) continue;
+      if (!site || site.fills + site.digs > maxWork || avoid(site.anchor)) continue;
       if (!best || site.cost < best.cost) best = site;
     }
   }
