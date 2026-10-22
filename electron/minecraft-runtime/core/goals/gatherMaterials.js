@@ -100,18 +100,14 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions });
   }
 
+  // Everything but mining happens up top: out of the mine along its own tunnel, a leg at a time.
+  async function climbOut(ctx) {
+    const leg = await mining.leaveMine(bot, ctx, memory, actions);
+    if (leg) return leg;
+    return surfaceFirst(ctx);
+  }
+
   async function surfaceFirst(ctx) {
-    // Out of our own mine the way we came, up its staircase: a search for
-    // "any block at surface height" goes digging through rock instead, which
-    // stalls, and without a pickaxe never ends.
-    const entrance = memory.mine?.entrance;
-    if (entrance && bot.entity.position.y < entrance.y - 2 && !blacklist.has('mine_exit')) {
-      ctx.record('mine_exit', { from: bot.entity.position.floored(), entrance });
-      const out = await mining.exitMine(bot, ctx, memory, { actions });
-      if (out?.ok) return out;
-      ctx.record('mine_exit_failed', { reason: out?.reason, stair: out?.stair, at: bot.entity.position.floored() });
-      blacklist.add('mine_exit', out?.reason, 60000);
-    }
     if (typeof actions.surface !== 'function' || blacklist.has('surface')) return null;
     const result = await actions.surface(bot, ctx);
     if (result) ctx.record('surface', { ok: result.ok });
@@ -123,7 +119,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
     // Everything but ore deep down is found on the surface: climb out of the mine first.
     if (step.kind !== 'gather' || !Number.isFinite(step.mineY)) {
-      const up = await surfaceFirst(ctx);
+      const up = await climbOut(ctx);
       if (up) return up;
     }
     switch (step.kind) {
@@ -209,7 +205,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     // whole item of the list in the bag: store it now, a death would lose it.
     const whole = carried.some((w) => w.count >= debts.find((r) => r.key === w.key).count);
     const nearChest = bot.entity.position.distanceTo(new Vec3(chest.x + 0.5, chest.y, chest.z + 0.5)) <= NEAR_CHEST;
-    if (carried.length && (!step || freeSlots <= FREE_SLOTS_TO_STORE || (whole && nearChest))) return store(ctx, carried);
+    if (carried.length && (!step || freeSlots <= FREE_SLOTS_TO_STORE || (whole && nearChest))) {
+      return (await climbOut(ctx)) || store(ctx, carried);
+    }
     if (step) return runStep(ctx, step);
     // Nothing left to plan and nothing to store, yet the chest still lacks something.
     return { ok: false, reason: 'nothing_to_do' };

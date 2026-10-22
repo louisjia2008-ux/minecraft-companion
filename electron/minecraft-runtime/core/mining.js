@@ -135,17 +135,18 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   if (!memory.mine) {
     const from = start || { x: feet.x, y: feet.y, z: feet.z };
     memory.mine = { entrance: from, front: from, surfaceY: from.y, dir: memory.mineDir ?? 0, phase: 'descend',
-      mainSteps: 0, steps: 0, turns: 0, branch: null, stairs: [from] };
+      mainSteps: 0, steps: 0, turns: 0, branch: null, cells: { [posKey(from)]: null }, walkFailures: 0 };
     ctx.record('mine_start', { at: posKey(from), y });
   }
   const mine = memory.mine;
   // Back to the front first (after a trip home, a death, a fight).
-  const front = new Vec3(mine.front.x, mine.front.y, mine.front.z);
-  if (!feet.equals(front)) {
+  if (!feet.equals(new Vec3(mine.front.x, mine.front.y, mine.front.z))) {
     ctx.record('mine_return', { front: posKey(mine.front) });
-    const back = await actions.goTo(bot, ctx, new goals.GoalBlock(front.x, front.y, front.z),
-      { timeoutMs: 90000, arrived: (at) => at.floored().equals(front) });
-    if (!back.ok) {
+    const front = new Vec3(mine.front.x, mine.front.y, mine.front.z);
+    const back = (await walkTunnel(bot, ctx, mine, 'front', actions))
+      || await actions.goTo(bot, ctx, new goals.GoalBlock(front.x, front.y, front.z),
+        { timeoutMs: 8000, arrived: (at) => at.floored().equals(front) });
+    if (!back.ok && ++mine.walkFailures >= 3) {
       ctx.record('mine_abandoned', { reason: back.reason });
       memory.mineDir = (mine.dir + 1) % 4;
       memory.mine = null;
@@ -174,7 +175,7 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   if (!moved.ok) return moved;
   const previous = mine.front;
   mine.front = t;
-  if (descend) mine.stairs?.push(t);
+  if (!(posKey(t) in mine.cells)) mine.cells[posKey(t)] = posKey(previous);
   mine.steps += 1;
   mine.turns = 0;
   await maybeTorch(bot, ctx, mine, previous);
@@ -182,31 +183,65 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   return { ok: true, mined: posKey(t) };
 }
 
+const LEG = 6;
+const near = (a, b, d = 1.5) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) <= d;
+const unkey = (k) => { const [x, y, z] = k.split(',').map(Number); return { x, y, z }; };
+
+/** The tunnel cell the bot stands in (or right next to), as a key into mine.cells. */
+function cellAt(mine, feet) {
+  const own = posKey(feet);
+  if (own in mine.cells) return own;
+  return Object.keys(mine.cells).find((k) => near(unkey(k), feet)) || null;
+}
+
+/** Keys from `k` up to the entrance. */
+function chain(mine, k) {
+  const out = [];
+  for (let at = k; at; at = mine.cells[at]) out.push(at);
+  return out;
+}
+
 /**
- * Climbs out the way the bot came down: to the nearest cell of its own
- * staircase, then up it one step at a time. A path search straight to the
- * surface through rock stalls part-way; one step at a time cannot.
- * Null when there is no recorded staircase.
+ * One leg (a few blocks) along the bot's own tunnel, towards the entrance
+ * ('out') or the front ('front'). Every dug cell remembers the cell it was
+ * entered from, so the tunnel is a tree and both ways are walks along it.
+ * Long paths through solid rock make the pathfinder search the whole
+ * hillside; short legs along known open cells do not. Returns null when
+ * there is nowhere to go (already there, or not in the tunnel).
  */
-async function exitMine(bot, ctx, memory, { actions = defaultActions } = {}) {
-  const stairs = memory.mine?.stairs;
-  if (!stairs?.length) return null;
-  const feet = bot.entity.position.floored();
-  const distance = (p) => Math.hypot(p.x - feet.x, p.y - feet.y, p.z - feet.z);
-  let index = 0;
-  stairs.forEach((p, i) => { if (distance(p) < distance(stairs[index])) index = i; });
-  const at = (p) => (pos) => pos.floored().equals(new Vec3(p.x, p.y, p.z));
-  if (distance(stairs[index]) > 0) {
-    const p = stairs[index];
-    const reached = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), { timeoutMs: 60000, arrived: at(p) });
-    if (!reached.ok) return reached;
+async function walkTunnel(bot, ctx, mine, towards, actions = defaultActions) {
+  const go = async (p, timeoutMs = 20000) => {
+    const result = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z),
+      { timeoutMs, arrived: (at) => near(at.floored(), p, 0.5) });
+    if (result.ok) mine.walkFailures = 0;
+    return result;
+  };
+  const here = cellAt(mine, bot.entity.position.floored());
+  if (!here) return towards === 'out' ? null : go(mine.entrance, 90000); // outside: to the entrance first
+  const up = chain(mine, here);
+  let target;
+  if (towards === 'out') {
+    target = up[Math.min(LEG, up.length - 1)];
+  } else {
+    const down = chain(mine, posKey(mine.front)); // front ... entrance
+    const at = down.indexOf(here);
+    if (at >= 0) target = down[Math.max(0, at - LEG)]; // on the way to the front: go deeper
+    else {
+      // In a side branch off the way: back towards where it joins.
+      const join = up.findIndex((k) => down.includes(k));
+      target = up[Math.min(LEG, join < 0 ? up.length - 1 : join)];
+    }
   }
-  for (let i = index - 1; i >= 0; i -= 1) {
-    const p = stairs[i];
-    const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), { timeoutMs: 8000, arrived: at(p) });
-    if (!moved.ok) return { ...moved, stair: i };
-  }
-  return { ok: true, surfaced: true };
+  if (target === here) return null;
+  return go(unkey(target));
+}
+
+/** Below the mine's entrance: one leg back up towards it, else null. */
+function leaveMine(bot, ctx, memory, actions = defaultActions) {
+  const mine = memory.mine;
+  if (!mine || bot.entity.position.y >= mine.surfaceY - 1) return null;
+  ctx.record('mine_leave', { at: posKey(bot.entity.position.floored()) });
+  return walkTunnel(bot, ctx, mine, 'out', actions);
 }
 
 /** Moves the plan on after a step: count main tunnel steps, open and close branches. */
@@ -255,4 +290,4 @@ async function maybeTorch(bot, ctx, mine, cell) {
   } catch (_) { /* a torch is a nicety, not progress */ }
 }
 
-module.exports = { inspectStep, mineStep, exitMine, visibleOre, exposed, advance, DIRS, BRANCH_EVERY, BRANCH_LENGTH };
+module.exports = { inspectStep, mineStep, leaveMine, walkTunnel, visibleOre, exposed, advance, DIRS, BRANCH_EVERY, BRANCH_LENGTH };
