@@ -89,7 +89,9 @@ const wearsGold = (bot) => /^golden_/.test(bot.inventory?.slots?.[5]?.name || ''
 const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false, thresholds = {} } = {}) {
-  const t = { ghastRange: 48, escapeHealth: 6, escapeRange: 6, defendRange: 5, rangedRange: 14, rangedHealth: 14, eatFood: 14,
+  // At night an archer is not chased far: out there more of them spawn, and
+  // the way home to bed is the better defence.
+  const t = { ghastRange: 48, escapeHealth: 6, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
     eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, oxygen: 8, dropsTtlMs: 270000,
     walkSpeed: 4, dropsMaxDistance: 600,
     ...thresholds };
@@ -139,7 +141,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;
     return threats(state).find((h) => h.name !== 'creeper' && !(AVOIDED.has(h.name) && h.distance > 2.5)
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
-        || (RANGED.has(h.name) && h.distance <= t.rangedRange && state.health > t.rangedHealth && armed(state)
+        || (RANGED.has(h.name) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
+          && state.health > t.rangedHealth && armed(state)
           && Math.abs(h.position.y - state.position.y) <= 4))) || null;
   };
 
