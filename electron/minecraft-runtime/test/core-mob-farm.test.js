@@ -34,6 +34,14 @@ test('water runs exactly to the hole, the fall kills, the hopper feeds the chest
     assert.equal(f.stairs[0].y, f.anchor.y);
     const foot = f.stairs[f.stairs.length - 1];
     assert.equal(Math.abs(foot.x - f.cells.stairsFoot.x) + Math.abs(foot.z - f.cells.stairsFoot.z), 1);
+    // Every step stands on rock that must stay solid.
+    const solid = new Set(f.solid.map(key));
+    const bottomOfColumn = new Map();
+    for (const c of f.stairs) {
+      const col = `${c.x},${c.z}`;
+      if (!bottomOfColumn.has(col) || c.y < bottomOfColumn.get(col).y) bottomOfColumn.set(col, c);
+    }
+    for (const c of bottomOfColumn.values()) assert.ok(solid.has(key({ ...c, y: c.y - 1 })), `${facing}: tread under ${key(c)}`);
     // Nothing that must stay solid is dug.
     const dug = new Set([...f.stairs, ...f.room, ...f.channels, ...f.shaft, ...f.bottom].map(key));
     assert.ok(f.solid.every((c) => !dug.has(key(c))), facing);

@@ -45,10 +45,12 @@ function createMobFarm(anchor, facing = 'east') {
   // Stairs from the surface down to the ledge beside the `facing` arm's water
   // source; each step is three high so the bot can walk up and down them.
   const stairs = [];
+  const treads = []; // what each step stands on
   for (let i = ROOM_DEPTH + 1; i >= 0; i -= 1) {
     const at = (y) => cell(d.x * (ARM + 1 + i) + p.x, y, d.z * (ARM + 1 + i) + p.z);
     const feet = L + i;
     for (const y of [feet + 2, feet + 1, feet]) if (y <= g) stairs.push(at(y));
+    treads.push(at(feet - 1));
   }
   const stairsTop = cell(d.x * (ARM + 1 + ROOM_DEPTH + 1) + p.x, g + 1, d.z * (ARM + 1 + ROOM_DEPTH + 1) + p.z);
 
@@ -97,7 +99,7 @@ function createMobFarm(anchor, facing = 'east') {
       facing: DIRECTION_NAMES[`${-d.x},${-d.z}`] },
   ];
   // Must stay solid so the water and the mobs stay where they belong.
-  const solid = [...ledgeFloors.values(), ...channels.map((c) => ({ ...c, y: c.y - 1 })),
+  const solid = [...treads, ...ledgeFloors.values(), ...channels.map((c) => ({ ...c, y: c.y - 1 })),
     ...shaft.filter((c) => c.y < L - 1) // at L-1 the hole's sides are the channels
       .flatMap((c) => Object.values(FACINGS).map((u) => ({ x: c.x + u.x, y: c.y, z: c.z + u.z })))
       .filter((c) => ![cells.stand, cells.alcoveHead, cells.pocket].some((b) => key(b) === key(c)))];
