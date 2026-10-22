@@ -7,6 +7,7 @@
 const { FLAT_GENERATOR, GROUND, resetArea } = require('./collectLogs.cjs');
 const { createCobbleGenerator } = require('../core/blueprints/cobbleGenerator');
 const { createAutoSmelter } = require('../core/blueprints/autoSmelter');
+const { createCaneFarm } = require('../core/blueprints/caneFarm');
 
 const HARVEST = 8;
 
@@ -129,7 +130,11 @@ const autoSmelterFlat = {
     const d = createAutoSmelter(memory.device.anchor, memory.device.facing);
     const parts = {};
     for (const part of d.parts) {
-      parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+      let ok = false;
+      for (const name of part.accept || [part.block]) {
+        ok = ok || await testBlock(server, part.position, `minecraft:${name}${part.facing ? `[facing=${part.facing}]` : ''}`);
+      }
+      parts[part.key] = ok;
     }
     const ingots = await countOnPlayer(server, username, 'minecraft:iron_ingot');
     const pass = Object.values(parts).every(Boolean) && ingots >= SMELT;
@@ -137,4 +142,51 @@ const autoSmelterFlat = {
   },
 };
 
-module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat };
+const CANE = 4;
+
+// Random ticks are sped up (sugar cane otherwise grows one block every ~15 minutes).
+const caneFarmFlat = {
+  name: 'canefarm-flat',
+  description: `Flat plains, handed a piston, an observer, redstone, one sugar cane, a water bucket and dirt; build an observer sugar cane column and collect ${CANE} cane it harvests by itself.`,
+  serverProperties: cobbleGeneratorFlat.serverProperties,
+  timeoutMs: 8 * 60 * 1000,
+  setup({ username, rng, difficulty = 'peaceful' }) {
+    const x = Math.round((rng() - 0.5) * 16);
+    const z = Math.round((rng() - 0.5) * 16);
+    const yaw = Math.round(rng() * 360) - 180;
+    return {
+      commands: [
+        ...commonSetup(username, difficulty),
+        'gamerule randomTickSpeed 200',
+        ...resetArea(),
+        `give ${username} stone_pickaxe`, `give ${username} stone_shovel`, `give ${username} piston`,
+        `give ${username} observer`, `give ${username} redstone`, `give ${username} sugar_cane`,
+        `give ${username} water_bucket`, `give ${username} dirt 4`,
+        `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
+      ],
+      details: { start: { x, z, yaw } },
+    };
+  },
+  start: (companion) => companion.caneFarm({ count: CANE }),
+  async verify({ server, username, goal }) {
+    server.command('gamerule randomTickSpeed 3');
+    const memory = goal?.memory;
+    if (!memory?.farm) return { pass: false, details: { reason: 'no_site' } };
+    const f = createCaneFarm(memory.farm.anchor, memory.farm.facing);
+    const parts = {};
+    for (const part of f.parts) {
+      let ok = false;
+      for (const name of part.accept || [part.block]) {
+        ok = ok || await testBlock(server, part.position, `minecraft:${name}${part.facing ? `[facing=${part.facing}]` : ''}`);
+      }
+      parts[part.key] = ok;
+    }
+    parts.water = await testBlock(server, f.cells.water, 'minecraft:water[level=0]');
+    const cane = await countOnPlayer(server, username, 'minecraft:sugar_cane');
+    const pass = Object.values(parts).every(Boolean) && cane >= CANE;
+    return { pass, details: { farm: { anchor: f.anchor, facing: f.facing }, parts, cane,
+      harvested: memory.harvested, harvests: memory.harvests } };
+  },
+};
+
+module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat };

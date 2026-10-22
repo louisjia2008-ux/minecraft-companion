@@ -331,12 +331,26 @@ async function pourLiquid(bot, ctx, position, fluid) {
     const result = await goToGoal(bot, ctx, goal, usable);
     if (!result.ok) return result;
   }
-  const found = goal.getFaceAndRef(head());
-  if (!found) return fail('no_pour_face');
   if (entityInside(bot, target)) return fail('cell_occupied_by_entity');
   try {
     await bot.equip(bucket, 'hand');
-    await bot.lookAt(found.to, true);
+  } catch (error) {
+    if (isAbort(error)) throw error;
+  }
+  // The bucket goes next to whatever the look ray hits first: from a wrong
+  // angle that is a wall of the hole, not its floor. Aim where the ray
+  // really reaches the floor's top face, from the rim if need be.
+  let aimed = await aimAtFace(bot, floor.position, 1);
+  for (const stand of aimed ? [] : rimCells(bot, target)) {
+    const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(stand.x, stand.y, stand.z), { timeoutMs: 10000 });
+    if (!moved.ok || overlaps(bot.entity, target)) continue;
+    aimed = await aimAtFace(bot, floor.position, 1);
+    if (aimed) break;
+  }
+  if (!aimed) return fail('no_pour_face');
+  try {
+    // The server aims the bucket from its own copy of the player's position: let it catch up.
+    await bot.waitForTicks(2);
     bot.activateItem();
   } catch (error) {
     if (isAbort(error)) throw error;
@@ -346,6 +360,66 @@ async function pourLiquid(bot, ctx, position, fluid) {
   ctx.record('pour_failed', { target: posKey(target), fluid, at: posKey(bot.entity.position),
     now: bot.blockAt(target)?.name || null, holding: bot.heldItem?.name || null });
   return fail('pour_unconfirmed');
+}
+
+/** Turns toward a point of `position`'s `face` that the look ray reaches first; true when found. */
+async function aimAtFace(bot, position, face) {
+  const steps = [0.5, 0.2, 0.8];
+  for (const a of steps) {
+    for (const b of steps) {
+      const point = face === 1 ? position.offset(a, 1, b) : position.offset(a, b, 0);
+      await bot.lookAt(point, true);
+      const hit = bot.blockAtCursor?.(4.5);
+      if (hit && hit.position.equals(position) && hit.face === face) return true;
+    }
+  }
+  return false;
+}
+
+/** Cells beside `target`'s column, up to two above it, where the bot can stand. */
+function rimCells(bot, target) {
+  const cells = [];
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    for (let dy = 0; dy <= 2; dy += 1) {
+      const feet = target.offset(dx, dy, dz);
+      const below = bot.blockAt(feet.offset(0, -1, 0));
+      if (below?.boundingBox !== 'block' || !AIR.has(bot.blockAt(feet)?.name) || !AIR.has(bot.blockAt(feet.offset(0, 1, 0))?.name)) continue;
+      cells.push(feet);
+    }
+  }
+  return cells.sort((a, b) => a.distanceTo(bot.entity.position) - b.distanceTo(bot.entity.position)).slice(0, 4);
+}
+
+/**
+ * Fills an empty bucket from the `fluid` source at `position` (a pour that
+ * landed in the wrong cell). Done once a filled bucket is in the inventory.
+ */
+async function scoopLiquid(bot, ctx, position, fluid) {
+  const target = v(position);
+  if (!isFluidSource(bot.blockAt(target), fluid)) return fail('no_source');
+  const filled = () => bot.inventory.items().filter((i) => i.name === `${fluid}_bucket`).length;
+  const empty = bot.inventory.items().find((i) => i.name === 'bucket');
+  if (!empty) return fail('no_material', { missing: [{ name: 'bucket', short: 1 }] });
+  // Right beside (or in) the cell, so the look ray drops into it over no wall.
+  const near = () => Math.abs(Math.floor(bot.entity.position.x) - target.x) <= 1
+    && Math.abs(Math.floor(bot.entity.position.z) - target.z) <= 1 && Math.abs(bot.entity.position.y - target.y) <= 1.5;
+  if (!near()) {
+    await actions.goTo(bot, ctx, new goals.GoalNear(target.x, target.y + 1, target.z, 1.5), { timeoutMs: 15000, arrived: near });
+    if (!near()) return fail('not_arrived');
+  }
+  const before = filled();
+  try {
+    await bot.equip(empty, 'hand');
+    await bot.lookAt(target.offset(0.5, 0.8, 0.5), true);
+    await bot.waitForTicks(2);
+    bot.activateItem();
+  } catch (error) {
+    if (isAbort(error)) throw error;
+  }
+  const scooped = await waitUntil(() => filled() > before, { timeoutMs: 2000, signal: ctx.signal });
+  if (scooped) return { ok: true };
+  ctx.record('scoop_failed', { target: posKey(target), at: posKey(bot.entity.position), holding: bot.heldItem?.name || null });
+  return fail('scoop_unconfirmed');
 }
 
 function goToGoal(bot, ctx, goal, arrived) {
@@ -754,4 +828,4 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, pourLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeItems, takeItems, useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, pourLiquid, scoopLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeItems, takeItems, useBed, digIn, digOut, inventoryCounts, entityInside };
