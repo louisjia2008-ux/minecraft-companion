@@ -135,7 +135,7 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   if (!memory.mine) {
     const from = start || { x: feet.x, y: feet.y, z: feet.z };
     memory.mine = { entrance: from, front: from, surfaceY: from.y, dir: memory.mineDir ?? 0, phase: 'descend',
-      mainSteps: 0, steps: 0, turns: 0, branch: null };
+      mainSteps: 0, steps: 0, turns: 0, branch: null, stairs: [from] };
     ctx.record('mine_start', { at: posKey(from), y });
   }
   const mine = memory.mine;
@@ -174,11 +174,39 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   if (!moved.ok) return moved;
   const previous = mine.front;
   mine.front = t;
+  if (descend) mine.stairs?.push(t);
   mine.steps += 1;
   mine.turns = 0;
   await maybeTorch(bot, ctx, mine, previous);
   advance(mine);
   return { ok: true, mined: posKey(t) };
+}
+
+/**
+ * Climbs out the way the bot came down: to the nearest cell of its own
+ * staircase, then up it one step at a time. A path search straight to the
+ * surface through rock stalls part-way; one step at a time cannot.
+ * Null when there is no recorded staircase.
+ */
+async function exitMine(bot, ctx, memory, { actions = defaultActions } = {}) {
+  const stairs = memory.mine?.stairs;
+  if (!stairs?.length) return null;
+  const feet = bot.entity.position.floored();
+  const distance = (p) => Math.hypot(p.x - feet.x, p.y - feet.y, p.z - feet.z);
+  let index = 0;
+  stairs.forEach((p, i) => { if (distance(p) < distance(stairs[index])) index = i; });
+  const at = (p) => (pos) => pos.floored().equals(new Vec3(p.x, p.y, p.z));
+  if (distance(stairs[index]) > 0) {
+    const p = stairs[index];
+    const reached = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), { timeoutMs: 60000, arrived: at(p) });
+    if (!reached.ok) return reached;
+  }
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const p = stairs[i];
+    const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), { timeoutMs: 8000, arrived: at(p) });
+    if (!moved.ok) return { ...moved, stair: i };
+  }
+  return { ok: true, surfaced: true };
 }
 
 /** Moves the plan on after a step: count main tunnel steps, open and close branches. */
@@ -227,4 +255,4 @@ async function maybeTorch(bot, ctx, mine, cell) {
   } catch (_) { /* a torch is a nicety, not progress */ }
 }
 
-module.exports = { inspectStep, mineStep, visibleOre, exposed, advance, DIRS, BRANCH_EVERY, BRANCH_LENGTH };
+module.exports = { inspectStep, mineStep, exitMine, visibleOre, exposed, advance, DIRS, BRANCH_EVERY, BRANCH_LENGTH };
