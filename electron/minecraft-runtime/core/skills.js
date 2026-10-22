@@ -217,11 +217,14 @@ function shortBy(ingredients, have) {
  * Places `itemMatch` at `position`. Options:
  *   faces  - allowed directions from the target to its supporting block
  *   stand  - exact cell to stand in (orientation-sensitive blocks like beds)
- *   verify - extra check after placing (e.g. both bed halves)
+ *   verify - extra check after placing (e.g. both bed halves, a hopper's facing)
+ *   sneak  - hold sneak while clicking, so a chest, hopper or furnace can be
+ *            the supporting block instead of opening it. Hoppers point at the
+ *            block they are placed against, so device parts rely on this.
  */
 const INTERACTIVE = /(_door|_trapdoor|_fence_gate|_bed|_button|chest|barrel|crafting_table|furnace|smoker|anvil|lever|hopper|dispenser|dropper|lectern|loom|_table|enchanting|shulker_box|stonecutter|grindstone|cartography|brewing|beacon|bell|_sign|note_block|jukebox|composter|cauldron)$/;
 
-async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, alsoClear = [] } = {}) {
+async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sneak = false, alsoClear = [] } = {}) {
   const target = v(position);
   const current = bot.blockAt(target);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
@@ -251,7 +254,7 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
   } else {
     // Clicking a door, chest or bed uses it instead of placing against it.
     const allFaces = faces || [new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(0, 0, -1), new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(1, 0, 0)];
-    const usableFaces = allFaces.filter((f) => !INTERACTIVE.test(bot.blockAt(target.plus(f))?.name || ''));
+    const usableFaces = sneak ? allFaces : allFaces.filter((f) => !INTERACTIVE.test(bot.blockAt(target.plus(f))?.name || ''));
     const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces: usableFaces });
     // Same eye point the goal itself uses, so "arrived" agrees with the pathfinder.
     const head = () => bot.entity.position.floored().offset(0.5, 1.6, 0.5);
@@ -273,9 +276,15 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
   if (entityInside(bot, target) || alsoClear.some((p) => entityInside(bot, v(p)))) return fail('cell_occupied_by_entity');
   try {
     await bot.equip(item, 'hand');
+    if (sneak) {
+      bot.setControlState('sneak', true);
+      await sleep(150, ctx.signal); // the server must see the sneak before the click
+    }
     await runCancellable(() => bot.placeBlock(ref, face), { signal: ctx.signal, timeoutMs: 6000, timeoutCode: 'place_timeout' });
   } catch (error) {
     if (isAbort(error)) throw error;
+  } finally {
+    if (sneak) bot.setControlState('sneak', false);
   }
   const placed = await waitUntil(() => {
     const block = bot.blockAt(target);
@@ -547,10 +556,10 @@ async function storeItems(bot, ctx, { position, items }) {
   const block = bot.blockAt(v(position));
   if (block?.name !== 'chest') return fail('chest_missing');
   const freeBefore = bot.inventory.emptySlotCount();
+  const stored = {};
   let chest;
   try {
     chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
-    const stored = {};
     for (const { name, count } of items) {
       const type = bot.registry.itemsByName[name]?.id;
       const have = bot.inventory.items().filter((i) => i.name === name).reduce((sum, i) => sum + i.count, 0);
@@ -564,14 +573,48 @@ async function storeItems(bot, ctx, { position, items }) {
         break; // the chest is full
       }
     }
-    return Object.keys(stored).length && bot.inventory.emptySlotCount() > freeBefore
-      ? { ok: true, stored } : fail('chest_full');
   } catch (error) {
     if (isAbort(error)) throw error;
     return fail('chest_failed');
   } finally {
     try { chest?.close(); } catch (_) { /* ignore */ }
   }
+  // Mineflayer syncs the inventory only once the window is closed.
+  const freed = Object.keys(stored).length > 0
+    && await waitUntil(() => bot.inventory.emptySlotCount() > freeBefore, { timeoutMs: 2000, signal: ctx.signal });
+  return freed ? { ok: true, stored } : fail('chest_full');
+}
+
+/** Takes every matching stack out of a chest; ok once the inventory holds more of it. */
+async function takeItems(bot, ctx, { position, itemMatch }) {
+  const moved = await goToBlock(bot, ctx, position);
+  if (!moved.ok) return moved;
+  const block = bot.blockAt(v(position));
+  if (block?.name !== 'chest') return fail('chest_missing');
+  const count = () => ownedItems(bot).filter((i) => itemMatch(i.name)).reduce((sum, i) => sum + i.count, 0);
+  const before = count();
+  let chest;
+  try {
+    chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
+    const stacks = chest.containerItems().filter((i) => itemMatch(i.name));
+    if (stacks.length === 0) return fail('chest_empty');
+    for (const stack of stacks) {
+      try {
+        await chest.withdraw(stack.type, null, stack.count);
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        break; // inventory full: keep what earlier stacks already moved
+      }
+    }
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return fail('chest_failed');
+  } finally {
+    try { chest?.close(); } catch (_) { /* ignore */ }
+  }
+  // Mineflayer syncs the inventory only once the window is closed.
+  const gained = await waitUntil(() => count() > before, { timeoutMs: 2000, signal: ctx.signal });
+  return gained ? { ok: true, taken: count() - before } : fail('take_unconfirmed');
 }
 
 /** Opens the chest and stores one item; confirmed by the container contents. */
@@ -711,4 +754,4 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, pourLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeItems, useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, pourLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeItems, takeItems, useBed, digIn, digOut, inventoryCounts, entityInside };

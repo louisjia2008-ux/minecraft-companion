@@ -10,6 +10,7 @@ const { createRecovery } = require('./behaviors/recovery');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
+const { createAutoSmelterGoal } = require('./goals/autoSmelter');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
@@ -105,6 +106,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     cobbleGenerator(options = {}) {
       const goal = createCobbleGeneratorGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    autoSmelter(options = {}) {
+      const goal = createAutoSmelterGoal({ bot, ...options });
       director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
