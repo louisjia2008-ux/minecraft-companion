@@ -69,3 +69,34 @@ test('the main tunnel opens a branch to each side every few blocks, then carries
   for (let i = 0; i < BRANCH_LENGTH; i += 1) advance(mine);
   assert.deepEqual([mine.phase, mine.branch, mine.front], ['main', null, junction]);
 });
+
+test('the way out and back follows the tunnel the bot dug, a few blocks per leg', async () => {
+  const { walkTunnel } = require('../core/mining');
+  const { Vec3 } = require('vec3');
+  // Staircase east from (0,10,0) down to y=2, then a branch north from (8,2,0).
+  const cells = { '0,10,0': null };
+  let prev = '0,10,0';
+  for (let i = 1; i <= 8; i += 1) { const k = `${i},${10 - i},0`; cells[k] = prev; prev = k; }
+  for (let i = 1; i <= 5; i += 1) { const k = `8,2,${-i}`; cells[k] = prev; prev = k; }
+  const mine = { entrance: { x: 0, y: 10, z: 0 }, front: { x: 8, y: 2, z: 0 }, cells, walkFailures: 0 };
+  const walked = [];
+  const bot = { entity: { position: new Vec3(8.5, 2, -5.5) } };
+  const actions = { goTo: async (_bot, _ctx, goal) => {
+    walked.push(`${goal.x},${goal.y},${goal.z}`);
+    bot.entity.position = new Vec3(goal.x + 0.5, goal.y, goal.z + 0.5);
+    return { ok: true };
+  } };
+  const ctx = {};
+  // From the end of the branch to the front (the junction): back along the branch.
+  while (await walkTunnel(bot, ctx, mine, 'front', actions));
+  assert.deepEqual(walked, ['8,2,0']);
+  // Out to the entrance in legs of at most six blocks.
+  walked.length = 0;
+  while (await walkTunnel(bot, ctx, mine, 'out', actions));
+  assert.deepEqual(walked, ['2,8,0', '0,10,0']);
+  // From home back down to the front: entrance, then down the stairs.
+  bot.entity.position = new Vec3(30, 10, 30);
+  walked.length = 0;
+  while (await walkTunnel(bot, ctx, mine, 'front', actions));
+  assert.deepEqual(walked, ['0,10,0', '6,4,0', '8,2,0']);
+});
