@@ -5,10 +5,11 @@
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const actions = require('./actions');
-const { waitUntil, runCancellable, sleep } = require('./confirm');
+const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { posKey } = require('./blacklist');
 const { FUELS, COLORS } = require('./knowledge');
 const { ownedItems } = require('./perception');
+const { withCursorConfirmation } = require('./inventory');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -114,16 +115,51 @@ async function goToBlock(bot, ctx, position, reach = 4) {
 async function clearCraftingLeftovers(bot, ctx) {
   const grid = bot.inventory.slots.slice(0, 5).some(Boolean);
   const cursor = bot.inventory.selectedItem;
-  if (!grid && !cursor && !bot.currentWindow) return;
-  try { bot.closeWindow(bot.currentWindow || bot.inventory); } catch (_) { /* ignore */ }
-  await waitUntil(() => !bot.inventory.slots.slice(0, 5).some(Boolean) && !bot.inventory.selectedItem,
-    { timeoutMs: 1500, signal: ctx.signal });
+  if (!grid && !cursor && !bot.currentWindow) return true;
+  return withCursorConfirmation(bot, async () => {
+    try { bot.closeWindow(bot.currentWindow || bot.inventory); } catch (_) { /* ignore */ }
+    return waitUntil(() => !bot.inventory.slots.slice(0, 5).some(Boolean) && !bot.inventory.selectedItem,
+      { timeoutMs: 1500, signal: ctx.signal });
+  });
+}
+
+async function craftInWindow(bot, ctx, recipe, table) {
+  const click = bot.clickWindow;
+  const close = bot.closeWindow;
+  let window = table ? null : bot.inventory;
+  let cancelled = false;
+  // The native recipe executor chooses bot.currentWindow again on every
+  // click. Keep its window alive until it settles; closing it on preemption
+  // sent later clicks into the player's 2x2 grid/armor slots instead.
+  bot.clickWindow = function (...args) {
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    if (cancelled) throw Object.assign(new Error('craft_timeout'), { code: 'craft_timeout' });
+    const current = bot.currentWindow || bot.inventory;
+    if (!window) window = current;
+    if (current !== window || (table && !current.type.startsWith('minecraft:crafting'))) {
+      throw Object.assign(new Error('craft_window_changed'), { code: 'craft_window_changed' });
+    }
+    return click.apply(bot, args);
+  };
+  bot.closeWindow = function (target) {
+    // A second close copies the old window's stale main inventory over newer
+    // server updates. The native executor still closes after a server close.
+    if (target && (target === bot.inventory || target === bot.currentWindow)) return close.call(bot, target);
+  };
+  try {
+    await runCancellable(() => bot.craft(recipe, 1, table), { signal: ctx.signal, timeoutMs: 8000,
+      timeoutCode: 'craft_timeout', cancel: () => { cancelled = true; } });
+  } finally {
+    if (window && window !== bot.inventory && bot.currentWindow === window) bot.closeWindow(window);
+    bot.clickWindow = click;
+    bot.closeWindow = close;
+  }
 }
 
 async function craft(bot, ctx, { item, times = 1, tablePosition = null }) {
   const info = bot.registry.itemsByName[item];
   if (!info) return fail('unknown_item');
-  await clearCraftingLeftovers(bot, ctx);
+  if (!await clearCraftingLeftovers(bot, ctx)) return fail('crafting_grid_unconfirmed');
   let table = null;
   if (tablePosition) {
     const moved = await goToBlock(bot, ctx, tablePosition);
@@ -133,33 +169,41 @@ async function craft(bot, ctx, { item, times = 1, tablePosition = null }) {
   }
   const before = actions.countItems(bot, (n) => n === item);
   let crafted = 0;
-  for (let i = 0; i < times; i += 1) {
-    const recipe = bot.recipesFor(info.id, null, 1, table)[0];
-    if (!recipe) break;
-    const count = actions.countItems(bot, (n) => n === item);
-    try {
-      await runCancellable(() => bot.craft(recipe, 1, table), { signal: ctx.signal, timeoutMs: 8000,
-        timeoutCode: 'craft_timeout', cancel: () => bot.closeWindow?.(bot.currentWindow) });
-    } catch (error) {
-      if (isAbort(error)) throw error;
+  let cleared;
+  try {
+    for (let i = 0; i < times; i += 1) {
+      const recipe = bot.recipesFor(info.id, null, 1, table)[0];
+      if (!recipe) break;
+      const count = actions.countItems(bot, (n) => n === item);
+      try {
+        await craftInWindow(bot, ctx, recipe, table);
+      } catch (error) {
+        if (isAbort(error)) throw error;
+      }
+      if (await waitUntil(() => actions.countItems(bot, (n) => n === item) > count, { timeoutMs: 1500, signal: ctx.signal })) {
+        crafted += 1;
+      } else break;
+      // Let the window's slot updates settle before the next set of clicks;
+      // back-to-back crafts under server load put ingredients in the wrong slots.
+      await sleep(250, ctx.signal);
     }
-    if (await waitUntil(() => actions.countItems(bot, (n) => n === item) > count, { timeoutMs: 1500, signal: ctx.signal })) {
-      crafted += 1;
-    } else break;
-    // Let the window's slot updates settle before the next set of clicks;
-    // back-to-back crafts under server load put ingredients in the wrong slots.
-    await sleep(250, ctx.signal);
+  } finally {
+    // Return cursor/grid contents even when preempted, before the next behavior
+    // can read inventory. This bounded cleanup must survive the aborted signal.
+    cleared = await clearCraftingLeftovers(bot, { signal: undefined });
   }
-  await clearCraftingLeftovers(bot, ctx);
+  if (!cleared) return fail('crafting_grid_unconfirmed');
   if (crafted === 0) {
     if (bot.recipesFor(info.id, null, 1, table).length) return fail('craft_unconfirmed');
     // Say exactly what is short (the bot's count can drift from the server's).
-    const have = inventoryCounts(bot);
+    const have = {};
+    for (const stack of bot.inventory.items()) have[stack.name] = (have[stack.name] || 0) + stack.count;
     const recipe = bot.recipesAll(info.id, null, table)
       .map((r) => r.delta.filter((d) => d.count < 0).map((d) => ({ name: bot.registry.items[d.id]?.name, need: -d.count })))
       .sort((a, b) => shortBy(a, have) - shortBy(b, have))[0] || [];
     const missing = recipe.filter((d) => (have[d.name] || 0) < d.need)
       .map((d) => ({ name: d.name, short: d.need - (have[d.name] || 0) }));
+    ctx.record?.('craft_missing', { item, missing, inventory: have });
     return fail('missing_ingredients', { missing });
   }
   return { ok: true, crafted, gained: actions.countItems(bot, (n) => n === item) - before, usedTable: Boolean(table) };

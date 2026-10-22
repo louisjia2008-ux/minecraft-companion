@@ -161,10 +161,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
 
   // Items dropped on death stay for five minutes: go back for them once it is safe.
   let lastDeath = null;
-  bot.on?.('death', () => { lastDeath = { position: bot.entity.position.clone(), at: Date.now(), tries: 0 }; });
+  const onDeathDrops = () => { lastDeath = { position: bot.entity.position.clone(), at: Date.now(), tries: 0 }; };
+  bot.on?.('death', onDeathDrops);
   const recoverDrops = {
     name: 'recover_drops',
     band: BAND.MAINTENANCE,
+    dispose: () => bot.removeListener?.('death', onDeathDrops),
     want(state) {
       if (state.sheltered || !lastDeath || Date.now() - lastDeath.at > t.dropsTtlMs || lastDeath.tries >= 3) return 0;
       if (state.health < 10 || state.hostiles.some((h) => h.distance <= 8)) return 0;
@@ -233,7 +235,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       return out;
     },
   };
-  bot.on?.('death', () => { hidden = null; });
+  const onDeathHide = () => { hidden = null; };
+  bot.on?.('death', onDeathHide);
+  hide.dispose = () => bot.removeListener?.('death', onDeathHide);
 
   return [escape, breathe, hide, defend, avoid, eat, provision, recover, recoverDrops];
 }

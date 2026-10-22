@@ -12,12 +12,14 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { once } = require('node:events');
+const { setTimeout: delay } = require('node:timers/promises');
 const mineflayer = require('mineflayer');
 const { startVanillaServer } = require('../scenarios/vanillaServer.cjs');
 const { SCENARIOS } = require('../scenarios/index.cjs');
 const { createCompanion } = require('../core/companion');
 const { acknowledgePlayerLoaded } = require('../runtime');
 const { withMinecraftProtocolCompatibility } = require('../protocolCompatibility');
+const { ownedItems, countInventory } = require('../core/perception');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
@@ -29,6 +31,7 @@ const option = (name, fallback) => {
 function usage(message) {
   if (message) console.error(message);
   console.error(`Usage: node tools/run-scenarios.cjs --accept-eula [--scenario NAME[,NAME]] [--runs N]
+  [--start-run N] [--bot-lifecycle reuse|fresh] [--inventory-trace]
   [--difficulty peaceful|easy|normal] [--seed N] [--installation DIR] [--java PATH] [--server-jar PATH] [--version V]
 Scenarios: ${Object.keys(SCENARIOS).join(', ')}`);
   process.exit(2);
@@ -50,7 +53,14 @@ async function connectBot({ port, username, version }) {
   const bot = mineflayer.createBot(withMinecraftProtocolCompatibility({
     host: '127.0.0.1', port, username, auth: 'offline', version, hideErrors: false,
   }));
-  await Promise.race([once(bot, 'spawn'), sleep(60000).then(() => { throw new Error('spawn timeout'); })]);
+  const timeout = new AbortController();
+  try {
+    await Promise.race([once(bot, 'spawn'), delay(60000, null, { signal: timeout.signal })
+      .then(() => { throw new Error('spawn timeout'); })]);
+  } catch (error) {
+    bot.quit();
+    throw error;
+  } finally { timeout.abort(); }
   await acknowledgePlayerLoaded(bot);
   await bot.waitForChunksToLoad();
   // A respawn needs the same acknowledgement, as the desktop runtime does on
@@ -59,12 +69,29 @@ async function connectBot({ port, username, version }) {
   return bot;
 }
 
-async function runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir }) {
+function inventorySnapshot(bot) {
+  const item = (i) => i && { name: i.name, count: i.count, slot: i.slot };
+  return { inventory: countInventory(bot.inventory.items()), owned: countInventory(ownedItems(bot)),
+    slots: bot.inventory.slots.map(item), cursor: item(bot.inventory.selectedItem),
+    window: bot.currentWindow && { id: bot.currentWindow.id, type: bot.currentWindow.type,
+      slots: bot.currentWindow.slots.map(item), cursor: item(bot.currentWindow.selectedItem) } };
+}
+
+async function runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir, lifecycle, traceInventory }) {
   const rng = mulberry32(seed + run * 7919);
   const eventsFile = fs.createWriteStream(path.join(runDir, `run-${String(run + 1).padStart(2, '0')}.jsonl`));
   const write = (type, data = {}) => eventsFile.write(JSON.stringify({ type, t: Date.now(), ...data }) + '\n');
   const setup = scenario.setup({ username, run, rng, difficulty });
-  write('setup', { seed, run, difficulty, details: setup.details });
+  write('setup', { seed, run, difficulty, details: setup.details, botLifecycle: lifecycle });
+  const trace = (stage) => write('inventory_state', { stage, ...inventorySnapshot(bot) });
+  const packetListeners = ['set_slot', 'set_player_inventory', 'window_items'].map((name) => {
+    const listener = (packet) => write('inventory_packet', { name, windowId: packet.windowId,
+      slot: packet.slot ?? packet.slotId, stateId: packet.stateId, ...inventorySnapshot(bot) });
+    if (traceInventory) bot._client.on(name, listener);
+    return [name, listener];
+  });
+  let readback = Promise.resolve();
+  let readbackAt = 0;
   for (const command of setup.commands) server.command(command);
   // `list` is processed after every queued command, so its reply is a barrier.
   await server.query('list', /players online/, 15000);
@@ -79,6 +106,7 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
       if (attempt >= 6) throw error;
     }
   }
+  if (traceInventory) trace('after_setup');
 
   let deaths = 0;
   const onDeath = () => { deaths += 1; write('death', { position: bot.entity?.position }); };
@@ -90,6 +118,13 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     bot,
     onEvent(event) {
       write('brain', event);
+      if (traceInventory && (event.type === 'plan_step' || event.type === 'behavior_finished')) trace(event.type);
+      if (traceInventory && event.reason === 'missing_ingredients' && Date.now() - readbackAt > 60000) {
+        readbackAt = Date.now();
+        readback = server.query(`data get entity ${username} Inventory`, /has the following entity data: .*/)
+          .then((match) => write('server_inventory', { data: match[0] }))
+          .catch((error) => write('server_inventory_error', { reason: error.message }));
+      }
       // `stopped` covers death: the brain drops its goal when the bot dies.
       if (event.type === 'goal_done' || event.type === 'goal_failed' || event.type === 'stopped') {
         outcome = outcome || event;
@@ -112,11 +147,13 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
       + ` food=${bot.food} deaths=${deaths} ${Object.entries(inv).map(([k, n]) => `${k}:${n}`).join(' ')}`);
   }, 60000);
   // Scenarios may also end on a world condition (e.g. the next morning).
+  const deadline = new AbortController();
   const condition = scenario.finishWhen ? (async () => {
-    for (;;) { await sleep(2000); if (scenario.finishWhen({ bot })) return false; }
+    for (;;) { await delay(2000, null, { signal: deadline.signal }); if (scenario.finishWhen({ bot })) return false; }
   })() : new Promise(() => {});
   const timedOut = await Promise.race([finished.then(() => false), condition,
-    sleep(scenario.timeoutMs).then(() => true)]);
+    delay(scenario.timeoutMs, null, { signal: deadline.signal }).then(() => true)]);
+  deadline.abort();
   clearInterval(heartbeat);
   await companion.dispose();
   bot.removeListener('death', onDeath);
@@ -131,7 +168,9 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   const result = { run: run + 1, pass: verdict.pass, reason, durationMs, deaths,
     brainOutcome: outcome?.type || null, failureReasons: outcome?.reasons || [], ...verdict.details };
   write('result', result);
-  eventsFile.end();
+  for (const [name, listener] of packetListeners) bot._client.removeListener(name, listener);
+  await readback;
+  await new Promise((resolve) => eventsFile.end(resolve));
   return result;
 }
 
@@ -158,11 +197,16 @@ async function main() {
   const jar = option('--server-jar', installed.minecraft?.jar || path.join(installation, 'server.jar'));
   const version = option('--version', installed.minecraft?.version || '1.21.8');
   const runs = Number(option('--runs', 20));
+  const startRun = Number(option('--start-run', 1));
+  const lifecycle = option('--bot-lifecycle', 'reuse');
+  const traceInventory = args.includes('--inventory-trace');
   const seed = Number(option('--seed', Date.now() % 1_000_000));
   const difficultyOption = option('--difficulty', null);
   const names = option('--scenario', 'collect-logs-flat').split(',');
   if (!fs.existsSync(jar)) usage(`Server jar not found: ${jar}`);
   if (!Number.isSafeInteger(runs) || runs < 1) usage('--runs must be a positive integer');
+  if (!Number.isSafeInteger(startRun) || startRun < 1) usage('--start-run must be a positive integer');
+  if (!['reuse', 'fresh'].includes(lifecycle)) usage('--bot-lifecycle must be reuse or fresh');
   if (difficultyOption && !['peaceful', 'easy', 'normal', 'hard'].includes(difficultyOption)) usage('Unknown --difficulty');
   for (const name of names) if (!SCENARIOS[name]) usage(`Unknown scenario: ${name}`);
 
@@ -177,18 +221,28 @@ async function main() {
     const server = await startVanillaServer({ java, jar, dir: path.join(batchDir, 'server'),
       properties: { ...scenario.serverProperties, difficulty } });
     const username = 'DeskPetCore';
-    const bot = await connectBot({ port: server.port, username, version });
-    bot.on('error', (error) => console.error('bot error:', error.message));
+    let bot = null;
     const results = [];
     try {
-      for (let run = 0; run < runs; run += 1) {
+      for (let run = startRun - 1; run < startRun - 1 + runs; run += 1) {
         let result;
         try {
-          result = await runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir: batchDir });
+          if (!bot) {
+            bot = await connectBot({ port: server.port, username, version });
+            bot.on('error', (error) => console.error('bot error:', error.message));
+          }
+          result = await runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir: batchDir,
+            lifecycle, traceInventory });
         } catch (error) {
           result = { run: run + 1, pass: false, reason: `harness_error:${error.message}`, durationMs: 0, deaths: 0 };
         }
         results.push(result);
+        if (lifecycle === 'fresh' && bot) {
+          const ended = once(bot, 'end');
+          bot.quit();
+          await ended;
+          bot = null;
+        }
         console.log(`  run ${String(run + 1).padStart(2)}: ${result.pass ? 'PASS' : 'FAIL'}`
           + ` ${Math.round(result.durationMs / 1000)}s${result.reason ? ` (${result.reason})` : ''}`
           + `${result.logsOnServer !== undefined ? ` logs=${result.logsOnServer}` : ''}`
@@ -196,7 +250,7 @@ async function main() {
             + ` gear=${JSON.stringify(result.gear)} chest=${result.chestUsed} bed=${result.bedUsed}` : ''}`);
       }
     } finally {
-      bot.quit();
+      bot?.quit();
       await server.stop();
     }
     const summary = summarize(name, results);
