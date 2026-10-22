@@ -2,11 +2,13 @@
 // Wires the brain to a live Mineflayer bot: perception, survival behaviors,
 // conservative movement settings and the decision tick.
 
+const { Vec3 } = require('vec3');
 const { pathfinder, Movements } = require('mineflayer-pathfinder');
 const { createBrain } = require('./brain');
 const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createRecovery } = require('./behaviors/recovery');
+const { createNightRest } = require('./behaviors/nightRest');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
@@ -59,10 +61,20 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   const recovery = createRecovery({ bot });
   // Animals the current goal keeps (a ranch's herd) are not hunted for food.
   let spare = () => false;
-  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors];
   let director = null;
+  let brain = null;
+  // Nights after the house is done: home to bed, whatever goal runs. The
+  // homestead goal keeps handling its own nights while it builds.
+  const nightRest = createNightRest({ bot, home: () => {
+    const house = director?.memory.homestead?.memory?.house;
+    if (!house || brain?.status().goal?.name === 'homestead') return null;
+    const bed = house.furniture.bed.position;
+    if (!bot.blockAt(new Vec3(bed.x, bed.y, bed.z))?.name.endsWith('_bed')) return null;
+    return { bed, centre: house.interiorCenter };
+  } });
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors, nightRest];
   const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
-  const brain = createBrain({
+  brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
     onEvent: (event) => {

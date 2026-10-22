@@ -7,10 +7,11 @@ const { netherQuartzGiven } = require('./nether.cjs');
 const { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat } = require('./devices.cjs');
 const { farmFlat } = require('./farm.cjs');
 const { ranchFlat } = require('./ranch.cjs');
+const { e2eFlat, machinesFlat } = require('./e2e.cjs');
 
 const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat,
   netherQuartzGiven, cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, materialsCobblegenFlat, branchMineIronFlat,
-  farmFlat, ranchFlat]
+  farmFlat, ranchFlat, e2eFlat, machinesFlat]
   .map((s) => [s.name, s]));
 
 module.exports = { SCENARIOS };

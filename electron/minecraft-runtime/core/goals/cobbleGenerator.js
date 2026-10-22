@@ -63,8 +63,8 @@ function evaluateGeneratorSite(blockAt, anchor, facing, options = {}) {
   return { device, fixes };
 }
 
-/** Nearest buildable spot around `around` (a position with integer-able coords). */
-function chooseGeneratorSite(blockAt, around, { radius = 10, collector = false } = {}) {
+/** Nearest buildable spot around `around`; `avoid(p)` rules out cells that belong to something else (the house). */
+function chooseGeneratorSite(blockAt, around, { radius = 10, collector = false, avoid = null } = {}) {
   const origin = { x: Math.floor(around.x), y: Math.floor(around.y), z: Math.floor(around.z) };
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 1) {
@@ -81,7 +81,7 @@ function chooseGeneratorSite(blockAt, around, { radius = 10, collector = false }
       if (y === null) continue;
       for (const facing of Object.keys(FACINGS)) {
         const site = evaluateGeneratorSite(blockAt, { x: origin.x + dx, y, z: origin.z + dz }, facing, { collector });
-        if (!site) continue;
+        if (!site || (avoid && footprint(site.device).some(avoid))) continue;
         // Keep a clear gap from the bot's own feet: it must not stand in a cell to dig.
         const score = site.fixes * 4 + Math.hypot(dx, dz) + Math.abs(y + 1 - origin.y) * 2 + (Math.hypot(dx, dz) < 3 ? 6 : 0);
         if (!best || score < best.score) best = { ...site, score };
@@ -91,7 +91,10 @@ function chooseGeneratorSite(blockAt, around, { radius = 10, collector = false }
   return best ? best.device : null;
 }
 
-function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harvest = 8, collector = false,
+// Every cell the device digs, seals or keeps clear.
+const footprint = (device) => [...device.open, ...device.seal, ...device.clearAbove, ...device.parts.map((part) => part.position)];
+
+function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harvest = 8, collector = false, avoid = null,
   skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(harvest) || harvest < 1) throw new TypeError('harvest must be a positive integer');
   const memory = {
@@ -259,16 +262,34 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
     return got ? { ok: true } : { ok: false, reason: 'drop_not_collected' };
   }
 
+  // Items still to be brought for the parts not yet in the world, as
+  // knowledge keys; before a site is chosen, everything a site may take.
+  function needs() {
+    const s = inspect();
+    if (!s) {
+      const probe = createCobbleGenerator({ x: 0, y: 0, z: 0 }, 'east', { collector });
+      return [{ key: 'water_bucket', count: 1 }, { key: 'lava_bucket', count: 1 }, { key: 'cobblestone', count: Math.min(probe.seal.length, 12) },
+        ...probe.parts.map((part) => ({ key: part.block, count: 1 }))];
+    }
+    const list = [];
+    if (!s.water) list.push({ key: 'water_bucket', count: 1 });
+    if (!s.lava) list.push({ key: 'lava_bucket', count: 1 });
+    if (s.openSeal.length) list.push({ key: 'cobblestone', count: s.openSeal.length });
+    for (const part of memory.device.parts) if (!partOk(part)) list.push({ key: part.block, count: 1 });
+    return list;
+  }
+
   return {
     name: 'cobble_generator',
     memory,
+    needs,
     noProgressLimit: 8,
     isDone: () => Boolean(inspect()?.working) && memory.harvested >= harvest,
     progress: progressOf,
     async run(ctx) {
       if (!memory.device) {
         const p = bot.entity.position;
-        const device = chooseGeneratorSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), p, { collector });
+        const device = chooseGeneratorSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), p, { collector, avoid });
         if (!device) return { ok: false, reason: 'no_site' };
         memory.device = device;
         ctx.record('device_site', { kind: device.kind, anchor: device.anchor, facing: device.facing });
