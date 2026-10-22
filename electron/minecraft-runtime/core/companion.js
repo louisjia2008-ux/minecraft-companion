@@ -8,6 +8,7 @@ const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
+const { createNetherQuartzGoal } = require('./goals/netherQuartz');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
@@ -82,6 +83,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     homestead(options = {}) {
       const goal = createHomesteadGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    netherQuartz(options = {}) {
+      const goal = createNetherQuartzGoal({ bot, ...options });
       director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);

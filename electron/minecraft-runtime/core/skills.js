@@ -593,6 +593,8 @@ async function digOut(bot, ctx, bunker) {
 
 /** Uses the bed: sleeps at night, otherwise sets the respawn point by interacting. */
 async function useBed(bot, ctx, { position }) {
+  // Outside the overworld a bed explodes when used.
+  if (String(bot.game?.dimension || 'overworld').replace(/^minecraft:/, '') !== 'overworld') return fail('bed_explodes_here');
   const moved = await goToBlock(bot, ctx, position);
   if (!moved.ok) return moved;
   const block = bot.blockAt(v(position));
