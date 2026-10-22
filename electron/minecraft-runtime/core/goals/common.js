@@ -21,6 +21,8 @@ function createPlannerRunner({ bot, skills, kb, memory, blacklist, avoid = () =>
         const p = here.offset(dx, 0, dz);
         if (blockAt(p)?.name !== 'air' || blockAt(p.offset(0, -1, 0))?.boundingBox !== 'block' || avoid(p)) continue;
         const placed = await skills.placeAt(bot, ctx, p, (n) => n === 'crafting_table', { faces: DOWN });
+        // An animal (or the bot) standing there: try the next spot.
+        if (placed.reason === 'cell_occupied_by_entity') continue;
         if (placed.ok) memory.table = { x: p.x, y: p.y, z: p.z };
         return placed;
       }

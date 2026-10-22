@@ -34,6 +34,10 @@ function configureMovements(bot) {
   movements.maxDropDown = 4; // a 4-block drop costs one heart; 3 strands the bot on tree tops
   movements.infiniteLiquidDropdownDistance = false;
   movements.canOpenDoors = true;
+  // Fences and gates are someone's pen: walk around or through, never dig them.
+  for (const block of Object.values(bot.registry.blocksByName)) {
+    if (/_fence(_gate)?$/.test(block.name)) movements.blocksCantBreak.add(block.id);
+  }
   // Water is allowed but costly: banning it left the bot unable to reach
   // anything across a lake (all the animals on the far shore).
   movements.liquidCost = 5;
