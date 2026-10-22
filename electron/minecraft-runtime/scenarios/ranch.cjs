@@ -25,7 +25,7 @@ const ranchFlat = {
   setup({ username, rng, difficulty = 'easy' }) {
     const trees = plantTrees(rng, 8);
     const commands = [...living(username, difficulty), ...resetArea(), ...trees.commands,
-      'kill @e[type=minecraft:cow]', 'time set 1000', 'gamerule doDaylightCycle false', `give ${username} wheat 16`];
+      'kill @e[type=minecraft:cow]', 'time set 1000', 'gamerule doDaylightCycle false', `give ${username} wheat 16`, `give ${username} bread 8`];
     for (const [x, z] of [[-16, 14], [15, -15]]) commands.push(`summon cow ${x} ${GROUND} ${z}`);
     commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`);
     return { commands, details: { trees: trees.trees.length } };

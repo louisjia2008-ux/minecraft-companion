@@ -118,7 +118,8 @@ async function lure(bot, ctx, pen, entity) {
   const opened = await setGate(bot, ctx, pen, true);
   if (!opened.ok) return opened;
   await holdFood(bot, kind);
-  const following = () => bot.entities[entity.id] && bot.entities[entity.id].position.distanceTo(bot.entity.position) < 7;
+  // Tempted animals close in to about two blocks; wait for that, not just "nearby".
+  const following = () => bot.entities[entity.id] && bot.entities[entity.id].position.distanceTo(bot.entity.position) < 3.5;
   // Toward the gate, then inside, a few blocks at a time.
   for (const target of [pen.outside, pen.inside]) {
     for (let leg = 0; leg < 12; leg += 1) {
@@ -127,13 +128,21 @@ async function lure(bot, ctx, pen, entity) {
       if (here.distanceTo(goal) < 1.5) break;
       const step = here.plus(goal.minus(here).normalize().scaled(Math.min(3, here.distanceTo(goal))));
       await actions.goNear(bot, ctx, step, 1, { timeoutMs: 8000 });
-      // Let the animal catch up.
-      await waitUntil(following, { timeoutMs: 4000, signal: ctx.signal });
-      if (!bot.entities[entity.id]) return fail('animal_gone');
+      // Let the animal catch up; one that stopped following is lost.
+      if (!await waitUntil(following, { timeoutMs: 8000, signal: ctx.signal })) {
+        if (!bot.entities[entity.id]) return fail('animal_gone');
+        if (bot.entities[entity.id].position.distanceTo(bot.entity.position) > 10) return fail('animal_stopped_following');
+      }
     }
   }
-  const inside = await waitUntil(() => bot.entities[entity.id] && pen.contains(bot.entities[entity.id].position),
-    { timeoutMs: 10000, signal: ctx.signal });
+  // Through a one-block gate animals take a while: give it time, stepping
+  // back and forth inside so it keeps coming.
+  let inside = false;
+  for (let i = 0; i < 4 && !inside; i += 1) {
+    inside = await waitUntil(() => bot.entities[entity.id] && pen.contains(bot.entities[entity.id].position),
+      { timeoutMs: 6000, signal: ctx.signal });
+    if (!inside) await actions.goNear(bot, ctx, v(i % 2 ? pen.inside : { ...pen.inside, z: pen.inside.z - 1 }).offset(0.5, 0, 0.5), 0, { timeoutMs: 4000 });
+  }
   // Food away so it stops following, then out and shut.
   try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
   if (!inside) return fail('animal_not_inside');

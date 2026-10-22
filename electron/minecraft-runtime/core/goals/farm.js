@@ -8,6 +8,7 @@
 
 const { Vec3 } = require('vec3');
 const defaultSkills = require('../skills');
+const defaultActions = require('../actions');
 const defaultFarming = require('../farming');
 const { planNext } = require('../planner');
 const { KNOWLEDGE, countKey } = require('../knowledge');
@@ -16,7 +17,7 @@ const { sleep } = require('../confirm');
 const { createPlannerRunner } = require('./common');
 
 function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = null,
-  skills = defaultSkills, farming = defaultFarming, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000 } = {}) {
+  skills = defaultSkills, actions = defaultActions, farming = defaultFarming, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000 } = {}) {
   const blacklist = createBlacklist({ ttlMs: 60000 });
   const memory = { center: center || null, plots: null, table: home?.table || null, steps: 0, harvested: 0, shortfall: {} };
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
@@ -39,6 +40,14 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
     const state = ctx.perceive();
     const list = plots();
     if (!list.length) return skills.explore(bot, ctx, memory);
+    // Off exploring for seeds and the farm is out of sight (unloaded) or far:
+    // walk back before judging the plots, or they all look like nothing to do.
+    const c = memory.center;
+    const away = Math.hypot(bot.entity.position.x - c.x, bot.entity.position.z - c.z);
+    if (away > 32 && (list.some((p) => farming.plotState(bot, p) === 'unknown') || (state.inventory.wheat_seeds || 0) > 0)) {
+      ctx.record('farm', { action: 'return', distance: Math.round(away) });
+      return actions.goNear(bot, ctx, new Vec3(c.x + 0.5, c.y, c.z + 0.5), 4, { timeoutMs: 90000 });
+    }
     const byState = (s) => list.filter((p) => farming.plotState(bot, p) === s && !blacklist.has(posKey(p)));
     const stations = { crafting_table: tableHere() };
     const inventory = inventoryFor(state);

@@ -27,6 +27,10 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
     avoid: (p) => inPenArea(p) || exclude(p) });
 
   const penCount = () => (memory.pen ? husbandry.animalsIn(bot, memory.pen, kind).length : 0);
+  // Hunting for food never takes the herd: animals in the pen, and the kind
+  // being gathered while the pen is still short of it.
+  bot.companionSpared = (e) => Boolean(memory.pen && e.position
+    && (memory.pen.contains(e.position) || (e.name === kind && penCount() < target)));
 
   async function runOnce(ctx) {
     const state = ctx.perceive();

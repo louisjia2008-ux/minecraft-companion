@@ -404,7 +404,7 @@ async function huntOne(bot, ctx, { mobs, dropMatch, radius = 48, blacklist, acce
   const score = (e) => e.position.distanceTo(here) + penalty(e);
   const target = Object.values(bot.entities)
     .filter((e) => mobs.includes(e.name) && e.position && e.position.distanceTo(here) <= radius
-      && !blacklist?.has(`mob:${e.id}`) && accept(e))
+      && !blacklist?.has(`mob:${e.id}`) && accept(e) && !bot.companionSpared?.(e))
     .sort((a, b) => score(a) - score(b))[0];
   if (!target) return fail('no_mob_in_range');
   ctx.record('hunt_target', { mob: target.name, distance: Math.round(target.position.distanceTo(here)) });

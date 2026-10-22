@@ -26,9 +26,10 @@ const farmFlat = {
       // A 3x3 pond at ground level, a stone ledge under it so it stays put.
       `fill 6 ${GROUND - 2} 6 8 ${GROUND - 2} 8 stone`, `fill 6 ${GROUND - 1} 6 8 ${GROUND - 1} 8 water`];
     // Grass tufts for seeds, away from the pond.
-    for (let i = 0; i < 70; i += 1) {
-      const x = Math.round(rng() * 40 - 20);
-      const z = Math.round(rng() * 40 - 20);
+    // A flat world has no grass of its own; about one tuft in eight drops a seed.
+    for (let i = 0; i < 200; i += 1) {
+      const x = Math.round(rng() * 46 - 23);
+      const z = Math.round(rng() * 46 - 23);
       if (Math.abs(x - 7) <= 5 && Math.abs(z - 7) <= 5) continue;
       commands.push(`setblock ${x} ${GROUND} ${z} short_grass keep`);
     }
