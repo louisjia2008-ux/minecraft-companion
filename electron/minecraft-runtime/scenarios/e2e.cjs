@@ -96,6 +96,46 @@ function finished(companion, bot) {
   return memory.homestead.isDone(state) && memory.cobbleGenerator.isDone(state) && memory.autoSmelter.isDone(state);
 }
 
+/** Both machines in the world as built, judged by the server, and what they produced. */
+async function verifyMachines({ server, companion }) {
+  const forceload = (a) => server.query(`forceload add ${a.x - 4} ${a.z - 4} ${a.x + 4} ${a.z + 4}`,
+    /(Marked|already|forceloaded|loaded)/i, 10000).catch(() => null);
+  const partsOk = async (parts) => {
+    const out = {};
+    for (const part of parts) {
+      out[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+    }
+    return out;
+  };
+  const details = { generatorOk: false, smelterOk: false };
+  const gd = machine(companion, 'cobbleGenerator')?.memory.device.device;
+  if (gd) {
+    const d = createCobbleGenerator(gd.anchor, gd.facing, { collector: true });
+    await forceload(d.anchor);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const c = d.cells;
+    const blocks = {
+      lava: await testBlock(server, c.lava, 'minecraft:lava[level=0]'),
+      water: await testBlock(server, c.water, 'minecraft:water[level=0]'),
+      cobble: await testBlock(server, c.cobble, 'minecraft:cobblestone'),
+      ...await partsOk(d.parts),
+    };
+    const { harvested, regenerated } = machine(companion, 'cobbleGenerator').memory.device;
+    details.generatorOk = Object.values(blocks).every(Boolean) && harvested >= GENERATOR_HARVEST;
+    details.generator = { anchor: d.anchor, facing: d.facing, blocks, harvested, regenerated };
+  }
+  const sd = machine(companion, 'autoSmelter')?.memory.device.device;
+  if (sd) {
+    const d = createAutoSmelter(sd.anchor, sd.facing);
+    await forceload(d.anchor);
+    const parts = await partsOk(d.parts);
+    const { taken } = machine(companion, 'autoSmelter').memory.device;
+    details.smelterOk = Object.values(parts).every(Boolean) && taken >= SMELT_COUNT;
+    details.smelter = { anchor: d.anchor, facing: d.facing, parts, taken };
+  }
+  return { pass: details.generatorOk && details.smelterOk, details };
+}
+
 const e2eFlat = {
   name: 'e2e-flat',
   description: 'Empty inventory, easy, day/night and mobs on, a fresh flat world: the player asks for the house, then'
@@ -183,53 +223,16 @@ const e2eFlat = {
   },
   finishWhen: ({ companion, bot, state }) => state.injections.every((i) => i.recoveredAt) && finished(companion, bot),
   async verify(context) {
-    const { server, companion, bot, state } = context;
-    const memory = companion.director.memory;
-    const homestead = await verifyHomestead({ ...context, goal: memory.homestead });
-    const generator = machine(companion, 'cobbleGenerator');
-    const smelter = machine(companion, 'autoSmelter');
-    const details = { homestead: homestead.details, injections: state.injections, alive: bot.health > 0 };
-    let generatorOk = false;
-    const gd = generator?.memory.device.device;
-    if (gd) {
-      const d = createCobbleGenerator(gd.anchor, gd.facing, { collector: true });
-      await server.query(`forceload add ${d.anchor.x - 4} ${d.anchor.z - 4} ${d.anchor.x + 4} ${d.anchor.z + 4}`,
-        /(Marked|already|forceloaded|loaded)/i, 10000).catch(() => null);
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      const c = d.cells;
-      const blocks = {
-        lava: await testBlock(server, c.lava, 'minecraft:lava[level=0]'),
-        water: await testBlock(server, c.water, 'minecraft:water[level=0]'),
-        cobble: await testBlock(server, c.cobble, 'minecraft:cobblestone'),
-      };
-      for (const part of d.parts) {
-        blocks[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
-      }
-      const { harvested, regenerated } = generator.memory.device;
-      generatorOk = Object.values(blocks).every(Boolean) && harvested >= GENERATOR_HARVEST;
-      details.generator = { anchor: d.anchor, facing: d.facing, blocks, harvested, regenerated };
-    }
-    let smelterOk = false;
-    const sd = smelter?.memory.device.device;
-    if (sd) {
-      const d = createAutoSmelter(sd.anchor, sd.facing);
-      await server.query(`forceload add ${d.anchor.x - 4} ${d.anchor.z - 4} ${d.anchor.x + 4} ${d.anchor.z + 4}`,
-        /(Marked|already|forceloaded|loaded)/i, 10000).catch(() => null);
-      const parts = {};
-      for (const part of d.parts) {
-        parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
-      }
-      const { taken } = smelter.memory.device;
-      smelterOk = Object.values(parts).every(Boolean) && taken >= SMELT_COUNT;
-      details.smelter = { anchor: d.anchor, facing: d.facing, parts, taken };
-    }
+    const { companion, bot, state } = context;
+    const homestead = await verifyHomestead({ ...context, goal: companion.director.memory.homestead });
+    const machines = await verifyMachines(context);
     const injected = state.injections.every((i) => i.recoveredAt);
-    const pass = homestead.pass && generatorOk && smelterOk && injected && details.alive;
-    // Shown on the run line.
-    Object.assign(details, { placed: homestead.details.placed, total: homestead.details.total,
-      furniture: homestead.details.furniture, gear: homestead.details.gear, chestUsed: homestead.details.chestUsed,
-      bedUsed: homestead.details.bedUsed });
-    return { pass, details: { ...details, generatorOk, smelterOk, injected } };
+    const alive = bot.health > 0;
+    const pass = homestead.pass && machines.pass && injected && alive;
+    const h = homestead.details;
+    // placed..bedUsed are shown on the run line.
+    return { pass, details: { homestead: h, ...machines.details, injections: state.injections, injected, alive,
+      placed: h.placed, total: h.total, furniture: h.furniture, gear: h.gear, chestUsed: h.chestUsed, bedUsed: h.bedUsed } };
   },
 };
 
@@ -274,10 +277,8 @@ const machinesFlat = {
   },
   finishWhen: ({ companion, bot }) => finished(companion, bot),
   async verify(context) {
-    const verdict = await e2eFlat.verify({ ...context, state: { injections: [] } });
-    const d = verdict.details;
-    const pass = d.generatorOk && d.smelterOk && d.alive;
-    return { pass, details: { generator: d.generator, smelter: d.smelter, generatorOk: d.generatorOk, smelterOk: d.smelterOk } };
+    const machines = await verifyMachines(context);
+    return { pass: machines.pass && context.bot.health > 0, details: machines.details };
   },
 };
 
