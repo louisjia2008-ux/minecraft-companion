@@ -106,6 +106,9 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
         if (bucketStep) return bucketStep;
         return { kind: 'fill', key, liquid: source.liquid, count: deficit };
       }
+      if (source.kind === 'farm') {
+        return { kind: 'farm', key, crop: source.crop, count: deficit };
+      }
       if (source.kind === 'hunt') {
         return { kind: 'hunt', key, mobs: source.mobs, count: deficit };
       }

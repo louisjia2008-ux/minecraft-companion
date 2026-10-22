@@ -10,7 +10,8 @@
     "start": "node index.js",
     "test": "node --test test/*.test.js vendor/server/minecraftModules.test.js vendor/server/minecraftAgentLearning.test.js",
     "test:core": "node --test test/core-*.test.js",
-    "scenario": "node tools/run-scenarios.cjs"
+    "scenario": "node tools/run-scenarios.cjs",
+    "regression": "node tools/run-regression.cjs"
   },
   "dependencies": {
     "mineflayer": "4.37.1",
