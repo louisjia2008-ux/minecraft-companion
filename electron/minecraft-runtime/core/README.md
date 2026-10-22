@@ -111,6 +111,30 @@
 - **自然地形差异大**：需要更多次运行才能得到稳定的通过率；最终测量期间加的 3 个修复还没有经过完整的 10 次测量。
 - 还没有接入桌面应用和 AI Provider。
 
+## 生电装置第一步：刷石机（`goals/cobbleGenerator.js`）
+
+按“先给材料把建造做稳，再接采集链”的顺序，第一个装置是不用红石的刷石机：一桶水、一桶岩浆，挖进平地里。
+
+```
+侧视（沿装置方向）   y+1  .  .  .  .
+                     y    L  C  P  W     L 岩浆源  C 出圆石  P 两格深的坑  W 水源
+                     y-1  #  #  P  #     # 必须是实心、不会掉落的方块
+```
+
+水从 W 流进坑里往下落，碰不到 C；岩浆从 L 流进 C，碰到坑里的水变成圆石。机器人站在 C 侧面挖下去一格的站位 S 里挖 C，掉落物落在拾取范围内。
+
+- **蓝图**（`blueprints/cobbleGenerator.js`）：除了要放的方块，还分出“要挖空的格子”“必须密封的格子”“上方要留空的格子”，支持四个朝向。以后的装置沿用这种写法。
+- **倒液体**（`skills.pourLiquid`）：水桶、岩浆桶是按视线落点放的，所以要站到能看见目标格地面顶面的地方，瞄准后使用；服务器上出现源方块才算成功。
+- **顺序**：先补密封格，再挖空（先挖站位），再倒水，确认坑里有水后才倒岩浆。
+- **防护**：寻路器不走进也不站到 L、C、P、W 上，也不挖密封格；掉进坑里先游上来再继续。
+- **功能验证**：只把“挖掉后亲眼看到 C 重新长出圆石、而且掉落物进了背包”的那块算作产出。
+
+| 场景 | 结果 | 说明 |
+|---|---|---|
+| `cobblegen-flat` | **10/10 通过**（seed 777） | 给石镐、石锹、水桶、岩浆桶、16 泥土，平地随机起点；中位 29 秒，0 次死亡。服务器确认岩浆源、水源、坑里的水、C 处的圆石，以及玩家身上至少 8 块圆石 |
+
+尚未解决：约 25% 的掉落物捡不到（107 次挖掘里 27 次）。挖开 C 时掉落物带随机初速度，会漂进旁边的岩浆烧掉或掉进水坑，而拾取有 10 tick 延迟。下一阶段用漏斗收集可以根治。
+
 ## 文件
 
 | 文件 | 作用 |
@@ -120,9 +144,10 @@
 | `inventory.js` | 新核心专用的 Mineflayer 4.37.1 / vanilla 1.21.8 玩家库存槽位转换；不修改共享协议数据或旧代理 |
 | `confirm.js` | `waitUntil` / `runCancellable` / 可中止的 `sleep` |
 | `actions.js` | 寻路（含爬出坑）、挖掘、拾取、进食、攻击、逃离、脱困 |
-| `skills.js` | 采集一个方块、合成、放置方块、熔炼、打猎、摘浆果、探索、使用箱子、使用床 |
+| `skills.js` | 采集一个方块、合成、放置方块、倒水或岩浆、熔炼、打猎、摘浆果、探索、使用箱子、使用床 |
 | `knowledge.js` / `planner.js` | 物品来源知识表，以及基于虚拟背包的纯规划器 |
 | `site.js` / `blueprints/starterHouse.js` | 选址、根据世界现状算出整地工作、小屋蓝图 |
+| `blueprints/cobbleGenerator.js` / `goals/cobbleGenerator.js` | 刷石机蓝图（挖空、密封、留空格子）/ 选址、建造、倒液体、挖圆石并验证重新生成 |
 | `nether.js` | 维度判断、找传送门、4×5 门框（四角用圆石，顶排挂在顶角上）、点火、穿门、下界寻路设置（岩浆旁代价、下落上限 3、不挖金矿） |
 | `goals/netherQuartz.js` | 搭门或复用已有门 → 进下界 → 采石英 → 回主世界；死后从主世界走回记住的门再进去 |
 | `goals/gatherBlocks.js` / `goals/homestead.js` | 采集目标 / 完整任务链目标 |
@@ -140,6 +165,7 @@ npm run test:core     # 单元测试，包括在模拟世界里跑完整任务�
 npm run scenario -- --accept-eula --scenario collect-logs-flat --runs 20
 npm run scenario -- --accept-eula --scenario homestead-flat --runs 3
 npm run scenario -- --accept-eula --scenario homestead-natural --runs 3
+npm run scenario -- --accept-eula --scenario cobblegen-flat --runs 10
 
 # seed=500 的第 4、5 轮地点；同一服务器、世界与玩家，只改变客户端生命周期。
 # 默认 reuse；fresh 在每轮验证完成后断开并重新建立 Mineflayer bot。
