@@ -9,6 +9,7 @@ const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { haltBody } = require('./actions');
+const { installInventoryCompatibility } = require('./inventory');
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
@@ -41,12 +42,14 @@ function configureMovements(bot) {
 
 function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
   if (!bot) throw new TypeError('bot is required');
+  installInventoryCompatibility(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
 
+  const behaviors = createSurvivalBehaviors({ bot });
   const brain = createBrain({
     perceive: () => perceive(bot),
-    behaviors: createSurvivalBehaviors({ bot }),
+    behaviors,
     onEvent,
   });
   const timer = setInterval(() => { brain.tick().catch(() => {}); }, tickMs);
@@ -80,6 +83,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
       clearInterval(timer);
       bot.removeListener('death', onDeath);
       await brain.dispose();
+      for (const behavior of behaviors) behavior.dispose?.();
       haltBody(bot);
     },
   };

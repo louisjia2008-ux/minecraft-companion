@@ -34,6 +34,8 @@
 | 熔炼成功却报"没有产物" | 熔炉界面开着时不同步背包 | 关闭界面后再计数 |
 | 盾牌放进副手后又去做新盾牌 | `inventory.items()` 不含副手栏和盔甲栏 | 统一用 `ownedItems()` 计数 |
 | 一次失败的合成在 1 秒内重试 25 次 | 背包计数与服务器不一致，规划器以为材料够 | 合成失败时报告具体差多少，作为临时需求补齐；目标失败后短暂暂停再试 |
+| 木板不足却持续合成箱子；下一轮清空背包后仍尝试合成木棍 | Mineflayer 4.37.1 把 `set_player_inventory` 的玩家库存下标当作窗口下标，退还合成材料时把热键栏木板写进靴子栏；`ownedItems()` 因而重复计数，`clear` 也清不掉客户端的幽灵装备 | 新核心为 1.21.8 + 此依赖版本转换槽位坐标；合成中止先停止后续点击，等原操作结束再关闭窗口；返回合成格与光标物品后才重新规划；短缺只按主背包中的可合成材料计算 |
+| 2×2 合成中止后实际材料已退回，仍认为光标上有物品 | 同一依赖忽略 `set_cursor_item` 和窗口同步的 `carriedItem` | 仅在关闭合成界面、原点击已结束的确认阶段同步服务端光标；普通装备/点击流程保留原生预测，避免延迟旧包覆盖后续点击 |
 | 选址选在山坡上，一直在挖山 | 选址时区块未加载完，空值被当作空气 | 未加载视为未知，不选；净空空间里的实心方块都计入工作量；整地超过 40 块就换地方 |
 | 夜里被骷髅、苦力怕、蜘蛛打死 | 先做铁装备，房子来不及盖 | 改为"石器 → 食物 → 床 → 房子 → 铁"，天黑就去睡觉；血量高于 14 才主动追打骷髅 |
 | 低血量时还跑去远处打猎而死 | 没有低血量策略 | 血量低于 10 时禁止远行打猎；敌人不在 4 格内就先吃；吃饱后原地回血；死后 5 分钟内回去捡掉落物 |
@@ -85,6 +87,7 @@
 |---|---|
 | `brain.js` | 决策循环、抢占、进展预算、失败退避 |
 | `perception.js` | 当前状态快照（血量、饱食度、氧气、昼夜、背包含副手栏和盔甲栏、附近敌对生物） |
+| `inventory.js` | 新核心专用的 Mineflayer 4.37.1 / vanilla 1.21.8 玩家库存槽位转换；不修改共享协议数据或旧代理 |
 | `confirm.js` | `waitUntil` / `runCancellable` / 可中止的 `sleep` |
 | `actions.js` | 寻路（含爬出坑）、挖掘、拾取、进食、攻击、逃离、脱困 |
 | `skills.js` | 采集一个方块、合成、放置方块、熔炼、打猎、摘浆果、探索、使用箱子、使用床 |
@@ -103,7 +106,16 @@ npm run test:core     # 单元测试，包括在模拟世界里跑完整任务�
 npm run scenario -- --accept-eula --scenario collect-logs-flat --runs 20
 npm run scenario -- --accept-eula --scenario homestead-flat --runs 3
 npm run scenario -- --accept-eula --scenario homestead-natural --runs 3
+
+# seed=500 的第 4、5 轮地点；同一服务器、世界与玩家，只改变客户端生命周期。
+# 默认 reuse；fresh 在每轮验证完成后断开并重新建立 Mineflayer bot。
+npm run scenario -- --accept-eula --scenario homestead-natural --seed 500 --start-run 4 --runs 2 --bot-lifecycle reuse --inventory-trace
+npm run scenario -- --accept-eula --scenario homestead-natural --seed 500 --start-run 4 --runs 2 --bot-lifecycle fresh --inventory-trace
 ```
+
+`--inventory-trace` 在单轮日志中额外记录主背包、装备栏、合成格、光标、当前窗口与库存数据包；出现 `missing_ingredients` 时每分钟最多读取一次服务器库存。它只读服务器状态，不补给材料或干预目标。`--start-run` 保留原轮号对应的随机种子和地点中心；原版 `spreadplayers` 的落点、动物与战斗并不由该种子完全决定，不能保证逐帧重放。
+
+复用 bot 时，每轮 `companion.dispose()` 也会移除该轮生存行为的死亡监听，避免旧监听随轮数累积。每轮结束会取消尚未到期的场景计时器，结果写完并停服后进程可自行退出。
 
 结果写入 `.minecraft-local-test/scenario-runs/<批次>/<场景>/`：每次运行一个 `run-XX.jsonl`（setup 参数、每个决策事件、每分钟一次心跳、最终结果），加上一个 `summary.json`。是否通过一律由服务器判定：
 - 物品数量：用 `clear <玩家> <物品> 0` 计数，不实际清除。
