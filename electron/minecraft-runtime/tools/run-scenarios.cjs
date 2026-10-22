@@ -32,7 +32,8 @@ function usage(message) {
   if (message) console.error(message);
   console.error(`Usage: node tools/run-scenarios.cjs --accept-eula [--scenario NAME[,NAME]] [--runs N]
   [--start-run N] [--bot-lifecycle reuse|fresh] [--inventory-trace]
-  [--difficulty peaceful|easy|normal] [--seed N] [--installation DIR] [--java PATH] [--server-jar PATH] [--version V]
+  [--difficulty peaceful|easy|normal] [--seed N] [--batch NAME] [--installation DIR] [--java PATH]
+  [--server-jar PATH] [--version V]
 Scenarios: ${Object.keys(SCENARIOS).join(', ')}`);
   process.exit(2);
 }
@@ -210,7 +211,8 @@ async function main() {
   if (difficultyOption && !['peaceful', 'easy', 'normal', 'hard'].includes(difficultyOption)) usage('Unknown --difficulty');
   for (const name of names) if (!SCENARIOS[name]) usage(`Unknown scenario: ${name}`);
 
-  const batch = new Date().toISOString().replace(/[:.]/g, '-');
+  const batch = option('--batch', new Date().toISOString().replace(/[:.]/g, '-'));
+  if (!/^[\w.-]+$/.test(batch)) usage('--batch may only contain letters, digits, ".", "_" and "-"');
   const summaries = [];
   for (const name of names) {
     const scenario = SCENARIOS[name];

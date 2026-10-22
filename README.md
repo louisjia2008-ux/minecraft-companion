@@ -56,6 +56,19 @@ npm start
 
 本地 Java 服务器安装流程见 [MINECRAFT_LOCAL_SERVER.md](electron/docs/MINECRAFT_LOCAL_SERVER.md)。安装工具会从官方来源下载 JDK/服务器；实际运行需要用户自行接受 Minecraft EULA。代码上传没有启动、恢复或重跑游戏。
 
+### 任务回归套件
+
+装好本地服务器后，一条命令跑完核心单元测试和各任务场景（床、地下掩体、耕种、畜牧、采木），每个场景用独立的新服务器，按通过率门槛判定：
+
+```sh
+cd electron/minecraft-runtime
+npm run regression -- --accept-eula                       # quick 套件，约半小时
+npm run regression -- --accept-eula --suite full          # 另加自然地形和完整家园，数小时
+npm run regression -- --accept-eula --only farm-flat --runs 5
+```
+
+套件内容和门槛在 `scenarios/regression.cjs`。`--parallel N` 控制同时运行的服务器数（默认 2，每个约 2 GB 内存），`--seed N` 可复现一次失败。结果写到 `.minecraft-local-test/scenario-runs/regression-<时间>/`，`regression.json` 是总判定，每次运行的事件日志在各场景子目录。任何场景低于门槛时退出码为 1。
+
 当前新种子正式入口：
 
 ```sh

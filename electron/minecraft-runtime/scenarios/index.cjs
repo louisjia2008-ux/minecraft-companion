@@ -2,12 +2,14 @@
 'use strict';
 const { collectLogsFlat, collectLogsNatural } = require('./collectLogs.cjs');
 const { homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat } = require('./homestead.cjs');
+const { farmFlat } = require('./farm.cjs');
+const { ranchFlat } = require('./ranch.cjs');
 const { materialsCobblegenFlat, branchMineIronFlat } = require('./materials.cjs');
 const { netherQuartzGiven } = require('./nether.cjs');
 const { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat } = require('./devices.cjs');
 
 const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat,
-  netherQuartzGiven, cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat,
+  farmFlat, ranchFlat, netherQuartzGiven, cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat,
   materialsCobblegenFlat, branchMineIronFlat, caneFarmFlat]
   .map((s) => [s.name, s]));
 

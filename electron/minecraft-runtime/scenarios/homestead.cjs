@@ -168,4 +168,4 @@ function nightScenario({ name, withBed }) {
 const nightBunkerFlat = nightScenario({ name: 'night-bunker-flat', withBed: false });
 const nightBedFlat = nightScenario({ name: 'night-bed-flat', withBed: true });
 
-module.exports = { homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat, verifyHomestead };
+module.exports = { homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat, verifyHomestead, testBlock, countOnPlayer, living };
