@@ -30,7 +30,10 @@ const REGENERATE_MS = 5000;
 
 const isAir = (block) => !block || block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air';
 const isSoft = (block) => isAir(block) || (block.boundingBox === 'empty' && !LIQUID.has(block.name));
-const isSeal = (block) => Boolean(block) && block.boundingBox === 'block' && !LIQUID.has(block.name) && !GRAVITY.test(block.name);
+// Lava burns flammable neighbours away (with fire ticks on), opening the seal.
+const FLAMMABLE = /(_log|_wood|_stem|_hyphae|_leaves|_planks|_wool|_carpet|_slab|_stairs|_fence|bookshelf|hay_block|scaffolding|tnt|bamboo|dried_kelp_block|target|beehive|bee_nest|moss_block|coal_block)$/;
+const isSeal = (block) => Boolean(block) && block.boundingBox === 'block' && !LIQUID.has(block.name)
+  && !GRAVITY.test(block.name) && !FLAMMABLE.test(block.name);
 const key = (p) => `${p.x},${p.y},${p.z}`;
 
 /**

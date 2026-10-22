@@ -59,6 +59,11 @@ test('site choice takes plain ground and refuses water, sand and blocked tops', 
   const sandy = {};
   for (let x = -12; x <= 12; x += 1) for (let z = -12; z <= 12; z += 1) sandy[`${x},-1,${z}`] = 'sand';
   assert.equal(chooseGeneratorSite(flatWorld(sandy).block, { x: 0.5, y: 1, z: 0.5 }, { radius: 4 }), null);
+
+  // Lava would burn a wooden seal away.
+  const wooden = {};
+  for (let x = -12; x <= 12; x += 1) for (let z = -12; z <= 12; z += 1) wooden[`${x},-1,${z}`] = 'oak_planks';
+  assert.equal(chooseGeneratorSite(flatWorld(wooden).block, { x: 0.5, y: 1, z: 0.5 }, { radius: 4 }), null);
 });
 
 test('the goal builds the generator and harvests only regenerated cobblestone', async () => {
