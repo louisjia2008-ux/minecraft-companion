@@ -61,10 +61,19 @@ const INJECTIONS = [
       server.command(`fill ${feet.x} ${feet.y - 6} ${feet.z} ${feet.x} ${feet.y - 1} ${feet.z} air`);
       server.command(`tp ${username} ${feet.x + 0.5} ${feet.y - 6} ${feet.z + 0.5}`);
     },
-    recovered: ({ bot, state, since }) => {
-      if (Date.now() - since < 3000) return false;
+    // Counts only once the bot was seen at the bottom (a teleport can be
+    // lost, e.g. while it gets into bed); then it has to get itself out.
+    recovered: ({ server, username, bot, state, since }) => {
       const p = bot.entity.position;
       const inShaft = Math.floor(p.x) === state.pit.x && Math.floor(p.z) === state.pit.z && p.y < state.pit.y - 0.5;
+      if (!state.pit.seen) {
+        if (inShaft) state.pit.seen = Date.now();
+        else if (Date.now() - since > 10000 && !state.pit.retried) {
+          state.pit.retried = true;
+          server.command(`tp ${username} ${state.pit.x + 0.5} ${state.pit.y - 6} ${state.pit.z + 0.5}`);
+        }
+        return false;
+      }
       return bot.health > 0 && !inShaft;
     },
   },
@@ -80,7 +89,9 @@ const INJECTIONS = [
 
 function onOpenGround(bot, state) {
   const p = bot.entity?.position;
-  if (!p || bot.health <= 10 || bot.entity.isInWater) return false;
+  if (!p || bot.health <= 10 || bot.entity.isInWater || bot.isSleeping) return false;
+  // By day: at dusk the bot is on its way to bed.
+  if (!(bot.time?.timeOfDay < 11500)) return false;
   if (Math.abs(p.y - GROUND) > 0.1) return false;
   const house = state.house;
   if (house && p.x >= house.x - 3 && p.x <= house.x + 10 && p.z >= house.z - 3 && p.z <= house.z + 10) return false;

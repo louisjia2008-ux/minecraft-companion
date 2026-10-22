@@ -13,7 +13,7 @@ const { Vec3 } = require('vec3');
 const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
-const { sleep, runCancellable } = require('../confirm');
+const { sleep } = require('../confirm');
 
 const PATH_FAILURES = new Set(['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck', 'leg_blocked']);
 // Never wanted by any goal; thrown away first when the bag is full.
@@ -145,6 +145,10 @@ function createRecovery({
     band: BAND.MAINTENANCE,
     want(state) {
       if (!bagFull(state) || state.sheltered || !calm(state, 8)) return 0;
+      // Thrown in a tunnel, it lies on the way back out and is picked up again
+      // (over and over): wait until the goal is back up top. A mine sheds
+      // its own rubble at the front (mining.js).
+      if (typeof actions.underground === 'function' && actions.underground(bot)) return 0;
       return discardable(state.inventory, keep).length ? 0.7 : 0;
     },
     async run(ctx) {
@@ -162,15 +166,7 @@ function createRecovery({
   async function tossItems(ctx, items) {
     const before = bot.inventory.emptySlotCount();
     const at = bot.entity.position.clone();
-    for (const { name, count } of items) {
-      const type = bot.registry.itemsByName[name]?.id;
-      if (!Number.isInteger(type)) continue;
-      try {
-        await runCancellable(() => bot.toss(type, null, count), { signal: ctx.signal, timeoutMs: 3000, timeoutCode: 'toss_timeout' });
-      } catch (error) {
-        if (error?.code === 'aborted') throw error;
-      }
-    }
+    await (skills.tossStacks || defaultSkills.tossStacks)(bot, ctx, items);
     // Thrown items can be picked up again after two seconds: walk off.
     await actions.fleeFrom(bot, ctx, at, { distance: 6, timeoutMs: 6000 });
     return bot.inventory.emptySlotCount() > before ? { ok: true, freed: bot.inventory.emptySlotCount() - before }

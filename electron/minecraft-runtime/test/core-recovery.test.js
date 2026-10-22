@@ -17,13 +17,14 @@ function fakeBot({ position = new Vec3(0.5, 64, 0.5), freeSlots = 10, inventory 
   bot.registry = { itemsByName: { gravel: { id: 1 }, cobblestone: { id: 2 }, dirt: { id: 3 } } };
   bot.tossed = [];
   bot.inventory = {
-    items: () => Object.entries(inventory).map(([name, count]) => ({ name, count })),
+    items: () => Object.entries(inventory).map(([name, count]) => ({ name, count, type: bot.registry.itemsByName[name]?.id })),
     emptySlotCount: () => freeSlots,
   };
   bot.toss = async (type, _meta, count) => {
     bot.tossed.push({ type, count });
     freeSlots += 1;
   };
+  bot.tossStack = async (item) => bot.toss(item.type, null, item.count);
   bot.setFree = (n) => { freeSlots = n; };
   bot.inv = inventory;
   return bot;
@@ -137,6 +138,19 @@ test('a full bag is thrown away even next to the house chest, which stays free f
   bot.companionChest = { x: 3, y: 64, z: 0 };
   const skills = { storeItems: async () => assert.fail('junk must not go into the house chest') };
   const { brain } = wire({ bot, perceive: perceiveFor(bot), skills, actions: { fleeFrom: async () => ({ ok: true }) } });
+  await ticks(brain, 1);
+  assert.deepEqual(bot.tossed[0], { type: 1, count: 10 });
+  await brain.dispose();
+});
+
+test('a full bag waits until the bot is out of the tunnel, where thrown junk is not walked over again', async () => {
+  const bot = fakeBot({ freeSlots: 0, inventory: { gravel: 10 } });
+  let below = true;
+  const actions = { underground: () => below, fleeFrom: async () => ({ ok: true }) };
+  const { brain } = wire({ bot, perceive: perceiveFor(bot), actions });
+  await ticks(brain, 1);
+  assert.equal(bot.tossed.length, 0);
+  below = false;
   await ticks(brain, 1);
   assert.deepEqual(bot.tossed[0], { type: 1, count: 10 });
   await brain.dispose();
