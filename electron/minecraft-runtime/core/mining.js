@@ -133,8 +133,10 @@ function visibleOre(bot, match, radius = 5) {
   const ids = Object.values(bot.registry.blocksByName).filter((b) => ORES.test(b.name) && match(b.name)).map((b) => b.id);
   if (!ids.length) return [];
   const here = bot.entity.position;
+  // Ore showing in the walls, or just behind them (two blocks from the bot):
+  // what a tunnel along the layer turns up.
   return bot.findBlocks({ matching: ids, maxDistance: radius, count: 16 })
-    .filter((p) => SIDES.some(([x, y, z]) => bot.blockAt(p.offset(x, y, z))?.boundingBox === 'empty')
+    .filter((p) => (p.distanceTo(here) <= 2.5 || SIDES.some(([x, y, z]) => bot.blockAt(p.offset(x, y, z))?.boundingBox === 'empty'))
       && !nearLiquid(bot, p))
     .sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
 }
