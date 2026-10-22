@@ -486,6 +486,43 @@ async function explore(bot, ctx, memory) {
   return moved >= 10 ? { ok: true, moved: Math.round(moved) } : fail(result.ok ? 'explore_blocked' : result.reason);
 }
 
+/**
+ * Opens the chest and stores `count` of each named item (all of it when no
+ * count). Confirmed by the bag emptying, not by the deposit call returning.
+ */
+async function storeItems(bot, ctx, { position, items }) {
+  const moved = await goToBlock(bot, ctx, position);
+  if (!moved.ok) return moved;
+  const block = bot.blockAt(v(position));
+  if (block?.name !== 'chest') return fail('chest_missing');
+  const freeBefore = bot.inventory.emptySlotCount();
+  let chest;
+  try {
+    chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
+    const stored = {};
+    for (const { name, count } of items) {
+      const type = bot.registry.itemsByName[name]?.id;
+      const have = bot.inventory.items().filter((i) => i.name === name).reduce((sum, i) => sum + i.count, 0);
+      const n = Math.min(have, count ?? have);
+      if (!Number.isInteger(type) || n <= 0) continue;
+      try {
+        await chest.deposit(type, null, n);
+        stored[name] = n;
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        break; // the chest is full
+      }
+    }
+    return Object.keys(stored).length && bot.inventory.emptySlotCount() > freeBefore
+      ? { ok: true, stored } : fail('chest_full');
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return fail('chest_failed');
+  } finally {
+    try { chest?.close(); } catch (_) { /* ignore */ }
+  }
+}
+
 /** Opens the chest and stores one item; confirmed by the container contents. */
 async function useChest(bot, ctx, { position, itemMatch }) {
   const moved = await goToBlock(bot, ctx, position);
@@ -698,6 +735,8 @@ async function digOut(bot, ctx, bunker) {
 
 /** Uses the bed: sleeps at night, otherwise sets the respawn point by interacting. */
 async function useBed(bot, ctx, { position }) {
+  // Outside the overworld a bed explodes when used.
+  if (String(bot.game?.dimension || 'overworld').replace(/^minecraft:/, '') !== 'overworld') return fail('bed_explodes_here');
   const moved = await goToBlock(bot, ctx, position);
   if (!moved.ok) return moved;
   const block = bot.blockAt(v(position));
@@ -726,5 +765,5 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeInChest, fillBucket,
-  useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeItems, storeInChest,
+  fillBucket, useBed, digIn, digOut, inventoryCounts, entityInside };
