@@ -11,14 +11,15 @@ const { createRecovery } = require('./behaviors/recovery');
 const { createNightRest } = require('./behaviors/nightRest');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
+const { createFarmGoal } = require('./goals/farm');
+const { createRanchGoal } = require('./goals/ranch');
+const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
-const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
+const { createCaneFarmGoal } = require('./goals/caneFarm');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
-const { createFarmGoal } = require('./goals/farm');
-const { createRanchGoal } = require('./goals/ranch');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 const { installEdgeNudge } = require('./edgeNudge');
@@ -80,6 +81,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     perceive: () => perceive(bot),
     behaviors,
     onEvent: (event) => {
+      // A finished goal no longer keeps its herd from the cooking pot.
+      if (['goal_done', 'goal_failed', 'goal_cleared', 'stopped'].includes(event.type)) spare = () => false;
       recovery.observe(event);
       director?.handleEvent(event);
       onEvent(event);
@@ -120,8 +123,27 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       useGoal(goal);
       return brain.tick().then(() => goal);
     },
+    farm(options = {}) {
+      const goal = createFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    ranch(options = {}) {
+      const goal = createRanchGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
     netherQuartz(options = {}) {
       const goal = createNetherQuartzGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
+    gatherMaterials(options) {
+      const goal = createGatherMaterialsGoal({ bot, ...options });
       director.notePlayerGoal();
       useGoal(goal);
       return brain.tick().then(() => goal);
@@ -138,23 +160,10 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       useGoal(goal);
       return brain.tick().then(() => goal);
     },
-    farm(options = {}) {
-      const goal = createFarmGoal({ bot, ...options });
+    caneFarm(options = {}) {
+      const goal = createCaneFarmGoal({ bot, ...options });
       director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    ranch(options = {}) {
-      const goal = createRanchGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
-    gatherMaterials(options) {
-      const goal = createGatherMaterialsGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
+      brain.setGoal(goal);
       return brain.tick().then(() => goal);
     },
     setGoal(goal) {
