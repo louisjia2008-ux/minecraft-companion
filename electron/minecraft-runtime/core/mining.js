@@ -85,7 +85,20 @@ async function step(bot, ctx, skills, memory, kind) {
     if (!filled.ok) return filled;
   }
   const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(cells.next.x, cells.next.y, cells.next.z), { timeoutMs: 8000 });
-  if (!moved.ok && !bot.entity.position.floored().equals(cells.next)) return moved;
+  if (!moved.ok && !bot.entity.position.floored().equals(cells.next)) {
+    // Something the bot cannot see in its way: after a few tries here, turn.
+    const key = `${feet.x},${feet.y},${feet.z}`;
+    memory.blockedTries = memory.lastBlocked === key ? (memory.blockedTries || 0) + 1 : 1;
+    memory.lastBlocked = key;
+    ctx.record('mine_blocked', { at: key, tries: memory.blockedTries,
+      cells: [...cells.dig, cells.floor].map((p) => bot.blockAt(p)?.name || null) });
+    if (memory.blockedTries >= 3) {
+      const others = HEADINGS.filter((h) => h[0] !== memory.tunnel[0] || h[1] !== memory.tunnel[1]);
+      memory.tunnel = others[Math.floor(Math.random() * others.length)];
+      memory.blockedTries = 0;
+    }
+    return moved;
+  }
   memory.length = (memory.length || 0) + 1;
   if (memory.length % 7 === 0) await placeTorch(bot, ctx, skills, cells.next);
   return { ok: true };
