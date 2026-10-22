@@ -36,6 +36,13 @@ function createMineGoal({ bot, want = { raw_iron: 8, coal: 8 }, layer = null,
     // Tools for the hardest ore wanted, and torches while there is coal.
     const tools = [...new Set(missing(state).map((item) => TOOL_OF[item] || 'stone_tier_pickaxe'))]
       .map((key) => ({ key, count: 1 }));
+    // A worn pickaxe gets a spare made while there is still stone to make it
+    // from; a crafting table travels along so that can happen underground.
+    const pickaxes = bot.inventory.items().filter((i) => i.name.endsWith('_pickaxe'));
+    const worn = pickaxes.length === 1 && (pickaxes[0].maxDurability || 0) - (pickaxes[0].durabilityUsed || 0) < 15;
+    if (worn && pickaxes[0].name !== 'wooden_pickaxe') tools.push({ key: 'stone_pickaxe', count: 2 });
+    // Packed before going down, where there is wood to make one.
+    if (memory.length === 0 && !(state.inventory.crafting_table > 0)) tools.push({ key: 'crafting_table', count: 1 });
     const toolStep = planNext({ requirements: tools, inventory, stations, kb });
     if (toolStep) return plannerStep(ctx, { ...toolStep, for: 'pickaxe' });
     if (have(state, 'torch') < 4 && have(state, 'coal') >= 1 && (have(state, 'stick') >= 1 || countKey('planks', inventory, kb) >= 2)) {
