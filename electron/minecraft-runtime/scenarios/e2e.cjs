@@ -125,9 +125,10 @@ const e2eFlat = {
       const [x, z] = spot(18);
       commands.push(`fill ${x} ${GROUND - 13} ${z} ${x + 1} ${GROUND - 12} ${z + 1} iron_ore`);
     }
-    // Deeper veins at y=15-16 all around, as a branch mine finds them: iron, some coal.
-    for (let i = 0; i < 70; i += 1) {
-      const [x, z] = spot(70);
+    // Deeper veins at y=15-16 all around, about as dense as vanilla iron at
+    // that height: what a branch mine finds. Iron, a quarter of it coal.
+    for (let i = 0; i < 400; i += 1) {
+      const [x, z] = spot(80);
       commands.push(`fill ${x} 15 ${z} ${x + 1} 16 ${z + 1} ${i % 4 === 3 ? 'coal_ore' : 'iron_ore'}`);
     }
     // One small pond and one lava pool, each lined with stone, away from the trees.

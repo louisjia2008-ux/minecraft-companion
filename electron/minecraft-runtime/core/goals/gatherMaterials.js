@@ -28,6 +28,7 @@ const DOWN = [new Vec3(0, -1, 0)];
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
 const MINE_FROM_HOME = 8;
+const SPARE_PICKAXES = 3;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
   skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
@@ -129,8 +130,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         return skills.placeAt(bot, ctx, spot, (n) => n === step.station, { faces: DOWN });
       }
       case 'craft': {
-        const result = await skills.craft(bot, ctx, { item: step.item, times: step.times,
+        const craft = (times) => skills.craft(bot, ctx, { item: step.item, times,
           tablePosition: step.table ? stations.crafting_table : null });
+        // A stone pickaxe lasts about 60 blocks of tunnel, and the table is
+        // at home: make spares while here if the bag has enough for them.
+        let result = step.item === 'stone_pickaxe' && step.times < SPARE_PICKAXES ? await craft(SPARE_PICKAXES) : null;
+        if (!result?.ok) result = await craft(step.times);
         // Short of something the plan thought was there: plan for it explicitly for a while.
         for (const m of result.missing || []) {
           const family = familyOf(m.name, kb);
