@@ -98,6 +98,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       }
       start = bot.entity.position.floored();
     }
+    // An unlit tunnel fills with monsters: carry torches while there is coal for them.
+    const have = (n) => countKey(n, ctx.perceive().inventory, kb);
+    if (have('torch') === 0 && have('coal') > 0 && have('stick') > 0 && !blacklist.has('torch')) {
+      const made = await skills.craft(bot, ctx, { item: 'torch', times: Math.min(2, have('coal'), have('stick')) });
+      if (!made.ok) blacklist.add('torch', made.reason, 60000);
+    }
     return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions });
   }
 
