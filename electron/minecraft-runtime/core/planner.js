@@ -87,7 +87,9 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
           if (step) return step;
         }
         const step = { kind: 'gather', key, blocks: source.blocks, tool: source.tool || null, count: deficit };
-        return source.dimension ? { ...step, dimension: source.dimension } : step;
+        if (source.dimension) step.dimension = source.dimension;
+        if (Number.isFinite(source.mineY)) step.mineY = source.mineY;
+        return step;
       }
       if (source.kind === 'smelt') {
         const inputStep = need(source.input, deficit, depth + 1);

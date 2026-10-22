@@ -5,6 +5,7 @@
 // Source kinds:
 //   craft  { yields, needs: { key: count }, table, pick(inventory) -> concrete item name }
 //   gather { blocks(name) -> bool, tool?: key }      break a block, collect the drop
+//          mineY?: when none is in sight, branch mine at this height (mining.js)
 //   smelt  { input: key, fuel: true }                 at the home furnace
 //   hunt   { mobs: [names] }                          kill, collect drops
 //   fill   { liquid, bucket: key }                     use an empty bucket on a source block
@@ -95,11 +96,11 @@ const KNOWLEDGE = {
   },
   coal: {
     match: exact('coal', 'charcoal'),
-    sources: [{ kind: 'gather', blocks: exact('coal_ore', 'deepslate_coal_ore'), tool: 'pickaxe' }],
+    sources: [{ kind: 'gather', blocks: exact('coal_ore', 'deepslate_coal_ore'), tool: 'pickaxe', mineY: 16 }],
   },
   raw_iron: {
     match: exact('raw_iron'),
-    sources: [{ kind: 'gather', blocks: exact('iron_ore', 'deepslate_iron_ore'), tool: 'stone_tier_pickaxe' }],
+    sources: [{ kind: 'gather', blocks: exact('iron_ore', 'deepslate_iron_ore'), tool: 'stone_tier_pickaxe', mineY: 16 }],
   },
   iron_ingot: { match: exact('iron_ingot'), sources: [{ kind: 'smelt', input: 'raw_iron', inputItem: 'raw_iron' }] },
   iron_sword: {
@@ -155,7 +156,7 @@ const KNOWLEDGE = {
   },
   redstone: {
     match: exact('redstone'),
-    sources: [{ kind: 'gather', blocks: exact('redstone_ore', 'deepslate_redstone_ore'), tool: 'iron_tier_pickaxe' }],
+    sources: [{ kind: 'gather', blocks: exact('redstone_ore', 'deepslate_redstone_ore'), tool: 'iron_tier_pickaxe', mineY: -53 }],
   },
   quartz: {
     match: exact('quartz'),

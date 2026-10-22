@@ -6,12 +6,13 @@
 //   1. chest contents unknown        -> open it and look
 //   2. everything still owed carried -> store it in the chest
 //   3. planner has a step            -> gather / craft / smelt / fill a bucket / place a station
+//      (ore with nothing in sight      -> one more block of branch mine, see mining.js)
 // Only the chest counts as done: carried items die with the bot, stored ones
 // do not. Items in the chest are never taken back out for crafting, so the
 // planner only ever sees the inventory, asked for what the chest still lacks.
 //
 // The only memory kept across runs is the chest contents last seen there,
-// what was left in the furnace and short-lived blacklists.
+// what was left in the furnace, where the mine's front is, and short-lived blacklists.
 
 const { Vec3 } = require('vec3');
 const defaultSkills = require('../skills');
@@ -20,11 +21,13 @@ const { planNext } = require('../planner');
 const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { materialsFor } = require('../materials');
 const { createBlacklist } = require('../blacklist');
+const mining = require('../mining');
 
 const DOWN = [new Vec3(0, -1, 0)];
 // Main inventory slots (36): store what is owed before the bag overflows.
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
+const MINE_FROM_HOME = 8;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
   skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
@@ -40,6 +43,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     exploreStreak: 0,
     pathFailures: 0,
     shortfall: {},
+    mine: null,
     steps: 0,
   };
   const blacklist = createBlacklist({ ttlMs: 120000 });
@@ -81,6 +85,21 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     return result;
   }
 
+  // A staircase starts at least this far from the chest, so home is never undermined.
+  async function mine(ctx, step, dropMatch) {
+    let start = null;
+    if (!memory.mine) {
+      const at = bot.entity.position.floored();
+      if (Math.hypot(at.x - chest.x, at.z - chest.z) < MINE_FROM_HOME) {
+        const away = new Vec3(chest.x + MINE_FROM_HOME + 2, chest.y, chest.z);
+        const moved = await actions.goNear(bot, ctx, away, 1, { timeoutMs: 30000 });
+        if (!moved.ok) return moved;
+      }
+      start = bot.entity.position.floored();
+    }
+    return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions });
+  }
+
   async function surfaceFirst(ctx) {
     if (typeof actions.surface !== 'function' || blacklist.has('surface')) return null;
     const result = await actions.surface(bot, ctx);
@@ -114,11 +133,18 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       case 'gather': {
         const dimension = String(bot.game?.dimension || 'overworld').replace(/^minecraft:/, '');
         if (step.dimension && step.dimension !== dimension) return { ok: false, reason: `needs_dimension:${step.dimension}` };
-        let result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match, blacklist });
+        const dropMatch = kb[step.key].match;
+        const deep = Number.isFinite(step.mineY);
+        // Ore that needs a mine is mined from the tunnel once there is one.
+        if (deep && memory.mine) return mine(ctx, step, dropMatch);
+        // Elsewhere only ore in the open (surface, cave mouths): never a
+        // pathfinder tunnel straight down to buried ore.
+        const exclude = deep ? (p) => !mining.exposed(bot, p) : undefined;
+        let result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch, blacklist, exclude });
         if (result.reason === 'no_target_in_range') {
-          result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match, blacklist, radius: 128 });
+          result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch, blacklist, exclude, radius: 128 });
         }
-        if (result.reason === 'no_target_in_range') return explore(ctx, step.key);
+        if (result.reason === 'no_target_in_range') return deep ? mine(ctx, step, dropMatch) : explore(ctx, step.key);
         return result;
       }
       case 'smelt': {

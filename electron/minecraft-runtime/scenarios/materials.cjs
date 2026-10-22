@@ -68,4 +68,47 @@ const materialsCobblegenFlat = {
   },
 };
 
-module.exports = { materialsCobblegenFlat, chestContents };
+// No ore in sight anywhere: iron only in veins around y=16, under the plain to
+// the east where the staircase from home comes down. The bot must branch mine.
+const IRON = [{ key: 'raw_iron', count: 12 }];
+const branchMineIronFlat = {
+  name: 'branch-mine-iron-flat',
+  description: 'Empty inventory, peaceful, flat plains with trees; iron only in buried veins at y=15-16;'
+    + ' store 12 raw iron in the home chest (staircase down, branch mine, back up).',
+  serverProperties: materialsCobblegenFlat.serverProperties,
+  timeoutMs: 45 * 60 * 1000,
+  setup({ username, rng, difficulty = 'peaceful' }) {
+    const trees = plantTrees(rng);
+    const commands = [
+      `difficulty ${difficulty}`,
+      'gamerule doDaylightCycle false', 'gamerule doWeatherCycle false', 'gamerule doMobSpawning false',
+      'gamerule doImmediateRespawn true', 'time set noon', 'weather clear',
+      'kill @e[type=item]', 'kill @e[type=!player]',
+      `clear ${username}`, `effect clear ${username}`, `gamemode survival ${username}`,
+      ...resetArea(),
+      ...trees.commands,
+      `setblock ${CHEST.x} ${CHEST.y} ${CHEST.z} chest`,
+      // Fill in the staircase, veins and tunnels of earlier runs.
+      `fill 9 15 -8 60 59 2 stone`,
+      `fill 40 14 -40 72 19 -8 stone`, `fill 40 14 -7 72 19 25 stone`,
+      `fill 73 14 -40 105 19 -8 stone`, `fill 73 14 -7 105 19 25 stone`,
+    ];
+    const veins = [];
+    for (let i = 0; i < 40; i += 1) {
+      const x = 44 + Math.floor(rng() * 58);
+      const z = -36 + Math.floor(rng() * 58);
+      veins.push({ x, z });
+      commands.push(`fill ${x} 15 ${z} ${x + 1} 16 ${z + 1} iron_ore`);
+    }
+    commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`);
+    return { commands, details: { trees: trees.trees.length, veins: veins.length } };
+  },
+  start: (companion) => companion.gatherMaterials({ chest: CHEST, stations: STATIONS, requirements: IRON }),
+  async verify({ server }) {
+    const contents = await chestContents(server, CHEST);
+    const rawIron = contents.raw_iron || 0;
+    return { pass: rawIron >= 12, details: { chest: contents, required: IRON } };
+  },
+};
+
+module.exports = { materialsCobblegenFlat, branchMineIronFlat, chestContents };
