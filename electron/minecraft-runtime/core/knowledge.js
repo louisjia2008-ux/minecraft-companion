@@ -139,6 +139,20 @@ const KNOWLEDGE = {
     sources: [{ kind: 'craft', yields: 3, needs: { planks: 6 }, table: true, pick: (inv) => `${dominantWood(inv)}_door` }],
   },
   food: { match: exact(...MEATS), sources: [{ kind: 'hunt', mobs: ['cow', 'pig', 'sheep', 'chicken', 'rabbit'] }] },
+  // Farming: a hoe tills, seeds come from breaking grass, wheat from the farm.
+  hoe: {
+    match: exact('wooden_hoe', 'stone_hoe', 'iron_hoe', 'golden_hoe', 'diamond_hoe', 'netherite_hoe'),
+    tool: true,
+    sources: [{ kind: 'alias', key: 'stone_hoe' }],
+  },
+  stone_hoe: {
+    match: exact('stone_hoe', 'iron_hoe', 'diamond_hoe', 'netherite_hoe'),
+    tool: true,
+    sources: [{ kind: 'craft', yields: 1, needs: { cobblestone: 2, stick: 2 }, table: true, pick: () => 'stone_hoe' }],
+  },
+  wheat_seeds: { match: exact('wheat_seeds'), sources: [{ kind: 'gather', blocks: exact('short_grass', 'tall_grass') }] },
+  wheat: { match: exact('wheat'), sources: [{ kind: 'farm', crop: 'wheat' }] },
+  bread: { match: exact('bread'), sources: [{ kind: 'craft', yields: 1, needs: { wheat: 3 }, table: true, pick: () => 'bread' }] },
   dirt: { match: exact('dirt'), sources: [{ kind: 'gather', blocks: exact('dirt', 'grass_block', 'coarse_dirt') }] },
 };
 
