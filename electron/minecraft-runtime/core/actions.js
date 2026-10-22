@@ -554,6 +554,10 @@ async function surface(bot, ctx) {
   if (!underground(bot)) return null;
   const target = Math.floor(bot.companionSurfaceY);
   await withClimbing(bot, target + 4, () => goTo(bot, ctx, new goals.GoalY(target), { timeoutMs: 30000, arrived: () => true }));
+  // The pathfinder found no way up in time: dig a staircase the rest of the way.
+  if (bot.entity.position.y < target - 1) {
+    await digStairsUp(bot, ctx, target, { maxSteps: target - Math.floor(bot.entity.position.y) + 4 });
+  }
   return bot.entity.position.y >= target - 1 ? { ok: true, surfaced: true } : fail('still_below_surface');
 }
 

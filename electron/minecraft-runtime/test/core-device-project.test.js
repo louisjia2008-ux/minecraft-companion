@@ -51,6 +51,26 @@ test('a device project gathers what the bag lacks into the chest, takes it out, 
   assert.ok(goal.progress({}) >= 13);
 });
 
+test('the mine dug by one gather is handed to the next', async () => {
+  const device = fakeDevice();
+  const made = [];
+  const createGather = () => {
+    let runs = 0;
+    const memory = { mine: null };
+    made.push(memory);
+    return { memory, isDone: () => runs >= 1, progress: () => runs,
+      run: async () => { runs += 1; memory.mine = memory.mine || { surfaceY: 64, dug: made.length }; return { ok: true }; } };
+  };
+  const bot = { entity: { position: new Vec3(17, 64, 3) } };
+  const skills = { takeItems: async () => ({ ok: true }) };
+  const goal = createDeviceProjectGoal({ bot, name: 'x', device, home, skills, actions: {}, createGather });
+  await goal.run(ctx()); // first gather digs its mine
+  await goal.run(ctx()); // done: take out (on the surface, nothing to climb)
+  await goal.run(ctx()); // a second gather: same mine
+  assert.equal(made.length, 2);
+  assert.deepEqual(made[1].mine, { surfaceY: 64, dug: 1 });
+});
+
 test('a project walks to the next site spot when the device finds no site', async () => {
   const device = fakeDevice();
   device.needs = () => [];
