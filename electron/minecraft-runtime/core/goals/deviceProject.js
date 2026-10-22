@@ -28,7 +28,17 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
   if (!device || typeof device.needs !== 'function') throw new TypeError('device must be a goal with needs()');
   if (!home?.chest || !home.centre) throw new TypeError('home needs chest and centre');
   // The mine outlives each gather: the way back up is its own staircase.
-  const memory = { gather: null, mine: null, steps: 0, siteTry: 0, done: false, device: device.memory };
+  const memory = { gather: null, mine: null, mineDir: undefined, steps: 0, siteTry: 0, done: false, device: device.memory };
+
+  // Killed down in the mine: monsters have the tunnel now. The next gather
+  // starts a fresh one in another direction instead of walking back in.
+  bot.on?.('death', () => {
+    const mine = memory.mine;
+    if (!mine || bot.entity.position.y >= mine.surfaceY - 3) return;
+    memory.mine = null;
+    memory.mineDir = (mine.dir + 1) % 4;
+    if (memory.gather?.memory) Object.assign(memory.gather.memory, { mine: null, mineDir: memory.mineDir });
+  });
 
   const lacking = (state) => device.needs()
     .map((r) => ({ key: r.key, count: r.count - countKey(r.key, state.inventory, kb) }))
@@ -51,11 +61,11 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
     if (!memory.gather) {
       ctx.record('device_materials', { device: device.name, lack: lack.map((r) => `${r.key}x${r.count}`) });
       memory.gather = createGather({ bot, chest: home.chest, stations: home.stations || {}, requirements: lack, kb });
-      if (memory.gather.memory && memory.mine) memory.gather.memory.mine = memory.mine;
+      if (memory.gather.memory) Object.assign(memory.gather.memory, { mine: memory.mine, mineDir: memory.mineDir });
     }
     if (!memory.gather.isDone(state)) {
       const result = await memory.gather.run(ctx);
-      if (memory.gather?.memory) memory.mine = memory.gather.memory.mine;
+      if (memory.gather?.memory) ({ mine: memory.mine, mineDir: memory.mineDir } = memory.gather.memory);
       return result;
     }
     const up = await climbOut(ctx);

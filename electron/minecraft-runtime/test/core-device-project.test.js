@@ -161,3 +161,23 @@ test('a cobblestone generator asks for a pickaxe until its harvest is in', () =>
   goal.memory.harvested = 8;
   assert.ok(!goal.needs().some((r) => r.key === 'pickaxe'));
 });
+
+test('a death down in the mine gives the tunnel up', async () => {
+  const device = fakeDevice();
+  const handlers = {};
+  const made = [];
+  const createGather = () => {
+    const memory = { mine: null };
+    made.push(memory);
+    return { memory, isDone: () => false, progress: () => 0,
+      run: async () => { memory.mine = memory.mine || { surfaceY: 64, dir: 0 }; return { ok: true }; } };
+  };
+  const bot = { entity: { position: new Vec3(17, 64, 3) }, on: (e, f) => { handlers[e] = f; } };
+  const goal = createDeviceProjectGoal({ bot, name: 'x', device, home, skills: {}, actions: {}, createGather });
+  await goal.run(ctx());
+  bot.entity.position = new Vec3(30, 16, 3);
+  handlers.death();
+  assert.equal(goal.memory.mine, null);
+  assert.equal(made[0].mine, null);
+  assert.equal(made[0].mineDir, 1);
+});
