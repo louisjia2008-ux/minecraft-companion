@@ -40,11 +40,11 @@ const key = (p) => `${p.x},${p.y},${p.z}`;
  * Scores a generator at `anchor` facing `facing`; null when it cannot be built
  * without terraforming. `blockAt(x, y, z)` returns null for unloaded chunks.
  */
-function evaluateGeneratorSite(blockAt, anchor, facing) {
-  const device = createCobbleGenerator(anchor, facing);
+function evaluateGeneratorSite(blockAt, anchor, facing, options = {}) {
+  const device = createCobbleGenerator(anchor, facing, options);
   const at = (p) => blockAt(p.x, p.y, p.z);
   let fixes = 0;
-  for (const p of device.open) {
+  for (const p of [...device.open, ...device.parts.map((part) => part.position)]) {
     const block = at(p);
     if (!block) return null;
     if (!DIGGABLE.has(block.name)) return null;
@@ -64,7 +64,7 @@ function evaluateGeneratorSite(blockAt, anchor, facing) {
 }
 
 /** Nearest buildable spot around `around` (a position with integer-able coords). */
-function chooseGeneratorSite(blockAt, around, { radius = 10 } = {}) {
+function chooseGeneratorSite(blockAt, around, { radius = 10, collector = false } = {}) {
   const origin = { x: Math.floor(around.x), y: Math.floor(around.y), z: Math.floor(around.z) };
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 1) {
@@ -80,7 +80,7 @@ function chooseGeneratorSite(blockAt, around, { radius = 10 } = {}) {
       }
       if (y === null) continue;
       for (const facing of Object.keys(FACINGS)) {
-        const site = evaluateGeneratorSite(blockAt, { x: origin.x + dx, y, z: origin.z + dz }, facing);
+        const site = evaluateGeneratorSite(blockAt, { x: origin.x + dx, y, z: origin.z + dz }, facing, { collector });
         if (!site) continue;
         // Keep a clear gap from the bot's own feet: it must not stand in a cell to dig.
         const score = site.fixes * 4 + Math.hypot(dx, dz) + Math.abs(y + 1 - origin.y) * 2 + (Math.hypot(dx, dz) < 3 ? 6 : 0);
@@ -91,11 +91,11 @@ function chooseGeneratorSite(blockAt, around, { radius = 10 } = {}) {
   return best ? best.device : null;
 }
 
-function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harvest = 8,
+function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harvest = 8, collector = false,
   skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(harvest) || harvest < 1) throw new TypeError('harvest must be a positive integer');
   const memory = {
-    device: anchor ? createCobbleGenerator(anchor, facing) : null,
+    device: anchor ? createCobbleGenerator(anchor, facing, { collector }) : null,
     harvested: 0,
     regenerated: 0,
     guarded: false,
@@ -114,7 +114,15 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
     const above = (p) => ({ x: p.x, y: p.y + 1, z: p.z });
     const noStep = new Set(liquidCells().flatMap((p) => [p, above(p)]).map(key));
     const noBreak = new Set([...d.seal, d.cells.cobble].map(key));
-    movements.exclusionAreasStep.push((block) => (block?.position && noStep.has(key(block.position)) ? 1000 : 0));
+    // Until the collector is in, S and the cells under it are holes to dig, not
+    // places to stand: digging S's floor from S drops the bot into a 1x1 shaft.
+    const collectorCells = new Set(d.parts.flatMap((part) => [part.position, above(part.position)]).map(key));
+    movements.exclusionAreasStep.push((block) => {
+      if (!block?.position) return 0;
+      const k = key(block.position);
+      if (noStep.has(k)) return 1000;
+      return collectorCells.has(k) && d.parts.some((part) => !partOk(part)) ? 1000 : 0;
+    });
     movements.exclusionAreasBreak.push((block) => (block?.position && noBreak.has(key(block.position)) ? 100 : 0));
   }
 
@@ -123,10 +131,18 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
     return [c.lava, c.cobble, c.pitTop, c.pitBottom, c.water];
   };
 
-  // In one of L, C, P or W, or standing on one (and about to dig it out).
+  const facingOf = (block) => block?.getProperties?.().facing;
+  const partOk = (part) => {
+    const block = blockAt(part.position);
+    return block?.name === part.block && (!part.facing || facingOf(block) === part.facing);
+  };
+
+  // In one of L, C, P or W, or standing on one (and about to dig it out), or
+  // above a collector part still to be dug out or placed.
   function trappedCell() {
     const feet = bot.entity.position.floored();
-    return liquidCells().find((p) => feet.x === p.x && feet.z === p.z && feet.y >= p.y && feet.y <= p.y + 1) || null;
+    const pending = memory.device.parts.filter((part) => !partOk(part)).map((part) => part.position);
+    return [...liquidCells(), ...pending].find((p) => feet.x === p.x && feet.z === p.z && feet.y >= p.y && feet.y <= p.y + 1) || null;
   }
 
   // Out of the pit or off a cell: swim up through the pit's water, otherwise
@@ -173,8 +189,9 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
     const toDig = d.open.filter((p) => { const b = blockAt(p); return b && !accepts(p, b.name); });
     const headBlocked = !isSoft(blockAt(c.head));
     const pitWater = blockAt(c.pitBottom)?.name === 'water';
-    const working = lava && water && pitWater && openSeal.length === 0 && toDig.length === 0;
-    return { lava, water, pitWater, openSeal, toDig, headBlocked, working };
+    const nextPart = d.parts.find((part) => !partOk(part)) || null;
+    const working = lava && water && pitWater && openSeal.length === 0 && toDig.length === 0 && !nextPart;
+    return { lava, water, pitWater, openSeal, toDig, headBlocked, nextPart, working };
   }
 
   function progressOf() {
@@ -182,17 +199,21 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
     if (!s) return 0;
     const d = memory.device;
     const built = (d.seal.length - s.openSeal.length) + (d.open.length - s.toDig.length)
-      + (s.water ? 1 : 0) + (s.lava ? 1 : 0);
-    return built + memory.harvested;
+      + d.parts.filter(partOk).length + (s.water ? 1 : 0) + (s.lava ? 1 : 0);
+    return built + memory.regenerated + memory.harvested;
   }
 
   // Exactly into S: from the surface next to it the drop is out of pickup range.
   async function goToStand(ctx) {
     const c = memory.device.cells;
     const stand = new Vec3(c.stand.x, c.stand.y, c.stand.z);
-    const inStand = () => bot.entity.position.floored().equals(stand);
+    // Standing on the collector chest (0.875 high) puts the feet just below S.
+    const inStand = () => {
+      const at = bot.entity.position;
+      return Math.floor(at.x) === stand.x && Math.floor(at.z) === stand.z && Math.abs(at.y - stand.y) < 0.5;
+    };
     if (inStand()) return { ok: true };
-    const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(stand.x, stand.y, stand.z), {
+    const moved = await actions.goTo(bot, ctx, new goals.GoalXZ(stand.x, stand.z), {
       timeoutMs: 30000, arrived: inStand,
     });
     if (inStand()) return { ok: true };
@@ -212,13 +233,25 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
       if (!back) return { ok: false, reason: 'no_regeneration' };
       block = blockAt(c.cobble);
     }
+    if (memory.device.collector && (memory.regenerated >= memory.harvested + 4 || memory.regenerated >= harvest)) {
+      // Empty the collector chest under S now and then; the hopper fills it.
+      const taken = await skills.takeItems(bot, ctx, { position: c.collectorChest, itemMatch: (n) => n === 'cobblestone' });
+      if (taken.ok) memory.harvested += taken.taken;
+      ctx.record('generator_collect', { ok: taken.ok, reason: taken.reason, harvested: memory.harvested });
+      if (taken.ok || memory.harvested >= harvest) return taken;
+    }
     const before = actions.countItems(bot, (n) => n === 'cobblestone');
     const dug = await actions.digBlock(bot, ctx, block);
     if (!dug.ok) return dug;
     // The drop lands at the bot's feet; it is picked up without moving (10-tick delay).
-    const got = await waitUntil(() => actions.countItems(bot, (n) => n === 'cobblestone') > before, { timeoutMs: 2500, signal: ctx.signal });
     const back = await waitUntil(() => blockAt(c.cobble)?.name === 'cobblestone', { timeoutMs: REGENERATE_MS, signal: ctx.signal });
     if (back) memory.regenerated += 1;
+    if (memory.device.collector) {
+      ctx.record('generator_harvest', { regenerated: back, count: memory.regenerated });
+      return back ? { ok: true } : { ok: false, reason: 'no_regeneration' };
+    }
+    const got = actions.countItems(bot, (n) => n === 'cobblestone') > before
+      || await waitUntil(() => actions.countItems(bot, (n) => n === 'cobblestone') > before, { timeoutMs: 1000, signal: ctx.signal });
     if (got && back) memory.harvested += actions.countItems(bot, (n) => n === 'cobblestone') - before;
     ctx.record('generator_harvest', { picked: got, regenerated: back, harvested: memory.harvested,
       at: bot.entity.position.floored().toString() });
@@ -235,7 +268,7 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
     async run(ctx) {
       if (!memory.device) {
         const p = bot.entity.position;
-        const device = chooseGeneratorSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), p);
+        const device = chooseGeneratorSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), p, { collector });
         if (!device) return { ok: false, reason: 'no_site' };
         memory.device = device;
         ctx.record('device_site', { kind: device.kind, anchor: device.anchor, facing: device.facing });
@@ -257,6 +290,21 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
         const reach = await actions.goToDig(bot, ctx, block);
         if (!reach.ok) return reach;
         return actions.digBlock(bot, ctx, block);
+      }
+      if (s.nextPart) {
+        const part = s.nextPart;
+        if (!isAir(blockAt(part.position))) {
+          const block = blockAt(part.position);
+          const reach = await actions.goToDig(bot, ctx, block);
+          if (!reach.ok) return reach;
+          return actions.digBlock(bot, ctx, block);
+        }
+        const toward = new Vec3(part.against.x - part.position.x, part.against.y - part.position.y, part.against.z - part.position.z);
+        const result = await skills.placeAt(bot, ctx, part.position, (n) => n === part.block, {
+          faces: [toward], sneak: Boolean(part.sneak), verify: () => partOk(part),
+        });
+        ctx.record('device_part', { part: part.key, ok: result.ok, reason: result.reason, facing: facingOf(blockAt(part.position)) });
+        return result;
       }
       if (!s.water) return skills.pourLiquid(bot, ctx, d.cells.water, 'water');
       if (!s.pitWater) {

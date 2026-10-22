@@ -131,9 +131,33 @@
 
 | 场景 | 结果 | 说明 |
 |---|---|---|
-| `cobblegen-flat` | **10/10 通过**（seed 777） | 给石镐、石锹、水桶、岩浆桶、16 泥土，平地随机起点；中位 29 秒，0 次死亡。服务器确认岩浆源、水源、坑里的水、C 处的圆石，以及玩家身上至少 8 块圆石 |
+| `cobblegen-flat` | **10/10 通过**（seed 777，合并漏斗版后 seed 909 又 10/10） | 给石镐、石锹、水桶、岩浆桶、16 泥土，平地随机起点；中位 29 秒，0 次死亡。服务器确认岩浆源、水源、坑里的水、C 处的圆石，以及玩家身上至少 8 块圆石 |
 
-尚未解决：约 25% 的掉落物捡不到（107 次挖掘里 27 次）。挖开 C 时掉落物带随机初速度，会漂进旁边的岩浆烧掉或掉进水坑，而拾取有 10 tick 延迟。下一阶段用漏斗收集可以根治。
+普通版约 25% 的掉落物捡不到（107 次挖掘里 27 次）：挖开 C 时掉落物带随机初速度，会漂进旁边的岩浆烧掉或掉进水坑，而玩家拾取有 10 tick 延迟。**漏斗版**（`collector: true`）把 C 的地面换成漏斗、S 的地面换成箱子：漏斗没有拾取延迟，掉落物一落地就被吸进箱子，机器人站在箱子上，隔几块打开箱子取一次。
+
+## 生电装置第二步：漏斗与自动熔炉（`goals/autoSmelter.js`）
+
+```
+侧视（沿装置方向，g 为地面顶层）
+  g+2   .   I   .        I 输入箱
+  g+1   F   H   .        F 燃料箱，H 朝下的漏斗 → 熔炉顶部（原料格）
+  g     h   U   .        h 朝前的漏斗 → 熔炉侧面（燃料格），U 熔炉
+  g-1   #   O   C        O 熔炉下的漏斗，朝前 → C 输出箱（C 上方留空，箱子才能打开）
+```
+
+整个装置往地下沉两格，因为方块的顶面只有站在它上方才点得到，这样每个零件都能站在地面上放。
+
+- **零件清单**（`blueprints/autoSmelter.js`）：按建造顺序排列，每个零件写明“贴着哪个方块放”；漏斗的朝向就是它贴着的方向。放完读服务器方块状态核对 `facing`，不对就挖掉重放。
+- **下蹲放置**（`placeAt(..., { sneak: true })`）：箱子、漏斗、熔炉被点击会打开界面，贴着它们放方块时要按住下蹲。
+- **取物**（`skills.takeItems`）：从箱子里取出指定物品，关闭界面、背包同步后才确认。
+- **运行**：原料放进输入箱，燃料放进燃料箱，每隔 11 秒（熔炼一个 10 秒）打开输出箱取一次；只有从输出箱取出的才算产出。
+- 顺带修复了 `storeItems`：Mineflayer 在关闭界面后才同步背包，以前在界面打开时检查空格，存进去了也会误报 `chest_full`。
+
+| 场景 | 结果 | 说明 |
+|---|---|---|
+| `smelter-flat` | **10/10 通过**（seed 909） | 给 3 箱子、3 漏斗、熔炉、8 粗铁、1 煤；中位 97 秒，0 次死亡。服务器逐个确认零件和漏斗朝向，玩家身上至少 8 个铁锭 |
+| `cobblegen-hopper-flat` | **10/10 通过**（seed 1234） | 刷石机加漏斗和箱子；中位 24 秒，0 次死亡。服务器确认漏斗朝向和箱子位置 |
+
 
 ## 文件
 
@@ -144,10 +168,11 @@
 | `inventory.js` | 新核心专用的 Mineflayer 4.37.1 / vanilla 1.21.8 玩家库存槽位转换；不修改共享协议数据或旧代理 |
 | `confirm.js` | `waitUntil` / `runCancellable` / 可中止的 `sleep` |
 | `actions.js` | 寻路（含爬出坑）、挖掘、拾取、进食、攻击、逃离、脱困 |
-| `skills.js` | 采集一个方块、合成、放置方块、倒水或岩浆、熔炼、打猎、摘浆果、探索、使用箱子、使用床 |
+| `skills.js` | 采集一个方块、合成、放置方块（可下蹲贴着容器放）、倒水或岩浆、从箱子取物、熔炼、打猎、摘浆果、探索、使用箱子、使用床 |
 | `knowledge.js` / `planner.js` | 物品来源知识表，以及基于虚拟背包的纯规划器 |
 | `site.js` / `blueprints/starterHouse.js` | 选址、根据世界现状算出整地工作、小屋蓝图 |
-| `blueprints/cobbleGenerator.js` / `goals/cobbleGenerator.js` | 刷石机蓝图（挖空、密封、留空格子）/ 选址、建造、倒液体、挖圆石并验证重新生成 |
+| `blueprints/cobbleGenerator.js` / `goals/cobbleGenerator.js` | 刷石机蓝图（挖空、密封、留空格子，可选漏斗收集）/ 选址、建造、倒液体、挖圆石并验证重新生成 |
+| `blueprints/autoSmelter.js` / `goals/autoSmelter.js` | 自动熔炉零件清单（建造顺序、贴放方向、漏斗朝向）/ 选址、建造、装料、从输出箱取物 |
 | `nether.js` | 维度判断、找传送门、4×5 门框（四角用圆石，顶排挂在顶角上）、点火、穿门、下界寻路设置（岩浆旁代价、下落上限 3、不挖金矿） |
 | `goals/netherQuartz.js` | 搭门或复用已有门 → 进下界 → 采石英 → 回主世界；死后从主世界走回记住的门再进去 |
 | `goals/gatherBlocks.js` / `goals/homestead.js` | 采集目标 / 完整任务链目标 |
@@ -166,6 +191,7 @@ npm run scenario -- --accept-eula --scenario collect-logs-flat --runs 20
 npm run scenario -- --accept-eula --scenario homestead-flat --runs 3
 npm run scenario -- --accept-eula --scenario homestead-natural --runs 3
 npm run scenario -- --accept-eula --scenario cobblegen-flat --runs 10
+npm run scenario -- --accept-eula --scenario cobblegen-hopper-flat,smelter-flat --runs 10
 
 # seed=500 的第 4、5 轮地点；同一服务器、世界与玩家，只改变客户端生命周期。
 # 默认 reuse；fresh 在每轮验证完成后断开并重新建立 Mineflayer bot。

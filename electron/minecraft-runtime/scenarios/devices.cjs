@@ -6,6 +6,7 @@
 
 const { FLAT_GENERATOR, GROUND, resetArea } = require('./collectLogs.cjs');
 const { createCobbleGenerator } = require('../core/blueprints/cobbleGenerator');
+const { createAutoSmelter } = require('../core/blueprints/autoSmelter');
 
 const HARVEST = 8;
 
@@ -74,4 +75,66 @@ const cobbleGeneratorFlat = {
   },
 };
 
-module.exports = { cobbleGeneratorFlat };
+// The same generator with a hopper under C feeding a chest under S.
+const cobbleGeneratorHopperFlat = {
+  ...cobbleGeneratorFlat,
+  name: 'cobblegen-hopper-flat',
+  description: `As cobblegen-flat plus a hopper and a chest: the hopper under the cobblestone collects every drop; take ${HARVEST} cobblestone out of the chest.`,
+  setup(options) {
+    const base = cobbleGeneratorFlat.setup(options);
+    const tp = base.commands.pop();
+    base.commands.push(`give ${options.username} hopper`, `give ${options.username} chest`, tp);
+    return base;
+  },
+  start: (companion) => companion.cobbleGenerator({ harvest: HARVEST, collector: true }),
+  async verify(context) {
+    const verdict = await cobbleGeneratorFlat.verify(context);
+    const memory = context.goal?.memory;
+    if (!memory?.device) return verdict;
+    const d = createCobbleGenerator(memory.device.anchor, memory.device.facing, { collector: true });
+    const parts = {};
+    for (const part of d.parts) {
+      parts[part.key] = await testBlock(context.server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+    }
+    return { pass: verdict.pass && Object.values(parts).every(Boolean), details: { ...verdict.details, parts } };
+  },
+};
+
+const SMELT = 8;
+
+const autoSmelterFlat = {
+  name: 'smelter-flat',
+  description: `Flat plains, handed chests, hoppers, a furnace, ${SMELT} raw iron and coal; build a hopper-fed furnace and take ${SMELT} iron ingots out of its output chest.`,
+  serverProperties: cobbleGeneratorFlat.serverProperties,
+  timeoutMs: 6 * 60 * 1000,
+  setup({ username, rng, difficulty = 'peaceful' }) {
+    const x = Math.round((rng() - 0.5) * 16);
+    const z = Math.round((rng() - 0.5) * 16);
+    const yaw = Math.round(rng() * 360) - 180;
+    return {
+      commands: [
+        ...commonSetup(username, difficulty),
+        ...resetArea(),
+        `give ${username} stone_pickaxe`, `give ${username} stone_shovel`, `give ${username} chest 3`,
+        `give ${username} hopper 3`, `give ${username} furnace`, `give ${username} raw_iron ${SMELT}`, `give ${username} coal 1`,
+        `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
+      ],
+      details: { start: { x, z, yaw } },
+    };
+  },
+  start: (companion) => companion.autoSmelter({ count: SMELT }),
+  async verify({ server, username, goal }) {
+    const memory = goal?.memory;
+    if (!memory?.device) return { pass: false, details: { reason: 'no_site' } };
+    const d = createAutoSmelter(memory.device.anchor, memory.device.facing);
+    const parts = {};
+    for (const part of d.parts) {
+      parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+    }
+    const ingots = await countOnPlayer(server, username, 'minecraft:iron_ingot');
+    const pass = Object.values(parts).every(Boolean) && ingots >= SMELT;
+    return { pass, details: { device: { anchor: d.anchor, facing: d.facing }, parts, ingots, taken: memory.taken } };
+  },
+};
+
+module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat };
