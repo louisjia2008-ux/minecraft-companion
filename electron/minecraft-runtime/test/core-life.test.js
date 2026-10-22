@@ -17,7 +17,8 @@ function world({ homeDone, timeOfDay = 1000, inventory = {} }) {
     registry: { blocksByName: {} },
   };
   const home = {
-    memory: { house: { anchor: { x: 0, y: 1, z: 0 }, furniture: { chest: { position: { x: 4, y: 1, z: 5 } } } } },
+    memory: { house: { anchor: { x: 0, y: 1, z: 0 }, blocks: [{}], furniture: { chest: { position: { x: 4, y: 1, z: 5 } } } },
+      houseBuilt: homeDone ? 1 : 0, houseBed: homeDone },
     isDone: () => homeDone,
     run: async () => { calls.push('home'); return homeDone ? { ok: true, idle: true } : { ok: true }; },
   };

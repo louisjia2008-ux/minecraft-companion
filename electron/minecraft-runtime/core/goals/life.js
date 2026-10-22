@@ -94,6 +94,7 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
   function choose(state) {
     const scores = [];
     if (freeSlots() < 6) scores.push(['store', 5]);
+    if (!home.isDone(state)) scores.push(['home', 3]);
     const plotsReady = memory.projects.farm?.memory.plots?.length || 0;
     scores.push(['farm', food(state) < 12 ? 4 : plotsReady < 8 ? 2.5 : 1]);
     const herd = memory.projects.ranch;
@@ -111,18 +112,22 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
     if (name === 'ranch') return ranch(state);
     if (name === 'mine') return mine(state);
     if (name === 'store') return store;
+    if (name === 'home') return home;
     return null;
   }
 
   async function runOnce(ctx) {
     const state = ctx.perceive();
     const evening = Number.isFinite(state.timeOfDay) && state.timeOfDay >= 11800 && state.timeOfDay < 23400;
-    // Home first, and every night at home.
-    if (evening || !home.isDone(state)) {
+    // Home first, and every night at home. Once the house stands with its
+    // bed, the rest of the homestead (iron gear, trying the furniture) is
+    // one project among the others instead of blocking all of them.
+    const livable = Boolean(home.memory.house) && home.memory.houseBuilt >= home.memory.house.blocks.length && home.memory.houseBed;
+    if (evening || (!home.isDone(state) && !livable)) {
       const result = await home.run(ctx);
       if (!result.idle) return result;
     }
-    const current = memory.project === 'store' ? store : memory.projects[memory.project];
+    const current = memory.project === 'store' ? store : memory.project === 'home' ? home : memory.projects[memory.project];
     const due = !memory.project || now() - memory.since > SLICE_MS || memory.stalls >= STALL_LIMIT
       || Boolean(current?.isDone(state));
     if (due) {
