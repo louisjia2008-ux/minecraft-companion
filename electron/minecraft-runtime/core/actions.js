@@ -421,12 +421,17 @@ async function unstick(bot, ctx) {
   if (await nudge(bot, ctx)) return { ok: true, moved: 'nudged' };
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;
-  // Down in a pit or a mine: pillar straight back up to ground level.
+  // Down in a pit or a mine: pillar straight back up to ground level. With
+  // nothing to pillar with, the pit walls supply it; failing that, dig a
+  // staircase out.
   if (underground(bot)) {
     const surface = Number.isFinite(bot.companionSurfaceY) ? bot.companionSurfaceY : start.y + 6;
+    if (countItems(bot, (n) => CLIMB_BLOCKS.includes(n)) < 4) await gatherClimbBlocks(bot, ctx);
     await withClimbing(bot, surface + 4, () => goTo(bot, ctx, new goals.GoalY(Math.floor(surface)), { timeoutMs: 30000,
       arrived: () => true }));
     if (bot.entity.position.y - start.y >= 2) return { ok: true, moved: 'climbed' };
+    const stairs = await digStairsUp(bot, ctx, Number.isFinite(bot.companionSurfaceY) ? bot.companionSurfaceY : localSurfaceY(bot));
+    if (stairs >= 2) return { ok: true, moved: 'stairs' };
   }
   const saved = movements.maxDropDown;
   try {
@@ -451,6 +456,98 @@ async function unstick(bot, ctx) {
   return bot.entity.position.distanceTo(start) > 2 ? { ok: true, moved: 'partial' } : fail('stuck');
 }
 
+const FLUID = /water|lava/;
+const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const fluidNext = (bot, p) => [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
+  .some(([dx, dy, dz]) => FLUID.test(bot.blockAt(p.offset(dx, dy, dz))?.name || ''));
+// Blocks whose drop can be pillared with: soil by hand, rock with a pickaxe.
+const SOIL = /^(dirt|grass_block|coarse_dirt|podzol|rooted_dirt|mycelium)$/;
+const ROCK = /^(stone|cobblestone|deepslate|cobbled_deepslate)$/;
+
+/** Digs a few pit-wall blocks at or above foot level for their dirt or cobblestone. */
+async function gatherClimbBlocks(bot, ctx, { want = 6 } = {}) {
+  const pickaxe = bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'));
+  const feet = bot.entity.position.floored();
+  const walls = [];
+  for (let dx = -2; dx <= 2; dx += 1) {
+    for (let dz = -2; dz <= 2; dz += 1) {
+      for (let dy = 0; dy <= 2; dy += 1) {
+        if (dx === 0 && dz === 0) continue;
+        const block = bot.blockAt(feet.offset(dx, dy, dz));
+        if (!block || !(SOIL.test(block.name) || (pickaxe && ROCK.test(block.name)))) continue;
+        if (fluidNext(bot, block.position) || !withinReach(bot, block.position)) continue;
+        walls.push(block);
+      }
+    }
+  }
+  walls.sort((a, b) => Number(ROCK.test(a.name)) - Number(ROCK.test(b.name)));
+  let gained = 0;
+  for (const block of walls) {
+    if (gained >= want) break;
+    const before = countItems(bot, (n) => CLIMB_BLOCKS.includes(n));
+    const dug = await digBlock(bot, ctx, block, { timeoutMs: 8000 });
+    if (!dug.ok) continue;
+    await collectDrops(bot, ctx, block.position.offset(0.5, 0.5, 0.5), (n) => CLIMB_BLOCKS.includes(n), { radius: 4, timeoutMs: 3000 });
+    gained += Math.max(0, countItems(bot, (n) => CLIMB_BLOCKS.includes(n)) - before);
+  }
+  return gained;
+}
+
+/** The highest standing level among the columns a few blocks around the bot. */
+function localSurfaceY(bot, { radius = 3, above = 10 } = {}) {
+  const feet = bot.entity.position.floored();
+  let best = feet.y;
+  for (let i = 0; i < 8; i += 1) {
+    const angle = (i * Math.PI) / 4;
+    const column = feet.offset(Math.round(Math.cos(angle) * radius), 0, Math.round(Math.sin(angle) * radius));
+    for (let dy = above; dy >= 0; dy -= 1) {
+      if (solidGround(bot.blockAt(column.offset(0, dy, 0)))) { best = Math.max(best, feet.y + dy + 1); break; }
+    }
+  }
+  return best;
+}
+
+/**
+ * Digs a staircase up toward targetY: each step clears headroom above the bot
+ * and two cells ahead one level up, then steps onto the block ahead. Never digs
+ * next to water or lava. Returns how many steps were climbed.
+ */
+async function digStairsUp(bot, ctx, targetY, { maxSteps = 24 } = {}) {
+  const clearable = (p) => {
+    const b = bot.blockAt(p);
+    if (!b || FLUID.test(b.name)) return false;
+    if (b.boundingBox === 'empty') return true;
+    return bot.canDigBlock(b) && b.diggable !== false && !fluidNext(bot, p);
+  };
+  let direction = null;
+  let climbed = 0;
+  for (let step = 0; step < maxSteps; step += 1) {
+    const feet = bot.entity.position.floored();
+    if (feet.y >= Math.floor(targetY)) break;
+    const sides = direction ? [direction, ...SIDES.filter((d) => d !== direction)] : SIDES;
+    const next = sides.find(([dx, dz]) => {
+      const ahead = feet.offset(dx, 0, dz);
+      return bot.blockAt(ahead)?.boundingBox === 'block' && !FLUID.test(bot.blockAt(ahead).name)
+        && clearable(feet.offset(0, 2, 0)) && clearable(ahead.offset(0, 1, 0)) && clearable(ahead.offset(0, 2, 0));
+    });
+    if (!next) break;
+    direction = next;
+    const ahead = feet.offset(next[0], 0, next[1]);
+    for (const p of [feet.offset(0, 2, 0), ahead.offset(0, 2, 0), ahead.offset(0, 1, 0)]) {
+      const b = bot.blockAt(p);
+      if (b && b.boundingBox !== 'empty') {
+        const dug = await digBlock(bot, ctx, b, { timeoutMs: 8000 });
+        if (!dug.ok) return climbed;
+      }
+    }
+    const up = ahead.offset(0, 1, 0);
+    const moved = await goToOnce(bot, ctx, new goals.GoalBlock(up.x, up.y, up.z), { timeoutMs: 5000 });
+    if (!moved.ok || bot.entity.position.y < feet.y + 0.9) return climbed;
+    climbed += 1;
+  }
+  return climbed;
+}
+
 /** Climbs back to the surface reference level if the bot is below it. */
 async function surface(bot, ctx) {
   if (!Number.isFinite(bot.companionSurfaceY) || bot.entity.position.y >= bot.companionSurfaceY - 1) return null;
@@ -461,6 +558,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, gatherClimbBlocks, digStairsUp, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, RISKY_FOODS,
 };
