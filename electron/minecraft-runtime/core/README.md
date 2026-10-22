@@ -182,6 +182,36 @@
 |---|---|---|
 | `canefarm-flat` | **10/10 通过**（seed 11） | 中位 121 秒，0 次死亡；改倒水后刷石机两个场景回归各 3/3。给活塞、侦测器、红石、1 甘蔗、水桶、4 泥土；随机刻速度调到 200 让甘蔗快长。服务器确认每个零件和朝向、水源，玩家身上至少 4 根甘蔗 |
 
+## 全流程：从零建家到生电装置（`goals/deviceProject.js`、`behaviors/nightRest.js`）
+
+玩家只下一句“建房子”，之后全靠自主发育：
+
+1. **建家**：`homestead` 卡片（阶段 0）照旧从空背包建房、做家具和铁装。
+2. **刷石机**（`cobble_generator`，阶段 1，风险 medium）→ **自动熔炉**（`auto_smelter`，要求刷石机已建好）。两张卡片都用 `deviceProject` 包装装置目标：
+   - 装置的 `needs()` 列出还没建好的部分要的材料（桶装水、岩浆、圆石、漏斗、箱子、熔炉、待熔炼的矿、燃料），背包里已有的扣掉；
+   - 缺的交给 `gatherMaterials` 采集进家里箱子（地表材料先爬出矿井再采，铁在 y=16 分支挖），齐了再取出来；
+   - 选址在房子中心 14 格外的 8 个方向上轮流试，避开房子和另一台装置；
+   - 已经建好的部分不会再要材料；死后丢了材料只会回到“采集”这一步。一个装置的多批采集共用同一条矿道，出矿永远沿着自己的楼梯走。
+3. **夜里回家睡**（`nightRest`，维护档）：房子建好后，天黑离床 64 格内就回去睡；太远或床不能用就在原地挖地堡。
+4. **出不来时**：`actions.surface` 先寻路向上，找不到路就就地挖楼梯到地表；背包满时只在地面扔垃圾，扔掉每一组，不往家里箱子塞。
+
+### 全流程测试 `e2e-flat`
+
+新平地世界（easy，昼夜和刷怪开启，空背包），玩家下“建房子”，然后打开自主发育。运行中测试框架注入 4 次故障，每次都要求机器人自己恢复：
+
+| 注入 | 时间 | 恢复判定 |
+|---|---|---|
+| 建家时被杀 | 第 12 分钟后 | 复活后继续建同一栋房子 |
+| 背包塞满垃圾 | 装置卡片开始 1 分钟后 | 腾出至少 4 格 |
+| 脚下挖 6 格深坑掉进去 | 上一项恢复 2 分钟后，白天在空地上 | 必须先确认落到坑底，再爬回地面 |
+| 造装置时被杀 | 上一项恢复 3 分钟后 | 复活后继续造装置 |
+
+通过条件全部由服务器判定：房子、家具、床的复活点，刷石机的水、岩浆、圆石、漏斗和收集箱（收集箱里至少有 8 个圆石），自动熔炉的零件和取出的熔炼产物（至少 4 个），4 次注入都已恢复，机器人活着。超时 300 分钟。
+
+`machines-flat` 是只测装置的快速版：和平难度，命令摆出替身房子（箱子、工作台、熔炉、床）并给铁装，空箱子开局，从采集材料开始造两台装置。
+
+RESULTS_PLACEHOLDER
+
 ## 文件
 
 | 文件 | 作用 |
@@ -200,7 +230,9 @@
 | `nether.js` | 维度判断、找传送门、4×5 门框（四角用圆石，顶排挂在顶角上）、点火、穿门、下界寻路设置（岩浆旁代价、下落上限 3、不挖金矿） |
 | `goals/netherQuartz.js` | 搭门或复用已有门 → 进下界 → 采石英 → 回主世界；死后从主世界走回记住的门再进去 |
 | `goals/gatherBlocks.js` / `goals/homestead.js` | 采集目标 / 完整任务链目标 |
-| `director.js` / `goals/registry.js` / `goals/stockFood.js` | 自主发育：没有玩家任务时按需求分挑下一个目标 / 可自主选择的目标卡片 / 囤食物目标 |
+| `director.js` / `goals/registry.js` / `goals/stockFood.js` | 自主发育：没有玩家任务时按需求分挑下一个目标 / 可自主选择的目标卡片（含刷石机、自动熔炉）/ 囤食物目标 |
+| `goals/deviceProject.js` | 装置项目：缺什么采什么进家箱、取出、选址、交给装置目标建造 |
+| `behaviors/nightRest.js` | 房子建好后夜里回家睡，太远就地挖地堡 |
 | `behaviors/survival.js` | 逃离、上浮换气、防御、进食、找食物、回血、捡回掉落物 |
 | `behaviors/recovery.js` | 通用恢复：卡住脱困、整理背包、离开反复死亡的地点、死亡循环时结束目标 |
 | `companion.js` | 把以上组件接到真实的 Mineflayer bot 上 |
@@ -217,6 +249,10 @@ npm run scenario -- --accept-eula --scenario homestead-natural --runs 3
 npm run scenario -- --accept-eula --scenario cobblegen-flat --runs 10
 npm run scenario -- --accept-eula --scenario cobblegen-hopper-flat,smelter-flat --runs 10
 npm run scenario -- --accept-eula --scenario canefarm-flat --runs 10
+
+# 全流程：3 个独立世界并行（每个种子一个服务器），各自从零建家到两台装置，带故障注入
+npm run e2e -- --accept-eula --sessions 3 --seed 1
+npm run scenario -- --accept-eula --scenario machines-flat --runs 1
 
 # seed=500 的第 4、5 轮地点；同一服务器、世界与玩家，只改变客户端生命周期。
 # 默认 reuse；fresh 在每轮验证完成后断开并重新建立 Mineflayer bot。

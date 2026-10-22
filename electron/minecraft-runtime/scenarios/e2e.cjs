@@ -66,10 +66,13 @@ const INJECTIONS = [
     recovered: ({ server, username, bot, state, since }) => {
       const p = bot.entity.position;
       const inShaft = Math.floor(p.x) === state.pit.x && Math.floor(p.z) === state.pit.z && p.y < state.pit.y - 0.5;
+      // Down there it may dig sideways at once: next to the shaft, below ground counts too.
+      const down = Math.abs(p.x - (state.pit.x + 0.5)) < 2.5 && Math.abs(p.z - (state.pit.z + 0.5)) < 2.5
+        && p.y < state.pit.y - 2;
       if (!state.pit.seen) {
-        if (inShaft) state.pit.seen = Date.now();
-        else if (Date.now() - since > 10000 && !state.pit.retried) {
-          state.pit.retried = true;
+        if (down) state.pit.seen = Date.now();
+        else if (Date.now() - since > 10000 * ((state.pit.retries || 0) + 1) && (state.pit.retries || 0) < 5) {
+          state.pit.retries = (state.pit.retries || 0) + 1;
           server.command(`tp ${username} ${state.pit.x + 0.5} ${state.pit.y - 6} ${state.pit.z + 0.5}`);
         }
         return false;
