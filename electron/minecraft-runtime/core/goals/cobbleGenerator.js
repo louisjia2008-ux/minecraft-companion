@@ -269,9 +269,11 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
     if (!s) {
       const probe = createCobbleGenerator({ x: 0, y: 0, z: 0 }, 'east', { collector });
       return [{ key: 'water_bucket', count: 1 }, { key: 'lava_bucket', count: 1 }, { key: 'cobblestone', count: Math.min(probe.seal.length, 12) },
-        ...probe.parts.map((part) => ({ key: part.block, count: 1 }))];
+        ...probe.parts.map((part) => ({ key: part.block, count: 1 })), { key: 'pickaxe', count: 1 }];
     }
-    const list = [];
+    // Mined by hand, cobblestone drops nothing: after a death the harvest
+    // would regenerate forever with an empty collector chest.
+    const list = memory.harvested < harvest ? [{ key: 'pickaxe', count: 1 }] : [];
     if (!s.water) list.push({ key: 'water_bucket', count: 1 });
     if (!s.lava) list.push({ key: 'lava_bucket', count: 1 });
     if (s.openSeal.length) list.push({ key: 'cobblestone', count: s.openSeal.length });

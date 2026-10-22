@@ -152,3 +152,12 @@ test('night rest shelters in the house when the bed is gone', async () => {
   await rest.run(context);
   assert.deepEqual(went.map((p) => [p.x, p.z]), [[3.5, 3.5]]);
 });
+
+test('a cobblestone generator asks for a pickaxe until its harvest is in', () => {
+  const { createCobbleGeneratorGoal } = require('../core/goals/cobbleGenerator');
+  const bot = { entity: { position: new Vec3(0, 64, 0) }, blockAt: () => null };
+  const goal = createCobbleGeneratorGoal({ bot, anchor: { x: 0, y: 63, z: 0 }, collector: true, harvest: 8 });
+  assert.ok(goal.needs().some((r) => r.key === 'pickaxe'));
+  goal.memory.harvested = 8;
+  assert.ok(!goal.needs().some((r) => r.key === 'pickaxe'));
+});
