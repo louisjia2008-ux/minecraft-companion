@@ -65,7 +65,6 @@ const INJECTIONS = [
     // lost, e.g. while it gets into bed); then it has to get itself out.
     recovered: ({ server, username, bot, state, since }) => {
       const p = bot.entity.position;
-      const inShaft = Math.floor(p.x) === state.pit.x && Math.floor(p.z) === state.pit.z && p.y < state.pit.y - 0.5;
       // Down there it may dig sideways at once: next to the shaft, below ground counts too.
       const down = Math.abs(p.x - (state.pit.x + 0.5)) < 2.5 && Math.abs(p.z - (state.pit.z + 0.5)) < 2.5
         && p.y < state.pit.y - 2;
@@ -77,7 +76,8 @@ const INJECTIONS = [
         }
         return false;
       }
-      return bot.health > 0 && !inShaft;
+      // Out means back up at ground level, not just a step aside underground.
+      return bot.health > 0 && p.y >= state.pit.y - 1;
     },
   },
   {
