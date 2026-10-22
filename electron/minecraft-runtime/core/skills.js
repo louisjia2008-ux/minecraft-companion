@@ -288,6 +288,57 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
   return fail('place_unconfirmed');
 }
 
+function fluidLevel(block) {
+  const level = block?.getProperties?.().level;
+  return Number.isFinite(Number(level)) ? Number(level) : block?.metadata;
+}
+
+/** True when `block` is a still source of `fluid` (water or lava). */
+function isFluidSource(block, fluid) {
+  return block?.name === fluid && fluidLevel(block) === 0;
+}
+
+/**
+ * Empties a water or lava bucket into the cell at `position`, which must have
+ * a solid floor. A filled bucket goes where the player's look ray hits, so the
+ * bot stands where it can see the floor's top face, aims at it and uses the
+ * item. Done only once the server shows a source block in that cell.
+ */
+async function pourLiquid(bot, ctx, position, fluid) {
+  const target = v(position);
+  if (isFluidSource(bot.blockAt(target), fluid)) return { ok: true, already: true };
+  const current = bot.blockAt(target);
+  if (!current) return fail('unloaded');
+  if (!AIR.has(current.name) && current.name !== fluid) return fail('occupied', { block: current.name });
+  const floor = bot.blockAt(target.offset(0, -1, 0));
+  if (!floor || floor.boundingBox !== 'block') return fail('no_support');
+  const bucket = bot.inventory.items().find((i) => i.name === `${fluid}_bucket`);
+  if (!bucket) return fail('no_material', { missing: [{ name: `${fluid}_bucket`, short: 1 }] });
+
+  const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces: [new Vec3(0, -1, 0)] });
+  const head = () => bot.entity.position.floored().offset(0.5, 1.6, 0.5);
+  const usable = () => goal.getFaceAndRef(head()) !== null && !overlaps(bot.entity, target);
+  if (!usable()) {
+    const result = await goToGoal(bot, ctx, goal, usable);
+    if (!result.ok) return result;
+  }
+  const found = goal.getFaceAndRef(head());
+  if (!found) return fail('no_pour_face');
+  if (entityInside(bot, target)) return fail('cell_occupied_by_entity');
+  try {
+    await bot.equip(bucket, 'hand');
+    await bot.lookAt(found.to, true);
+    bot.activateItem();
+  } catch (error) {
+    if (isAbort(error)) throw error;
+  }
+  const poured = await waitUntil(() => isFluidSource(bot.blockAt(target), fluid), { timeoutMs: 2000, signal: ctx.signal });
+  if (poured) return { ok: true };
+  ctx.record('pour_failed', { target: posKey(target), fluid, at: posKey(bot.entity.position),
+    now: bot.blockAt(target)?.name || null, holding: bot.heldItem?.name || null });
+  return fail('pour_unconfirmed');
+}
+
 function goToGoal(bot, ctx, goal, arrived) {
   return actions.goTo(bot, ctx, goal, { timeoutMs: 15000, arrived, targetY: goal.pos?.y });
 }
@@ -621,4 +672,4 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, pourLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };
