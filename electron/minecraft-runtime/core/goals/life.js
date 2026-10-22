@@ -36,6 +36,7 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
   };
 
   const food = (state) => countKey('food', state.inventory, kb);
+  const ctx0 = () => ({ inventory: {} });
   const freeSlots = () => 36 - bot.inventory.items().length;
   const ironStock = (state) => (state.inventory.raw_iron || 0) + (state.inventory.iron_ingot || 0);
 
@@ -46,7 +47,9 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
       memory.projects.farm = createFarmGoal({ bot, skills, center: { x: a.x + 3, y: a.y, z: a.z + 14 },
         exclude: (p) => nearHouse(p) || Boolean(pen()?.contains({ ...p, x: p.x + 0.5, z: p.z + 0.5 })),
         // Fixed per turn (set when the farm is chosen), so some wheat is left for the herd.
-        bread: () => memory.breadGoal || 3 });
+        bread: () => memory.breadGoal || 3,
+        // Until there is a herd, four wheat stay unbaked to lead and breed it.
+        reserveWheat: () => (memory.projects.ranch?.isDone(ctx0()) ? 0 : 4) });
     }
     return memory.projects.farm;
   }
@@ -104,7 +107,8 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
     const plotsReady = memory.projects.farm?.memory.plots?.length || 0;
     scores.push(['farm', food(state) < 12 ? 4 : plotsReady < 8 ? 2.5 : 1]);
     const herd = memory.projects.ranch;
-    if (!herd?.isDone(state) && herdKind(state)) scores.push(['ranch', 2]);
+    // A herd needs its pen once: ahead of mining when there is food to lead it with.
+    if (!herd?.isDone(state) && herdKind(state)) scores.push(['ranch', herd?.memory.pen ? 2 : 2.6]);
     if (ironStock(state) < 24 || (state.inventory.coal || 0) < 16) scores.push(['mine', 2.2]);
     // Do not pick the same stalled project again straight away.
     const last = memory.history[memory.history.length - 1];

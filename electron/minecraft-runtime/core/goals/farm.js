@@ -17,7 +17,8 @@ const { sleep } = require('../confirm');
 const { createPlannerRunner } = require('./common');
 
 function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = null,
-  skills = defaultSkills, actions = defaultActions, farming = defaultFarming, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000 } = {}) {
+  skills = defaultSkills, actions = defaultActions, farming = defaultFarming, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000,
+  reserveWheat = () => 0 } = {}) {
   const blacklist = createBlacklist({ ttlMs: 60000 });
   const breadTarget = typeof bread === 'function' ? bread : () => bread;
   const memory = { center: center || null, plots: null, table: home?.table || null, steps: 0, harvested: 0, shortfall: {} };
@@ -55,7 +56,8 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
 
     // Bread first whenever three wheat are in the bag: with a large farm
     // something is always ripe, and the harvest would never end.
-    if (countKey('bread', state.inventory, kb) < breadTarget() && (inventory.wheat || 0) >= 3) {
+    // Wheat kept back (to lead and breed a herd) is not baked.
+    if (countKey('bread', state.inventory, kb) < breadTarget() && (inventory.wheat || 0) - reserveWheat() >= 3) {
       const breadStep = planNext({ requirements: [{ key: 'bread', count: countKey('bread', state.inventory, kb) + 1 }], inventory, stations, kb });
       if (breadStep && breadStep.kind !== 'farm') return step(ctx, { ...breadStep, for: 'bread' });
     }
