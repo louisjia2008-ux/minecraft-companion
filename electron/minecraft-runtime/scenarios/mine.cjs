@@ -2,7 +2,8 @@
 'use strict';
 // A mining trip on natural terrain: staircase down to the iron layer and a
 // tunnel along it until 8 raw iron and 8 coal are in the bag. Starts with a
-// stone pickaxe, torches and bread; judged by the server's item counts.
+// stone pickaxe and sword, torches and bread (what the bot carries down by
+// the time it mines in a full game); judged by the server's item counts.
 
 const { countOnPlayer, living } = require('./homestead.cjs');
 
@@ -19,7 +20,7 @@ const mineNatural = {
     const z = Math.round(Math.sin(angle) * 300 * (run + 1));
     return {
       commands: [...living(username, difficulty), `spreadplayers ${x} ${z} 0 16 false ${username}`,
-        `give ${username} stone_pickaxe`, `give ${username} torch 16`, `give ${username} bread 12`, `give ${username} stick 4`],
+        `give ${username} stone_pickaxe`, `give ${username} stone_sword`, `give ${username} torch 16`, `give ${username} bread 12`, `give ${username} stick 4`],
       details: { center: { x, z } },
     };
   },

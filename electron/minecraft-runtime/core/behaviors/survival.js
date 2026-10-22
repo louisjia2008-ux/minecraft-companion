@@ -210,23 +210,39 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
   let hidden = null;
+  const hurtUnderground = (state) => state.health <= 8 && state.hostiles.some((h) => h.distance <= 8)
+    && typeof actions.underground === 'function' && actions.underground(bot);
   const hide = {
     name: 'hide',
     band: BAND.ESCAPE,
     want(state) {
       if (hidden) return 1;
-      return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
+      if (state.sheltered) return 0;
+      // Hurt underground with monsters close: running through caves gets the
+      // bot killed; sealing itself in until it heals does not.
+      return angryEnderman(state, 12) || hurtUnderground(state) ? 1 : 0;
     },
     async run(ctx) {
       if (!hidden) {
-        ctx.record('hide', { from: 'enderman' });
+        const state = ctx.perceive();
+        const reason = angryEnderman(state, 12) ? 'enderman' : 'hurt_underground';
+        ctx.record('hide', { from: reason, health: Math.round(state.health) });
         const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => SEALS.has(n) });
         if (!dug.ok) return dug;
-        hidden = { bunker: dug.bunker, since: Date.now() };
+        hidden = { bunker: dug.bunker, since: Date.now(), reason };
         return { ok: true };
       }
       const waited = Date.now() - hidden.since;
-      if (waited < 90000 && (waited < 25000 || angryEnderman(ctx.perceive(), 24))) {
+      const state = ctx.perceive();
+      const stay = hidden.reason === 'enderman' ? (waited < 25000 || angryEnderman(state, 24))
+        : (state.health < 16 && state.food > 0);
+      // Health only comes back on a full stomach: eat in there (the eat
+      // behavior ranks below hiding).
+      if (stay && state.food < 18 && hasSafeFood(state, state.food <= 6)) {
+        const ate = await actions.eat(bot, ctx);
+        if (ate.ok) return { ok: true, waited: true };
+      }
+      if (waited < 90000 && stay) {
         await sleep(2000, ctx.signal);
         return { ok: true, waited: true };
       }
