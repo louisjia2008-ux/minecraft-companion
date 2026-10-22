@@ -23,7 +23,7 @@ const TOOL_OF = { coal: 'pickaxe', raw_copper: 'stone_tier_pickaxe', raw_iron: '
 function createMineGoal({ bot, want = { raw_iron: 8, coal: 8 }, layer = null,
   skills = defaultSkills, mining = defaultMining, kb = KNOWLEDGE } = {}) {
   const blacklist = createBlacklist({ ttlMs: 120000 });
-  const memory = { heading: mining.HEADINGS[Math.floor(Math.random() * 4)], length: 0, steps: 0, table: null };
+  const memory = { tunnel: mining.HEADINGS[Math.floor(Math.random() * 4)], length: 0, steps: 0, table: null };
   const { step: plannerStep, inventoryFor, tableHere } = createPlannerRunner({ bot, skills, kb, memory, blacklist });
   const targetY = layer ?? Math.min(...Object.keys(want).map((k) => LAYER[k] ?? 16));
   const have = (state, item) => state.inventory[item] || 0;
@@ -56,7 +56,7 @@ function createMineGoal({ bot, want = { raw_iron: 8, coal: 8 }, layer = null,
     // Down to the layer, then along it.
     const y = Math.floor(bot.entity.position.y);
     const kind = y > targetY ? 'down' : 'level';
-    ctx.record('mine', { action: kind, y, heading: memory.heading });
+    ctx.record('mine', { action: kind, y, heading: memory.tunnel });
     return mining.step(bot, ctx, skills, memory, kind);
   }
 

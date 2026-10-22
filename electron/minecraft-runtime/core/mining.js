@@ -52,13 +52,13 @@ function stepSafe(bot, cells) {
 /** One step of a staircase down or a level tunnel; turns when the way ahead touches liquid. */
 async function step(bot, ctx, skills, memory, kind) {
   const feet = bot.entity.position.floored();
-  let cells = stepCells(feet, memory.heading, kind);
+  let cells = stepCells(feet, memory.tunnel, kind);
   if (!stepSafe(bot, cells)) {
-    const turned = HEADINGS.filter((h) => h[0] !== memory.heading[0] || h[1] !== memory.heading[1])
+    const turned = HEADINGS.filter((h) => h[0] !== memory.tunnel[0] || h[1] !== memory.tunnel[1])
       .find((h) => stepSafe(bot, stepCells(feet, h, kind)));
     if (!turned) return fail('liquid_all_around');
-    ctx.record('mine_turn', { from: memory.heading, to: turned });
-    memory.heading = turned;
+    ctx.record('mine_turn', { from: memory.tunnel, to: turned });
+    memory.tunnel = turned;
     cells = stepCells(feet, turned, kind);
   }
   for (const p of cells.dig) {
