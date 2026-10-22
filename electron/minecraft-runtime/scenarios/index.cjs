@@ -6,11 +6,11 @@ const { farmFlat } = require('./farm.cjs');
 const { ranchFlat } = require('./ranch.cjs');
 const { materialsCobblegenFlat, branchMineIronFlat } = require('./materials.cjs');
 const { netherQuartzGiven } = require('./nether.cjs');
-const { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat } = require('./devices.cjs');
+const { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat } = require('./devices.cjs');
 
 const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat,
   farmFlat, ranchFlat, netherQuartzGiven, cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat,
-  materialsCobblegenFlat, branchMineIronFlat]
+  materialsCobblegenFlat, branchMineIronFlat, caneFarmFlat]
   .map((s) => [s.name, s]));
 
 module.exports = { SCENARIOS };
