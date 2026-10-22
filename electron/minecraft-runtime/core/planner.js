@@ -100,6 +100,9 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
         if (fuelStep) return fuelStep;
         return { kind: 'smelt', key, input: source.inputItem, count: deficit };
       }
+      if (source.kind === 'farm') {
+        return { kind: 'farm', key, crop: source.crop, count: deficit };
+      }
       if (source.kind === 'fill') {
         // Each fill turns one empty bucket into a full one.
         const bucketStep = need(source.bucket, deficit, depth + 1);

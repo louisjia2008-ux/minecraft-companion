@@ -502,7 +502,9 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (!memory.verified.bed) {
       ctx.record('verify', { furniture: 'bed' });
       const result = await skills.useBed(bot, ctx, { position: f.bed.position });
-      if (result.ok) memory.verified.bed = true;
+      // Monsters nearby refuse sleep but the respawn point is set all the same.
+      if (result.ok || result.spawnSet) memory.verified.bed = true;
+      if (result.spawnSet && !result.ok) return { ok: true, spawnSet: true };
       return result;
     }
     if (!memory.verified.crafting_table) {
@@ -550,7 +552,9 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         return { ok: true };
       }
       const result = await runOnce(ctx);
-      if (result.ok) {
+      // Waiting (for dusk, out the night) is not progress: counting it would
+      // refill the stall budget of a step that keeps failing every morning.
+      if (result.ok && !result.waited) {
         memory.steps += 1;
         if (!result.moved) memory.exploreStreak = 0;
       }

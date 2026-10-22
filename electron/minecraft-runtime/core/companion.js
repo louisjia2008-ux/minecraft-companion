@@ -9,6 +9,8 @@ const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createRecovery } = require('./behaviors/recovery');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
+const { createFarmGoal } = require('./goals/farm');
+const { createRanchGoal } = require('./goals/ranch');
 const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
@@ -59,12 +61,17 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
 
   // Stuck bodies, full bags and death loops are recovered for every goal alike.
   const recovery = createRecovery({ bot });
-  const behaviors = [...createSurvivalBehaviors({ bot }), ...recovery.behaviors];
+  // Animals the current goal keeps (a ranch's herd) are not hunted for food.
+  let spare = () => false;
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors];
   let director = null;
+  const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
   const brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
     onEvent: (event) => {
+      // A finished goal no longer keeps its herd from the cooking pot.
+      if (['goal_done', 'goal_failed', 'goal_cleared', 'stopped'].includes(event.type)) spare = () => false;
       recovery.observe(event);
       director?.handleEvent(event);
       onEvent(event);
@@ -90,7 +97,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     director,
     gatherLogs(count) {
       director.notePlayerGoal();
-      brain.setGoal(createGatherLogsGoal({ bot, count }));
+      useGoal(createGatherLogsGoal({ bot, count }));
       return brain.tick();
     },
     homestead(options = {}) {
@@ -100,32 +107,44 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
         : createHomesteadGoal({ bot, ...options });
       director.memory.homestead = goal;
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    farm(options = {}) {
+      const goal = createFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    ranch(options = {}) {
+      const goal = createRanchGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     netherQuartz(options = {}) {
       const goal = createNetherQuartzGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
     gatherMaterials(options) {
       const goal = createGatherMaterialsGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     cobbleGenerator(options = {}) {
       const goal = createCobbleGeneratorGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     autoSmelter(options = {}) {
       const goal = createAutoSmelterGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     caneFarm(options = {}) {
@@ -142,7 +161,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     setGoal(goal) {
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick();
     },
     /** Lets the bot choose its own goals while no player task is set. */
