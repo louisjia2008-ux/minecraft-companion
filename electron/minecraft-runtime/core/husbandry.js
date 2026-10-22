@@ -183,8 +183,9 @@ async function leave(bot, ctx, pen) {
   const opened = await setGate(bot, ctx, pen, true);
   if (!opened.ok) return opened;
   const out = await actions.goNear(bot, ctx, v(pen.outside).offset(0.5, 0, 0.5), 1, { timeoutMs: 20000 });
-  await setGate(bot, ctx, pen, false);
-  return out;
+  // An open gate lets the herd walk out again: that failure outranks the walk.
+  const shut = await setGate(bot, ctx, pen, false);
+  return shut.ok ? out : shut;
 }
 
 module.exports = { FOOD, penLayout, choosePenSite, isBaby, animalsIn, holdFood, setGate, lure, breed, leave };

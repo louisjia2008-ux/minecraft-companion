@@ -68,6 +68,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     perceive: () => perceive(bot),
     behaviors,
     onEvent: (event) => {
+      // A finished goal no longer keeps its herd from the cooking pot.
+      if (['goal_done', 'goal_failed', 'goal_cleared', 'stopped'].includes(event.type)) spare = () => false;
       recovery.observe(event);
       director?.handleEvent(event);
       onEvent(event);
