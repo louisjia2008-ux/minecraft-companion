@@ -82,7 +82,11 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       return brain.tick();
     },
     homestead(options = {}) {
-      const goal = createHomesteadGoal({ bot, ...options });
+      // One house per run: the director keeps building the one the player asked for.
+      const goal = Object.keys(options).length === 0 && director.memory.homestead
+        ? director.memory.homestead
+        : createHomesteadGoal({ bot, ...options });
+      director.memory.homestead = goal;
       director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
