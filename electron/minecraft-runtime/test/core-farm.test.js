@@ -101,3 +101,25 @@ test('farm goal goes from an empty inventory to bread and leaves the plots sown'
   assert.ok(sown >= 3, `only ${sown} plots sown`);
   await brain.dispose();
 });
+
+test('farm goal walks back when its plots are out of sight instead of waiting', async () => {
+  let away = true;
+  const returns = [];
+  const plots = Array.from({ length: 4 }, (_, i) => ({ x: i, y: 0, z: 3, hydrated: true }));
+  const farming = {
+    choosePlots: () => plots,
+    findWater: () => [],
+    plotState: () => (away ? 'unknown' : 'growing'),
+    returnTo: async (_b, _c, p) => { returns.push(p); away = false; return { ok: true }; },
+  };
+  const bot = { entity: { position: new Vec3(190.5, 1, 190.5) }, blockAt: () => null };
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills: {}, waitMs: 0 });
+  const ctx = { perceive: () => ({ inventory: {} }), record: () => {}, signal: new AbortController().signal };
+  const first = await goal.run(ctx);
+  assert.equal(returns.length, 1);
+  assert.ok(first.ok && !first.waited);
+  // Back in sight with everything growing: now it waits.
+  const second = await goal.run(ctx);
+  assert.equal(returns.length, 1);
+  assert.ok(second.waited);
+});

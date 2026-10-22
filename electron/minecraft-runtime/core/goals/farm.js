@@ -39,6 +39,13 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
     const state = ctx.perceive();
     const list = plots();
     if (!list.length) return skills.explore(bot, ctx, memory);
+    // A seed search can wander out of view of the farm. Its plots then read
+    // as unknown, never ripe or empty, and the goal would wait there forever.
+    const unseen = list.find((p) => farming.plotState(bot, p) === 'unknown');
+    if (unseen) {
+      ctx.record('farm', { action: 'return', plot: posKey(unseen) });
+      return farming.returnTo(bot, ctx, unseen);
+    }
     const byState = (s) => list.filter((p) => farming.plotState(bot, p) === s && !blacklist.has(posKey(p)));
     const stations = { crafting_table: tableHere() };
     const inventory = inventoryFor(state);

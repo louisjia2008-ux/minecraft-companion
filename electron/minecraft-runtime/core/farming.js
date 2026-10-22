@@ -98,6 +98,12 @@ async function reach(bot, ctx, p) {
   return actions.withinReach(bot, v(p).offset(0.5, 0.5, 0.5), 4.5) ? { ok: true } : (moved.ok ? fail('out_of_reach') : moved);
 }
 
+/** Walks back towards the farm until its plots are in loaded chunks again. */
+async function returnTo(bot, ctx, p) {
+  const moved = await actions.goNear(bot, ctx, v(p).offset(0.5, 1, 0.5), 4, { timeoutMs: 60000 });
+  return plotState(bot, p) === 'unknown' ? (moved.ok ? fail('farm_out_of_sight') : moved) : { ok: true };
+}
+
 async function useOn(bot, ctx, block) {
   try {
     await bot.lookAt(block.position.offset(0.5, 1, 0.5), true);
@@ -164,4 +170,4 @@ async function gatherSeeds(bot, ctx, { radius = 32, blacklist, exclude = () => f
   return { ok: true, seeds: actions.countItems(bot, (n) => n === 'wheat_seeds') - before };
 }
 
-module.exports = { choosePlots, findWater, plotState, till, plant, harvest, gatherSeeds, TILLABLE, RIPE };
+module.exports = { choosePlots, findWater, plotState, till, plant, harvest, gatherSeeds, returnTo, TILLABLE, RIPE };
