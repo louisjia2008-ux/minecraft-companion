@@ -15,7 +15,7 @@ const { sleep } = require('../confirm');
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
 
-/** `home()` returns { bed, centre } once the house is finished, otherwise null. */
+/** `home()` returns { bed, centre } once the house is finished (bed null if it is gone), otherwise null. */
 function createNightRest({ bot, home, actions = defaultActions, skills = defaultSkills, now = Date.now,
   farDistance = 64, retryBedMs = 20000 } = {}) {
   if (!bot || typeof home !== 'function') throw new TypeError('bot and home are required');
@@ -51,7 +51,9 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
       }
       const spot = where();
       if (!spot) return { ok: true };
-      const bed = new Vec3(spot.bed.x + 0.5, spot.bed.y, spot.bed.z + 0.5);
+      // No bed left (broken, not yet replaced): the house itself is the shelter.
+      const anchor = spot.bed || spot.centre;
+      const bed = new Vec3(anchor.x + 0.5, anchor.y, anchor.z + 0.5);
       const distance = bot.entity.position.distanceTo(bed);
       if (distance > farDistance) {
         ctx.record('night_rest', { action: 'dig_in', distance: Math.round(distance) });
@@ -61,7 +63,7 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
         bot.companionSheltered = true;
         return { ok: true };
       }
-      if (now() >= bedRefusedUntil) {
+      if (spot.bed && now() >= bedRefusedUntil) {
         if (distance > 3) {
           ctx.record('night_rest', { action: 'go_home', distance: Math.round(distance) });
           return actions.goNear(bot, ctx, bed, 2, { timeoutMs: 90000 });

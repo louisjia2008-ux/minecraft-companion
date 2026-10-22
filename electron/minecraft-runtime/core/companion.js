@@ -47,6 +47,10 @@ function configureMovements(bot) {
     const below = bot.blockAt(block.position.offset(0, -1, 0));
     return below && leaves.has(below.type) ? 25 : 0;
   });
+  // A path never digs through the furniture or a machine: chasing a skeleton
+  // out of the house once broke the bed and the bot slept outside after that.
+  const KEEP = /(_bed|_door|^chest|^trapped_chest|^furnace|^crafting_table|^hopper|^barrel)$/;
+  for (const b of Object.values(bot.registry.blocksByName)) if (KEEP.test(b.name)) movements.blocksCantBreak.add(b.id);
   bot.pathfinder.setMovements(movements);
   // Mining paths through stone need more search time than surface walks.
   bot.pathfinder.thinkTimeout = 10000;
@@ -72,8 +76,9 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     const house = director?.memory.homestead?.memory?.house;
     if (!house || brain?.status().goal?.name === 'homestead') return null;
     const bed = house.furniture.bed.position;
-    if (!bot.blockAt(new Vec3(bed.x, bed.y, bed.z))?.name.endsWith('_bed')) return null;
-    return { bed, centre: house.interiorCenter };
+    const block = bot.blockAt(new Vec3(bed.x, bed.y, bed.z));
+    // Out of sight means far away (it digs in there); seen and gone means sleep without it.
+    return { bed: !block || block.name.endsWith('_bed') ? bed : null, centre: house.interiorCenter };
   } });
   const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors, nightRest];
   const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
