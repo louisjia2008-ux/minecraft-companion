@@ -227,10 +227,16 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
   if (current && itemMatch(current.name)) return { ok: true, already: true };
   if (current && !AIR.has(current.name)) {
     if (current.boundingBox !== 'empty' || current.name === 'water' || current.name === 'lava') return fail('occupied');
-    // Grass or flowers: break them first.
-    const reach = await actions.goToDig(bot, ctx, current, { timeoutMs: 20000 });
+  }
+  // Grass, flowers or petals in the cell or in a cell the item also takes (a
+  // bed's head): break them first. Flowers and petals are not replaced by a
+  // placed block; vanilla refuses the placement.
+  for (const p of [target, ...alsoClear.map(v)]) {
+    const plant = bot.blockAt(p);
+    if (!plant || AIR.has(plant.name) || plant.boundingBox !== 'empty' || /water|lava|torch|rail|button|lever|redstone/.test(plant.name)) continue;
+    const reach = await actions.goToDig(bot, ctx, plant, { timeoutMs: 20000 });
     if (!reach.ok) return reach;
-    const dug = await actions.digBlock(bot, ctx, current);
+    const dug = await actions.digBlock(bot, ctx, plant);
     if (!dug.ok) return dug;
   }
   const item = bot.inventory.items().find((i) => itemMatch(i.name));
