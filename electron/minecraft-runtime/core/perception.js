@@ -58,6 +58,8 @@ function perceive(bot, { hostileRange = 16, now = Date.now } = {}) {
     // Set by a goal while the bot waits out the night in a sealed bunker or the finished house.
     sheltered: bot.companionSheltered === true,
     inventory: countInventory(ownedItems(bot)),
+    // Free main-inventory slots; drops cannot be picked up once this hits 0.
+    freeSlots: typeof bot.inventory?.emptySlotCount === 'function' ? bot.inventory.emptySlotCount() : null,
     hostiles,
   };
 }

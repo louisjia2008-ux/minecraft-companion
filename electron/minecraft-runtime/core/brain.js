@@ -208,6 +208,15 @@ function createBrain({
       if (running?.behavior.isGoal) await preempt(reason);
       emit('goal_cleared', { goal: name, reason });
     },
+    /** Ends the goal as failed from outside (a death loop, say) instead of letting it retry. */
+    async failGoal(reason = 'failed') {
+      if (!goal) return;
+      const { def } = goal;
+      const state = safePerceive();
+      goal = null;
+      if (running?.behavior.isGoal) await preempt(reason);
+      emit('goal_failed', { goal: def.name, progress: state ? safeProgress(def, state) : null, reasons: [reason] });
+    },
     /** Aborts whatever runs now but keeps the goal; the next tick re-plans. */
     async interrupt(reason = 'interrupted') {
       emit('interrupted', { reason, behavior: running?.behavior.name || null });

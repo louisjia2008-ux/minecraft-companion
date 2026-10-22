@@ -6,6 +6,7 @@ const { pathfinder, Movements } = require('mineflayer-pathfinder');
 const { createBrain } = require('./brain');
 const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
+const { createRecovery } = require('./behaviors/recovery');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
@@ -49,16 +50,20 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
 
-  const behaviors = createSurvivalBehaviors({ bot });
+  // Stuck bodies, full bags and death loops are recovered for every goal alike.
+  const recovery = createRecovery({ bot });
+  const behaviors = [...createSurvivalBehaviors({ bot }), ...recovery.behaviors];
   let director = null;
   const brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
     onEvent: (event) => {
+      recovery.observe(event);
       director?.handleEvent(event);
       onEvent(event);
     },
   });
+  recovery.attach(brain);
   // With no player task the director picks the next goal itself; off unless asked for.
   const { cards, stageOf } = createDefaultCards({ bot });
   director = createDirector({ brain, perceive: () => perceive(bot), cards, stageOf, onEvent });
@@ -114,13 +119,14 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       await brain.stop(reason);
       haltBody(bot);
     },
-    status: () => ({ ...brain.status(), autonomy: director.status() }),
+    status: () => ({ ...brain.status(), recovery: recovery.status(), autonomy: director.status() }),
     async dispose() {
       clearInterval(timer);
       await director.disable('disposed');
       bot.removeListener('death', onDeath);
       await brain.dispose();
       for (const behavior of behaviors) behavior.dispose?.();
+      recovery.dispose();
       haltBody(bot);
     },
   };

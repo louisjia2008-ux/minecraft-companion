@@ -3,6 +3,7 @@
 // goal while one of them wants the body and the goal re-plans afterwards.
 // Kept deliberately simple; hardening them is the next milestone.
 
+const { Vec3 } = require('vec3');
 const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
@@ -90,6 +91,7 @@ const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, thresholds = {} } = {}) {
   const t = { ghastRange: 48, escapeHealth: 6, escapeRange: 6, defendRange: 5, rangedRange: 14, rangedHealth: 14, eatFood: 14,
     eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, oxygen: 8, dropsTtlMs: 270000,
+    walkSpeed: 4, dropsMaxDistance: 600,
     ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
   const exploreMemory = {};
@@ -276,13 +278,20 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (state.health < 10 || threats(state).some((h) => h.distance <= 8)) return 0;
       // Drops left in the other dimension wait until a goal takes the bot back there.
       if (lastDeath.dimension !== dimensionOf(bot)) return 0;
-      return state.position.distanceTo(lastDeath.position) < 160 ? 0.8 : 0;
+      // Where the bot keeps dying, the drops are bait: leave them.
+      const danger = bot.companionDeathDanger;
+      if (danger && danger.until > Date.now() && danger.dimension === lastDeath.dimension
+        && lastDeath.position.distanceTo(new Vec3(danger.center.x, danger.center.y, danger.center.z)) <= 24) return 0;
+      // Worth the trip while the bot can still get there before they despawn.
+      const reachable = Math.min(t.dropsMaxDistance, ((t.dropsTtlMs - (Date.now() - lastDeath.at)) / 1000) * t.walkSpeed);
+      return state.position.distanceTo(lastDeath.position) < reachable ? 0.8 : 0;
     },
     async run(ctx) {
       const target = lastDeath;
       target.tries += 1;
       ctx.record('recover_drops', { position: target.position.floored(), try: target.tries });
-      const moved = await actions.goNear(bot, ctx, target.position, 2, { timeoutMs: 60000 });
+      const left = t.dropsTtlMs - (Date.now() - target.at);
+      const moved = await actions.goNear(bot, ctx, target.position, 2, { timeoutMs: Math.max(60000, Math.min(240000, left)) });
       if (!moved.ok) return moved;
       const result = await actions.collectDrops(bot, ctx, target.position, () => true, { radius: 8, timeoutMs: 15000 });
       if (result.ok || target.tries >= 3) lastDeath = null;
