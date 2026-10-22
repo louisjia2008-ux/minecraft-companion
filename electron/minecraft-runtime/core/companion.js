@@ -6,6 +6,7 @@ const { pathfinder, Movements } = require('mineflayer-pathfinder');
 const { createBrain } = require('./brain');
 const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
+const { createRecovery } = require('./behaviors/recovery');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { haltBody } = require('./actions');
@@ -46,12 +47,15 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
 
-  const behaviors = createSurvivalBehaviors({ bot });
+  // Stuck bodies, full bags and death loops are recovered for every goal alike.
+  const recovery = createRecovery({ bot });
+  const behaviors = [...createSurvivalBehaviors({ bot }), ...recovery.behaviors];
   const brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
-    onEvent,
+    onEvent: (event) => { recovery.observe(event); onEvent(event); },
   });
+  recovery.attach(brain);
   const timer = setInterval(() => { brain.tick().catch(() => {}); }, tickMs);
   timer.unref?.();
   // Death interrupts the current action only: progress lives in the world, so
@@ -78,12 +82,13 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
       await brain.stop(reason);
       haltBody(bot);
     },
-    status: () => brain.status(),
+    status: () => ({ ...brain.status(), recovery: recovery.status() }),
     async dispose() {
       clearInterval(timer);
       bot.removeListener('death', onDeath);
       await brain.dispose();
       for (const behavior of behaviors) behavior.dispose?.();
+      recovery.dispose();
       haltBody(bot);
     },
   };
