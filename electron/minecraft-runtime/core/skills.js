@@ -548,7 +548,10 @@ async function storeInChest(bot, ctx, { position, wants = [] }) {
         left -= Math.max(0, added);
       }
     }
-    return { ok: true, contents: chestCounts(chest), stored };
+    const contents = chestCounts(chest);
+    // Nothing went in (a full chest): not progress, even though the chest was read.
+    if (wants.length && Object.keys(stored).length === 0) return fail('chest_full', { contents });
+    return { ok: true, contents, stored };
   } catch (error) {
     if (isAbort(error)) throw error;
     return fail('chest_failed');

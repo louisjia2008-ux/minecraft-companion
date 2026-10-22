@@ -50,6 +50,14 @@ test('redstone needs an iron pickaxe; quartz is gathered in the Nether', () => {
   assert.deepEqual([quartz.kind, quartz.key, quartz.dimension], ['gather', 'quartz', 'the_nether']);
 });
 
+test('every machine part can be planned from an empty inventory', () => {
+  for (const key of ['bucket', 'water_bucket', 'lava_bucket', 'hopper', 'redstone', 'stone', 'glass', 'sugar_cane',
+    'redstone_torch', 'repeater', 'piston', 'observer', 'bow', 'dispenser']) {
+    const step = planNext({ requirements: [{ key, count: 1 }], inventory: {} });
+    assert.notEqual(step.kind, 'unplannable', `${key}: ${JSON.stringify(step)}`);
+  }
+});
+
 test('the material list counts only blueprint blocks not yet in place', () => {
   const world = { '0,0,0': 'cobblestone', '1,0,0': 'water', '2,0,0': 'air' };
   const nameAt = (p) => world[`${p.x},${p.y},${p.z}`] || 'air';
@@ -225,6 +233,19 @@ test('a death loses only what was carried: stored materials are not gathered aga
   assert.ok(events.some((e) => e.type === 'goal_done'));
   assert.equal(sim.chest.cobblestone, 5);
   assert.equal(sim.chest.hopper, 1);
+});
+
+test('a chest that takes nothing fails instead of counting as progress', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.inventory.cobblestone = 10;
+  sim.skills.storeInChest = async (_bot, _ctx, { wants }) => (wants.length
+    ? { ok: false, reason: 'chest_full', contents: {} } : { ok: true, contents: {} });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'cobblestone', count: 10 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  const { events } = await runGoal(sim, goal, { limit: 2000 });
+  const failed = events.find((e) => e.type === 'goal_failed');
+  assert.ok(failed);
+  assert.ok(failed.reasons.includes('chest_full'));
 });
 
 test('a requirement already in the chest is done after one look', async () => {

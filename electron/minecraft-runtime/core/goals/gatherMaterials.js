@@ -77,7 +77,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     ctx.record('store', { items: wants.map((w) => `${w.key}x${w.count}`) });
     const result = await skills.storeInChest(bot, ctx, { position: chest,
       wants: wants.map((w) => ({ match: kb[w.key].match, count: w.count })) });
-    if (result.ok) memory.chest = result.contents;
+    if (result.contents) memory.chest = result.contents;
     return result;
   }
 

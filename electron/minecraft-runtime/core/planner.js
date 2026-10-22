@@ -10,7 +10,9 @@
 
 const { KNOWLEDGE, FUELS, countKey } = require('./knowledge');
 
-const MAX_DEPTH = 12;
+// Guards against cycles only: a repeater from nothing is 14 levels deep
+// (repeater, torch, redstone, iron pickaxe, iron, stone pickaxe, wood...).
+const MAX_DEPTH = 24;
 
 function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
   const virt = { ...inventory };
