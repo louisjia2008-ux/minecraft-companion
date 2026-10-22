@@ -6,7 +6,8 @@
 //
 // Crops take about half an hour of real time to ripen at the vanilla random
 // tick speed; the scenario raises it tenfold so a run fits in minutes. Only
-// growth is faster: everything the bot does is unchanged.
+// growth is faster: everything the bot does is unchanged. Kept in daylight:
+// this tests the farming skills; nights belong to the homestead.
 
 const { GROUND, plantTrees, resetArea, FLAT_GENERATOR } = require('./collectLogs.cjs');
 const { testBlock, countOnPlayer, living } = require('./homestead.cjs');
@@ -21,7 +22,7 @@ const farmFlat = {
   timeoutMs: 60 * 60 * 1000,
   setup({ username, rng, difficulty = 'easy' }) {
     const trees = plantTrees(rng, 8);
-    const commands = [...living(username, difficulty), ...resetArea(), ...trees.commands, 'gamerule randomTickSpeed 30',
+    const commands = [...living(username, difficulty), ...resetArea(), ...trees.commands, 'gamerule randomTickSpeed 30', 'time set 1000', 'gamerule doDaylightCycle false',
       // A 3x3 pond at ground level, a stone ledge under it so it stays put.
       `fill 6 ${GROUND - 2} 6 8 ${GROUND - 2} 8 stone`, `fill 6 ${GROUND - 1} 6 8 ${GROUND - 1} 8 water`];
     // Grass tufts for seeds, away from the pond.
