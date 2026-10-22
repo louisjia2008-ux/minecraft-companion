@@ -9,6 +9,7 @@ const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createRecovery } = require('./behaviors/recovery');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
+const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
 const { createCaneFarmGoal } = require('./goals/caneFarm');
@@ -17,6 +18,7 @@ const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
+const { installEdgeNudge } = require('./edgeNudge');
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
@@ -50,6 +52,7 @@ function configureMovements(bot) {
 function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false } = {}) {
   if (!bot) throw new TypeError('bot is required');
   installInventoryCompatibility(bot);
+  const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
 
@@ -105,6 +108,13 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
     },
+    /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
+    gatherMaterials(options) {
+      const goal = createGatherMaterialsGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
     cobbleGenerator(options = {}) {
       const goal = createCobbleGeneratorGoal({ bot, ...options });
       director.notePlayerGoal();
@@ -145,6 +155,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       clearInterval(timer);
       await director.disable('disposed');
       bot.removeListener('death', onDeath);
+      removeEdgeNudge();
       await brain.dispose();
       for (const behavior of behaviors) behavior.dispose?.();
       recovery.dispose();
