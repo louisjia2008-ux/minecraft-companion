@@ -16,10 +16,12 @@ function createPlannerRunner({ bot, skills, kb, memory, blacklist, avoid = () =>
 
   async function placeTableNearby(ctx) {
     const here = bot.entity.position.floored();
-    for (let r = 2; r <= 4; r += 1) {
-      for (const [dx, dz] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
-        const p = here.offset(dx, 0, dz);
-        if (blockAt(p)?.name !== 'air' || blockAt(p.offset(0, -1, 0))?.boundingBox !== 'block' || avoid(p)) continue;
+    // Close by first; in a one-wide tunnel only the cells right next to the bot are open.
+    for (let r = 1; r <= 4; r += 1) {
+      for (const [dx, dz, dy] of [[r, 0, 0], [-r, 0, 0], [0, r, 0], [0, -r, 0], [r, r, 0], [-r, -r, 0], [r, -r, 0], [-r, r, 0],
+        [r, 0, 1], [-r, 0, 1], [0, r, 1], [0, -r, 1], [r, 0, -1], [-r, 0, -1], [0, r, -1], [0, -r, -1]]) {
+        const p = here.offset(dx, dy, dz);
+        if (!/^(air|cave_air)$/.test(blockAt(p)?.name || '') || blockAt(p.offset(0, -1, 0))?.boundingBox !== 'block' || avoid(p)) continue;
         const placed = await skills.placeAt(bot, ctx, p, (n) => n === 'crafting_table', { faces: DOWN });
         if (placed.ok) memory.table = { x: p.x, y: p.y, z: p.z };
         return placed;
