@@ -99,10 +99,25 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
     },
   };
 
+  // Quick food while the farm is slow: hunt what is in sight (the herd's own
+  // kind is spared by huntOne) until there are a few meals in the bag.
+  const HUNTED = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
+  const animalsInSight = () => Object.values(bot.entities).some((e) => HUNTED.includes(e.name) && e.position
+    && e.position.distanceTo(bot.entity.position) < 48 && !bot.companionSpared?.(e));
+  const hunt = {
+    name: 'hunt',
+    isDone: (state) => food(state) >= 10 || !animalsInSight(),
+    progress: (state) => food(state),
+    async run(ctx) {
+      return skills.huntOne(bot, ctx, { mobs: HUNTED, dropMatch: (n) => kb.food.match(n), radius: 48 });
+    },
+  };
+
   /** Scores for each project from the world as it is now; the best goes next. */
   function choose(state) {
     const scores = [];
     if (freeSlots() < 6) scores.push(['store', 5]);
+    if (food(state) < 6 && animalsInSight()) scores.push(['hunt', 4.5]);
     if (!home.isDone(state)) scores.push(['home', 3]);
     const plotsReady = memory.projects.farm?.memory.plots?.length || 0;
     scores.push(['farm', food(state) < 12 ? 4 : plotsReady < 8 ? 2.5 : 1]);
@@ -122,6 +137,7 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
     if (name === 'ranch') return ranch(state);
     if (name === 'mine') return mine(state);
     if (name === 'store') return store;
+    if (name === 'hunt') return hunt;
     if (name === 'home') return home;
     return null;
   }
@@ -137,7 +153,7 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
       const result = await home.run(ctx);
       if (!result.idle) return result;
     }
-    const current = memory.project === 'store' ? store : memory.project === 'home' ? home : memory.projects[memory.project];
+    const current = { store, home, hunt }[memory.project] || memory.projects[memory.project];
     const due = !memory.project || now() - memory.since > SLICE_MS || memory.stalls >= STALL_LIMIT
       || Boolean(current?.isDone(state));
     if (due) {
