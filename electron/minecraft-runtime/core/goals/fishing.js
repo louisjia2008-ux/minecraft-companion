@@ -16,14 +16,14 @@ const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const { createFishPond } = require('../blueprints/fishPond');
 const { FACINGS } = require('../blueprints/cobbleGenerator');
-const { waitUntil } = require('../confirm');
+const { waitUntil, runCancellable } = require('../confirm');
 
 const LIQUID = new Set(['water', 'lava', 'bubble_column']);
 const GRAVITY = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|.*_concrete_powder)$/;
 // A bite comes 5 to 30 s after the bobber lands (faster with Lure).
 const BITE_TIMEOUT_MS = 45000;
 
-// Pond cells are dug out: only plain soil or stone.
+// Pond cells are dug out: only plain soil or stone. Soil picked up late is never a catch.
 const DIGGABLE = new Set(['grass_block', 'dirt', 'coarse_dirt', 'podzol', 'rooted_dirt', 'mycelium', 'mud', 'moss_block',
   'stone', 'andesite', 'diorite', 'granite', 'cobblestone', 'clay', 'terracotta', 'deepslate', 'tuff']);
 const isAir = (block) => !block || block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air';
@@ -72,8 +72,6 @@ function createFishingGoal({ bot, anchor = null, facing = 'east', count = 5,
   const memory = { pond: anchor ? createFishPond(anchor, facing) : null, catches: 0, casts: 0, caught: {} };
   const blockAt = (p) => bot.blockAt(v(p));
   const isSource = (p) => skills.isFluidSource(blockAt(p), 'water');
-  // Soil dug from the pond can still be picked up late: it is never a catch.
-  const itemTotal = () => bot.inventory.items().reduce((sum, item) => sum + (DIGGABLE.has(item.name) ? 0 : item.count), 0);
   const inStand = () => {
     const s = memory.pond.cells.stand;
     const at = bot.entity.position;
@@ -101,31 +99,31 @@ function createFishingGoal({ bot, anchor = null, facing = 'east', count = 5,
     if (!rod) return { ok: false, reason: 'no_material', missing: [{ name: 'fishing_rod', short: 1 }] };
     const standing = await goStand(ctx);
     if (!standing.ok) return standing;
-    const before = itemTotal();
     const names = new Map(bot.inventory.items().map((item) => [item.name, item.count]));
-    let bite;
     try {
       await bot.equip(rod, 'hand');
       await bot.lookAt(v(memory.pond.target), true);
       memory.casts += 1;
-      let timer;
-      bite = await Promise.race([
-        bot.fish().then(() => true, () => false),
-        new Promise((resolve) => { timer = setTimeout(() => resolve(false), BITE_TIMEOUT_MS); }),
-      ]).finally(() => clearTimeout(timer));
-      if (!bite) bot.activateItem(); // reel the idle bobber back in
+      // On timeout or preemption a second use of the rod reels the bobber in,
+      // and the wait ends at once even if no bobber ever landed.
+      let stop = null;
+      await runCancellable(() => new Promise((resolve, reject) => { stop = reject; bot.fish().then(resolve, reject); }), {
+        signal: ctx.signal, timeoutMs: BITE_TIMEOUT_MS, timeoutCode: 'no_bite',
+        cancel: () => { bot.activateItem(); stop?.(new Error('reeled_in')); },
+      });
     } catch (error) {
       if (ctx.signal?.aborted) throw error;
+      if (error.code === 'no_bite') return { ok: false, reason: 'no_bite' };
       return { ok: false, reason: 'cast_failed', message: error.message };
     }
-    if (!bite) return { ok: false, reason: 'no_bite' };
-    const landed = await waitUntil(() => itemTotal() > before, { timeoutMs: 3000, signal: ctx.signal });
+    // Item by item: a rod that breaks on this catch leaves the inventory as the catch arrives.
+    const newItems = () => bot.inventory.items()
+      .filter((item) => item.name !== 'fishing_rod' && !DIGGABLE.has(item.name) && item.count > (names.get(item.name) || 0));
+    const landed = await waitUntil(() => newItems().length > 0, { timeoutMs: 3000, signal: ctx.signal });
     if (!landed) return { ok: false, reason: 'catch_not_collected' };
     memory.catches += 1;
-    for (const item of bot.inventory.items()) {
-      if (DIGGABLE.has(item.name)) continue;
-      const extra = item.count - (names.get(item.name) || 0);
-      if (extra > 0) { memory.caught[item.name] = (memory.caught[item.name] || 0) + extra; names.set(item.name, item.count); }
+    for (const item of newItems()) {
+      memory.caught[item.name] = (memory.caught[item.name] || 0) + item.count - (names.get(item.name) || 0);
     }
     ctx.record('fish_caught', { catches: memory.catches, casts: memory.casts, caught: memory.caught });
     return { ok: true };
