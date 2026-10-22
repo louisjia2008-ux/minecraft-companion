@@ -15,6 +15,7 @@ const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
+const { installEdgeNudge } = require('./edgeNudge');
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
@@ -48,6 +49,7 @@ function configureMovements(bot) {
 function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false } = {}) {
   if (!bot) throw new TypeError('bot is required');
   installInventoryCompatibility(bot);
+  const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
 
@@ -131,6 +133,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       clearInterval(timer);
       await director.disable('disposed');
       bot.removeListener('death', onDeath);
+      removeEdgeNudge();
       await brain.dispose();
       for (const behavior of behaviors) behavior.dispose?.();
       recovery.dispose();
