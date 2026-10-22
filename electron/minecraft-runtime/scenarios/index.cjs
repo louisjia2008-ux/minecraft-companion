@@ -5,8 +5,9 @@ const { homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat } = requi
 const { farmFlat } = require('./farm.cjs');
 const { ranchFlat } = require('./ranch.cjs');
 const { mineNatural } = require('./mine.cjs');
+const { lifeNatural } = require('./life.cjs');
 
-const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat, farmFlat, ranchFlat, mineNatural]
+const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat, farmFlat, ranchFlat, mineNatural, lifeNatural]
   .map((s) => [s.name, s]));
 
 module.exports = { SCENARIOS };

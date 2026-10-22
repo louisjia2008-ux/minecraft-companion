@@ -19,6 +19,7 @@ const { createPlannerRunner } = require('./common');
 function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = null,
   skills = defaultSkills, actions = defaultActions, farming = defaultFarming, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000 } = {}) {
   const blacklist = createBlacklist({ ttlMs: 60000 });
+  const breadTarget = typeof bread === 'function' ? bread : () => bread;
   const memory = { center: center || null, plots: null, table: home?.table || null, steps: 0, harvested: 0, shortfall: {} };
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
   // Never put the crafting table on a plot.
@@ -54,7 +55,7 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
 
     // Bread first whenever three wheat are in the bag: with a large farm
     // something is always ripe, and the harvest would never end.
-    if (countKey('bread', state.inventory, kb) < bread && (inventory.wheat || 0) >= 3) {
+    if (countKey('bread', state.inventory, kb) < breadTarget() && (inventory.wheat || 0) >= 3) {
       const breadStep = planNext({ requirements: [{ key: 'bread', count: countKey('bread', state.inventory, kb) + 1 }], inventory, stations, kb });
       if (breadStep && breadStep.kind !== 'farm') return step(ctx, { ...breadStep, for: 'bread' });
     }
@@ -98,7 +99,7 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
     noProgressLimit: 30,
     memory,
     // Done with the bread in the bag and the farm left sown behind it.
-    isDone: (state) => countKey('bread', state.inventory, kb) >= bread
+    isDone: (state) => countKey('bread', state.inventory, kb) >= breadTarget()
       && (!(state.inventory.wheat_seeds > 0) || !(memory.plots || []).some((p) => farming.plotState(bot, p) === 'empty')),
     progress: () => memory.steps,
     async run(ctx) {

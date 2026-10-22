@@ -511,6 +511,40 @@ async function useChest(bot, ctx, { position, itemMatch }) {
 }
 
 /**
+ * Stores every stack matching `itemMatch` in the chest at `position`,
+ * confirmed by the chest's contents. Stops when the chest is full.
+ */
+async function depositAll(bot, ctx, { position, itemMatch }) {
+  const moved = await goToBlock(bot, ctx, position);
+  if (!moved.ok) return moved;
+  const block = bot.blockAt(v(position));
+  if (!/chest|barrel/.test(block?.name || '')) return fail('chest_missing');
+  if (!bot.inventory.items().some((i) => itemMatch(i.name))) return fail('nothing_to_store');
+  let chest;
+  let stored = 0;
+  try {
+    chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
+    const inChest = () => chest.containerItems().reduce((s, i) => s + i.count, 0);
+    for (const item of bot.inventory.items().filter((i) => itemMatch(i.name))) {
+      const before = inChest();
+      try {
+        await chest.deposit(item.type, null, item.count);
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        break; // full
+      }
+      if (await waitUntil(() => inChest() > before, { timeoutMs: 2000, signal: ctx.signal })) stored += inChest() - before;
+    }
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    if (!stored) return fail('chest_failed');
+  } finally {
+    try { chest?.close(); } catch (_) { /* ignore */ }
+  }
+  return stored ? { ok: true, stored } : fail('chest_full');
+}
+
+/**
  * Night bunker: dig three blocks straight down and seal the opening above the
  * head with a block. Nothing can reach the bot in a sealed 1x1 shaft. Returns
  * the bunker so digOut can undo it exactly.
@@ -632,4 +666,4 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, depositAll, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };

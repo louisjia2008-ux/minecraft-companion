@@ -11,6 +11,7 @@ const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
 const { createRanchGoal } = require('./goals/ranch');
 const { createMineGoal } = require('./goals/mine');
+const { createLifeGoal } = require('./goals/life');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 
@@ -85,6 +86,11 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
     },
     mine(options = {}) {
       const goal = createMineGoal({ bot, ...options });
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    life(options = {}) {
+      const goal = createLifeGoal({ bot, ...options });
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
     },

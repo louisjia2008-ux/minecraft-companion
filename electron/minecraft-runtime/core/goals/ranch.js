@@ -19,7 +19,8 @@ const BREED_COOLDOWN_MS = 5 * 60 * 1000 + 5000; // vanilla: 6000 ticks
 function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = null,
   skills = defaultSkills, actions = defaultActions, husbandry = defaultHusbandry, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000 } = {}) {
   const blacklist = createBlacklist({ ttlMs: 60000 });
-  const memory = { center, pen: null, table: null, steps: 0, bredAt: 0, born: 0 };
+  const herdTarget = typeof target === 'function' ? target : () => target;
+  const memory = { kind, center, pen: null, table: null, steps: 0, bredAt: 0, born: 0 };
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
   const inPenArea = (p) => memory.pen && p.x >= memory.pen.corner.x - 1 && p.x <= memory.pen.corner.x + size
     && p.z >= memory.pen.corner.z - 2 && p.z <= memory.pen.corner.z + size;
@@ -30,7 +31,7 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
   // Hunting for food never takes the herd: animals in the pen, and the kind
   // being gathered while the pen is still short of it.
   bot.companionSpared = (e) => Boolean(memory.pen && e.position
-    && (memory.pen.contains(e.position) || (e.name === kind && penCount() < target)));
+    && (memory.pen.contains(e.position) || (e.name === kind && penCount() < herdTarget())));
 
   async function runOnce(ctx) {
     const state = ctx.perceive();
@@ -91,7 +92,7 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
       .filter((e) => e.name === kind && e.position && !pen.contains(e.position) && !blacklist.has(`mob:${e.id}`)
         && !husbandry.isBaby(bot, e) && e.position.distanceTo(bot.entity.position) < 64)
       .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
-    if (outside && adults.length < Math.max(2, target - 1)) {
+    if (outside && adults.length < Math.max(2, herdTarget() - 1)) {
       ctx.record('ranch', { action: 'lure', id: outside.id, distance: Math.round(outside.position.distanceTo(bot.entity.position)) });
       const result = await husbandry.lure(bot, ctx, pen, outside);
       if (!result.ok) blacklist.add(`mob:${outside.id}`, result.reason, 60000);
@@ -108,7 +109,7 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
     name: 'ranch',
     noProgressLimit: 30,
     memory,
-    isDone: () => penCount() >= target && (!memory.pen || !memory.pen.contains(bot.entity.position)),
+    isDone: () => penCount() >= herdTarget() && (!memory.pen || !memory.pen.contains(bot.entity.position)),
     progress: () => memory.steps,
     async run(ctx) {
       const result = await runOnce(ctx);
