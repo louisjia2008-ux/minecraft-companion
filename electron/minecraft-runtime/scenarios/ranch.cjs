@@ -1,8 +1,8 @@
 /* global module, require */
 'use strict';
-// Animal husbandry: fence a pen, lead the two cows of the area into it with
-// wheat and breed them. Only two cows exist, so three cows in the pen means
-// a calf was born there. Judged by the server's entity counts. Kept in
+// Animal husbandry: fence a pen, lead cows into it with wheat and breed
+// them. Judged by the server: three cows inside the fence, one of them a calf
+// (negative Age). Kept in
 // daylight: this tests the ranching skills; nights belong to the homestead.
 
 const { GROUND, plantTrees, resetArea, FLAT_GENERATOR } = require('./collectLogs.cjs');
@@ -35,9 +35,15 @@ const ranchFlat = {
     const pen = goal?.memory?.pen;
     if (!pen) return { pass: false, details: { reason: 'no_pen' } };
     const c = pen.corner;
-    const inPen = await countCows(server, `x=${c.x + 1},y=${c.y - 1},z=${c.z + 1},dx=${pen.size - 3},dy=3,dz=${pen.size - 3}`);
-    const total = await countCows(server, `x=0,y=${GROUND},z=0,distance=..96`);
-    return { pass: inPen >= 3 && total >= 3, details: { inPen, total, born: goal.memory.born, corner: c } };
+    const region = `x=${c.x + 1},y=${c.y - 1},z=${c.z + 1},dx=${pen.size - 3},dy=3,dz=${pen.size - 3}`;
+    const inPen = await countCows(server, region);
+    // Calves have a negative Age: copy it into a score to count them.
+    server.command('scoreboard objectives add age dummy');
+    server.command(`execute as @e[type=minecraft:cow,${region}] store result score @s age run data get entity @s Age`);
+    // `list` is processed after the queued commands: its reply is a barrier.
+    await server.query('list', /players online/, 5000);
+    const calves = await countCows(server, `${region},scores={age=..-1}`);
+    return { pass: inPen >= 3 && calves >= 1, details: { inPen, calves, born: goal.memory.born, corner: c } };
   },
 };
 

@@ -11,6 +11,7 @@ test('a 6x6 pen has 19 fence posts and the gate in the middle of the north side'
   assert.ok(pen.contains({ x: 12.5, y: 64, z: 22.5 }));
   assert.ok(!pen.contains({ x: 13.5, y: 64, z: 18.5 }), 'the spot outside the gate is outside');
   assert.ok(!pen.contains({ x: 10.1, y: 64, z: 22 }), 'the fence line itself is not inside');
+  assert.ok(!pen.contains({ x: 13.5, y: 64, z: 20.6 }), 'the gate cell is not inside');
 });
 
 test('the pen site is flat open ground, clear of trees', () => {

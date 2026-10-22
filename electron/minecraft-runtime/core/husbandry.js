@@ -38,7 +38,9 @@ function penLayout(corner, size = 6) {
     gate: at(gateDx, 0),
     outside: at(gateDx, -2),
     inside: at(gateDx, size - 2),
-    contains: (p) => p.x > corner.x + 0.3 && p.x < corner.x + size - 0.3 && p.z > corner.z + 0.3 && p.z < corner.z + size - 0.3
+    // Strictly between the fence lines: an animal standing in the open gate
+    // cell is not in the pen yet.
+    contains: (p) => p.x > corner.x + 1 && p.x < corner.x + size - 1 && p.z > corner.z + 1 && p.z < corner.z + size - 1
       && Math.abs(p.y - corner.y) < 2,
   };
 }
