@@ -178,7 +178,12 @@ async function lure(bot, ctx, pen, entity, { followGap = 3.5 } = {}) {
   if (!opened.ok) return opened;
   await holdFood(bot, kind);
   const through = await passGate(bot, ctx, pen, true, catchUp);
-  if (!through.ok) return through;
+  if (!through.ok) {
+    // Shut again so the ones already penned stay in.
+    try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
+    await setGate(bot, ctx, pen, false);
+    return through;
+  }
   // On to the far corner: it stops a couple of blocks short, well inside.
   const far = new Vec3(pen.corner.x + pen.size - 1.5, pen.corner.y, pen.corner.z + pen.size - 1.5);
   await actions.goNear(bot, ctx, far, 0, { timeoutMs: 6000 });
