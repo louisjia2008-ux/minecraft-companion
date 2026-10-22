@@ -75,8 +75,9 @@ function createBrain({
       goal = null;
       return;
     }
-    // Being interrupted by survival is not a lack of progress.
-    if (preempted) return;
+    // Being interrupted by survival is not a lack of progress, and neither is
+    // waiting out the night: a wait neither spends nor refills the budget.
+    if (preempted || result?.waited) return;
     const progress = safeProgress(goal.def, state);
     if (progress > goal.best) {
       goal.best = progress;

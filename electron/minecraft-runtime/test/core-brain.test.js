@@ -102,6 +102,19 @@ test('a goal with a recovery gets that many fresh budgets before failing', async
   await brain.dispose();
 });
 
+test('waiting neither refills nor spends the no-progress budget', async () => {
+  const { world, perceive } = makeWorld();
+  const events = [];
+  const brain = createBrain({ perceive, noProgressLimit: 3, onEvent: (e) => events.push(e) });
+  let calls = 0;
+  // fail, wait, fail, wait, ...: only the failures count, so it fails after 3 of them.
+  brain.setGoal({ ...logGoal(world, 2), run: async () => ((calls += 1) % 2 ? { ok: false, reason: 'no_path' } : { ok: true, waited: true }) });
+  await runUntil(brain, () => events.some((e) => e.type === 'goal_failed'));
+  assert.deepEqual(events.find((e) => e.type === 'goal_failed').reasons, ['no_path', 'no_path', 'no_path']);
+  assert.equal(calls, 5);
+  await brain.dispose();
+});
+
 test('a failing reflex backs off so it cannot monopolize the body', async () => {
   const { world, perceive } = makeWorld();
   let now = 0;
