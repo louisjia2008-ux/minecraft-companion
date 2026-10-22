@@ -205,6 +205,26 @@
 |---|---|---|
 | `mobfarm-flat` | **10/10 通过**（seed 101） | 中位 377 秒，0 次死亡。简单难度、固定正午（地面太亮不刷怪），独立的无矿井平坦世界；给铁镐、铁锹、4 桶水、漏斗、箱子、面包。服务器确认漏斗朝向、箱子和 4 个水源，玩家身上至少 4 个怪物掉落物 |
 
+## 生电装置第五步：刷地毯机（`goals/carpetDuper.js`）
+
+```
+侧视（沿活塞推的方向，g 为地面顶层）
+  g+2   .   S   c        S 粘液块；P 是粘性活塞，推粘液块前进一格再拉回
+  g+1   b P S   f        b 地上的石头按钮；f 挂在下层粘液侧面的失活珊瑚扇，c 是立在扇上的地毯
+  g     # # _   #        _ 粘液块下面挖空
+```
+
+每按一次按钮，粘液块把地毯拖走，而它的支撑（珊瑚扇挂在粘液侧面，不随粘液移动）留在原地，地毯弹出一张掉落物又被放回原处，所以一按复制一张。机器人站在扇旁边按按钮，掉出来的地毯在拾取范围内。
+
+- **原理先在原版 1.21.8 服务器上用命令搭出来验证**：按钮长度的脉冲（1 秒）每按约 0.8 张；侦测器时钟太快会把粘液块吐出来卡坏装置。同样的办法复制不了铁轨（铁轨直接掉落）。
+- **粘液块下面必须挖空**：粘液会粘住脚下的地面一起推，平地一整排泥土超过活塞 12 格推动上限，活塞就推不动。下层粘液改为贴着活塞放。
+- **先放按钮再放扇和地毯**：地毯挡头但扇没有碰撞箱，寻路以为能穿过扇那一格，结果卡住。现在寻路不走扇、地毯、按钮格，也不挖零件。
+- **计数**：放出去的种子地毯不算；背包里地毯比开始多出来的才算。
+
+| 场景 | 结果 | 说明 |
+|---|---|---|
+| `carpetdupe-flat` | **10/10 通过**（seed 101） | 中位 27 秒，0 次死亡。 给粘性活塞、2 个粘液块、失活管珊瑚扇、1 张白地毯、石头按钮。服务器确认每个零件和活塞、扇的朝向，玩家身上至少 8 张白地毯 |
+
 ## 文件
 
 | 文件 | 作用 |
@@ -220,6 +240,7 @@
 | `blueprints/cobbleGenerator.js` / `goals/cobbleGenerator.js` | 刷石机蓝图（挖空、密封、留空格子，可选漏斗收集）/ 选址、建造、倒液体、挖圆石并验证重新生成 |
 | `blueprints/autoSmelter.js` / `goals/autoSmelter.js` | 自动熔炉零件清单（建造顺序、贴放方向、漏斗朝向）/ 选址、建造、装料、从输出箱取物 |
 | `blueprints/caneFarm.js` / `goals/caneFarm.js` | 侦测器甘蔗农场（侦测器、红石粉、方块、活塞的相对位置和站位）/ 选址、挖坑倒水、建造、等待活塞收割 |
+| `blueprints/carpetDuper.js` / `goals/carpetDuper.js` | 刷地毯机（活塞、粘液块、珊瑚扇、地毯、按钮的位置和放置顺序）/ 选址、挖空粘液下方、建造、按按钮、捡地毯 |
 | `blueprints/mobFarm.js` / `goals/mobFarm.js` | 地下暗室刷怪塔（楼梯、刷怪层、水道、竖井、井底漏斗箱子）/ 选址、挖掘、倒水、挖竖井、放零件、收掉落物 |
 | `nether.js` | 维度判断、找传送门、4×5 门框（四角用圆石，顶排挂在顶角上）、点火、穿门、下界寻路设置（岩浆旁代价、下落上限 3、不挖金矿） |
 | `goals/netherQuartz.js` | 搭门或复用已有门 → 进下界 → 采石英 → 回主世界；死后从主世界走回记住的门再进去 |
@@ -242,6 +263,7 @@ npm run scenario -- --accept-eula --scenario cobblegen-flat --runs 10
 npm run scenario -- --accept-eula --scenario cobblegen-hopper-flat,smelter-flat --runs 10
 npm run scenario -- --accept-eula --scenario canefarm-flat --runs 10
 npm run scenario -- --accept-eula --scenario mobfarm-flat --runs 10
+npm run scenario -- --accept-eula --scenario carpetdupe-flat --runs 10
 
 # seed=500 的第 4、5 轮地点；同一服务器、世界与玩家，只改变客户端生命周期。
 # 默认 reuse；fresh 在每轮验证完成后断开并重新建立 Mineflayer bot。
