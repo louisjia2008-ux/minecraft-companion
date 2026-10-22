@@ -16,6 +16,7 @@ const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
 const { createCaneFarmGoal } = require('./goals/caneFarm');
 const { createMobFarmGoal } = require('./goals/mobFarm');
+const { createCarpetDuperGoal } = require('./goals/carpetDuper');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
@@ -155,6 +156,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     mobFarm(options = {}) {
       const goal = createMobFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    carpetDuper(options = {}) {
+      const goal = createCarpetDuperGoal({ bot, ...options });
       director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);

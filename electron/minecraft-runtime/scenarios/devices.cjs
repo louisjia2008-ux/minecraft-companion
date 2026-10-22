@@ -10,6 +10,7 @@ const { createAutoSmelter } = require('../core/blueprints/autoSmelter');
 const { createCaneFarm } = require('../core/blueprints/caneFarm');
 const { createMobFarm } = require('../core/blueprints/mobFarm');
 const { MOB_DROPS } = require('../core/goals/mobFarm');
+const { createCarpetDuper } = require('../core/blueprints/carpetDuper');
 
 const HARVEST = 8;
 
@@ -263,4 +264,41 @@ const mobFarmFlat = {
   },
 };
 
-module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat };
+const CARPETS = 8;
+
+const carpetDuperFlat = {
+  name: 'carpetdupe-flat',
+  description: `Flat plains, handed a sticky piston, 2 slime blocks, a dead coral fan, one white carpet and a stone button; build a carpet duplicator and press it until ${CARPETS} new carpets are on the player.`,
+  serverProperties: cobbleGeneratorFlat.serverProperties,
+  timeoutMs: 6 * 60 * 1000,
+  setup({ username, rng, difficulty = 'peaceful' }) {
+    const x = Math.round((rng() - 0.5) * 16);
+    const z = Math.round((rng() - 0.5) * 16);
+    const yaw = Math.round(rng() * 360) - 180;
+    return {
+      commands: [
+        ...commonSetup(username, difficulty),
+        ...resetArea(),
+        `give ${username} stone_pickaxe`, `give ${username} sticky_piston`, `give ${username} slime_block 2`,
+        `give ${username} dead_tube_coral_fan`, `give ${username} white_carpet`, `give ${username} stone_button`,
+        `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
+      ],
+      details: { start: { x, z, yaw } },
+    };
+  },
+  start: (companion) => companion.carpetDuper({ count: CARPETS }),
+  async verify({ server, username, goal }) {
+    const memory = goal?.memory;
+    if (!memory?.device) return { pass: false, details: { reason: 'no_site' } };
+    const d = createCarpetDuper(memory.device.anchor, memory.device.facing);
+    const parts = {};
+    for (const part of d.parts) {
+      parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+    }
+    const carpets = await countOnPlayer(server, username, 'minecraft:white_carpet');
+    const pass = Object.values(parts).every(Boolean) && carpets >= CARPETS;
+    return { pass, details: { device: { anchor: d.anchor, facing: d.facing }, parts, carpets, presses: memory.presses } };
+  },
+};
+
+module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat };
