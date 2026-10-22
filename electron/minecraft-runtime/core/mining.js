@@ -70,6 +70,17 @@ async function step(bot, ctx, skills, memory, kind) {
         }
       }
     }
+    if (!turned && kind === 'down') {
+      // Water or lava below in every direction (an aquifer): tunnel level for
+      // a few blocks to get away from it, then carry on down.
+      const level = HEADINGS.find((h) => usable(stepCells(feet, h, 'level')));
+      if (level) {
+        memory.tunnel = level;
+        memory.levelSteps = 6;
+        ctx.record('mine_turn', { to: level, level: true });
+        return step(bot, ctx, skills, memory, 'level');
+      }
+    }
     if (!turned) return fail('liquid_all_around');
     ctx.record('mine_turn', { from: memory.tunnel, to: turned });
     memory.tunnel = turned;

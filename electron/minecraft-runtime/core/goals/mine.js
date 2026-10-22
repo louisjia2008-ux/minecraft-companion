@@ -62,7 +62,9 @@ function createMineGoal({ bot, want = { raw_iron: 8, coal: 8 }, layer = null,
     }
     // Down to the layer, then along it.
     const y = Math.floor(bot.entity.position.y);
-    const kind = y > targetY ? 'down' : 'level';
+    let kind = y > targetY ? 'down' : 'level';
+    // Moving away from water below before going down again.
+    if (kind === 'down' && memory.levelSteps > 0) { memory.levelSteps -= 1; kind = 'level'; }
     ctx.record('mine', { action: kind, y, heading: memory.tunnel });
     return mining.step(bot, ctx, skills, memory, kind);
   }
