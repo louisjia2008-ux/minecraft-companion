@@ -43,6 +43,13 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
       return { ok: true };
     }
     const pen = memory.pen;
+    // Away from the pen (or it is out of sight): go back before judging it,
+    // or a missing gate is just an unloaded chunk.
+    const centre = new Vec3(pen.corner.x + size / 2, pen.corner.y, pen.corner.z + size / 2);
+    if (!blockAt(pen.gate) || bot.entity.position.distanceTo(centre) > 32) {
+      ctx.record('ranch', { action: 'return', distance: Math.round(bot.entity.position.distanceTo(centre)) });
+      return actions.goNear(bot, ctx, new Vec3(pen.outside.x + 0.5, pen.outside.y, pen.outside.z + 0.5), 3, { timeoutMs: 90000 });
+    }
     const inventory = inventoryFor(state);
     const stations = { crafting_table: tableHere() };
 
@@ -104,7 +111,11 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
       if (!result.ok) blacklist.add(`mob:${outside.id}`, result.reason, 60000);
       return result;
     }
-    if (adults.length < 2) return skills.explore(bot, ctx, memory);
+    // Animals of this kind still in sight (only set aside after a failed
+    // attempt): wait for them rather than wander off.
+    const seen = Object.values(bot.entities).some((e) => e.name === kind && e.position && !pen.contains(e.position)
+      && e.position.distanceTo(bot.entity.position) < 64);
+    if (adults.length < 2 && !seen) return skills.explore(bot, ctx, memory);
     // Parents on cooldown: wait it out, out of the pen.
     if (pen.contains(bot.entity.position)) return husbandry.leave(bot, ctx, pen);
     await sleep(waitMs, ctx.signal);
