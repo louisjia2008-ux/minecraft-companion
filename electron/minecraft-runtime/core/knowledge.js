@@ -139,6 +139,15 @@ const KNOWLEDGE = {
     sources: [{ kind: 'craft', yields: 3, needs: { planks: 6 }, table: true, pick: (inv) => `${dominantWood(inv)}_door` }],
   },
   food: { match: exact(...MEATS), sources: [{ kind: 'hunt', mobs: ['cow', 'pig', 'sheep', 'chicken', 'rabbit'] }] },
+  // Ranching: a fenced pen with a gate.
+  fence: {
+    match: (n) => WOODS.some((w) => n === `${w}_fence`),
+    sources: [{ kind: 'craft', yields: 3, needs: { planks: 4, stick: 2 }, table: true, pick: (inv) => `${dominantWood(inv)}_fence` }],
+  },
+  fence_gate: {
+    match: (n) => WOODS.some((w) => n === `${w}_fence_gate`),
+    sources: [{ kind: 'craft', yields: 1, needs: { planks: 2, stick: 4 }, table: true, pick: (inv) => `${dominantWood(inv)}_fence_gate` }],
+  },
   // Farming: a hoe tills, seeds come from breaking grass, wheat from the farm.
   hoe: {
     match: exact('wooden_hoe', 'stone_hoe', 'iron_hoe', 'golden_hoe', 'diamond_hoe', 'netherite_hoe'),

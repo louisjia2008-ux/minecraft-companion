@@ -3,8 +3,9 @@
 const { collectLogsFlat, collectLogsNatural } = require('./collectLogs.cjs');
 const { homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat } = require('./homestead.cjs');
 const { farmFlat } = require('./farm.cjs');
+const { ranchFlat } = require('./ranch.cjs');
 
-const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat, farmFlat]
+const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat, farmFlat, ranchFlat]
   .map((s) => [s.name, s]));
 
 module.exports = { SCENARIOS };
