@@ -11,6 +11,7 @@ const { createCaneFarm } = require('../core/blueprints/caneFarm');
 const { createMobFarm } = require('../core/blueprints/mobFarm');
 const { MOB_DROPS } = require('../core/goals/mobFarm');
 const { createCarpetDuper } = require('../core/blueprints/carpetDuper');
+const { createFishPond } = require('../core/blueprints/fishPond');
 
 const HARVEST = 8;
 
@@ -301,4 +302,43 @@ const carpetDuperFlat = {
   },
 };
 
-module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat };
+const CATCHES = 5;
+const FISH = ['cod', 'salmon', 'tropical_fish', 'pufferfish'];
+
+const fishingFlat = {
+  name: 'fishing-flat',
+  description: `Flat plains, handed a fishing rod, a shovel and 2 water buckets; dig a 2x2 pond, fill it and fish until ${CATCHES} catches are on the player.`,
+  serverProperties: cobbleGeneratorFlat.serverProperties,
+  timeoutMs: 8 * 60 * 1000,
+  setup({ username, rng, difficulty = 'peaceful' }) {
+    const x = Math.round((rng() - 0.5) * 16);
+    const z = Math.round((rng() - 0.5) * 16);
+    const yaw = Math.round(rng() * 360) - 180;
+    return {
+      commands: [
+        ...commonSetup(username, difficulty),
+        ...resetArea(),
+        `give ${username} fishing_rod`, `give ${username} stone_shovel`, `give ${username} water_bucket 2`,
+        `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
+      ],
+      details: { start: { x, z, yaw } },
+    };
+  },
+  start: (companion) => companion.fishing({ count: CATCHES }),
+  async verify({ server, username, goal }) {
+    const memory = goal?.memory;
+    if (!memory?.pond) return { pass: false, details: { reason: 'no_site' } };
+    const p = createFishPond(memory.pond.anchor, memory.pond.facing);
+    const water = {};
+    for (const [i, c] of p.pond.entries()) water[`pond${i}`] = await testBlock(server, c, 'minecraft:water[level=0]');
+    const fish = {};
+    for (const item of FISH) fish[item] = await countOnPlayer(server, username, `minecraft:${item}`);
+    const totalFish = Object.values(fish).reduce((a, b) => a + b, 0);
+    // Junk and treasure are catches too (about 1 in 6), so only some fish is required.
+    const pass = Object.values(water).every(Boolean) && memory.catches >= CATCHES && totalFish >= 1;
+    return { pass, details: { pond: { anchor: p.anchor, facing: p.facing }, water, fish, catches: memory.catches,
+      casts: memory.casts, caught: memory.caught } };
+  },
+};
+
+module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat };

@@ -225,6 +225,24 @@
 |---|---|---|
 | `carpetdupe-flat` | **10/10 通过**（seed 101） | 中位 27 秒，0 次死亡。 给粘性活塞、2 个粘液块、失活管珊瑚扇、1 张白地毯、石头按钮。服务器确认每个零件和活塞、扇的朝向，玩家身上至少 8 张白地毯 |
 
+## 生电装置第六步：钓鱼池（`goals/fishing.js`）
+
+```
+俯视（g 为地面顶层）
+        .  r  r  .          W 倒水的两个格子，w 夹在两个水源中间，自己变成水源
+        r  W  w  r          B 机器人站的位置，在池边朝池子甩竿
+     B  r  w  W  r          r 必须是实心的池边，水不会漏出去
+        .  r  r  .
+```
+
+- **只要两桶水**：在 2×2 水池的对角倒两桶水，另外两格同时挨着两个水源，会自己变成水源。
+- **钓鱼**：站在池边，看向水池远的一半甩竿，用 Mineflayer 的 `bot.fish()` 等鱼咬钩再收竿；45 秒没咬钩就收竿重甩。
+- **计数**：收竿后背包里多出东西才算一次收获，鱼、垃圾、宝藏都算；挖池子时晚捡到的泥土不算。
+
+| 场景 | 结果 | 说明 |
+|---|---|---|
+| `fishing-flat` | **10/10 通过**（seed 101） | 中位 126 秒，0 次死亡。 给钓竿、石锹、2 桶水。服务器确认 4 格都是水源，机器人收获 5 次，身上至少有 1 条鱼 |
+
 ## 文件
 
 | 文件 | 作用 |
@@ -241,6 +259,7 @@
 | `blueprints/autoSmelter.js` / `goals/autoSmelter.js` | 自动熔炉零件清单（建造顺序、贴放方向、漏斗朝向）/ 选址、建造、装料、从输出箱取物 |
 | `blueprints/caneFarm.js` / `goals/caneFarm.js` | 侦测器甘蔗农场（侦测器、红石粉、方块、活塞的相对位置和站位）/ 选址、挖坑倒水、建造、等待活塞收割 |
 | `blueprints/carpetDuper.js` / `goals/carpetDuper.js` | 刷地毯机（活塞、粘液块、珊瑚扇、地毯、按钮的位置和放置顺序）/ 选址、挖空粘液下方、建造、按按钮、捡地毯 |
+| `blueprints/fishPond.js` / `goals/fishing.js` | 2×2 钓鱼池（池格、倒水格、池边、站位、甩竿目标）/ 选址、挖池、倒水、甩竿收鱼 |
 | `blueprints/mobFarm.js` / `goals/mobFarm.js` | 地下暗室刷怪塔（楼梯、刷怪层、水道、竖井、井底漏斗箱子）/ 选址、挖掘、倒水、挖竖井、放零件、收掉落物 |
 | `nether.js` | 维度判断、找传送门、4×5 门框（四角用圆石，顶排挂在顶角上）、点火、穿门、下界寻路设置（岩浆旁代价、下落上限 3、不挖金矿） |
 | `goals/netherQuartz.js` | 搭门或复用已有门 → 进下界 → 采石英 → 回主世界；死后从主世界走回记住的门再进去 |
@@ -264,6 +283,7 @@ npm run scenario -- --accept-eula --scenario cobblegen-hopper-flat,smelter-flat 
 npm run scenario -- --accept-eula --scenario canefarm-flat --runs 10
 npm run scenario -- --accept-eula --scenario mobfarm-flat --runs 10
 npm run scenario -- --accept-eula --scenario carpetdupe-flat --runs 10
+npm run scenario -- --accept-eula --scenario fishing-flat --runs 10
 
 # seed=500 的第 4、5 轮地点；同一服务器、世界与玩家，只改变客户端生命周期。
 # 默认 reuse；fresh 在每轮验证完成后断开并重新建立 Mineflayer bot。
