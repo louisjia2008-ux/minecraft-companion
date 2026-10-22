@@ -9,6 +9,8 @@ const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
+const { createDefaultCards } = require('./goals/registry');
+const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 
@@ -41,19 +43,30 @@ function configureMovements(bot) {
   return movements;
 }
 
-function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
+function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false } = {}) {
   if (!bot) throw new TypeError('bot is required');
   installInventoryCompatibility(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
 
   const behaviors = createSurvivalBehaviors({ bot });
+  let director = null;
   const brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
-    onEvent,
+    onEvent: (event) => {
+      director?.handleEvent(event);
+      onEvent(event);
+    },
   });
-  const timer = setInterval(() => { brain.tick().catch(() => {}); }, tickMs);
+  // With no player task the director picks the next goal itself; off unless asked for.
+  const { cards, stageOf } = createDefaultCards({ bot });
+  director = createDirector({ brain, perceive: () => perceive(bot), cards, stageOf, onEvent });
+  if (autonomy) director.enable();
+  const timer = setInterval(() => {
+    try { director.tick(); } catch (error) { onEvent({ type: 'autonomy_error', at: Date.now(), reason: String(error?.message || error) }); }
+    brain.tick().catch(() => {});
+  }, tickMs);
   timer.unref?.();
   // Death interrupts the current action only: progress lives in the world, so
   // after respawning the goal simply re-plans from what is left.
@@ -62,31 +75,49 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
 
   return {
     brain,
+    director,
     gatherLogs(count) {
+      director.notePlayerGoal();
       brain.setGoal(createGatherLogsGoal({ bot, count }));
       return brain.tick();
     },
     homestead(options = {}) {
-      const goal = createHomesteadGoal({ bot, ...options });
+      // One house per run: the director keeps building the one the player asked for.
+      const goal = Object.keys(options).length === 0 && director.memory.homestead
+        ? director.memory.homestead
+        : createHomesteadGoal({ bot, ...options });
+      director.memory.homestead = goal;
+      director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
     },
     netherQuartz(options = {}) {
       const goal = createNetherQuartzGoal({ bot, ...options });
+      director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
     },
     setGoal(goal) {
+      director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick();
     },
+    /** Lets the bot choose its own goals while no player task is set. */
+    setAutonomy(on) {
+      if (on) director.enable();
+      else return director.disable();
+      return Promise.resolve();
+    },
     async stop(reason = 'user_stop') {
+      // A player's stop also stops the bot from picking new goals on its own.
+      await director.disable(reason);
       await brain.stop(reason);
       haltBody(bot);
     },
-    status: () => brain.status(),
+    status: () => ({ ...brain.status(), autonomy: director.status() }),
     async dispose() {
       clearInterval(timer);
+      await director.disable('disposed');
       bot.removeListener('death', onDeath);
       await brain.dispose();
       for (const behavior of behaviors) behavior.dispose?.();
