@@ -15,6 +15,7 @@ const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
 const { createCaneFarmGoal } = require('./goals/caneFarm');
+const { createMobFarmGoal } = require('./goals/mobFarm');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
@@ -148,6 +149,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     caneFarm(options = {}) {
       const goal = createCaneFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    mobFarm(options = {}) {
+      const goal = createMobFarmGoal({ bot, ...options });
       director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
