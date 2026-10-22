@@ -15,6 +15,8 @@ const { createLifeGoal } = require('./goals/life');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 
+const KEEP_INTACT = /(_fence|_fence_gate|^farmland$|^wheat$|^carrots$|^potatoes$|^beetroots$|chest$|^barrel$|_bed$|_door$|_trapdoor$|^crafting_table$|furnace$|^torch$|^wall_torch$|^glass$)/;
+
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
 function configureMovements(bot) {
@@ -38,6 +40,11 @@ function configureMovements(bot) {
     const below = bot.blockAt(block.position.offset(0, -1, 0));
     return below && leaves.has(below.type) ? 25 : 0;
   });
+  // Never dig through what the bot built or keeps: a path out of a pen once
+  // went straight through its fence, and farmland, beds and chests matter too.
+  for (const block of Object.values(bot.registry.blocksByName)) {
+    if (KEEP_INTACT.test(block.name)) movements.blocksCantBreak.add(block.id);
+  }
   bot.pathfinder.setMovements(movements);
   // Mining paths through stone need more search time than surface walks.
   bot.pathfinder.thinkTimeout = 10000;

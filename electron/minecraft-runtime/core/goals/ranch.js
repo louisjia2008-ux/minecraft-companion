@@ -46,18 +46,9 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
     const inventory = inventoryFor(state);
     const stations = { crafting_table: tableHere() };
 
-    // The fence line first, then the gate.
-    const missing = pen.fences.filter((p) => !kb.fence.match(blockAt(p)?.name || '') && !blacklist.has(posKey(p)));
-    if (missing.length) {
-      const need = planNext({ requirements: [{ key: 'fence', count: missing.length }, { key: 'fence_gate', count: blockAt(pen.gate)?.name.endsWith('_fence_gate') ? 0 : 1 }],
-        inventory, stations, kb });
-      if (need && countKey('fence', inventory, kb) === 0) return step(ctx, need);
-      ctx.record('ranch', { action: 'fence', position: posKey(missing[0]) });
-      const placed = await skills.placeAt(bot, ctx, missing[0], (n) => kb.fence.match(n), { faces: DOWN });
-      if (!placed.ok) blacklist.add(posKey(missing[0]), placed.reason, 15000);
-      return placed;
-    }
-    const gate = blockAt(pen.gate);
+    // The gate first, so the bot is never fenced in (it cannot dig through
+    // fences), then the fence line.
+    let gate = blockAt(pen.gate);
     if (!gate?.name.endsWith('_fence_gate')) {
       const need = planNext({ requirements: [{ key: 'fence_gate', count: 1 }], inventory, stations, kb });
       if (need) return step(ctx, need);
@@ -66,6 +57,16 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
       return skills.placeAt(bot, ctx, pen.gate, (n) => kb.fence_gate.match(n),
         { faces: DOWN, stand: { x: pen.gate.x, y: pen.gate.y, z: pen.gate.z - 1 } });
     }
+    const missing = pen.fences.filter((p) => !kb.fence.match(blockAt(p)?.name || '') && !blacklist.has(posKey(p)));
+    if (missing.length) {
+      const need = planNext({ requirements: [{ key: 'fence', count: missing.length }], inventory, stations, kb });
+      if (need && countKey('fence', inventory, kb) === 0) return step(ctx, need);
+      ctx.record('ranch', { action: 'fence', position: posKey(missing[0]) });
+      const placed = await skills.placeAt(bot, ctx, missing[0], (n) => kb.fence.match(n), { faces: DOWN });
+      if (!placed.ok) blacklist.add(posKey(missing[0]), placed.reason, 15000);
+      return placed;
+    }
+    gate = blockAt(pen.gate);
     const facing = gate.getProperties?.().facing;
     if (facing && facing !== 'north' && facing !== 'south') {
       ctx.record('ranch', { action: 'gate_turned', facing });
@@ -86,6 +87,11 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
       memory.bredAt = Date.now();
       if (result.born) memory.born += 1;
       return result;
+    }
+    // Leading an animal starts outside the pen.
+    if (pen.contains(bot.entity.position) && !(adults.length >= 2 && Date.now() - memory.bredAt > BREED_COOLDOWN_MS)) {
+      const left = await husbandry.leave(bot, ctx, pen);
+      if (!left.ok) return left;
     }
     // More to lead in: the nearest one outside the pen.
     const outside = Object.values(bot.entities)
