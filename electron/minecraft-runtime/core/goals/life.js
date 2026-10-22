@@ -22,7 +22,9 @@ const SLICE_MS = 10 * 60 * 1000;
 const STALL_LIMIT = 12;
 // What a full bag keeps: tools, armour, food, torches and building stock stay
 // with the bot, everything else goes to the chest.
-const KEEP = /(_pickaxe|_sword|_axe|_shovel|_hoe|shield|_helmet|_chestplate|_leggings|_boots|^torch$|^bread$|^cooked_|^wheat_seeds$|^wheat$|_bed$|^crafting_table$|^cobblestone$|_planks$|^stick$)/;
+const KEEP = /(_pickaxe|_sword|_axe|_shovel|_hoe|shield|_helmet|_chestplate|_leggings|_boots|^torch$|^bread$|^cooked_|^wheat_seeds$|^wheat$|_bed$|^crafting_table$|_planks$|^stick$)/;
+// Iron and coal stay in the bag while the homestead still needs its iron gear.
+const GEAR_STOCK = /^(raw_iron|iron_ingot|coal|charcoal)$/;
 
 function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Date.now, homestead = null } = {}) {
   const home = homestead || createHomesteadGoal({ bot });
@@ -86,7 +88,11 @@ function createLifeGoal({ bot, skills = defaultSkills, kb = KNOWLEDGE, now = Dat
     async run(ctx) {
       const chest = house()?.furniture.chest.position;
       if (!chest) return { ok: false, reason: 'no_chest' };
-      return skills.depositAll(bot, ctx, { position: chest, itemMatch: (n) => !KEEP.test(n) });
+      const homeNeedsIron = !home.isDone(ctx.perceive());
+      // Cobblestone stays for building unless there is a lot of it.
+      const cobble = bot.inventory.items().filter((i) => i.name === 'cobblestone').reduce((n, i) => n + i.count, 0);
+      return skills.depositAll(bot, ctx, { position: chest,
+        itemMatch: (n) => !KEEP.test(n) && !(homeNeedsIron && GEAR_STOCK.test(n)) && (n !== 'cobblestone' || cobble > 64) });
     },
   };
 
