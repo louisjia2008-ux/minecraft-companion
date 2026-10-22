@@ -45,3 +45,7 @@ flowchart TD
 - `acceptance/`：真实 Vanilla Java 服务器入口、原生事件观察、种子分配与原任务验收。
 
 后续验收应保留同一正式代理、原生动作与实际回包；规划、组件测试或不同运行中的局部成功不自动产生整体验收结果。本文只描述当前结构，不预设后续重构方案。
+
+## 新执行核心（并行开发中）
+
+`electron/minecraft-runtime/core/` 是新的单一决策循环核心：每轮从当前状态重新选择行为，任务不保存步骤指针，被打断后不需要恢复分支。`electron/minecraft-runtime/scenarios/` 和 `tools/run-scenarios.cjs` 在真实 vanilla 服务器上重复运行场景并统计通过率。说明和验收标准见 `electron/minecraft-runtime/core/README.md`。该核心尚未接入桌面应用。
