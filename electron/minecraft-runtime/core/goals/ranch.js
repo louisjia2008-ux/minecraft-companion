@@ -82,8 +82,11 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
       if (need) return step(ctx, need);
       ctx.record('ranch', { action: 'gate' });
       // Placed from just outside, so it spans the fence line (faces north-south).
-      return skills.placeAt(bot, ctx, pen.gate, (n) => kb.fence_gate.match(n),
+      const placed = await skills.placeAt(bot, ctx, pen.gate, (n) => kb.fence_gate.match(n),
         { faces: DOWN, stand: { x: pen.gate.x, y: pen.gate.y, z: pen.gate.z - 1 } });
+      // An animal standing in the opening wanders off again by itself.
+      if (placed.reason === 'cell_occupied_by_entity') { await sleep(waitMs, ctx.signal); return { ok: true, waited: true }; }
+      return placed;
     }
     const facing = gate.getProperties?.().facing;
     if (facing && facing !== 'north' && facing !== 'south') {

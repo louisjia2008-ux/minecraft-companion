@@ -89,3 +89,64 @@ test('the herd being kept is spared from hunting', () => {
   assert.ok(goal.spares({ name: 'cow' }));
   assert.ok(!goal.spares({ name: 'pig' }));
 });
+
+test('a cow is led through the gate a block at a time and the gate is shut behind it', async (t) => {
+  const actions = require('../core/actions');
+  const husbandry = require('../core/husbandry');
+  const pen = penLayout({ x: 0, y: 64, z: 0 }, 6);
+  let open = false;
+  const path = [];
+  const cow = { id: 1, name: 'cow', position: new Vec3(3.5, 64, -12.5) };
+  const bot = {
+    entity: { position: new Vec3(3.5, 64, -9.5) },
+    entities: { 1: cow },
+    heldItem: null,
+    inventory: { items: () => [{ name: 'wheat', count: 8 }] },
+    equip: async (item) => { bot.heldItem = item; },
+    unequip: async () => { bot.heldItem = null; },
+    activateBlock: async () => { open = !open; },
+    lookAt: async (p) => { bot.facing = p; },
+    // Walking forward reaches the cell looked at; the cow keeps up.
+    setControlState: (control, on) => {
+      if (control !== 'forward' || !on) return;
+      bot.entity.position = new Vec3(bot.facing.x, 64, bot.facing.z);
+      path.push(`${Math.floor(bot.facing.x)},${Math.floor(bot.facing.z)}`);
+      follow();
+    },
+    blockAt: (p) => (p.x === pen.gate.x && p.z === pen.gate.z
+      ? { name: 'oak_fence_gate', position: new Vec3(p.x, p.y, p.z), getProperties: () => ({ open }) } : { name: 'air' }),
+  };
+  // A tempted cow trails the bot and stops 2.5 blocks short of it.
+  const follow = () => {
+    if (bot.heldItem?.name !== 'wheat') return;
+    const offset = cow.position.minus(bot.entity.position);
+    if (offset.norm() > 2.5) cow.position = bot.entity.position.plus(offset.normalize().scaled(2.5));
+  };
+  t.mock.method(actions, 'goNear', async (_b, _c, target) => {
+    bot.entity.position = new Vec3(target.x, 64, target.z);
+    path.push(`${Math.floor(target.x)},${Math.floor(target.z)}`);
+    follow();
+    return { ok: true };
+  });
+  const result = await husbandry.lure(bot, { record: () => {}, signal: undefined }, pen, cow);
+  assert.deepEqual(result, { ok: true });
+  assert.ok(pen.contains(cow.position));
+  assert.equal(open, false, 'gate shut');
+  for (const z of [-1, 0, 1, 2]) assert.ok(path.includes(`${pen.gate.x},${z}`), `stepped through ${pen.gate.x},${z}`);
+});
+
+test('a crafting table goes to the next free spot when an animal stands on the first', async () => {
+  const { createPlannerRunner } = require('../core/goals/common');
+  const tried = [];
+  const bot = {
+    entity: { position: new Vec3(0.5, 64, 0.5) },
+    blockAt: (p) => ({ name: p.y >= 64 ? 'air' : 'grass_block', boundingBox: p.y >= 64 ? 'empty' : 'block' }),
+  };
+  const skills = { placeAt: async (_b, _c, p) => { tried.push(p); return tried.length === 1 ? { ok: false, reason: 'cell_occupied_by_entity' } : { ok: true }; } };
+  const memory = {};
+  const { placeTableNearby } = createPlannerRunner({ bot, skills, kb: {}, memory, blacklist: null });
+  const result = await placeTableNearby({ record: () => {} });
+  assert.equal(result.ok, true);
+  assert.equal(tried.length, 2);
+  assert.deepEqual(memory.table, { x: tried[1].x, y: tried[1].y, z: tried[1].z });
+});
