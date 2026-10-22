@@ -53,6 +53,8 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     ctx.record('portal_enter', { from: nether.dimension(bot), portal: `${portal.x},${portal.y},${portal.z}` });
     const result = await nether.travel(bot, ctx, portal);
     if (!result.ok) return result;
+    // Back in the overworld the goal may be done at once: restore movement now.
+    if (!nether.inNether(bot)) leaveNetherMode();
     const here = nether.findPortal(bot, 6);
     if (nether.inNether(bot)) memory.netherPortal = here || bot.entity.position.floored();
     else memory.overworldPortal = here || memory.overworldPortal;

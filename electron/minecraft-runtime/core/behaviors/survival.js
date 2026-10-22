@@ -107,17 +107,26 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     return h.name === 'zombified_piglin' || wearsGold(bot);
   };
   const threats = (state) => state.hostiles.filter((h) => !calm(h));
+  // entityHurt names no attacker, so a mob counts as the culprit only if it
+  // swung its arm at melee range just before the hit; a skeleton arrow, a fall
+  // or fire next to a calm piglin must not turn the pack hostile.
+  const swings = new Map(); // entity id -> time of last arm swing
+  const onSwing = (entity) => {
+    if (entity && CALM_UNLESS_PROVOKED.has(entity.name)) swings.set(entity.id, Date.now());
+  };
   const onHurt = (entity) => {
     if (entity !== bot.entity) return;
     const here = bot.entity.position;
     const culprit = Object.values(bot.entities || {})
-      .filter((e) => CALM_UNLESS_PROVOKED.has(e.name) && e.position && e.position.distanceTo(here) <= (e.name === 'piglin' ? 16 : 4))
+      .filter((e) => CALM_UNLESS_PROVOKED.has(e.name) && e.position && e.position.distanceTo(here) <= 4
+        && Date.now() - (swings.get(e.id) || 0) <= 600)
       .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0];
     if (!culprit) return;
     for (const e of Object.values(bot.entities || {})) {
       if (e.name === culprit.name && e.position && e.position.distanceTo(culprit.position) <= 24) provoked.set(e.id, Date.now() + 60000);
     }
   };
+  bot.on?.('entitySwingArm', onSwing);
   bot.on?.('entityHurt', onHurt);
   const nearest = (state) => threats(state)[0] || null;
   // Chasing an archer bare-handed, or down into the cave it shoots from, loses.
@@ -390,7 +399,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
 
-  const disposeNether = () => bot.removeListener?.('entityHurt', onHurt);
+  const disposeNether = () => {
+    bot.removeListener?.('entityHurt', onHurt);
+    bot.removeListener?.('entitySwingArm', onSwing);
+  };
   deflect.dispose = disposeNether;
 
   return [escape, breathe, deflect, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];

@@ -70,3 +70,55 @@ test('nether movements are applied once and fully restored', () => {
   assert.deepEqual([...movements.blocksCantBreak], [1]);
   assert.equal(movements.exclusionAreasStep.length, 1);
 });
+
+const { EventEmitter } = require('node:events');
+const { createSurvivalBehaviors } = require('../core/behaviors/survival');
+
+function piglinBot() {
+  const bot = new EventEmitter();
+  bot.entity = { position: new Vec3(0, 64, 0) };
+  bot.game = { dimension: 'the_nether' };
+  bot.inventory = { slots: [], items: () => [] };
+  bot.registry = { foodsByName: {} };
+  bot.entities = { 7: { id: 7, name: 'zombified_piglin', position: new Vec3(2, 64, 0) } };
+  return bot;
+}
+const nearPiglin = (bot) => ({ alive: true, health: 20, food: 20, position: bot.entity.position, inventory: {},
+  hostiles: [{ id: 7, name: 'zombified_piglin', distance: 2, position: bot.entities[7].position }] });
+
+test('a calm zombified piglin beside the bot is not attacked after unrelated damage', () => {
+  const bot = piglinBot();
+  const defend = createSurvivalBehaviors({ bot }).find((b) => b.name === 'defend');
+  bot.emit('entityHurt', bot.entity); // an arrow or a fall: the piglin did not swing
+  assert.equal(defend.want(nearPiglin(bot)), 0);
+});
+
+test('a zombified piglin that swung just before the hit is fought back', () => {
+  const bot = piglinBot();
+  const defend = createSurvivalBehaviors({ bot }).find((b) => b.name === 'defend');
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  assert.equal(defend.want(nearPiglin(bot)), 1);
+});
+
+const { createNetherQuartzGoal } = require('../core/goals/netherQuartz');
+
+test('returning to the overworld restores the overworld movement settings', async () => {
+  const movements = { maxDropDown: 4, blocksCantBreak: new Set(), exclusionAreasStep: [] };
+  const bot = { ...makeWorld({ '0,64,0': 'nether_portal' }), pathfinder: { movements },
+    registry: { blocksByName: { nether_portal: { id: 1 } } },
+    inventory: { slots: [], items: () => [{ name: 'iron_pickaxe' }] },
+    findBlocks: () => [new Vec3(0, 64, 0)] };
+  bot.entity.position = new Vec3(0.5, 64, 0.5);
+  // Stands in the portal already: travel only waits for the dimension to change.
+  bot.waitForChunksToLoad = async () => {};
+  setTimeout(() => { bot.game.dimension = 'overworld'; }, 50);
+  const goal = createNetherQuartzGoal({ bot, count: 1 });
+  const ctx = { signal: new AbortController().signal, record: () => {}, perceive: () => ({ inventory: { quartz: 1 } }) };
+  bot.clearControlStates = () => {};
+  const result = await goal.run(ctx);
+  assert.equal(result.ok, true);
+  assert.equal(bot.game.dimension, 'overworld');
+  assert.equal(movements.maxDropDown, 4);
+  assert.equal(movements.exclusionAreasStep.length, 0);
+});
