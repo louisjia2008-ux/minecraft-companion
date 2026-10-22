@@ -258,12 +258,14 @@ const machinesFlat = {
       `give ${username} cooked_beef 32`, tp);
     return base;
   },
-  async start(companion) {
+  async start(companion, state, bot) {
     const a = HOUSE;
     const at = (dx, dz) => ({ x: a.x + dx, y: a.y, z: a.z + dz });
     const house = { anchor: { ...a }, interiorCenter: at(3, 3),
       furniture: { chest: { position: at(4, 5) }, crafting_table: { position: at(1, 5) }, furnace: { position: at(2, 5) },
         bed: { position: at(5, 1) } } };
+    // The homestead goal tells movement where the ground is; the stand-in does the same.
+    bot.companionSurfaceY = a.y;
     companion.director.memory.homestead = { name: 'homestead', memory: { house }, isDone: () => true, progress: () => 0,
       run: async () => ({ ok: true }) };
     await companion.setAutonomy(true);

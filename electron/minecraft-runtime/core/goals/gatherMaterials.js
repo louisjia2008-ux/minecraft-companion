@@ -15,6 +15,7 @@
 // what was left in the furnace, where the mine's front is, and short-lived blacklists.
 
 const { Vec3 } = require('vec3');
+const { goals } = require('mineflayer-pathfinder');
 const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const { planNext } = require('../planner');
@@ -101,6 +102,17 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   }
 
   async function surfaceFirst(ctx) {
+    // Out of our own mine the way we came: aiming at the entrance keeps the
+    // path search on the staircase, where "any block at surface height" sends
+    // it digging through rock (which stalls, and without a pickaxe never ends).
+    const entrance = memory.mine?.entrance;
+    if (entrance && bot.entity.position.y < entrance.y - 2 && !blacklist.has('mine_exit')) {
+      ctx.record('mine_exit', { from: bot.entity.position.floored(), entrance });
+      const out = await actions.goTo(bot, ctx, new goals.GoalBlock(entrance.x, entrance.y, entrance.z),
+        { timeoutMs: 120000, arrived: (at) => at.y >= entrance.y - 1 });
+      if (out.ok) return { ok: true, surfaced: true };
+      blacklist.add('mine_exit', out.reason, 60000);
+    }
     if (typeof actions.surface !== 'function' || blacklist.has('surface')) return null;
     const result = await actions.surface(bot, ctx);
     if (result) ctx.record('surface', { ok: result.ok });
@@ -110,7 +122,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   async function runStep(ctx, step) {
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
-    if (step.kind !== 'gather') {
+    // Everything but ore deep down is found on the surface: climb out of the mine first.
+    if (step.kind !== 'gather' || !Number.isFinite(step.mineY)) {
       const up = await surfaceFirst(ctx);
       if (up) return up;
     }

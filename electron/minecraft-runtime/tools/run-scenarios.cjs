@@ -137,7 +137,7 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   const startedAt = Date.now();
   // Per-run scratch space for scenario hooks (injected failures and their checks).
   const runState = {};
-  const goal = await scenario.start(companion, runState);
+  const goal = await scenario.start(companion, runState, bot);
   // A heartbeat every minute so long runs can be followed live.
   const heartbeat = setInterval(() => {
     const inv = {};

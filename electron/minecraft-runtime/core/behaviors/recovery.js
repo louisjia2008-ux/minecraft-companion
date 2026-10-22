@@ -151,12 +151,9 @@ function createRecovery({
       const state = ctx.perceive();
       const items = discardable(state.inventory, keep);
       if (!items.length) return { ok: false, reason: 'nothing_to_discard' };
-      const chest = bot.companionChest;
-      if (chest && state.position && distance(state.position, chest) <= t.storageRange && typeof skills.storeItems === 'function') {
-        ctx.record('tidy_inventory', { action: 'store', items });
-        const stored = await skills.storeItems(bot, ctx, { position: chest, items });
-        if (stored.ok) return stored;
-      }
+      // Junk and surplus are thrown away, never stored: the house chest holds
+      // what goals gather (a machine's materials), and a few full bags of
+      // gravel would leave no room for them.
       ctx.record('tidy_inventory', { action: 'toss', items });
       return tossItems(ctx, items);
     },

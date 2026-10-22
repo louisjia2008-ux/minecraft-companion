@@ -132,17 +132,13 @@ test('a goal that fails while the bot keeps moving is not stuck', async () => {
   await brain.dispose();
 });
 
-test('a full bag goes into the house chest when one is close', async () => {
-  const bot = fakeBot({ freeSlots: 0, inventory: { gravel: 10, cobblestone: 80, stone_pickaxe: 1 } });
+test('a full bag is thrown away even next to the house chest, which stays free for materials', async () => {
+  const bot = fakeBot({ freeSlots: 0, inventory: { gravel: 10, stone_pickaxe: 1 } });
   bot.companionChest = { x: 3, y: 64, z: 0 };
-  const stored = [];
-  const skills = { storeItems: async (_bot, _ctx, { items }) => { stored.push(...items); bot.setFree(3); return { ok: true }; } };
+  const skills = { storeItems: async () => assert.fail('junk must not go into the house chest') };
   const { brain } = wire({ bot, perceive: perceiveFor(bot), skills, actions: { fleeFrom: async () => ({ ok: true }) } });
   await ticks(brain, 1);
-  assert.deepEqual(stored, [{ name: 'gravel', count: 10 }, { name: 'cobblestone', count: 16 }]);
-  assert.equal(bot.tossed.length, 0);
-  await ticks(brain, 1);
-  assert.equal(stored.length, 2, 'nothing more once there is room');
+  assert.deepEqual(bot.tossed[0], { type: 1, count: 10 });
   await brain.dispose();
 });
 
