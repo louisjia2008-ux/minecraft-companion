@@ -18,7 +18,7 @@ const NEUTRAL = new Set(['enderman', 'zombified_piglin', 'piglin', 'spider', 'ca
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 
-function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, thresholds = {} } = {}) {
+function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false, thresholds = {} } = {}) {
   const t = { escapeHealth: 6, escapeRange: 6, defendRange: 5, rangedRange: 14, rangedHealth: 14, eatFood: 14,
     eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, oxygen: 8, dropsTtlMs: 270000,
     ...thresholds };
@@ -128,7 +128,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       // Animals are visible out to about 100 blocks; go for the nearest one seen.
-      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 96, blacklist: huntBlacklist });
+      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 96, blacklist: huntBlacklist,
+        accept: (e) => !spare(e) });
       // Nothing to hunt in sight: berries, else look further afield instead of waiting to starve.
       // Could not reach anything: the bot itself is probably stuck (tree top, ledge).
       if (['NoPath', 'Timeout', 'path_timeout', 'no_progress', 'not_arrived', 'chase_stuck'].includes(result.reason)) {

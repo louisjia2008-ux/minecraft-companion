@@ -15,6 +15,10 @@ const { sleep } = require('../confirm');
 const { createPlannerRunner, DOWN } = require('./common');
 
 const BREED_COOLDOWN_MS = 5 * 60 * 1000 + 5000; // vanilla: 6000 ticks
+// How far a search for animals may take the bot from its pen before it walks back.
+const ROAM = 80;
+// Wheat kept back for breeding; the rest may be baked into bread when hungry.
+const FEED_RESERVE = 4;
 
 function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = null,
   skills = defaultSkills, actions = defaultActions, husbandry = defaultHusbandry, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000 } = {}) {
@@ -27,6 +31,15 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
     avoid: (p) => inPenArea(p) || exclude(p) });
 
   const penCount = () => (memory.pen ? husbandry.animalsIn(bot, memory.pen, kind).length : 0);
+  const penMiddle = () => new Vec3(memory.pen.corner.x + size / 2, memory.pen.corner.y, memory.pen.corner.z + size / 2);
+
+  async function goBack(ctx, why) {
+    ctx.record('ranch', { action: 'return', why, distance: Math.round(bot.entity.position.distanceTo(penMiddle())) });
+    // A new heading next time: the last one led away from the animals.
+    memory.heading = undefined;
+    const moved = await actions.goNear(bot, ctx, new Vec3(memory.pen.outside.x + 0.5, memory.pen.outside.y, memory.pen.outside.z + 0.5), 3, { timeoutMs: 60000 });
+    return moved.ok || bot.entity.position.distanceTo(penMiddle()) < 16 ? { ok: true } : moved;
+  }
 
   async function runOnce(ctx) {
     const state = ctx.perceive();
@@ -40,6 +53,17 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
     const pen = memory.pen;
     const inventory = inventoryFor(state);
     const stations = { crafting_table: tableHere() };
+    // Out of sight of the pen its fences read as missing and its animals as
+    // gone: walk back before judging either.
+    if (pen.fences.some((p) => !blockAt(p)) || bot.entity.position.distanceTo(penMiddle()) > ROAM) return goBack(ctx, 'out_of_sight');
+
+    // Hungry with nothing to eat: bake the spare wheat before the hunger drive
+    // takes over and goes hunting (perhaps the very animals being kept).
+    const edible = Object.keys(state.inventory).some((n) => state.inventory[n] > 0 && n !== 'wheat' && bot.registry?.foodsByName?.[n]);
+    if (state.food <= 16 && !edible && (state.inventory.wheat || 0) >= 3 + FEED_RESERVE) {
+      const bake = planNext({ requirements: [{ key: 'bread', count: countKey('bread', inventory, kb) + 1 }], inventory, stations, kb });
+      if (bake) return step(ctx, { ...bake, for: 'bread' });
+    }
 
     // The fence line first, then the gate.
     const missing = pen.fences.filter((p) => !kb.fence.match(blockAt(p)?.name || '') && !blacklist.has(posKey(p)));
@@ -90,10 +114,21 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
     if (outside && adults.length < Math.max(2, target - 1)) {
       ctx.record('ranch', { action: 'lure', id: outside.id, distance: Math.round(outside.position.distanceTo(bot.entity.position)) });
       const result = await husbandry.lure(bot, ctx, pen, outside);
-      if (!result.ok) blacklist.add(`mob:${outside.id}`, result.reason, 60000);
+      if (!result.ok) blacklist.add(`mob:${outside.id}`, result.reason, 20000);
       return result;
     }
-    if (adults.length < 2) return skills.explore(bot, ctx, memory);
+    if (adults.length < 2) {
+      // One that just slipped away is still in sight: try it again shortly
+      // rather than wander off looking for others.
+      const known = Object.values(bot.entities).some((e) => e.name === kind && e.position && !pen.contains(e.position)
+        && !husbandry.isBaby(bot, e) && e.position.distanceTo(penMiddle()) < ROAM);
+      if (known) {
+        if (pen.contains(bot.entity.position)) return husbandry.leave(bot, ctx, pen);
+        await sleep(waitMs, ctx.signal);
+        return { ok: true, waited: true };
+      }
+      return skills.explore(bot, ctx, memory);
+    }
     // Parents on cooldown: wait it out, out of the pen.
     if (pen.contains(bot.entity.position)) return husbandry.leave(bot, ctx, pen);
     await sleep(waitMs, ctx.signal);
@@ -104,6 +139,8 @@ function createRanchGoal({ bot, kind = 'cow', target = 3, size = 6, center = nul
     name: 'ranch',
     noProgressLimit: 30,
     memory,
+    // Hunger must not be stilled with the animals this goal is keeping.
+    spares: (entity) => entity?.name === kind,
     isDone: () => penCount() >= target && (!memory.pen || !memory.pen.contains(bot.entity.position)),
     progress: () => memory.steps,
     async run(ctx) {

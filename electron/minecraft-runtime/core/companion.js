@@ -48,7 +48,10 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
 
-  const behaviors = createSurvivalBehaviors({ bot });
+  // Animals the current goal keeps (a ranch's herd) are not hunted for food.
+  let spare = () => false;
+  const behaviors = createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) });
+  const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
   const brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
@@ -64,26 +67,26 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
   return {
     brain,
     gatherLogs(count) {
-      brain.setGoal(createGatherLogsGoal({ bot, count }));
+      useGoal(createGatherLogsGoal({ bot, count }));
       return brain.tick();
     },
     homestead(options = {}) {
       const goal = createHomesteadGoal({ bot, ...options });
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     farm(options = {}) {
       const goal = createFarmGoal({ bot, ...options });
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     ranch(options = {}) {
       const goal = createRanchGoal({ bot, ...options });
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     setGoal(goal) {
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick();
     },
     async stop(reason = 'user_stop') {

@@ -136,7 +136,11 @@ async function lure(bot, ctx, pen, entity) {
     { timeoutMs: 10000, signal: ctx.signal });
   // Food away so it stops following, then out and shut.
   try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
-  if (!inside) return fail('animal_not_inside');
+  if (!inside) {
+    // Shut the gate again so the ones already penned stay in.
+    if (!pen.contains(bot.entity.position)) await setGate(bot, ctx, pen, false);
+    return fail('animal_not_inside');
+  }
   await sleep(500, ctx.signal);
   const out = await actions.goNear(bot, ctx, v(pen.outside).offset(0.5, 0, 0.5), 1, { timeoutMs: 20000 });
   const shut = await setGate(bot, ctx, pen, false);
