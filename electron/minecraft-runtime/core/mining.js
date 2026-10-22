@@ -113,7 +113,13 @@ async function step(bot, ctx, skills, memory, kind) {
   if (result.ok || result.reason === 'liquid_all_around') return result;
   const key = `${feet.x},${feet.y},${feet.z}`;
   memory.blockedTries = memory.lastBlocked === key ? (memory.blockedTries || 0) + 1 : 1;
+  memory.blockedTotal = memory.lastBlocked === key ? (memory.blockedTotal || 0) + 1 : 1;
   memory.lastBlocked = key;
+  // Every direction tried from here (a cliff edge, a tree top): start elsewhere.
+  if (memory.blockedTotal >= 8) {
+    memory.blockedTotal = 0;
+    return fail('stuck_here');
+  }
   const cells = stepCells(feet, memory.tunnel, kind);
   ctx.record('mine_blocked', { at: key, tries: memory.blockedTries, reason: result.reason,
     cells: [...cells.dig, cells.floor].map((p) => bot.blockAt(p)?.name || null) });

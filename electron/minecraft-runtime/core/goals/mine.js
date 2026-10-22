@@ -69,7 +69,7 @@ function createMineGoal({ bot, want = { raw_iron: 8, coal: 8 }, layer = null,
     const stepped = await mining.step(bot, ctx, skills, memory, kind);
     // Water on every side (a beach, a swamp, an aquifer): move off and start
     // again somewhere drier.
-    if (stepped.reason === 'liquid_all_around') return skills.explore(bot, ctx, memory);
+    if (stepped.reason === 'liquid_all_around' || stepped.reason === 'stuck_here') return skills.explore(bot, ctx, memory);
     return stepped;
   }
 
