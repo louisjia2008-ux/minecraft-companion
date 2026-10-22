@@ -64,6 +64,21 @@
 | 天黑后从远处赶路回家被打死 | 傍晚才往回走，路上已经天黑 | 天黑时离家超过 64 格就原地挖地堡过夜 |
 | 一类问题卡住整个任务 | 连续没有进展就永久失败 | 进展预算用完后先"恢复"：清空黑名单、脱困、走回家，再给一轮预算，最多 6 次 |
 
+## 自主发育：`director.js`
+
+没有玩家任务时，机器人自己决定下一步做什么。默认关闭，`companion.setAutonomy(true)` 或 `createCompanion({ autonomy: true })` 打开。
+
+1. **调度器不动身体。** brain 空闲 3 秒后，调度器读一次世界状态，给 `goals/registry.js` 里的每张卡片打 0–100 的需求分，把最高分的目标交给 brain。全是 0 分就继续待机。
+2. **跑完才重选。** 目标运行中不重新打分，结束（完成或失败）后才选下一个，避免来回切换。
+3. **风险看时间和身体。** 卡片标 `low` / `medium` / `high`。夜里 `medium` 只算 40%，`high` 不选；血量 < 12 或饥饿 < 8 时 `medium` 算 60%，`high` 不选。
+4. **失败冷却。** `goal_failed` 的卡片冷却 5 分钟，连续失败翻倍，上限 1 小时；完成一次就清零。
+5. **玩家优先。** 玩家下的任务直接替换调度器的目标；玩家任务结束后等 30 秒再恢复自主。玩家 `stop()` 同时关闭自主。
+6. **阶段从世界算出。** 0 = 家还没完成；1 = 房子、家具、铁装都齐。死后丢了铁装会回到阶段 0，重新补齐。
+
+现有卡片：`homestead`（阶段 0，整个运行只用一个实例，所以一直接着建同一栋房子）、`stock_food`（阶段 1，食物少于 16 个时打猎）。新目标要加入自主发育，只需在 `registry.js` 里加一张卡片：`{ id, stage, risk, requires?, need(state, memory), create(memory) }`。
+
+每次选择会发出 `autonomy_choice` 事件，附带所有卡片的分数和被跳过的原因（`stage` / `requires` / `cooldown`），方便调参。
+
 ## 真实服务器测试结果（vanilla 1.21.8，easy 难度，昼夜循环和刷怪开启，空背包开局）
 
 | 场景 | 结果 | 说明 |
@@ -94,6 +109,7 @@
 | `knowledge.js` / `planner.js` | 物品来源知识表，以及基于虚拟背包的纯规划器 |
 | `site.js` / `blueprints/starterHouse.js` | 选址、根据世界现状算出整地工作、小屋蓝图 |
 | `goals/gatherBlocks.js` / `goals/homestead.js` | 采集目标 / 完整任务链目标 |
+| `director.js` / `goals/registry.js` / `goals/stockFood.js` | 自主发育：没有玩家任务时按需求分挑下一个目标 / 可自主选择的目标卡片 / 囤食物目标 |
 | `behaviors/survival.js` | 逃离、上浮换气、防御、进食、找食物、回血、捡回掉落物 |
 | `companion.js` | 把以上组件接到真实的 Mineflayer bot 上 |
 
