@@ -598,7 +598,14 @@ async function takeItems(bot, ctx, { position, itemMatch }) {
     chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
     const stacks = chest.containerItems().filter((i) => itemMatch(i.name));
     if (stacks.length === 0) return fail('chest_empty');
-    for (const stack of stacks) await chest.withdraw(stack.type, null, stack.count);
+    for (const stack of stacks) {
+      try {
+        await chest.withdraw(stack.type, null, stack.count);
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        break; // inventory full: keep what earlier stacks already moved
+      }
+    }
   } catch (error) {
     if (isAbort(error)) throw error;
     return fail('chest_failed');

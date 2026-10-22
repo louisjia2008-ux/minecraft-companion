@@ -85,7 +85,8 @@ function createAutoSmelterGoal({ bot, anchor = null, facing = 'east', input = 'r
   };
   const blacklist = createBlacklist({ ttlMs: 60000 });
   const blockAt = (p) => bot.blockAt(v(p));
-  const have = (name) => actions.countItems(bot, (n) => n === name);
+  // Main inventory only: storeItems deposits from there, not from the off-hand.
+  const have = (name) => bot.inventory.items().filter((i) => i.name === name).reduce((sum, i) => sum + i.count, 0);
 
   function guardDevice() {
     const movements = bot.pathfinder?.movements;
