@@ -11,6 +11,7 @@ const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
+const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
@@ -112,6 +113,13 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     autoSmelter(options = {}) {
       const goal = createAutoSmelterGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
+    gatherMaterials(options) {
+      const goal = createGatherMaterialsGoal({ bot, ...options });
       director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
