@@ -23,6 +23,7 @@ const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff
 const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64 };
 const SAPLINGS_KEPT = 8;
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
+const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
 
 /** What a full bag can lose, junk first: [{ name, count }]. `keep` exempts items a goal still needs. */
 function discardable(inventory, keep = () => false) {
@@ -184,15 +185,17 @@ function createRecovery({
     const position = bot.entity?.position?.clone?.();
     if (!position) return;
     const at = now();
-    deaths.push({ position, at });
+    const dimension = dimensionOf(bot);
+    deaths.push({ position, at, dimension });
     while (deaths.length && at - deaths[0].at > t.deathWindowMs) deaths.shift();
     bunker = null;
     bot.companionSheltered = false;
-    const near = deaths.filter((d) => at - d.at <= t.clusterMs && distance(d.position, position) <= t.clusterRadius);
+    const near = deaths.filter((d) => d.dimension === dimension && at - d.at <= t.clusterMs
+      && distance(d.position, position) <= t.clusterRadius);
     if (near.length >= t.clusterDeaths) {
       const center = near.reduce((c, d) => ({ x: c.x + d.position.x / near.length, y: c.y + d.position.y / near.length,
         z: c.z + d.position.z / near.length }), { x: 0, y: 0, z: 0 });
-      danger = { center, until: at + t.clusterMs, left: false, deaths: near.length };
+      danger = { center, dimension, until: at + t.clusterMs, left: false, deaths: near.length };
       bot.companionDeathDanger = danger;
     }
     if (deaths.length > t.maxDeaths && brain && goalTrack.active) {
@@ -201,7 +204,7 @@ function createRecovery({
   }
   bot.on?.('death', onDeath);
 
-  const dangerActive = () => danger && danger.until > now();
+  const dangerActive = () => danger && danger.until > now() && danger.dimension === dimensionOf(bot);
   const nearDanger = (state) => dangerActive() && state.position && distance(state.position, danger.center) < t.leaveDistance - 8;
 
   // Respawned where the bot keeps dying (the world spawn on a beach, a mob
@@ -259,7 +262,8 @@ function createRecovery({
     band: BAND.MAINTENANCE,
     want(state) {
       if (bunker) return 1;
-      if (!dangerActive() || state.isDay !== false || state.sheltered) return 0;
+      // Nights only matter in the overworld.
+      if (!dangerActive() || state.isDay !== false || state.sheltered || dimensionOf(bot) !== 'overworld') return 0;
       // Already far from the deaths: the goal's own night handling is enough.
       return state.position && distance(state.position, danger.center) < t.leaveDistance * 2 ? 1 : 0;
     },
