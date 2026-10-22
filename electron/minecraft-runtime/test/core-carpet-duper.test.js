@@ -54,6 +54,9 @@ test('site choice needs flat ground and room around the device', () => {
   const device = chooseCarpetDuperSite(block, { x: 0.5, y: 64, z: 0.5 });
   assert.ok(device);
   assert.equal(device.anchor.y, 63);
+  // Bedrock under every slime cell: nothing it can dig.
+  const bedrock = (x, y, z) => (y === 63 ? { ...block(x, y, z), name: 'bedrock' } : block(x, y, z));
+  assert.equal(chooseCarpetDuperSite((x, y, z) => (y === 63 && (x !== 0 || z !== 0) ? bedrock(x, y, z) : block(x, y, z)), { x: 0.5, y: 64, z: 0.5 }, { radius: 0 }), null);
   for (let x = -4; x <= 4; x += 1) for (let z = -4; z <= 4; z += 1) if ((x + z) % 2 === 0) walls.add(`${x},${z}`);
   assert.equal(chooseCarpetDuperSite(block, { x: 0.5, y: 64, z: 0.5 }, { radius: 3 }), null);
 });

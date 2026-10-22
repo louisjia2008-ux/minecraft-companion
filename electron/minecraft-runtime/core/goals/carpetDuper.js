@@ -27,6 +27,9 @@ const isAir = (block) => !block || block.name === 'air' || block.name === 'cave_
 const isSoft = (block) => isAir(block) || (block.boundingBox === 'empty' && !LIQUID.has(block.name));
 const isFloor = (block) => Boolean(block) && block.boundingBox === 'block' && !LIQUID.has(block.name)
   && !/^(sand|red_sand|gravel|.*_concrete_powder)$/.test(block.name);
+// The cell under the slime is dug out: only plain soil or stone.
+const DIGGABLE = new Set(['grass_block', 'dirt', 'coarse_dirt', 'podzol', 'rooted_dirt', 'mycelium', 'mud', 'moss_block',
+  'stone', 'andesite', 'diorite', 'granite', 'cobblestone', 'clay', 'terracotta', 'deepslate', 'tuff']);
 const isCarpet = (name) => name === 'white_carpet';
 const droppedName = (entity) => { try { return entity.getDroppedItem?.()?.name || null; } catch (_) { return null; } };
 const v = (p) => new Vec3(p.x, p.y, p.z);
@@ -36,7 +39,7 @@ function evaluateCarpetDuperSite(blockAt, anchor, facing) {
   const at = (p) => blockAt(p.x, p.y, p.z);
   for (const p of device.floor) if (!isFloor(at(p))) return null;
   for (const p of device.clear) if (!isSoft(at(p))) return null;
-  for (const p of device.hollow) if (LIQUID.has(at(p)?.name)) return null;
+  for (const p of device.hollow) { const b = at(p); if (!isAir(b) && !DIGGABLE.has(b?.name)) return null; }
   return device;
 }
 
