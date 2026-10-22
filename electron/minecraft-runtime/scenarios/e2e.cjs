@@ -194,13 +194,27 @@ const e2eFlat = {
     commands.push(`fill ${lx - 2} ${GROUND - 3} ${lz - 2} ${lx + 2} ${GROUND - 1} ${lz + 2} stone`,
       `fill ${lx - 1} ${GROUND} ${lz - 1} ${lx + 1} ${GROUND} ${lz + 1} air`,
       `setblock ${lx} ${GROUND - 1} ${lz} lava`, `setblock ${lx + 1} ${GROUND - 1} ${lz} lava`);
+    // A grove farther out: a long run cuts the trees near home down, as in a real world.
+    const grove = [];
+    for (let guard = 0; grove.length < 24 && guard < 500; guard += 1) {
+      const angle = rng() * Math.PI * 2;
+      const radius = 30 + rng() * 30;
+      const x = Math.round(Math.cos(angle) * radius);
+      const z = Math.round(Math.sin(angle) * radius);
+      if ([...grove, { x: wx, z: wz }, { x: lx, z: lz }].some((p) => Math.abs(p.x - x) < 6 && Math.abs(p.z - z) < 6)) continue;
+      grove.push({ x, z });
+      const top = GROUND + 3 + Math.floor(rng() * 3);
+      commands.push(`fill ${x - 2} ${top - 1} ${z - 2} ${x + 2} ${top} ${z + 2} oak_leaves[persistent=true] keep`,
+        `fill ${x - 1} ${top + 1} ${z - 1} ${x + 1} ${top + 1} ${z + 1} oak_leaves[persistent=true] keep`,
+        `fill ${x} ${GROUND} ${z} ${x} ${top} ${z} oak_log`);
+    }
     // Animals for wool, food and a long day of work.
     for (let i = 0; i < 12; i += 1) commands.push(`summon sheep ${spot(23).join(` ${GROUND} `)} {Color:0b}`);
     for (let i = 0; i < 14; i += 1) commands.push(`summon cow ${spot(45).join(` ${GROUND} `)}`);
     for (let i = 0; i < 10; i += 1) commands.push(`summon pig ${spot(45).join(` ${GROUND} `)}`);
     for (let i = 0; i < 8; i += 1) commands.push(`summon chicken ${spot(45).join(` ${GROUND} `)}`);
     commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`);
-    return { commands, details: { trees: trees.trees.length, water: { x: wx, z: wz }, lava: { x: lx, z: lz } } };
+    return { commands, details: { trees: trees.trees.length, grove: grove.length, water: { x: wx, z: wz }, lava: { x: lx, z: lz } } };
   },
   async start(companion, state) {
     state.injections = INJECTIONS.map((i) => ({ name: i.name, firedAt: null, recoveredAt: null }));
