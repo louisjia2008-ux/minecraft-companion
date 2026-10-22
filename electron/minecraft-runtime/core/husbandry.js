@@ -103,50 +103,110 @@ async function setGate(bot, ctx, pen, open) {
   return await waitUntil(() => isOpen() === open, { timeoutMs: 1500, signal: ctx.signal }) ? { ok: true } : fail('gate_unconfirmed');
 }
 
+/** Walks straight at `target` (block centre, same level) without the pathfinder. */
+async function walkStraight(bot, ctx, target, timeoutMs = 3000) {
+  const flat = () => Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (flat() > 0.3 && Date.now() < deadline) {
+      await bot.lookAt(new Vec3(target.x, bot.entity.position.y + 1.6, target.z), true);
+      bot.setControlState('sprint', false);
+      bot.setControlState('forward', true);
+      await sleep(Math.min(150, flat() * 200), ctx.signal);
+    }
+  } finally {
+    bot.setControlState('forward', false);
+  }
+  return flat() <= 0.5 ? { ok: true } : fail('walk_blocked');
+}
+
 /**
- * Leads one animal into the pen: food in hand, walk in short legs so it keeps
- * up, through the open gate to the far side, then put the food away, step
- * out and shut the gate behind.
+ * Through the open gate along its axis, one block at a time: the pathfinder
+ * would rather open, close or dig the gate than walk through it. `wait` runs
+ * after each block (an animal catching up).
  */
-async function lure(bot, ctx, pen, entity) {
+async function passGate(bot, ctx, pen, inward, wait = async () => {}) {
+  const cells = [-1, 0, 1, 2].map((dz) => new Vec3(pen.gate.x + 0.5, pen.gate.y, pen.gate.z + dz + 0.5));
+  if (!inward) cells.reverse();
+  const moved = await actions.goNear(bot, ctx, cells[0], 0, { timeoutMs: 20000 });
+  if (!moved.ok && bot.entity.position.distanceTo(cells[0]) > 1.5) return moved;
+  for (const cell of cells.slice(1)) {
+    const walked = await walkStraight(bot, ctx, cell);
+    if (!walked.ok) return walked;
+    await wait();
+  }
+  return { ok: true };
+}
+
+/**
+ * Leads one animal into the pen with food in hand. Animals walk slower than
+ * the bot and lose interest past about ten blocks, so every walk goes in
+ * short legs that wait for it: to the gate, through it a block at a time (it
+ * follows in a line instead of pressing against the fence beside it), on to
+ * the far corner. Then the food goes away, it settles there, and the bot
+ * steps out and shuts the gate behind.
+ */
+async function lure(bot, ctx, pen, entity, { followGap = 3.5 } = {}) {
   const kind = entity.name;
   if (!await holdFood(bot, kind)) return fail('no_food');
-  const near = await actions.goNear(bot, ctx, entity.position.clone(), 3, { timeoutMs: 60000 });
-  if (!bot.entities[entity.id]) return fail('animal_gone');
-  if (!near.ok && bot.entities[entity.id].position.distanceTo(bot.entity.position) > 6) return near;
+  const animal = () => bot.entities[entity.id];
+  const gap = () => (animal() ? animal().position.distanceTo(bot.entity.position) : Infinity);
+  const close = () => gap() <= followGap;
+  const catchUp = () => waitUntil(close, { timeoutMs: 5000, signal: ctx.signal });
+  const near = await actions.goNear(bot, ctx, entity.position.clone(), 2, { timeoutMs: 60000 });
+  if (!animal()) return fail('animal_gone');
+  if (!near.ok && gap() > 6) return near;
   await holdFood(bot, kind);
+
+  // To the spot in front of the gate, two blocks at a time.
+  const front = new Vec3(pen.gate.x + 0.5, pen.gate.y, pen.gate.z - 1.5);
+  for (let leg = 0; leg < 40 && bot.entity.position.distanceTo(front) > 1.5; leg += 1) {
+    if (!animal()) return fail('animal_gone');
+    if (gap() > 8) {
+      // Left behind: go back for it.
+      await actions.goNear(bot, ctx, animal().position.clone(), 2, { timeoutMs: 15000 });
+      await holdFood(bot, kind);
+      continue;
+    }
+    const here = bot.entity.position;
+    const step = here.plus(front.minus(here).normalize().scaled(Math.min(2, here.distanceTo(front))));
+    await actions.goNear(bot, ctx, step, 0.5, { timeoutMs: 6000 });
+    await catchUp();
+  }
+  if (!await catchUp()) return fail('animal_not_following', { gap: Math.round(gap()) });
   const opened = await setGate(bot, ctx, pen, true);
   if (!opened.ok) return opened;
   await holdFood(bot, kind);
-  const following = () => bot.entities[entity.id] && bot.entities[entity.id].position.distanceTo(bot.entity.position) < 7;
-  // Toward the gate, then inside, a few blocks at a time.
-  for (const target of [pen.outside, pen.inside]) {
-    for (let leg = 0; leg < 12; leg += 1) {
-      const here = bot.entity.position;
-      const goal = v(target).offset(0.5, 0, 0.5);
-      if (here.distanceTo(goal) < 1.5) break;
-      const step = here.plus(goal.minus(here).normalize().scaled(Math.min(3, here.distanceTo(goal))));
-      await actions.goNear(bot, ctx, step, 1, { timeoutMs: 8000 });
-      // Let the animal catch up.
-      await waitUntil(following, { timeoutMs: 4000, signal: ctx.signal });
-      if (!bot.entities[entity.id]) return fail('animal_gone');
-    }
+  const through = await passGate(bot, ctx, pen, true, catchUp);
+  if (!through.ok) {
+    // Shut again so the ones already penned stay in.
+    try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
+    await setGate(bot, ctx, pen, false);
+    return through;
   }
-  const inside = await waitUntil(() => bot.entities[entity.id] && pen.contains(bot.entities[entity.id].position),
+  // On to the far corner: it stops a couple of blocks short, well inside.
+  const far = new Vec3(pen.corner.x + pen.size - 1.5, pen.corner.y, pen.corner.z + pen.size - 1.5);
+  await actions.goNear(bot, ctx, far, 0, { timeoutMs: 6000 });
+  const inside = await waitUntil(() => animal() && pen.contains(animal().position) && close(),
     { timeoutMs: 10000, signal: ctx.signal });
-  // Food away so it stops following, then out and shut.
-  try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
   if (!inside) {
-    // Shut the gate again so the ones already penned stay in.
-    if (!pen.contains(bot.entity.position)) await setGate(bot, ctx, pen, false);
-    return fail('animal_not_inside');
+    try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
+    // Out (or just shut the gate) so the ones already penned stay in.
+    const out = pen.contains(bot.entity.position) ? await leave(bot, ctx, pen) : await setGate(bot, ctx, pen, false);
+    return out.ok ? fail('animal_not_inside', { gap: Math.round(gap()) }) : out;
   }
-  await sleep(500, ctx.signal);
-  const out = await actions.goNear(bot, ctx, v(pen.outside).offset(0.5, 0, 0.5), 1, { timeoutMs: 20000 });
+  // Shut it in while the food still holds it by the bot, away from the
+  // opening; only then put the food away and step out.
+  const gateCentre = new Vec3(pen.gate.x + 0.5, pen.gate.y, pen.gate.z + 0.5);
+  const fromGate = () => (animal() ? Math.hypot(animal().position.x - gateCentre.x, animal().position.z - gateCentre.z) : Infinity);
+  await waitUntil(() => fromGate() > 1.2, { timeoutMs: 5000, signal: ctx.signal });
   const shut = await setGate(bot, ctx, pen, false);
+  try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
   if (!shut.ok) return shut;
-  if (!out.ok && pen.contains(bot.entity.position)) return out;
-  return bot.entities[entity.id] && pen.contains(bot.entities[entity.id].position) ? { ok: true } : fail('animal_escaped');
+  await sleep(1000, ctx.signal);
+  const out = await leave(bot, ctx, pen);
+  if (!out.ok) return out;
+  return animal() && pen.contains(animal().position) ? { ok: true } : fail('animal_escaped');
 }
 
 /** Feeds two adults inside the pen; confirmed by a new baby appearing there. */
@@ -157,8 +217,9 @@ async function breed(bot, ctx, pen, kind) {
   if (!pen.contains(bot.entity.position)) {
     const opened = await setGate(bot, ctx, pen, true);
     if (!opened.ok) return opened;
-    await actions.goNear(bot, ctx, v(pen.inside).offset(0.5, 0, 0.5), 1, { timeoutMs: 20000 });
+    const entered = await passGate(bot, ctx, pen, true);
     await setGate(bot, ctx, pen, false);
+    if (!entered.ok) return entered;
   }
   for (const animal of adults.slice(0, 2)) {
     if (!await holdFood(bot, kind)) return fail('no_food');
@@ -177,15 +238,15 @@ async function breed(bot, ctx, pen, kind) {
   return born ? { ok: true, born: true } : fail('no_baby');
 }
 
-/** Out through the gate, shutting it behind (the pathfinder does not open gates). */
+/** Out through the gate, shutting it behind. */
 async function leave(bot, ctx, pen) {
   if (!pen.contains(bot.entity.position)) return { ok: true };
   const opened = await setGate(bot, ctx, pen, true);
   if (!opened.ok) return opened;
-  const out = await actions.goNear(bot, ctx, v(pen.outside).offset(0.5, 0, 0.5), 1, { timeoutMs: 20000 });
+  const out = await passGate(bot, ctx, pen, false);
   // An open gate lets the herd walk out again: that failure outranks the walk.
   const shut = await setGate(bot, ctx, pen, false);
   return shut.ok ? out : shut;
 }
 
-module.exports = { FOOD, penLayout, choosePenSite, isBaby, animalsIn, holdFood, setGate, lure, breed, leave };
+module.exports = { FOOD, penLayout, choosePenSite, isBaby, animalsIn, holdFood, setGate, passGate, lure, breed, leave };

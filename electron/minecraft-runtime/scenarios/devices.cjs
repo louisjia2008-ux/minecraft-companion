@@ -8,6 +8,9 @@ const { FLAT_GENERATOR, GROUND, resetArea } = require('./collectLogs.cjs');
 const { createCobbleGenerator } = require('../core/blueprints/cobbleGenerator');
 const { createAutoSmelter } = require('../core/blueprints/autoSmelter');
 const { createCaneFarm } = require('../core/blueprints/caneFarm');
+const { createMobFarm } = require('../core/blueprints/mobFarm');
+const { MOB_DROPS } = require('../core/goals/mobFarm');
+const { createCarpetDuper } = require('../core/blueprints/carpetDuper');
 
 const HARVEST = 8;
 
@@ -189,4 +192,113 @@ const caneFarmFlat = {
   },
 };
 
-module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat };
+const MOB_DROP_COUNT = 4;
+
+// The farm reaches 39 blocks down and about 33 out from its start; refill the rock each run.
+function resetUnderground() {
+  const commands = [];
+  for (let y = GROUND - 44; y < GROUND - 4; y += 3) commands.push(`fill -48 ${y} -48 48 ${Math.min(y + 2, GROUND - 5)} 48 stone`);
+  commands.push(`fill -48 ${GROUND - 4} -48 48 ${GROUND - 2} 48 dirt`, `fill -48 ${GROUND - 1} -48 48 ${GROUND - 1} 48 grass_block`);
+  for (let y = GROUND; y < GROUND + 9; y += 3) commands.push(`fill -48 ${y} -48 48 ${y + 2} 48 air`);
+  return commands;
+}
+
+// Easy difficulty at a fixed noon: the surface stays too bright to spawn
+// anything, so every mob comes from the farm's dark spawning floor.
+const mobFarmFlat = {
+  name: 'mobfarm-flat',
+  description: `Flat plains on solid stone, easy difficulty at noon, handed an iron pickaxe, 4 water buckets, a hopper and a chest; dig an underground dark-room mob farm and collect ${MOB_DROP_COUNT} mob drops from it.`,
+  // A world of its own without mineshafts: mobs spawned in any other dark
+  // tunnel fill the hostile mob cap, and one corridor ran past the alcove.
+  serverProperties: {
+    ...cobbleGeneratorFlat.serverProperties, 'level-name': 'mobfarm-solid',
+    'generator-settings': JSON.stringify({ ...FLAT_GENERATOR, structure_overrides: [] }),
+  },
+  defaultDifficulty: 'easy',
+  timeoutMs: 25 * 60 * 1000,
+  setup({ username, rng, difficulty = 'easy' }) {
+    const x = Math.round((rng() - 0.5) * 16);
+    const z = Math.round((rng() - 0.5) * 16);
+    const yaw = Math.round(rng() * 360) - 180;
+    return {
+      commands: [
+        ...commonSetup(username, difficulty),
+        ...resetUnderground(),
+        // Nothing spawns within 24 blocks of the world spawn: keep it well away from the farm.
+        'gamerule spawnRadius 0', `setworldspawn 0 ${GROUND} 120`,
+        'kill @e[type=item]', 'gamerule doMobSpawning true',
+        `give ${username} iron_pickaxe`, `give ${username} iron_shovel`, `give ${username} water_bucket 4`,
+        `give ${username} hopper`, `give ${username} chest`, `give ${username} bread 16`,
+        `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
+      ],
+      details: { start: { x, z, yaw } },
+    };
+  },
+  start: (companion) => companion.mobFarm({ count: MOB_DROP_COUNT }),
+  async verify({ server, username, goal }) {
+    const memory = goal?.memory;
+    if (!memory?.farm) return { pass: false, details: { reason: 'no_site' } };
+    const f = createMobFarm(memory.farm.anchor, memory.farm.facing);
+    // Where the monsters are: on the spawning floor, or anywhere else in the world.
+    const count = async (selector) => {
+      const match = await server.query(`execute if entity ${selector}`, /Test (passed|failed)(?:, count: (\d+))?/);
+      return match[2] ? Number(match[2]) : 0;
+    };
+    const a = f.anchor;
+    const monsters = {
+      all: await count('@e[type=#minecraft:skeletons]') + await count('@e[type=zombie]') + await count('@e[type=creeper]') + await count('@e[type=spider]'),
+      floor: await count(`@e[type=!player,type=!item,x=${a.x - 10},y=${f.levels.feet - 1},z=${a.z - 10},dx=20,dy=3,dz=20]`),
+      shaft: await count(`@e[type=!player,type=!item,x=${a.x},y=${f.levels.bottom},z=${a.z},dx=0,dy=${f.levels.feet - f.levels.bottom - 2},dz=0]`),
+    };
+    server.command('gamerule doMobSpawning false');
+    const parts = {};
+    for (const part of f.parts) {
+      parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+    }
+    for (const [i, w] of f.water.entries()) parts[`water${i}`] = await testBlock(server, w, 'minecraft:water[level=0]');
+    const drops = {};
+    for (const item of MOB_DROPS) drops[item] = await countOnPlayer(server, username, `minecraft:${item}`);
+    const total = Object.values(drops).reduce((a, b) => a + b, 0);
+    const pass = Object.values(parts).every(Boolean) && total >= MOB_DROP_COUNT;
+    return { pass, details: { farm: { anchor: f.anchor, facing: f.facing }, parts, drops, total, taken: memory.taken, monsters } };
+  },
+};
+
+const CARPETS = 8;
+
+const carpetDuperFlat = {
+  name: 'carpetdupe-flat',
+  description: `Flat plains, handed a sticky piston, 2 slime blocks, a dead coral fan, one white carpet and a stone button; build a carpet duplicator and press it until ${CARPETS} new carpets are on the player.`,
+  serverProperties: cobbleGeneratorFlat.serverProperties,
+  timeoutMs: 6 * 60 * 1000,
+  setup({ username, rng, difficulty = 'peaceful' }) {
+    const x = Math.round((rng() - 0.5) * 16);
+    const z = Math.round((rng() - 0.5) * 16);
+    const yaw = Math.round(rng() * 360) - 180;
+    return {
+      commands: [
+        ...commonSetup(username, difficulty),
+        ...resetArea(),
+        `give ${username} stone_pickaxe`, `give ${username} sticky_piston`, `give ${username} slime_block 2`,
+        `give ${username} dead_tube_coral_fan`, `give ${username} white_carpet`, `give ${username} stone_button`,
+        `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
+      ],
+      details: { start: { x, z, yaw } },
+    };
+  },
+  start: (companion) => companion.carpetDuper({ count: CARPETS }),
+  async verify({ server, username, goal }) {
+    const memory = goal?.memory;
+    if (!memory?.device) return { pass: false, details: { reason: 'no_site' } };
+    const d = createCarpetDuper(memory.device.anchor, memory.device.facing);
+    const parts = {};
+    for (const part of d.parts) {
+      parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+    }
+    const carpets = await countOnPlayer(server, username, 'minecraft:white_carpet');
+    const pass = Object.values(parts).every(Boolean) && carpets >= CARPETS;
+    return { pass, details: { device: { anchor: d.anchor, facing: d.facing }, parts, carpets, presses: memory.presses } };
+  },
+};
+
+module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat };

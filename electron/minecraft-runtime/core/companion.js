@@ -17,6 +17,8 @@ const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
 const { createCaneFarmGoal } = require('./goals/caneFarm');
+const { createMobFarmGoal } = require('./goals/mobFarm');
+const { createCarpetDuperGoal } = require('./goals/carpetDuper');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
@@ -36,6 +38,13 @@ function configureMovements(bot) {
   movements.maxDropDown = 4; // a 4-block drop costs one heart; 3 strands the bot on tree tops
   movements.infiniteLiquidDropdownDistance = false;
   movements.canOpenDoors = true;
+  // Fences and gates are someone's pen; the furniture and machine parts are
+  // home (chasing a skeleton out of the house once broke the bed, and the bot
+  // slept outside after that). Paths walk around or through, never dig them.
+  const KEEP = /(_fence|_fence_gate|_bed|_door|^chest|^trapped_chest|^furnace|^crafting_table|^hopper|^barrel)$/;
+  for (const block of Object.values(bot.registry.blocksByName)) {
+    if (KEEP.test(block.name)) movements.blocksCantBreak.add(block.id);
+  }
   // Water is allowed but costly: banning it left the bot unable to reach
   // anything across a lake (all the animals on the far shore).
   movements.liquidCost = 5;
@@ -47,10 +56,6 @@ function configureMovements(bot) {
     const below = bot.blockAt(block.position.offset(0, -1, 0));
     return below && leaves.has(below.type) ? 25 : 0;
   });
-  // A path never digs through the furniture or a machine: chasing a skeleton
-  // out of the house once broke the bed and the bot slept outside after that.
-  const KEEP = /(_bed|_door|^chest|^trapped_chest|^furnace|^crafting_table|^hopper|^barrel)$/;
-  for (const b of Object.values(bot.registry.blocksByName)) if (KEEP.test(b.name)) movements.blocksCantBreak.add(b.id);
   bot.pathfinder.setMovements(movements);
   // Mining paths through stone need more search time than surface walks.
   bot.pathfinder.thinkTimeout = 10000;
@@ -167,6 +172,18 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     caneFarm(options = {}) {
       const goal = createCaneFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    mobFarm(options = {}) {
+      const goal = createMobFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    carpetDuper(options = {}) {
+      const goal = createCarpetDuperGoal({ bot, ...options });
       director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
