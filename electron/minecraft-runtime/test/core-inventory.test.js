@@ -223,7 +223,7 @@ test('disposing companions on a reused bot releases old survival death listeners
   const { createCompanion } = require('../core/companion');
   for (let n = 0; n < 10; n++) {
     const companion = createCompanion({ bot });
-    assert.equal(bot.listenerCount('death'), 3);
+    assert.equal(bot.listenerCount('death'), 4);
     await companion.dispose();
     assert.equal(bot.listenerCount('death'), 0);
     assert.equal(bot.listenerCount('end'), 1);

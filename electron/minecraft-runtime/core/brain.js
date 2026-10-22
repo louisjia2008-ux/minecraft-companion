@@ -39,6 +39,7 @@ function createBrain({
       want: (state) => (def.isDone(state) ? 0 : 1),
       run: (ctx) => def.run(ctx),
       isGoal: true,
+      def,
     };
   }
 
@@ -110,6 +111,8 @@ function createBrain({
     // failures, so a step that fails instantly cannot burn the budget in a
     // second; other behaviors back off so a failing reflex cannot monopolize the body.
     if (behavior.isGoal) {
+      // A replaced goal's failure says nothing about the goal that replaced it.
+      if (behavior.def !== goal?.def) return;
       const stalls = goal?.stalls || 0;
       if (goalRetryDelayMs > 0) {
         failures.set(behavior.name, { count: stalls, until: now() + Math.min(3000, goalRetryDelayMs * (stalls + 1)) });
@@ -172,7 +175,8 @@ function createBrain({
       const best = choose(state);
       if (running) {
         const current = running.behavior;
-        const stillWanted = candidates().some((b) => b.name === current.name);
+        // A goal replaced by another one of the same name is no longer wanted.
+        const stillWanted = candidates().some((b) => b.name === current.name && b.def === current.def);
         if (!stillWanted) {
           await preempt('goal_cleared');
         } else if (best && best.band > current.band) {
@@ -204,6 +208,15 @@ function createBrain({
       goal = null;
       if (running?.behavior.isGoal) await preempt(reason);
       emit('goal_cleared', { goal: name, reason });
+    },
+    /** Ends the goal as failed from outside (a death loop, say) instead of letting it retry. */
+    async failGoal(reason = 'failed') {
+      if (!goal) return;
+      const { def } = goal;
+      const state = safePerceive();
+      goal = null;
+      if (running?.behavior.isGoal) await preempt(reason);
+      emit('goal_failed', { goal: def.name, progress: state ? safeProgress(def, state) : null, reasons: [reason] });
     },
     /** Aborts whatever runs now but keeps the goal; the next tick re-plans. */
     async interrupt(reason = 'interrupted') {

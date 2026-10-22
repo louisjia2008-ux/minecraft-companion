@@ -176,3 +176,19 @@ test('death or missing state aborts whatever is running', async () => {
   assert.equal(brain.status().running, null);
   await brain.dispose();
 });
+
+test('a new goal with the same name preempts the running one', async () => {
+  const { world, perceive } = makeWorld();
+  const brain = createBrain({ perceive });
+  let oldRuns = 0;
+  const old = { ...logGoal(world, 99, { stepMs: 200 }), run: async (ctx) => { oldRuns += 1; await sleep(200, ctx.signal); return { ok: true }; } };
+  brain.setGoal(old);
+  await brain.tick();
+  assert.equal(oldRuns, 1);
+  const replacement = logGoal(world, 1);
+  brain.setGoal(replacement);
+  await brain.tick();
+  await runUntil(brain, () => world.logs >= 1, 150);
+  assert.equal(oldRuns, 1);
+  await brain.dispose();
+});

@@ -217,11 +217,14 @@ function shortBy(ingredients, have) {
  * Places `itemMatch` at `position`. Options:
  *   faces  - allowed directions from the target to its supporting block
  *   stand  - exact cell to stand in (orientation-sensitive blocks like beds)
- *   verify - extra check after placing (e.g. both bed halves)
+ *   verify - extra check after placing (e.g. both bed halves, a hopper's facing)
+ *   sneak  - hold sneak while clicking, so a chest, hopper or furnace can be
+ *            the supporting block instead of opening it. Hoppers point at the
+ *            block they are placed against, so device parts rely on this.
  */
 const INTERACTIVE = /(_door|_trapdoor|_fence_gate|_bed|_button|chest|barrel|crafting_table|furnace|smoker|anvil|lever|hopper|dispenser|dropper|lectern|loom|_table|enchanting|shulker_box|stonecutter|grindstone|cartography|brewing|beacon|bell|_sign|note_block|jukebox|composter|cauldron)$/;
 
-async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, alsoClear = [] } = {}) {
+async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sneak = false, alsoClear = [] } = {}) {
   const target = v(position);
   const current = bot.blockAt(target);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
@@ -251,7 +254,7 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
   } else {
     // Clicking a door, chest or bed uses it instead of placing against it.
     const allFaces = faces || [new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(0, 0, -1), new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(1, 0, 0)];
-    const usableFaces = allFaces.filter((f) => !INTERACTIVE.test(bot.blockAt(target.plus(f))?.name || ''));
+    const usableFaces = sneak ? allFaces : allFaces.filter((f) => !INTERACTIVE.test(bot.blockAt(target.plus(f))?.name || ''));
     const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces: usableFaces });
     // Same eye point the goal itself uses, so "arrived" agrees with the pathfinder.
     const head = () => bot.entity.position.floored().offset(0.5, 1.6, 0.5);
@@ -273,9 +276,15 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
   if (entityInside(bot, target) || alsoClear.some((p) => entityInside(bot, v(p)))) return fail('cell_occupied_by_entity');
   try {
     await bot.equip(item, 'hand');
+    if (sneak) {
+      bot.setControlState('sneak', true);
+      await sleep(150, ctx.signal); // the server must see the sneak before the click
+    }
     await runCancellable(() => bot.placeBlock(ref, face), { signal: ctx.signal, timeoutMs: 6000, timeoutCode: 'place_timeout' });
   } catch (error) {
     if (isAbort(error)) throw error;
+  } finally {
+    if (sneak) bot.setControlState('sneak', false);
   }
   const placed = await waitUntil(() => {
     const block = bot.blockAt(target);
@@ -286,6 +295,57 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, al
     face: `${face.x},${face.y},${face.z}`, at: posKey(bot.entity.position), now: bot.blockAt(target)?.name || null,
     holding: bot.heldItem?.name || null });
   return fail('place_unconfirmed');
+}
+
+function fluidLevel(block) {
+  const level = block?.getProperties?.().level;
+  return Number.isFinite(Number(level)) ? Number(level) : block?.metadata;
+}
+
+/** True when `block` is a still source of `fluid` (water or lava). */
+function isFluidSource(block, fluid) {
+  return block?.name === fluid && fluidLevel(block) === 0;
+}
+
+/**
+ * Empties a water or lava bucket into the cell at `position`, which must have
+ * a solid floor. A filled bucket goes where the player's look ray hits, so the
+ * bot stands where it can see the floor's top face, aims at it and uses the
+ * item. Done only once the server shows a source block in that cell.
+ */
+async function pourLiquid(bot, ctx, position, fluid) {
+  const target = v(position);
+  if (isFluidSource(bot.blockAt(target), fluid)) return { ok: true, already: true };
+  const current = bot.blockAt(target);
+  if (!current) return fail('unloaded');
+  if (!AIR.has(current.name) && current.name !== fluid) return fail('occupied', { block: current.name });
+  const floor = bot.blockAt(target.offset(0, -1, 0));
+  if (!floor || floor.boundingBox !== 'block') return fail('no_support');
+  const bucket = bot.inventory.items().find((i) => i.name === `${fluid}_bucket`);
+  if (!bucket) return fail('no_material', { missing: [{ name: `${fluid}_bucket`, short: 1 }] });
+
+  const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces: [new Vec3(0, -1, 0)] });
+  const head = () => bot.entity.position.floored().offset(0.5, 1.6, 0.5);
+  const usable = () => goal.getFaceAndRef(head()) !== null && !overlaps(bot.entity, target);
+  if (!usable()) {
+    const result = await goToGoal(bot, ctx, goal, usable);
+    if (!result.ok) return result;
+  }
+  const found = goal.getFaceAndRef(head());
+  if (!found) return fail('no_pour_face');
+  if (entityInside(bot, target)) return fail('cell_occupied_by_entity');
+  try {
+    await bot.equip(bucket, 'hand');
+    await bot.lookAt(found.to, true);
+    bot.activateItem();
+  } catch (error) {
+    if (isAbort(error)) throw error;
+  }
+  const poured = await waitUntil(() => isFluidSource(bot.blockAt(target), fluid), { timeoutMs: 2000, signal: ctx.signal });
+  if (poured) return { ok: true };
+  ctx.record('pour_failed', { target: posKey(target), fluid, at: posKey(bot.entity.position),
+    now: bot.blockAt(target)?.name || null, holding: bot.heldItem?.name || null });
+  return fail('pour_unconfirmed');
 }
 
 function goToGoal(bot, ctx, goal, arrived) {
@@ -486,6 +546,77 @@ async function explore(bot, ctx, memory) {
   return moved >= 10 ? { ok: true, moved: Math.round(moved) } : fail(result.ok ? 'explore_blocked' : result.reason);
 }
 
+/**
+ * Opens the chest and stores `count` of each named item (all of it when no
+ * count). Confirmed by the bag emptying, not by the deposit call returning.
+ */
+async function storeItems(bot, ctx, { position, items }) {
+  const moved = await goToBlock(bot, ctx, position);
+  if (!moved.ok) return moved;
+  const block = bot.blockAt(v(position));
+  if (block?.name !== 'chest') return fail('chest_missing');
+  const freeBefore = bot.inventory.emptySlotCount();
+  const stored = {};
+  let chest;
+  try {
+    chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
+    for (const { name, count } of items) {
+      const type = bot.registry.itemsByName[name]?.id;
+      const have = bot.inventory.items().filter((i) => i.name === name).reduce((sum, i) => sum + i.count, 0);
+      const n = Math.min(have, count ?? have);
+      if (!Number.isInteger(type) || n <= 0) continue;
+      try {
+        await chest.deposit(type, null, n);
+        stored[name] = n;
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        break; // the chest is full
+      }
+    }
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return fail('chest_failed');
+  } finally {
+    try { chest?.close(); } catch (_) { /* ignore */ }
+  }
+  // Mineflayer syncs the inventory only once the window is closed.
+  const freed = Object.keys(stored).length > 0
+    && await waitUntil(() => bot.inventory.emptySlotCount() > freeBefore, { timeoutMs: 2000, signal: ctx.signal });
+  return freed ? { ok: true, stored } : fail('chest_full');
+}
+
+/** Takes every matching stack out of a chest; ok once the inventory holds more of it. */
+async function takeItems(bot, ctx, { position, itemMatch }) {
+  const moved = await goToBlock(bot, ctx, position);
+  if (!moved.ok) return moved;
+  const block = bot.blockAt(v(position));
+  if (block?.name !== 'chest') return fail('chest_missing');
+  const count = () => ownedItems(bot).filter((i) => itemMatch(i.name)).reduce((sum, i) => sum + i.count, 0);
+  const before = count();
+  let chest;
+  try {
+    chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
+    const stacks = chest.containerItems().filter((i) => itemMatch(i.name));
+    if (stacks.length === 0) return fail('chest_empty');
+    for (const stack of stacks) {
+      try {
+        await chest.withdraw(stack.type, null, stack.count);
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        break; // inventory full: keep what earlier stacks already moved
+      }
+    }
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return fail('chest_failed');
+  } finally {
+    try { chest?.close(); } catch (_) { /* ignore */ }
+  }
+  // Mineflayer syncs the inventory only once the window is closed.
+  const gained = await waitUntil(() => count() > before, { timeoutMs: 2000, signal: ctx.signal });
+  return gained ? { ok: true, taken: count() - before } : fail('take_unconfirmed');
+}
+
 /** Opens the chest and stores one item; confirmed by the container contents. */
 async function useChest(bot, ctx, { position, itemMatch }) {
   const moved = await goToBlock(bot, ctx, position);
@@ -508,6 +639,111 @@ async function useChest(bot, ctx, { position, itemMatch }) {
   } finally {
     try { chest?.close(); } catch (_) { /* ignore */ }
   }
+}
+
+function chestCounts(chest) {
+  const counts = {};
+  for (const item of chest.containerItems()) counts[item.name] = (counts[item.name] || 0) + item.count;
+  return counts;
+}
+
+/**
+ * Opens a chest, deposits up to `count` of each wanted item, and returns what
+ * the chest holds afterwards as the server shows it. With no wants it only
+ * reads the contents.
+ */
+async function storeInChest(bot, ctx, { position, wants = [] }) {
+  const moved = await goToBlock(bot, ctx, position);
+  if (!moved.ok) return moved;
+  const block = bot.blockAt(v(position));
+  if (block?.name !== 'chest') return fail('chest_missing');
+  let chest;
+  try {
+    chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
+    const stored = {};
+    for (const { match, count } of wants) {
+      let left = count;
+      for (const item of bot.inventory.items().filter((i) => match(i.name))) {
+        if (left <= 0) break;
+        const n = Math.min(left, item.count);
+        const before = chestCounts(chest)[item.name] || 0;
+        try {
+          await chest.deposit(item.type, null, n);
+        } catch (error) {
+          if (isAbort(error)) throw error;
+          break; // chest full: what did go in is still counted below
+        }
+        await waitUntil(() => (chestCounts(chest)[item.name] || 0) > before, { timeoutMs: 2000, signal: ctx.signal });
+        const added = (chestCounts(chest)[item.name] || 0) - before;
+        if (added > 0) stored[item.name] = (stored[item.name] || 0) + added;
+        left -= Math.max(0, added);
+      }
+    }
+    const contents = chestCounts(chest);
+    // Nothing went in (a full chest): not progress, even though the chest was read.
+    if (wants.length && Object.keys(stored).length === 0) return fail('chest_full', { contents });
+    return { ok: true, contents, stored };
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return fail('chest_failed');
+  } finally {
+    try { chest?.close(); } catch (_) { /* ignore */ }
+  }
+}
+
+const sourceLevel = (block) => Number(block?.getProperties?.().level);
+
+/**
+ * Fills one empty bucket from a still source of water or lava, seen from dry
+ * ground. Confirmed only by the full bucket appearing in the inventory.
+ */
+async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48 }) {
+  const full = `${liquid}_bucket`;
+  if (!bot.inventory.items().some((i) => i.name === 'bucket')) return fail('no_bucket');
+  // Lava is only approached in good health: a slip costs a lot more than water.
+  if (liquid === 'lava' && bot.health < 14) return fail('low_health');
+  const id = bot.registry.blocksByName[liquid]?.id;
+  if (id === undefined) return fail('unknown_block');
+  const here = bot.entity.position;
+  const sources = bot.findBlocks({ matching: id, maxDistance: radius, count: 128 })
+    .filter((p) => !blacklist.has(posKey(p)))
+    .map((p) => bot.blockAt(p))
+    // A still source with open air above it, so the bucket can be aimed from the side or above.
+    .filter((b) => b && sourceLevel(b) === 0 && AIR.has(bot.blockAt(b.position.offset(0, 1, 0))?.name || ''))
+    .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here));
+  if (sources.length === 0) return fail('no_target_in_range');
+  const target = sources[0];
+  const key = posKey(target.position);
+  ctx.record('target_selected', { block: liquid, position: key, options: sources.length });
+  const centre = target.position.offset(0.5, 0.5, 0.5);
+  if (!actions.withinReach(bot, target.position, 4)) {
+    const moved = await actions.goNear(bot, ctx, target.position.offset(0.5, 1, 0.5), 2, { timeoutMs: 45000 });
+    if (!moved.ok && !actions.withinReach(bot, target.position, 4.5)) {
+      blacklist.add(key, moved.reason);
+      return moved;
+    }
+  }
+  if (liquid === 'lava' && bot.entity.isInLava) return fail('in_lava');
+  const before = actions.countItems(bot, (n) => n === full);
+  const bucket = bot.inventory.items().find((i) => i.name === 'bucket');
+  if (!bucket) return fail('no_bucket');
+  try {
+    await bot.equip(bucket, 'hand');
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return fail('equip_failed');
+  }
+  // The server traces the look from the eyes to the first source block; aim
+  // at the liquid's surface first, then at its middle.
+  for (const aim of [target.position.offset(0.5, 0.85, 0.5), centre]) {
+    await bot.lookAt(aim, true);
+    await sleep(100, ctx.signal);
+    try { bot.activateItem(); } catch (_) { /* checked below */ }
+    const filled = await waitUntil(() => actions.countItems(bot, (n) => n === full) > before, { timeoutMs: 1500, signal: ctx.signal });
+    if (filled) return { ok: true, filled: full };
+  }
+  blacklist.add(key, 'bucket_unfilled');
+  return fail('bucket_unfilled');
 }
 
 /**
@@ -595,6 +831,8 @@ async function digOut(bot, ctx, bunker) {
 const BED_REPLY = /set_spawn|no_sleep|not_safe|too_far|obstructed|occupied/;
 
 async function useBed(bot, ctx, { position }) {
+  // Outside the overworld a bed explodes when used.
+  if (String(bot.game?.dimension || 'overworld').replace(/^minecraft:/, '') !== 'overworld') return fail('bed_explodes_here');
   const moved = await goToBlock(bot, ctx, position);
   if (!moved.ok) return moved;
   const block = bot.blockAt(v(position));
@@ -632,4 +870,5 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, pourLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeItems, takeItems,
+  storeInChest, fillBucket, useBed, digIn, digOut, inventoryCounts, entityInside };

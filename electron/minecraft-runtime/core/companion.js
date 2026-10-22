@@ -6,12 +6,20 @@ const { pathfinder, Movements } = require('mineflayer-pathfinder');
 const { createBrain } = require('./brain');
 const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
+const { createRecovery } = require('./behaviors/recovery');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
 const { createRanchGoal } = require('./goals/ranch');
+const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
+const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
+const { createAutoSmelterGoal } = require('./goals/autoSmelter');
+const { createNetherQuartzGoal } = require('./goals/netherQuartz');
+const { createDefaultCards } = require('./goals/registry');
+const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
+const { installEdgeNudge } = require('./edgeNudge');
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
@@ -42,22 +50,38 @@ function configureMovements(bot) {
   return movements;
 }
 
-function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
+function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false } = {}) {
   if (!bot) throw new TypeError('bot is required');
   installInventoryCompatibility(bot);
+  const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
 
+  // Stuck bodies, full bags and death loops are recovered for every goal alike.
+  const recovery = createRecovery({ bot });
   // Animals the current goal keeps (a ranch's herd) are not hunted for food.
   let spare = () => false;
-  const behaviors = createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) });
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors];
+  let director = null;
   const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
   const brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
-    onEvent,
+    onEvent: (event) => {
+      recovery.observe(event);
+      director?.handleEvent(event);
+      onEvent(event);
+    },
   });
-  const timer = setInterval(() => { brain.tick().catch(() => {}); }, tickMs);
+  recovery.attach(brain);
+  // With no player task the director picks the next goal itself; off unless asked for.
+  const { cards, stageOf } = createDefaultCards({ bot });
+  director = createDirector({ brain, perceive: () => perceive(bot), cards, stageOf, onEvent });
+  if (autonomy) director.enable();
+  const timer = setInterval(() => {
+    try { director.tick(); } catch (error) { onEvent({ type: 'autonomy_error', at: Date.now(), reason: String(error?.message || error) }); }
+    brain.tick().catch(() => {});
+  }, tickMs);
   timer.unref?.();
   // Death interrupts the current action only: progress lives in the world, so
   // after respawning the goal simply re-plans from what is left.
@@ -66,39 +90,85 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
 
   return {
     brain,
+    director,
     gatherLogs(count) {
+      director.notePlayerGoal();
       useGoal(createGatherLogsGoal({ bot, count }));
       return brain.tick();
     },
     homestead(options = {}) {
-      const goal = createHomesteadGoal({ bot, ...options });
+      // One house per run: the director keeps building the one the player asked for.
+      const goal = Object.keys(options).length === 0 && director.memory.homestead
+        ? director.memory.homestead
+        : createHomesteadGoal({ bot, ...options });
+      director.memory.homestead = goal;
+      director.notePlayerGoal();
       useGoal(goal);
       return brain.tick().then(() => goal);
     },
     farm(options = {}) {
       const goal = createFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
       useGoal(goal);
       return brain.tick().then(() => goal);
     },
     ranch(options = {}) {
       const goal = createRanchGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    netherQuartz(options = {}) {
+      const goal = createNetherQuartzGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
+    gatherMaterials(options) {
+      const goal = createGatherMaterialsGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    cobbleGenerator(options = {}) {
+      const goal = createCobbleGeneratorGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    autoSmelter(options = {}) {
+      const goal = createAutoSmelterGoal({ bot, ...options });
+      director.notePlayerGoal();
       useGoal(goal);
       return brain.tick().then(() => goal);
     },
     setGoal(goal) {
+      director.notePlayerGoal();
       useGoal(goal);
       return brain.tick();
     },
+    /** Lets the bot choose its own goals while no player task is set. */
+    setAutonomy(on) {
+      if (on) director.enable();
+      else return director.disable();
+      return Promise.resolve();
+    },
     async stop(reason = 'user_stop') {
+      // A player's stop also stops the bot from picking new goals on its own.
+      await director.disable(reason);
       await brain.stop(reason);
       haltBody(bot);
     },
-    status: () => brain.status(),
+    status: () => ({ ...brain.status(), recovery: recovery.status(), autonomy: director.status() }),
     async dispose() {
       clearInterval(timer);
+      await director.disable('disposed');
       bot.removeListener('death', onDeath);
+      removeEdgeNudge();
       await brain.dispose();
       for (const behavior of behaviors) behavior.dispose?.();
+      recovery.dispose();
       haltBody(bot);
     },
   };

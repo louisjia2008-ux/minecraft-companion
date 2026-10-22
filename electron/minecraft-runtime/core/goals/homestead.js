@@ -40,7 +40,6 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     furnace: { item: null, input: 0, output: 0 },
     explore: {},
     exploreStreak: 0,
-    pathFailures: 0,
     shortfall: {},
     verified: { crafting_table: false, furnace: false, chest: false, bed: false },
     steps: 0,
@@ -536,19 +535,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     recover() {
       blacklist.clear();
       skipped.clear();
-      memory.pathFailures = 0;
       memory.recovery = true;
     },
     memory,
     isDone: (state) => complete(state),
     progress: () => memory.steps,
     async run(ctx) {
-      // Several "no path" results in a row usually mean the bot itself is stuck.
-      if (memory.pathFailures >= 2) {
-        memory.pathFailures = 0;
-        ctx.record('unstick', { at: bot.entity.position.floored() });
-        return actions.unstick(bot, ctx);
-      }
       if (memory.recovery) {
         memory.recovery = false;
         ctx.record('recovery', { at: bot.entity.position.floored() });
@@ -564,10 +556,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       // refill the stall budget of a step that keeps failing every morning.
       if (result.ok && !result.waited) {
         memory.steps += 1;
-        memory.pathFailures = 0;
         if (!result.moved) memory.exploreStreak = 0;
-      } else if (['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck'].includes(result.reason)) {
-        memory.pathFailures += 1;
       }
       return result;
     },
@@ -593,6 +582,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         if (movements && memory.protect) movements.exclusionAreasBreak = movements.exclusionAreasBreak.filter((f) => f !== memory.protect);
         memory.house = null;
         memory.protect = null;
+        bot.companionChest = null;
         memory.siteDigs = 0;
         memory.houseBuilt = 0;
         memory.furnace = { item: null, input: 0, output: 0 }; // whatever is smelting stays behind
@@ -622,6 +612,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const hs = houseState();
     memory.houseBuilt = memory.house.blocks.length - hs.missing.length;
     memory.houseBed = hs.placed.bed;
+    // A full bag is emptied into the house chest rather than onto the ground.
+    bot.companionChest = hs.placed.chest ? memory.house.furniture.chest.position : null;
     const inventory = plannerInventory(state);
     const stations = { crafting_table: hs.placed.crafting_table, furnace: hs.placed.furnace };
     // Evenings: home before dark, into bed at dusk, else a sealed bunker.

@@ -142,10 +142,10 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     const status = companion.status();
     const line = { minute: Math.round((Date.now() - startedAt) / 60000), running: status.running,
       steps: status.goal?.progress, health: bot.health, food: bot.food, deaths,
-      position: bot.entity?.position?.floored?.(), inventory: inv };
+      position: bot.entity?.position?.floored?.(), dimension: bot.game?.dimension, inventory: inv };
     write('heartbeat', line);
     console.log(`    [${line.minute}m] ${line.running || 'idle'} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
-      + ` food=${bot.food} deaths=${deaths} ${Object.entries(inv).map(([k, n]) => `${k}:${n}`).join(' ')}`);
+      + ` food=${bot.food} deaths=${deaths} ${line.dimension} ${Object.entries(inv).map(([k, n]) => `${k}:${n}`).join(' ')}`);
   }, 60000);
   // Scenarios may also end on a world condition (e.g. the next morning).
   const deadline = new AbortController();
@@ -248,6 +248,7 @@ async function main() {
         console.log(`  run ${String(run + 1).padStart(2)}: ${result.pass ? 'PASS' : 'FAIL'}`
           + ` ${Math.round(result.durationMs / 1000)}s${result.reason ? ` (${result.reason})` : ''}`
           + `${result.logsOnServer !== undefined ? ` logs=${result.logsOnServer}` : ''}`
+          + `${result.quartzOnServer !== undefined ? ` quartz=${result.quartzOnServer} dimension=${result.dimension}` : ''}`
           + `${result.placed !== undefined ? ` house=${result.placed}/${result.total} furniture=${JSON.stringify(result.furniture)}`
             + ` gear=${JSON.stringify(result.gear)} chest=${result.chestUsed} bed=${result.bedUsed}` : ''}`);
       }
