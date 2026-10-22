@@ -159,6 +159,29 @@
 | `cobblegen-hopper-flat` | **10/10 通过**（seed 1234） | 刷石机加漏斗和箱子；中位 24 秒，0 次死亡。服务器确认漏斗朝向和箱子位置 |
 
 
+## 生电装置第三步：侦测器甘蔗农场（`goals/caneFarm.js`）
+
+```
+侧视（沿装置方向，g 为地面顶层）
+  g+2   .   3   O   r        O 侦测器，脸朝甘蔗（盯第 3 节）
+  g+1   .   2   P   B        P 活塞，头朝甘蔗（推第 2 节）
+  g     c   1   #   #        r 侦测器背面点亮的红石粉，铺在 B 上；B 被充能后推动旁边的活塞
+  g-1   W   D   #   #        W 水源（上面用泥土 c 盖住），D 甘蔗下的泥土，1-3 甘蔗
+```
+
+机器人站在甘蔗第 1 节旁边下沉一格的 S 里等，第 2 节被推掉后掉落物落在甘蔗格底部，在拾取范围内。
+
+- **布局在真实服务器上试出来**：侦测器直接放在活塞正上方朝甘蔗时，活塞不会动作；可行的是侦测器背面的红石粉 → 方块 B → 旁边的活塞。
+- **放置朝向**：活塞头指向放置它的玩家，侦测器的脸朝玩家看的方向。蓝图给活塞和侦测器各指定一个站位，放完读服务器方块状态核对 `facing`。
+- **泥土会变草**：c 和 B 接受 `dirt` 或 `grass_block`，否则会被当成放错而反复挖掉重放（挖 B 还会把红石粉震掉）。
+- **倒水改进**（`skills.pourLiquid`）：水桶的水落在视线先碰到的方块旁边，从斜角看两格深的坑会碰到坑壁。现在先用射线确认视线确实落在坑底顶面，看不到就换到坑边重新瞄；倒偏的水源用空桶收回（`skills.scoopLiquid`）再倒。
+- **计数**：只有在 S 里等到第 2 节长出来又被活塞推掉、随后背包里多出的甘蔗才算收获。
+- **正常速度也不放弃**：正常随机刻下甘蔗长一节要十几分钟。顶端甘蔗的 `age` 每变一次、或者多长一节，都算一次进展，所以等待不会耗光“无进展”预算。
+
+| 场景 | 结果 | 说明 |
+|---|---|---|
+| `canefarm-flat` | **10/10 通过**（seed 11） | 中位 121 秒，0 次死亡；改倒水后刷石机两个场景回归各 3/3。给活塞、侦测器、红石、1 甘蔗、水桶、4 泥土；随机刻速度调到 200 让甘蔗快长。服务器确认每个零件和朝向、水源，玩家身上至少 4 根甘蔗 |
+
 ## 文件
 
 | 文件 | 作用 |
@@ -168,11 +191,12 @@
 | `inventory.js` | 新核心专用的 Mineflayer 4.37.1 / vanilla 1.21.8 玩家库存槽位转换；不修改共享协议数据或旧代理 |
 | `confirm.js` | `waitUntil` / `runCancellable` / 可中止的 `sleep` |
 | `actions.js` | 寻路（含爬出坑）、挖掘、拾取、进食、攻击、逃离、脱困 |
-| `skills.js` | 采集一个方块、合成、放置方块（可下蹲贴着容器放）、倒水或岩浆、从箱子取物、熔炼、打猎、摘浆果、探索、使用箱子、使用床 |
+| `skills.js` | 采集一个方块、合成、放置方块（可下蹲贴着容器放）、倒水或岩浆（确认视线落在坑底）、用空桶收回放错的水、从箱子取物、熔炼、打猎、摘浆果、探索、使用箱子、使用床 |
 | `knowledge.js` / `planner.js` | 物品来源知识表，以及基于虚拟背包的纯规划器 |
 | `site.js` / `blueprints/starterHouse.js` | 选址、根据世界现状算出整地工作、小屋蓝图 |
 | `blueprints/cobbleGenerator.js` / `goals/cobbleGenerator.js` | 刷石机蓝图（挖空、密封、留空格子，可选漏斗收集）/ 选址、建造、倒液体、挖圆石并验证重新生成 |
 | `blueprints/autoSmelter.js` / `goals/autoSmelter.js` | 自动熔炉零件清单（建造顺序、贴放方向、漏斗朝向）/ 选址、建造、装料、从输出箱取物 |
+| `blueprints/caneFarm.js` / `goals/caneFarm.js` | 侦测器甘蔗农场（侦测器、红石粉、方块、活塞的相对位置和站位）/ 选址、挖坑倒水、建造、等待活塞收割 |
 | `nether.js` | 维度判断、找传送门、4×5 门框（四角用圆石，顶排挂在顶角上）、点火、穿门、下界寻路设置（岩浆旁代价、下落上限 3、不挖金矿） |
 | `goals/netherQuartz.js` | 搭门或复用已有门 → 进下界 → 采石英 → 回主世界；死后从主世界走回记住的门再进去 |
 | `goals/gatherBlocks.js` / `goals/homestead.js` | 采集目标 / 完整任务链目标 |
@@ -192,6 +216,7 @@ npm run scenario -- --accept-eula --scenario homestead-flat --runs 3
 npm run scenario -- --accept-eula --scenario homestead-natural --runs 3
 npm run scenario -- --accept-eula --scenario cobblegen-flat --runs 10
 npm run scenario -- --accept-eula --scenario cobblegen-hopper-flat,smelter-flat --runs 10
+npm run scenario -- --accept-eula --scenario canefarm-flat --runs 10
 
 # seed=500 的第 4、5 轮地点；同一服务器、世界与玩家，只改变客户端生命周期。
 # 默认 reuse；fresh 在每轮验证完成后断开并重新建立 Mineflayer bot。
