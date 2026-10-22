@@ -210,7 +210,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
   let hidden = null;
+  // Only with a moment to spare: digging in takes seconds, and a monster
+  // already next to the bot kills it halfway down. Then it fights instead.
   const hurtUnderground = (state) => state.health <= 8 && state.hostiles.some((h) => h.distance <= 8)
+    && !state.hostiles.some((h) => h.distance <= 3)
     && typeof actions.underground === 'function' && actions.underground(bot);
   const hide = {
     name: 'hide',
