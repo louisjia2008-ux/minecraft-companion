@@ -10,9 +10,9 @@
 //   5. a part is missing/wrong -> dig the wrong block, or place the part
 //                                 (piston and observer from their standing cell,
 //                                  facing checked on the server's block state)
-//   6. otherwise               -> wait in S for the piston to fire and pick up the drop
-// Only cane seen falling after the piston fired (the 2nd block vanished while
-// the bot was not digging) counts.
+//   6. otherwise               -> wait in S for the cane to grow a step, or for
+//                                 the piston to fire and pick up the drop
+// Only cane gained after the column was cut while the bot waited counts.
 
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
@@ -27,7 +27,8 @@ const GRAVITY = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|.*_con
 // The cane grows on dirt-like ground; everything dug must be plain soil or stone.
 const CANE_SOIL = new Set(['grass_block', 'dirt', 'coarse_dirt', 'podzol', 'rooted_dirt', 'mycelium', 'mud', 'moss_block']);
 const DIGGABLE = new Set([...CANE_SOIL, 'stone', 'andesite', 'diorite', 'granite', 'cobblestone', 'clay', 'terracotta']);
-// One random-tick growth step is minutes apart on a normal world.
+// At the normal random tick speed the top block ages one step about every
+// 68 s (16 steps per block); each wait ends at the next step or the timeout.
 const HARVEST_WAIT_MS = 60000;
 
 const isAir = (block) => !block || block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air';
@@ -75,7 +76,7 @@ function chooseCaneSite(blockAt, around, { radius = 10 } = {}) {
 function createCaneFarmGoal({ bot, anchor = null, facing = 'east', count = 4,
   skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
-  const memory = { farm: anchor ? createCaneFarm(anchor, facing) : null, harvested: 0, harvests: 0, guarded: false };
+  const memory = { farm: anchor ? createCaneFarm(anchor, facing) : null, harvested: 0, harvests: 0, growth: 0, guarded: false };
   const blockAt = (p) => bot.blockAt(v(p));
   const facingOf = (block) => block?.getProperties?.().facing;
   const nameOk = (part, name) => name === part.block || Boolean(part.accept?.includes(name));
@@ -176,20 +177,39 @@ function createCaneFarmGoal({ bot, anchor = null, facing = 'east', count = 4,
     return inStand() ? { ok: true } : (moved.ok ? { ok: false, reason: 'not_in_stand' } : moved);
   }
 
-  // Waits in S for the piston to cut the cane, then for the drop to arrive.
+  // Waits in S for the next change of the cane: a growth step (the top block's
+  // age, or a new block) or the piston cutting it. Growth counts as progress, so
+  // a farm growing at normal speed (minutes per block) is not given up on.
   async function waitForHarvest(ctx) {
     const moved = await goToStand(ctx);
     if (!moved.ok) return moved;
     const c = memory.farm.cells;
     const cane = (n) => n === 'sugar_cane';
+    const column = [c.cane1, c.cane2, c.cane3];
+    const height = () => {
+      let h = 0;
+      while (h < column.length && blockAt(column[h])?.name === 'sugar_cane') h += 1;
+      return h;
+    };
+    const growth = () => {
+      const h = height();
+      return `${h}:${h ? blockAt(column[h - 1])?.getProperties?.().age : ''}`;
+    };
     const before = actions.countItems(bot, cane);
-    const grown = () => blockAt(c.cane2)?.name === 'sugar_cane';
-    // A full cycle: the 2nd block grows, then the piston removes it.
-    if (!grown()) {
-      const up = await waitUntil(grown, { timeoutMs: HARVEST_WAIT_MS, signal: ctx.signal });
-      if (!up) return { ok: false, reason: 'cane_not_growing' };
+    const startHeight = height();
+    const start = growth();
+    const changed = await waitUntil(() => growth() !== start, { timeoutMs: HARVEST_WAIT_MS, signal: ctx.signal });
+    if (!changed) return { ok: false, reason: 'cane_not_growing' };
+    const h = height();
+    if (h === 0) return { ok: false, reason: 'cane_lost' }; // replanted as a part next run
+    if (h > startHeight && h < column.length) {
+      memory.growth += 1;
+      ctx.record('cane_growth', { height: h, growth: memory.growth });
+      return { ok: true };
     }
-    const cut = await waitUntil(() => !grown(), { timeoutMs: HARVEST_WAIT_MS, signal: ctx.signal });
+    if (h === startHeight && h > 0) { memory.growth += 1; return { ok: true }; }
+    // The 3rd block appeared (the observer fires at once) or the column was cut.
+    const cut = await waitUntil(() => height() <= 1, { timeoutMs: 3000, signal: ctx.signal });
     if (!cut) return { ok: false, reason: 'piston_not_firing' };
     memory.harvests += 1;
     await waitUntil(() => actions.countItems(bot, cane) > before, { timeoutMs: 3000, signal: ctx.signal });
@@ -204,7 +224,7 @@ function createCaneFarmGoal({ bot, anchor = null, facing = 'east', count = 4,
     memory,
     noProgressLimit: 20,
     isDone: () => Boolean(memory.farm) && inspect().nextPart === null && memory.harvested >= count,
-    progress: () => (memory.farm ? inspect().built + memory.harvests + memory.harvested : 0),
+    progress: () => (memory.farm ? inspect().built + memory.growth + memory.harvests + memory.harvested : 0),
     async run(ctx) {
       if (!memory.farm) {
         const farm = chooseCaneSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), bot.entity.position);
