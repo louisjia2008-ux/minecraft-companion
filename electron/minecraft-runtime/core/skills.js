@@ -510,6 +510,108 @@ async function useChest(bot, ctx, { position, itemMatch }) {
   }
 }
 
+function chestCounts(chest) {
+  const counts = {};
+  for (const item of chest.containerItems()) counts[item.name] = (counts[item.name] || 0) + item.count;
+  return counts;
+}
+
+/**
+ * Opens a chest, deposits up to `count` of each wanted item, and returns what
+ * the chest holds afterwards as the server shows it. With no wants it only
+ * reads the contents.
+ */
+async function storeInChest(bot, ctx, { position, wants = [] }) {
+  const moved = await goToBlock(bot, ctx, position);
+  if (!moved.ok) return moved;
+  const block = bot.blockAt(v(position));
+  if (block?.name !== 'chest') return fail('chest_missing');
+  let chest;
+  try {
+    chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
+    const stored = {};
+    for (const { match, count } of wants) {
+      let left = count;
+      for (const item of bot.inventory.items().filter((i) => match(i.name))) {
+        if (left <= 0) break;
+        const n = Math.min(left, item.count);
+        const before = chestCounts(chest)[item.name] || 0;
+        try {
+          await chest.deposit(item.type, null, n);
+        } catch (error) {
+          if (isAbort(error)) throw error;
+          break; // chest full: what did go in is still counted below
+        }
+        await waitUntil(() => (chestCounts(chest)[item.name] || 0) > before, { timeoutMs: 2000, signal: ctx.signal });
+        const added = (chestCounts(chest)[item.name] || 0) - before;
+        if (added > 0) stored[item.name] = (stored[item.name] || 0) + added;
+        left -= Math.max(0, added);
+      }
+    }
+    return { ok: true, contents: chestCounts(chest), stored };
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return fail('chest_failed');
+  } finally {
+    try { chest?.close(); } catch (_) { /* ignore */ }
+  }
+}
+
+const sourceLevel = (block) => Number(block?.getProperties?.().level);
+
+/**
+ * Fills one empty bucket from a still source of water or lava, seen from dry
+ * ground. Confirmed only by the full bucket appearing in the inventory.
+ */
+async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48 }) {
+  const full = `${liquid}_bucket`;
+  if (!bot.inventory.items().some((i) => i.name === 'bucket')) return fail('no_bucket');
+  // Lava is only approached in good health: a slip costs a lot more than water.
+  if (liquid === 'lava' && bot.health < 14) return fail('low_health');
+  const id = bot.registry.blocksByName[liquid]?.id;
+  if (id === undefined) return fail('unknown_block');
+  const here = bot.entity.position;
+  const sources = bot.findBlocks({ matching: id, maxDistance: radius, count: 128 })
+    .filter((p) => !blacklist.has(posKey(p)))
+    .map((p) => bot.blockAt(p))
+    // A still source with open air above it, so the bucket can be aimed from the side or above.
+    .filter((b) => b && sourceLevel(b) === 0 && AIR.has(bot.blockAt(b.position.offset(0, 1, 0))?.name || ''))
+    .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here));
+  if (sources.length === 0) return fail('no_target_in_range');
+  const target = sources[0];
+  const key = posKey(target.position);
+  ctx.record('target_selected', { block: liquid, position: key, options: sources.length });
+  const centre = target.position.offset(0.5, 0.5, 0.5);
+  if (!actions.withinReach(bot, target.position, 4)) {
+    const moved = await actions.goNear(bot, ctx, target.position.offset(0.5, 1, 0.5), 2, { timeoutMs: 45000 });
+    if (!moved.ok && !actions.withinReach(bot, target.position, 4.5)) {
+      blacklist.add(key, moved.reason);
+      return moved;
+    }
+  }
+  if (liquid === 'lava' && bot.entity.isInLava) return fail('in_lava');
+  const before = actions.countItems(bot, (n) => n === full);
+  const bucket = bot.inventory.items().find((i) => i.name === 'bucket');
+  if (!bucket) return fail('no_bucket');
+  try {
+    await bot.equip(bucket, 'hand');
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return fail('equip_failed');
+  }
+  // The server traces the look from the eyes to the first source block; aim
+  // at the liquid's surface first, then at its middle.
+  for (const aim of [target.position.offset(0.5, 0.85, 0.5), centre]) {
+    await bot.lookAt(aim, true);
+    await sleep(100, ctx.signal);
+    try { bot.activateItem(); } catch (_) { /* checked below */ }
+    const filled = await waitUntil(() => actions.countItems(bot, (n) => n === full) > before, { timeoutMs: 1500, signal: ctx.signal });
+    if (filled) return { ok: true, filled: full };
+  }
+  blacklist.add(key, 'bucket_unfilled');
+  return fail('bucket_unfilled');
+}
+
 /**
  * Night bunker: dig three blocks straight down and seal the opening above the
  * head with a block. Nothing can reach the bot in a sealed 1x1 shaft. Returns
@@ -621,4 +723,5 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, pickBerries, explore, useChest, useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeInChest, fillBucket,
+  useBed, digIn, digOut, inventoryCounts, entityInside };

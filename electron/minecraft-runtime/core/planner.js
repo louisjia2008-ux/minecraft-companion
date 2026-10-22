@@ -84,7 +84,8 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
           const step = ensureTool(source.tool, depth);
           if (step) return step;
         }
-        return { kind: 'gather', key, blocks: source.blocks, tool: source.tool || null, count: deficit };
+        const step = { kind: 'gather', key, blocks: source.blocks, tool: source.tool || null, count: deficit };
+        return source.dimension ? { ...step, dimension: source.dimension } : step;
       }
       if (source.kind === 'smelt') {
         const inputStep = need(source.input, deficit, depth + 1);
@@ -94,6 +95,12 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
         const fuelStep = ensureFuel(deficit, depth);
         if (fuelStep) return fuelStep;
         return { kind: 'smelt', key, input: source.inputItem, count: deficit };
+      }
+      if (source.kind === 'fill') {
+        // Each fill turns one empty bucket into a full one.
+        const bucketStep = need(source.bucket, deficit, depth + 1);
+        if (bucketStep) return bucketStep;
+        return { kind: 'fill', key, liquid: source.liquid, count: deficit };
       }
       if (source.kind === 'hunt') {
         return { kind: 'hunt', key, mobs: source.mobs, count: deficit };

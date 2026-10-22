@@ -7,6 +7,7 @@
 //   gather { blocks(name) -> bool, tool?: key }      break a block, collect the drop
 //   smelt  { input: key, fuel: true }                 at the home furnace
 //   hunt   { mobs: [names] }                          kill, collect drops
+//   fill   { liquid, bucket: key }                     use an empty bucket on a source block
 //   station                                           a placed crafting table / furnace
 
 const WOODS = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak'];
@@ -63,6 +64,11 @@ const KNOWLEDGE = {
     match: exact('wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'netherite_pickaxe'),
     tool: true,
     sources: [{ kind: 'alias', key: 'wooden_pickaxe' }],
+  },
+  iron_tier_pickaxe: {
+    match: exact('iron_pickaxe', 'diamond_pickaxe', 'netherite_pickaxe'),
+    tool: true,
+    sources: [{ kind: 'alias', key: 'iron_pickaxe' }],
   },
   stone_tier_pickaxe: {
     match: exact('stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'netherite_pickaxe'),
@@ -137,6 +143,52 @@ const KNOWLEDGE = {
   door: {
     match: (n) => n.endsWith('_door') && WOODS.some((w) => n === `${w}_door`),
     sources: [{ kind: 'craft', yields: 3, needs: { planks: 6 }, table: true, pick: (inv) => `${dominantWood(inv)}_door` }],
+  },
+  // Redstone machine parts. Natural redstone and quartz ore are mined where
+  // they are seen; deep branch mining and the Nether are separate steps.
+  bucket: { match: exact('bucket'), sources: [{ kind: 'craft', yields: 1, needs: { iron_ingot: 3 }, table: true, pick: () => 'bucket' }] },
+  water_bucket: { match: exact('water_bucket'), sources: [{ kind: 'fill', liquid: 'water', bucket: 'bucket' }] },
+  lava_bucket: { match: exact('lava_bucket'), sources: [{ kind: 'fill', liquid: 'lava', bucket: 'bucket' }] },
+  hopper: {
+    match: exact('hopper'),
+    sources: [{ kind: 'craft', yields: 1, needs: { iron_ingot: 5, chest: 1 }, table: true, pick: () => 'hopper' }],
+  },
+  redstone: {
+    match: exact('redstone'),
+    sources: [{ kind: 'gather', blocks: exact('redstone_ore', 'deepslate_redstone_ore'), tool: 'iron_tier_pickaxe' }],
+  },
+  quartz: {
+    match: exact('quartz'),
+    sources: [{ kind: 'gather', blocks: exact('nether_quartz_ore'), tool: 'pickaxe', dimension: 'the_nether' }],
+  },
+  // Smooth stone for repeaters: cobblestone smelted once.
+  stone: { match: exact('stone'), sources: [{ kind: 'smelt', input: 'cobblestone', inputItem: 'cobblestone' }] },
+  sand: { match: exact('sand'), sources: [{ kind: 'gather', blocks: exact('sand') }] },
+  glass: { match: exact('glass'), sources: [{ kind: 'smelt', input: 'sand', inputItem: 'sand' }] },
+  sugar_cane: { match: exact('sugar_cane'), sources: [{ kind: 'gather', blocks: exact('sugar_cane') }] },
+  redstone_torch: {
+    match: exact('redstone_torch'),
+    sources: [{ kind: 'craft', yields: 1, needs: { redstone: 1, stick: 1 }, table: false, pick: () => 'redstone_torch' }],
+  },
+  repeater: {
+    match: exact('repeater'),
+    sources: [{ kind: 'craft', yields: 1, needs: { redstone_torch: 2, redstone: 1, stone: 3 }, table: true, pick: () => 'repeater' }],
+  },
+  piston: {
+    match: exact('piston'),
+    sources: [{ kind: 'craft', yields: 1, needs: { planks: 3, cobblestone: 4, iron_ingot: 1, redstone: 1 }, table: true, pick: () => 'piston' }],
+  },
+  observer: {
+    match: exact('observer'),
+    sources: [{ kind: 'craft', yields: 1, needs: { cobblestone: 6, redstone: 2, quartz: 1 }, table: true, pick: () => 'observer' }],
+  },
+  bow: {
+    match: exact('bow'),
+    sources: [{ kind: 'craft', yields: 1, needs: { stick: 3, string: 3 }, table: true, pick: () => 'bow' }],
+  },
+  dispenser: {
+    match: exact('dispenser'),
+    sources: [{ kind: 'craft', yields: 1, needs: { cobblestone: 7, bow: 1, redstone: 1 }, table: true, pick: () => 'dispenser' }],
   },
   food: { match: exact(...MEATS), sources: [{ kind: 'hunt', mobs: ['cow', 'pig', 'sheep', 'chicken', 'rabbit'] }] },
   dirt: { match: exact('dirt'), sources: [{ kind: 'gather', blocks: exact('dirt', 'grass_block', 'coarse_dirt') }] },

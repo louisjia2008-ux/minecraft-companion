@@ -8,6 +8,7 @@ const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
+const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 
@@ -67,6 +68,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250 } = {}) {
     },
     homestead(options = {}) {
       const goal = createHomesteadGoal({ bot, ...options });
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
+    gatherMaterials(options) {
+      const goal = createGatherMaterialsGoal({ bot, ...options });
       brain.setGoal(goal);
       return brain.tick().then(() => goal);
     },
