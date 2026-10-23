@@ -11,6 +11,7 @@
     "test": "node --test test/*.test.js vendor/server/minecraftModules.test.js vendor/server/minecraftAgentLearning.test.js",
     "test:core": "node --test test/core-*.test.js",
     "scenario": "node tools/run-scenarios.cjs",
+    "e2e": "node tools/run-e2e.cjs",
     "regression": "node tools/run-regression.cjs"
   },
   "dependencies": {
