@@ -22,6 +22,27 @@ function nearbyGhast(bot, range) {
   return Object.values(bot.entities || {}).find((e) => e.name === 'ghast' && e.position && e.position.distanceTo(here) <= range) || null;
 }
 
+/** The nearest solid cell with two open cells above, at or above the bot's feet, out of lava. */
+function lavaShore(bot, radius = 10) {
+  const feet = bot.entity.position.floored();
+  const open = (b) => b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
+  let best = null;
+  for (let dx = -radius; dx <= radius; dx += 1) {
+    for (let dz = -radius; dz <= radius; dz += 1) {
+      for (let dy = -1; dy <= 2; dy += 1) {
+        const p = feet.offset(dx, dy, dz);
+        const d = Math.hypot(dx, dz) + Math.abs(dy);
+        if (best && d >= best.d) continue;
+        const floor = bot.blockAt(p);
+        if (!floor || floor.boundingBox !== 'block' || /magma/.test(floor.name)) continue;
+        if (!open(bot.blockAt(p.offset(0, 1, 0))) || !open(bot.blockAt(p.offset(0, 2, 0)))) continue;
+        best = { p, d };
+      }
+    }
+  }
+  return best?.p || null;
+}
+
 /** True when no full block lies on the straight line between two points. */
 function clearLine(bot, from, to) {
   const d = to.minus(from);
@@ -86,6 +107,7 @@ const RANGED = new Set(['skeleton', 'stray', 'bogged']);
 const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 // Piglin brutes ignore gold armour and hit for half a heart bar with their axe: keep clear of them too.
 const BRUTE_RANGE = 12;
+const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
 const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull']);
 // One that got this close outruns the bot: turn and fight it.
 const BRUTE_FIGHT = 4;
@@ -99,7 +121,7 @@ const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
-  const t = { ghastRange: 48, escapeHealth: 6, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
+  const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
     eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, oxygen: 8, dropsTtlMs: 270000,
     walkSpeed: 4, dropsMaxDistance: 600,
     ...thresholds };
@@ -210,7 +232,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const quench = {
     name: 'quench',
     band: BAND.ESCAPE,
-    want: () => (burning(bot) && !hasEffect(bot, 'FireResistance') && bot.inventory?.items?.().some(isFireResistancePotion) ? 1.5 : 0),
+    want: () => (burning(bot) && !hasEffect(bot, 'FireResistance') && bot.inventory?.items?.().some(isFireResistancePotion) ? 3 : 0),
     async run(ctx) {
       const potion = bot.inventory.items().find(isFireResistancePotion);
       if (!potion) return { ok: false, reason: 'no_potion' };
@@ -221,6 +243,55 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       } catch (_) { /* confirmed by the effect below */ }
       const ok = await waitUntil(() => hasEffect(bot, 'FireResistance'), { timeoutMs: 2000, signal: ctx.signal });
       return ok ? { ok: true } : { ok: false, reason: 'drink_unconfirmed' };
+    },
+  };
+
+  // Badly hurt mid-fight (wither skeletons, brutes): a golden apple's absorption
+  // and regeneration buy the time running away does not.
+  const heal = {
+    name: 'heal',
+    band: BAND.ESCAPE,
+    want: (state) => (state.health <= t.healHealth && !hasEffect(bot, 'Regeneration')
+      && bot.inventory?.items?.().some((i) => GOLDEN_APPLES.has(i.name)) ? 1.2 : 0),
+    async run(ctx) {
+      const apple = bot.inventory.items().find((i) => i.name === 'enchanted_golden_apple')
+        || bot.inventory.items().find((i) => i.name === 'golden_apple');
+      if (!apple) return { ok: false, reason: 'no_golden_apple' };
+      ctx.record('heal', { item: apple.name, health: Math.round(bot.health) });
+      try {
+        await bot.equip(apple, 'hand');
+        await bot.consume();
+      } catch (_) { /* confirmed by the effect below */ }
+      const ok = await waitUntil(() => hasEffect(bot, 'Regeneration'), { timeoutMs: 2000, signal: ctx.signal });
+      return ok ? { ok: true } : { ok: false, reason: 'eat_unconfirmed' };
+    },
+  };
+
+  // Swimming in lava (knocked or slipped in): the pathfinder cannot plan from
+  // there, so swim for the nearest shore by hand, jumping all the way.
+  const leaveLava = {
+    name: 'leave_lava',
+    band: BAND.ESCAPE,
+    want: () => (bot.entity?.isInLava === true ? 2 : 0),
+    async run(ctx) {
+      const shore = lavaShore(bot);
+      ctx.record('leave_lava', { shore: shore ? `${shore.x},${shore.y},${shore.z}` : null });
+      bot.pathfinder?.setGoal(null);
+      try {
+        for (let i = 0; i < 150 && bot.entity.isInLava; i += 1) {
+          const target = shore ? shore.offset(0.5, 1.2, 0.5) : bot.entity.position.offset(0, 3, 0);
+          await bot.lookAt(target, true);
+          bot.setControlState('jump', true);
+          bot.setControlState('forward', Boolean(shore));
+          bot.setControlState('sprint', Boolean(shore));
+          await sleep(100, ctx.signal);
+        }
+        // A few steps more to stand clear of the edge.
+        if (shore) await sleep(400, ctx.signal);
+      } finally {
+        for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, false);
+      }
+      return bot.entity.isInLava ? { ok: false, reason: 'still_in_lava' } : { ok: true };
     },
   };
 
@@ -451,7 +522,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
   deflect.dispose = disposeNether;
 
-  return [quench, escape, breathe, deflect, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
+  return [quench, leaveLava, heal, escape, breathe, deflect, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };

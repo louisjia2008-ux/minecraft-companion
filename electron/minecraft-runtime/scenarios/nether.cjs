@@ -75,7 +75,7 @@ const EXPEDITION_KIT = [
   ['obsidian', 10], ['cobblestone', 64], ['flint_and_steel', 1], ['diamond_pickaxe', 1],
   ['diamond_sword[enchantments={looting:3,sharpness:3}]', 1], ['shield', 1],
   ['golden_helmet', 1], ['diamond_chestplate', 1], ['diamond_leggings', 1], ['diamond_boots', 1],
-  ['cooked_beef', 32], ['gold_ingot', GOLD],
+  ['cooked_beef', 32], ['golden_apple', 8], ['gold_ingot', GOLD],
   ['potion[potion_contents={potion:"minecraft:long_fire_resistance"}]', 4],
 ];
 
@@ -112,7 +112,7 @@ async function pickExpeditionStart(server, rng, run) {
 
 const netherStructuresGiven = {
   name: 'nether-structures-given',
-  description: `Expedition kit given (portal materials, diamond armour + gold helmet, looting sword, fire resistance,
+  description: `Expedition kit given (portal materials, diamond armour + gold helmet, looting sword, fire resistance, golden apples,
   ${GOLD} gold); find a fortress (${EXPEDITION.blazeRods} blaze rods, ${EXPEDITION.witherSkulls} wither skeleton skull) and a bastion
   (${EXPEDITION.trades} piglin trades), then come home. Structures are not told to the bot.`,
   serverProperties: {
