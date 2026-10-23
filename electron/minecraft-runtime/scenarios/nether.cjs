@@ -92,7 +92,7 @@ async function locate(server, structure, x, z) {
  * never told where they are: it has to see them from the loaded chunks.
  */
 async function pickExpeditionStart(server, rng, run) {
-  for (let attempt = 0; attempt < 16; attempt += 1) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
     const angle = rng() * Math.PI * 2;
     const r = 400 + rng() * 2600 + run * 300;
     const px = Math.round(Math.cos(angle) * r);
@@ -102,7 +102,7 @@ async function pickExpeditionStart(server, rng, run) {
     const bastion = await locate(server, 'bastion_remnant', fortress.x, fortress.z);
     if (!bastion) continue;
     const apart = Math.hypot(fortress.x - bastion.x, fortress.z - bastion.z);
-    if (apart < 64 || apart > 320) continue;
+    if (apart < 64 || apart > 400) continue;
     const jitter = () => Math.round((rng() - 0.5) * 60);
     const nether = { x: Math.round((fortress.x + bastion.x) / 2) + jitter(), z: Math.round((fortress.z + bastion.z) / 2) + jitter() };
     return { fortress, bastion, nether, attempt };

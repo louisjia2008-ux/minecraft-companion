@@ -110,36 +110,44 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
   }
 
-  /** Walks ~40 blocks along one heading; turns when blocked or past `roam` from the portal. */
+  /**
+   * Visits lookout points in rings around the arrival portal: 8 directions per
+   * ring, rings 80 blocks apart, each ring turned half a step. With 128 blocks
+   * of loaded chunks around the bot, the first ring alone sees ~200 blocks out.
+   * A point it cannot get nearer to is skipped.
+   */
+  function lookout(index, home) {
+    const ring = Math.floor(index / 8);
+    const angle = (index % 8) * (Math.PI / 4) + ring * (Math.PI / 8);
+    const r = Math.min(roam, 80 * (ring + 1));
+    return { x: Math.round(home.x + Math.cos(angle) * r), z: Math.round(home.z + Math.sin(angle) * r) };
+  }
+
   async function explore(ctx) {
     const m = memory.explore;
-    const home = memory.netherPortal;
+    const home = memory.netherPortal || bot.entity.position;
     const here = bot.entity.position;
-    if (home && here.distanceTo(home) > roam) {
-      m.heading = Math.atan2(home.z - here.z, home.x - here.x) + (Math.random() - 0.5);
-      m.blocked = false;
-    }
-    // Done with the bastion: its brutes are no company, head away from it first.
-    const bastion = memory.bastion && !tradeWork() && here.distanceTo(memory.bastion) < 80 ? memory.bastion : null;
-    if (bastion && !m.leftBastion) {
+    m.index = m.index || 0;
+    m.misses = m.misses || 0;
+    // Done with the bastion: start with the lookouts away from its brutes.
+    if (memory.bastion && !tradeWork() && !m.leftBastion) {
       m.leftBastion = true;
-      m.heading = Math.atan2(here.z - bastion.z, here.x - bastion.x) + (Math.random() - 0.5) * 0.6;
-      m.blocked = false;
+      const away = Math.atan2(home.z - memory.bastion.z, home.x - memory.bastion.x);
+      m.index = Math.round(((away % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 4)) % 8;
     }
-    if (m.heading === undefined || m.blocked) {
-      m.tried = m.tried || [];
-      const options = Array.from({ length: 8 }, (_, i) => (i * Math.PI) / 4).filter((a) => !m.tried.slice(-3).includes(a));
-      m.heading = options[Math.floor(Math.random() * options.length)];
-      m.tried.push(m.heading);
-      m.blocked = false;
-    }
-    const x = Math.round(here.x + Math.cos(m.heading) * 40);
-    const z = Math.round(here.z + Math.sin(m.heading) * 40);
-    ctx.record('explore', { x, z, want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
-    const result = await actions.goTo(bot, ctx, new goals.GoalNearXZ(x, z, 4), { timeoutMs: 45000, arrived: () => true });
+    const target = lookout(m.index, home);
+    ctx.record('explore', { lookout: m.index, x: target.x, z: target.z,
+      want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
+    const result = await actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8), { timeoutMs: 60000, arrived: () => true });
     const moved = bot.entity.position.distanceTo(here);
-    if (moved < 10) m.blocked = true;
+    const left = Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
     scan(ctx, true);
+    // Reached it, or stuck short of it twice: on to the next lookout.
+    m.misses = moved < 10 ? m.misses + 1 : 0;
+    if (left <= 16 || m.misses >= 2) {
+      m.index += 1;
+      m.misses = 0;
+    }
     return moved >= 10 ? { ok: true, moved: Math.round(moved) } : fail(result.ok ? 'explore_blocked' : result.reason);
   }
 
@@ -448,7 +456,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     },
     recover() {
       blacklist.clear?.();
-      memory.explore = {};
+      memory.explore = { index: memory.explore.index, leftBastion: memory.explore.leftBastion };
       memory.waitSince = 0;
     },
     async run(ctx) {

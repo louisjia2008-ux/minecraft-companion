@@ -22,16 +22,21 @@ function nearbyGhast(bot, range) {
   return Object.values(bot.entities || {}).find((e) => e.name === 'ghast' && e.position && e.position.distanceTo(here) <= range) || null;
 }
 
-/** The nearest solid cell with two open cells above, at or above the bot's feet, out of lava. */
-function lavaShore(bot, radius = 10) {
+/**
+ * The nearest solid cell, out of the lava, that a swimmer can climb onto: its
+ * top no higher than one block above the lava's surface.
+ */
+function lavaShore(bot, radius = 16) {
   const feet = bot.entity.position.floored();
+  let surface = feet.y;
+  while (surface < feet.y + 4 && bot.blockAt(feet.offset(0, surface - feet.y + 1, 0))?.name === 'lava') surface += 1;
   const open = (b) => b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 1) {
     for (let dz = -radius; dz <= radius; dz += 1) {
-      for (let dy = -1; dy <= 2; dy += 1) {
-        const p = feet.offset(dx, dy, dz);
-        const d = Math.hypot(dx, dz) + Math.abs(dy);
+      for (let y = feet.y - 1; y <= surface; y += 1) {
+        const p = new Vec3(feet.x + dx, y, feet.z + dz);
+        const d = Math.hypot(dx, dz);
         if (best && d >= best.d) continue;
         const floor = bot.blockAt(p);
         if (!floor || floor.boundingBox !== 'block' || /magma/.test(floor.name)) continue;
@@ -115,6 +120,8 @@ const BRUTE_FIGHT = 4;
 const NEUTRAL = new Set(['enderman', 'zombified_piglin', 'piglin', 'spider', 'cave_spider']);
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const CALM_UNLESS_PROVOKED = new Set(['zombified_piglin', 'piglin']);
+const OTHER_ATTACKERS = new Set(['wither_skeleton', 'skeleton', 'blaze', 'ghast', 'magma_cube', 'hoglin', 'piglin_brute', 'zombie', 'husk', 'spider', 'cave_spider', 'creeper', 'stray', 'bogged']);
+const PROJECTILES = new Set(['arrow', 'small_fireball', 'fireball', 'spectral_arrow']);
 const wearsGold = (bot) => /^golden_/.test(bot.inventory?.slots?.[5]?.name || '');
 const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 
@@ -148,6 +155,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const onSwing = (entity) => {
     if (entity && CALM_UNLESS_PROVOKED.has(entity.name)) swings.set(entity.id, Date.now());
   };
+  const suspects = new Map(); // mob name -> time it was last near a hit it may not have dealt
   const onHurt = (entity) => {
     if (entity !== bot.entity) return;
     const here = bot.entity.position;
@@ -156,6 +164,18 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         && Date.now() - (swings.get(e.id) || 0) <= 600)
       .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0];
     if (!culprit) return;
+    // Another attacker in reach (a wither skeleton's blade, a blaze's fireball,
+    // an arrow) makes the swing a coincidence; hitting the pack then turns all
+    // of it. Blame the pack only when nothing else could have done it, or when
+    // the same pack is caught twice in a few seconds.
+    const other = Object.values(bot.entities || {}).some((e) => e.position && e !== bot.entity
+      && ((OTHER_ATTACKERS.has(e.name) && e.position.distanceTo(here) <= 24)
+        || (PROJECTILES.has(e.name) && e.position.distanceTo(here) <= 6)));
+    if (other) {
+      const last = suspects.get(culprit.name) || 0;
+      suspects.set(culprit.name, Date.now());
+      if (Date.now() - last > 5000) return;
+    }
     for (const e of Object.values(bot.entities || {})) {
       if (e.name === culprit.name && e.position && e.position.distanceTo(culprit.position) <= 24) provoked.set(e.id, Date.now() + 60000);
     }

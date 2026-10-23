@@ -124,3 +124,16 @@ test('returning to the overworld restores the overworld movement settings', asyn
   assert.equal(movements.maxDropDown, 4);
   assert.equal(movements.exclusionAreasStep.length, 0);
 });
+
+test('a swing next to a hit is not blamed while a wither skeleton could have dealt it', () => {
+  const bot = piglinBot();
+  bot.entities[9] = { id: 9, name: 'wither_skeleton', position: new Vec3(-2, 64, 0) };
+  const defend = createSurvivalBehaviors({ bot }).find((b) => b.name === 'defend');
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  assert.equal(defend.want(nearPiglin(bot)), 0);
+  // Caught twice within a few seconds: that pack really is attacking.
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  assert.equal(defend.want(nearPiglin(bot)), 1);
+});
