@@ -47,7 +47,7 @@ function fortressFloor(bot, near, radius = 48, count = 64) {
     const b = bot.blockAt(p);
     return b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
   };
-  return bot.findBlocks({ matching: id, maxDistance: radius + 16, count: Math.max(256, count * 4) })
+  return bot.findBlocks({ point: near, matching: id, maxDistance: radius, count: Math.max(256, count * 4) })
     .filter((p) => p.distanceTo(near) <= radius && open(p.offset(0, 1, 0)) && open(p.offset(0, 2, 0)))
     .slice(0, count);
 }

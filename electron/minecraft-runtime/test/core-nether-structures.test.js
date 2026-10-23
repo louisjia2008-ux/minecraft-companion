@@ -22,9 +22,9 @@ function world(cells) {
     const name = blocks.get(`${position.x},${position.y},${position.z}`) || 'air';
     return { name, position, boundingBox: /^(air|lava)$/.test(name) ? 'empty' : 'block' };
   };
-  const findBlocks = ({ matching, maxDistance, count }) => {
+  const findBlocks = ({ matching, maxDistance, count, point }) => {
     const ids = new Set([].concat(matching));
-    const here = bot.entity.position;
+    const here = point || bot.entity.position;
     return [...blocks.entries()]
       .filter(([, name]) => ids.has(registry.blocksByName[name].id))
       .map(([key]) => new Vec3(...key.split(',').map(Number)))
@@ -48,6 +48,11 @@ test('a bastion needs many blackstone bricks: a ruined portal\'s handful does no
   assert.equal(structures.findStructure(world(row('polished_blackstone_bricks', 10, 12)), 'bastion'), null);
   const cells = { ...row('polished_blackstone_bricks', 10, 30), ...row('gilded_blackstone', 10, 30, 65) };
   assert.ok(structures.findStructure(world(cells), 'bastion'));
+});
+
+test('the fortress floor is searched around the given point, not around the bot', () => {
+  const bot = world(row('nether_bricks', 200, 4));
+  assert.equal(structures.fortressFloor(bot, new Vec3(201, 64, 0), 8).length, 4);
 });
 
 test('the fortress floor is nether bricks with two open cells above', () => {

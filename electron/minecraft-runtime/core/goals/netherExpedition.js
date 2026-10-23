@@ -225,7 +225,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const here = bot.entity.position;
     const floor = structures.fortressFloor(bot, centre, 64, 96)
       .filter((p) => { const d = p.distanceTo(here); return d >= 12 && d <= 40; });
-    if (!floor.length) return explore(ctx);
+    // Nothing else to walk to here: go and stand by the spawner (or the first brick seen).
+    if (!floor.length) return approachStructure(ctx, kind, kind === 'fortress' && memory.spawner ? memory.spawner : centre);
     const pick = floor[Math.floor(Math.random() * floor.length)];
     ctx.record('patrol', { kind, target: posKey(pick) });
     const result = await actions.goNear(bot, ctx, pick.offset(0, 1, 0), 2, { timeoutMs: 45000 });
@@ -233,8 +234,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   }
 
   /** No floor known yet (seen from afar): walk towards the first block seen. */
-  async function approachStructure(ctx, kind) {
-    const p = memory[kind];
+  async function approachStructure(ctx, kind, p = memory[kind]) {
     const here = bot.entity.position;
     ctx.record('approach', { kind, target: posKey(p), distance: Math.round(p.distanceTo(here)) });
     const result = await actions.goNear(bot, ctx, p, 4, { timeoutMs: 120000 });
@@ -404,7 +404,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     trip.enterNetherMode();
     trip.netherPortal();
     if (allDone(state)) return trip.toOverworld(ctx);
-    if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
+    // Lost the kit (died, drops gone): a bare-handed fortress run only dies again.
+    if (fortressWork(state) && !Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'))) return fail('no_weapon');
     scan(ctx);
     if (tradeWork()) {
       if (!gold(state)) return fail('no_gold');
