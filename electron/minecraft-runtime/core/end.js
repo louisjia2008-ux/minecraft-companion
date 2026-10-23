@@ -227,7 +227,8 @@ function applyEndMovements(bot) {
   const cache = new Map();
   let cacheAt = 0;
   const voidAt = (x, y, z) => {
-    if (Date.now() - cacheAt > 3000) { cache.clear(); cacheAt = Date.now(); }
+    // Islands do not move: a long-lived cache keeps the pathfinder fast.
+    if (Date.now() - cacheAt > 30000 || cache.size > 200000) { cache.clear(); cacheAt = Date.now(); }
     const key = `${x},${Math.floor(y / 8)},${z}`;
     if (!cache.has(key)) cache.set(key, overVoid(bot, x, y, z));
     return cache.get(key);

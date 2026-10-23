@@ -166,7 +166,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       memory.blocked = true;
       return fail(bridged.reason || 'explore_blocked');
     }
-    const walked = await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(target.x, target.z, 4), { timeoutMs: 45000, arrived: () => true });
+    const walked = await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(target.x, target.z, 4), { timeoutMs: 20000, arrived: () => true });
     if (bot.entity.position.distanceTo(here) >= 12) return { ok: true };
     ctx.record('explore_walk_short', { moved: Math.round(bot.entity.position.distanceTo(here)), reason: walked.reason || null });
     // Walked to the island's edge: bridge across.
