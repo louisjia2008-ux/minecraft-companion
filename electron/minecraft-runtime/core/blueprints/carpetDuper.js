@@ -53,7 +53,9 @@ function createCarpetDuper(anchor, facing = 'east') {
   const clear = [cells.piston, cells.slimeLow, cells.slimeHigh, cells.fan, cells.carpet, cells.button, cells.stand,
     at(0, 2, 1), at(2, 1), at(2, 2), at(2, 1, 1), at(2, 2, 1), at(3, 1), at(3, 2), at(1, 3), at(1, 3, 1),
     at(1, 1, -1), at(1, 2, -1), at(0, 2)];
-  return { kind: 'carpet_duper', anchor: { ...anchor }, facing, cells, parts, floor, hollow, clear };
+  // The fan has no collision but the carpet above it blocks the head: paths keep off.
+  const noStep = [cells.fan, cells.carpet, cells.button];
+  return { kind: 'carpet_duper', anchor: { ...anchor }, facing, cells: { ...cells, drop: cells.carpet }, parts, floor, hollow, clear, noStep };
 }
 
 module.exports = { createCarpetDuper };

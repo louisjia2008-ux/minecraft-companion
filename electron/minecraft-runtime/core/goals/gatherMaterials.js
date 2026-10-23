@@ -41,6 +41,7 @@ const DEPOT_STICKS = 24;
 const KEEP_PICKS = 3;
 const DEPOT_CRAFT = 6;
 const SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+const SPARE_PICKAXES = 3;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
   skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
@@ -112,6 +113,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         if (!moved.ok) return moved;
       }
       start = bot.entity.position.floored();
+    }
+    // An unlit tunnel fills with monsters: carry torches while there is coal for them.
+    const have = (n) => countKey(n, ctx.perceive().inventory, kb);
+    if (have('torch') === 0 && have('coal') > 0 && have('stick') > 0 && !blacklist.has('torch')) {
+      const made = await skills.craft(bot, ctx, { item: 'torch', times: Math.min(2, have('coal'), have('stick')) });
+      if (!made.ok) blacklist.add('torch', made.reason, 60000);
     }
     const m = memory.mine;
     if (m?.junction && !m.depot && m.y === step.mineY && step.mineY <= DEPOT_BELOW) return buildDepot(ctx);
@@ -237,8 +244,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         return skills.placeAt(bot, ctx, spot, (n) => n === step.station, { faces: DOWN });
       }
       case 'craft': {
-        const result = await skills.craft(bot, ctx, { item: step.item, times: step.times,
+        const craft = (times) => skills.craft(bot, ctx, { item: step.item, times,
           tablePosition: step.table ? stations.crafting_table : null });
+        // A stone pickaxe lasts about 60 blocks of tunnel, and the table is
+        // at home: make spares while here if the bag has enough for them.
+        let result = step.item === 'stone_pickaxe' && step.times < SPARE_PICKAXES ? await craft(SPARE_PICKAXES) : null;
+        if (!result?.ok) result = await craft(step.times);
         // Short of something the plan thought was there: plan for it explicitly for a while.
         for (const m of result.missing || []) {
           const family = familyOf(m.name, kb);

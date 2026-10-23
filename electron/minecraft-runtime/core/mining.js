@@ -37,6 +37,8 @@ const CHEAP_PICKS = PICKS.slice(0, 2);
 const BRANCH_EVERY = 3;
 const BRANCH_LENGTH = 16;
 const TORCH_EVERY = 8;
+// A walk back to the front takes a leg per call; the deepest mine needs well under this many.
+const MAX_RETURN_LEGS = 80; // y=-53 and a long main tunnel: some 40 legs from the surface
 const MAX_TURNS = 4;
 // Directions (relative to the staircase) a boxed-in main tunnel restarts in from its foot.
 const RESTART_SIDES = [1, 3];
@@ -181,14 +183,18 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
     const back = (await walkTunnel(bot, ctx, mine, 'front', actions))
       || await actions.goTo(bot, ctx, new goals.GoalBlock(front.x, front.y, front.z),
         { timeoutMs: 8000, arrived: (at) => at.floored().equals(front) });
-    if (!back.ok && ++mine.walkFailures >= 3) {
-      ctx.record('mine_abandoned', { reason: back.reason });
+    // Legs that each succeed yet never end at the front (a cell that cannot
+    // be stood in any more) loop as surely as failing ones.
+    mine.returns = (mine.returns || 0) + 1;
+    if ((!back.ok && ++mine.walkFailures >= 3) || mine.returns > MAX_RETURN_LEGS) {
+      ctx.record('mine_abandoned', { reason: back.ok ? 'front_unreached' : back.reason });
       memory.mineDir = (mine.dir + 1) % 4;
       memory.mine = null;
     }
     return back;
   }
 
+  mine.returns = 0;
   let dir = mine.dir;
   let descend = mine.phase === 'descend' && mine.front.y > mine.y;
   if (mine.phase === 'descend' && !descend) {

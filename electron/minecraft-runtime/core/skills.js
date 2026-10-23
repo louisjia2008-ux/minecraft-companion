@@ -249,8 +249,10 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sn
   if (stand) {
     const moved = await actions.goNear(bot, ctx, v(stand).offset(0.5, 0, 0.5), 0, { timeoutMs: 30000 });
     if (!moved.ok && bot.entity.position.floored().distanceTo(v(stand)) > 0.5) return moved;
-    ref = bot.blockAt(target.offset(0, -1, 0));
-    face = new Vec3(0, 1, 0);
+    // Against the first face asked for, else on top of the block below.
+    const toward = faces?.[0] || new Vec3(0, -1, 0);
+    ref = bot.blockAt(target.plus(toward));
+    face = toward.scaled(-1);
   } else {
     // Clicking a door, chest or bed uses it instead of placing against it.
     const allFaces = faces || [new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(0, 0, -1), new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(1, 0, 0)];
@@ -313,7 +315,9 @@ function isFluidSource(block, fluid) {
  * bot stands where it can see the floor's top face, aims at it and uses the
  * item. Done only once the server shows a source block in that cell.
  */
-async function pourLiquid(bot, ctx, position, fluid) {
+// `against`: pour by clicking the side of this neighbouring block instead of the
+// floor's top, for a cell whose floor is above the bot's eyes.
+async function pourLiquid(bot, ctx, position, fluid, { against = null } = {}) {
   const target = v(position);
   if (isFluidSource(bot.blockAt(target), fluid)) return { ok: true, already: true };
   const current = bot.blockAt(target);
@@ -324,7 +328,9 @@ async function pourLiquid(bot, ctx, position, fluid) {
   const bucket = bot.inventory.items().find((i) => i.name === `${fluid}_bucket`);
   if (!bucket) return fail('no_material', { missing: [{ name: `${fluid}_bucket`, short: 1 }] });
 
-  const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces: [new Vec3(0, -1, 0)] });
+  const ref = against ? v(against) : floor.position;
+  const toward = ref.minus(target);
+  const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces: [toward] });
   const head = () => bot.entity.position.floored().offset(0.5, 1.6, 0.5);
   const usable = () => goal.getFaceAndRef(head()) !== null && !overlaps(bot.entity, target);
   if (!usable()) {
@@ -340,8 +346,8 @@ async function pourLiquid(bot, ctx, position, fluid) {
   // The bucket goes next to whatever the look ray hits first: from a wrong
   // angle that is a wall of the hole, not its floor. Aim where the ray
   // really reaches the floor's top face, from the rim if need be.
-  let aimed = await aimAtFace(bot, floor.position, 1);
-  for (const stand of aimed ? [] : rimCells(bot, target)) {
+  let aimed = await aimAtFace(bot, ref, toward.scaled(-1));
+  for (const stand of aimed || against ? [] : rimCells(bot, target)) {
     const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(stand.x, stand.y, stand.z), { timeoutMs: 10000 });
     if (!moved.ok || overlaps(bot.entity, target)) continue;
     aimed = await aimAtFace(bot, floor.position, 1);
@@ -362,21 +368,32 @@ async function pourLiquid(bot, ctx, position, fluid) {
   return fail('pour_unconfirmed');
 }
 
-/** Turns toward a point of `position`'s `face` that the look ray reaches first; true when found. */
+// Mineflayer's face numbers, by outward normal.
+const FACE_NUMBER = { '0,-1,0': 0, '0,1,0': 1, '0,0,-1': 2, '0,0,1': 3, '-1,0,0': 4, '1,0,0': 5 };
+const NORMALS = Object.fromEntries(Object.entries(FACE_NUMBER).map(([k, n]) => [n, new Vec3(...k.split(',').map(Number))]));
+
+/**
+ * Turns toward a point of `position`'s face that the look ray reaches first;
+ * true when found. `face` is a mineflayer face number or an outward normal.
+ */
 async function aimAtFace(bot, position, face) {
+  const normal = typeof face === 'number' ? NORMALS[face] : face;
+  const number = FACE_NUMBER[`${normal.x},${normal.y},${normal.z}`];
   const steps = [0.5, 0.2, 0.8];
   for (const a of steps) {
     for (const b of steps) {
-      const point = face === 1 ? position.offset(a, 1, b) : position.offset(a, b, 0);
+      // On the face's plane; the two other axes spread over the face.
+      const free = [a, b];
+      const coord = (n) => (n === 0 ? free.shift() : (n > 0 ? 1 : 0));
+      const point = position.offset(coord(normal.x), coord(normal.y), coord(normal.z));
       await bot.lookAt(point, true);
       const hit = bot.blockAtCursor?.(4.5);
-      if (hit && hit.position.equals(position) && hit.face === face) return true;
+      if (hit && hit.position.equals(position) && hit.face === number) return true;
     }
   }
   return false;
 }
 
-/** Cells beside `target`'s column, up to two above it, where the bot can stand. */
 function rimCells(bot, target) {
   const cells = [];
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -883,6 +900,27 @@ async function digIn(bot, ctx, { sealMatch, avoid = () => false }) {
   return { ok: true, bunker: { top: { x: top.x, y: top.y, z: top.z } } };
 }
 
+/**
+ * Throws away up to `count` of each named item, stack by stack: one
+ * bot.toss() call only ever empties a single slot.
+ */
+async function tossStacks(bot, ctx, items) {
+  for (const { name, count } of items) {
+    let left = count ?? Infinity;
+    for (const stack of bot.inventory.items().filter((i) => i.name === name)) {
+      if (left <= 0) break;
+      const n = Math.min(left, stack.count);
+      try {
+        await runCancellable(() => (n === stack.count ? bot.tossStack(stack) : bot.toss(stack.type, null, n)),
+          { signal: ctx.signal, timeoutMs: 3000, timeoutCode: 'toss_timeout' });
+        left -= n;
+      } catch (error) {
+        if (isAbort(error)) throw error;
+      }
+    }
+  }
+}
+
 /** Opens the seal and climbs back up, filling the shaft behind the bot. */
 async function digOut(bot, ctx, bunker) {
   const top = new Vec3(bunker.top.x, bunker.top.y, bunker.top.z);
@@ -944,5 +982,5 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, pourLiquid, scoopLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeItems, takeItems,
-  storeInChest, fillBucket, useBed, digIn, digOut, inventoryCounts, entityInside };
+module.exports = { gatherOne, craft, placeAt, pourLiquid, scoopLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest,
+  storeItems, storeInChest, takeItems, fillBucket, useBed, digIn, digOut, tossStacks, inventoryCounts, entityInside, aimAtFace };

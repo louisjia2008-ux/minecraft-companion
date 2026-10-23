@@ -48,7 +48,7 @@ function evaluateSmelterSite(blockAt, anchor, facing) {
 }
 
 /** Nearest buildable spot; the anchor (furnace cell) is the top solid block of its column. */
-function chooseSmelterSite(blockAt, around, { radius = 10 } = {}) {
+function chooseSmelterSite(blockAt, around, { radius = 10, avoid = null } = {}) {
   const origin = { x: Math.floor(around.x), y: Math.floor(around.y), z: Math.floor(around.z) };
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 1) {
@@ -64,7 +64,7 @@ function chooseSmelterSite(blockAt, around, { radius = 10 } = {}) {
       if (y === null) continue;
       for (const facing of Object.keys(FACINGS)) {
         const device = evaluateSmelterSite(blockAt, { x: origin.x + dx, y, z: origin.z + dz }, facing);
-        if (!device) continue;
+        if (!device || (avoid && [...device.dig, ...device.floor, ...device.clearAbove, ...device.parts.map((p) => p.position)].some(avoid))) continue;
         // Not right under the bot: it would have to dig the ground it stands on.
         const score = Math.hypot(dx, dz) + Math.abs(y + 1 - origin.y) * 2 + (Math.hypot(dx, dz) < 3 ? 6 : 0);
         if (!best || score < best.score) best = { device, score };
@@ -75,11 +75,12 @@ function chooseSmelterSite(blockAt, around, { radius = 10 } = {}) {
 }
 
 function createAutoSmelterGoal({ bot, anchor = null, facing = 'east', input = 'raw_iron', output = 'iron_ingot',
-  fuel = 'coal', count = 8, skills = defaultSkills, actions = defaultActions } = {}) {
+  fuel = 'coal', count = 8, avoid = null, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
   const memory = {
     device: anchor ? createAutoSmelter(anchor, facing) : null,
     taken: 0,
+    loaded: { input: 0, fuel: 0 },
     lastCheck: 0,
     guarded: false,
   };
@@ -135,15 +136,30 @@ function createAutoSmelterGoal({ bot, anchor = null, facing = 'east', input = 'r
     return { toDig, nextPart, built: d.parts.filter(partOk).length };
   }
 
+  // Items still to be brought, as knowledge keys: the parts not yet placed,
+  // and input and fuel for whatever has not gone into the chests.
+  function needs() {
+    const parts = memory.device ? memory.device.parts.filter((p) => !partOk(p)) : createAutoSmelter({ x: 0, y: 0, z: 0 }).parts;
+    const counts = {};
+    for (const part of parts) counts[part.block] = (counts[part.block] || 0) + 1;
+    const inputLeft = count - Math.max(memory.loaded.input, memory.taken);
+    if (inputLeft > 0) counts[input] = inputLeft;
+    // One coal smelts eight items.
+    const fuelLeft = Math.ceil(count / 8) - memory.loaded.fuel;
+    if (fuelLeft > 0 && memory.taken < count) counts[fuel] = fuelLeft;
+    return Object.entries(counts).map(([key, n]) => ({ key, count: n }));
+  }
+
   return {
     name: 'auto_smelter',
     memory,
+    needs,
     noProgressLimit: 8,
     isDone: () => Boolean(memory.device) && inspect().nextPart === null && memory.taken >= count,
     progress: () => (memory.device ? inspect().built + memory.taken : 0),
     async run(ctx) {
       if (!memory.device) {
-        const device = chooseSmelterSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), bot.entity.position);
+        const device = chooseSmelterSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), bot.entity.position, { avoid });
         if (!device) return { ok: false, reason: 'no_site' };
         memory.device = device;
         ctx.record('device_site', { kind: device.kind, anchor: device.anchor, facing: device.facing });
@@ -172,8 +188,12 @@ function createAutoSmelterGoal({ bot, anchor = null, facing = 'east', input = 'r
       }
 
       // Built: the hoppers feed whatever is in the chests.
-      if (have(input) > 0) return skills.storeItems(bot, ctx, { position: d.cells.inChest, items: [{ name: input }] });
-      if (have(fuel) > 0) return skills.storeItems(bot, ctx, { position: d.cells.fuelChest, items: [{ name: fuel }] });
+      for (const [slot, name, chest] of [['input', input, d.cells.inChest], ['fuel', fuel, d.cells.fuelChest]]) {
+        if (have(name) === 0) continue;
+        const stored = await skills.storeItems(bot, ctx, { position: chest, items: [{ name }] });
+        if (stored.ok) memory.loaded[slot] += stored.stored?.[name] || 0;
+        return stored;
+      }
       const wait = memory.lastCheck + SMELT_WAIT_MS - Date.now();
       if (wait > 0) await sleep(wait, ctx.signal);
       memory.lastCheck = Date.now();

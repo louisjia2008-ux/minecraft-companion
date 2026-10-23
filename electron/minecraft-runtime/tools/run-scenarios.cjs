@@ -133,14 +133,17 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
           .catch((error) => write('server_inventory_error', { reason: error.message }));
       }
       // `stopped` covers death: the brain drops its goal when the bot dies.
-      if (event.type === 'goal_done' || event.type === 'goal_failed' || event.type === 'stopped') {
+      // An autonomous scenario outlives its goals: only finishWhen or the timeout end it.
+      if (!scenario.autonomous && (event.type === 'goal_done' || event.type === 'goal_failed' || event.type === 'stopped')) {
         outcome = outcome || event;
         resolveOutcome();
       }
     },
   });
   const startedAt = Date.now();
-  const goal = await scenario.start(companion);
+  // Per-run scratch space for scenario hooks (injected failures and their checks).
+  const runState = {};
+  const goal = await scenario.start(companion, runState, bot);
   // A heartbeat every minute so long runs can be followed live.
   const heartbeat = setInterval(() => {
     const inv = {};
@@ -150,23 +153,43 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
       steps: status.goal?.progress, health: bot.health, food: bot.food, deaths,
       position: bot.entity?.position?.floored?.(), dimension: bot.game?.dimension, inventory: inv };
     write('heartbeat', line);
-    console.log(`    [${line.minute}m] ${line.running || 'idle'} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
+    line.autonomy = status.autonomy?.current || null;
+    console.log(`    [${line.minute}m] ${line.running || 'idle'}${line.autonomy ? ` (auto:${line.autonomy})` : ''} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
       + ` food=${bot.food} deaths=${deaths} ${line.dimension} ${Object.entries(inv).map(([k, n]) => `${k}:${n}`).join(' ')}`);
   }, 60000);
+  // Scenarios may also act on the world while the goal runs (e.g. skip a night
+  // once the goal is ready for it), every two seconds.
+  // One call at a time, and the last one is awaited before verify() so their
+  // server queries never overlap.
+  let duringCall = Promise.resolve();
+  const during = scenario.during ? setInterval(() => {
+    duringCall = duringCall.then(() => scenario.during({ server, bot, goal, write }))
+      .catch((error) => write('during_failed', { error: String(error) }));
+  }, 2000) : null;
   // Scenarios may also end on a world condition (e.g. the next morning).
   const deadline = new AbortController();
-  const condition = scenario.finishWhen ? (async () => {
-    for (;;) { await delay(2000, null, { signal: deadline.signal }); if (scenario.finishWhen({ bot })) return false; }
-  })() : new Promise(() => {});
+  const hookContext = () => ({ server, bot, username, companion, goal, state: runState, write, deaths,
+    elapsedMs: Date.now() - startedAt });
+  const condition = scenario.finishWhen || scenario.onTick ? (async () => {
+    for (;;) {
+      await delay(2000, null, { signal: deadline.signal });
+      if (scenario.onTick) {
+        try { await scenario.onTick(hookContext()); } catch (error) { write('hook_error', { reason: error.message }); }
+      }
+      if (scenario.finishWhen?.(hookContext())) return false;
+    }
+  })().catch((error) => { if (error.name !== 'AbortError') throw error; return false; }) : new Promise(() => {});
   const timedOut = await Promise.race([finished.then(() => false), condition,
     delay(scenario.timeoutMs, null, { signal: deadline.signal }).then(() => true)]);
   deadline.abort();
   clearInterval(heartbeat);
+  if (during) clearInterval(during);
+  await duringCall;
   await companion.dispose();
   bot.removeListener('death', onDeath);
   const durationMs = Date.now() - startedAt;
   await sleep(500);
-  const verdict = await scenario.verify({ server, username, bot, goal, deaths });
+  const verdict = await scenario.verify({ server, username, bot, goal, deaths, companion, state: runState });
   const reason = verdict.pass ? null
     : timedOut ? 'timeout'
       : outcome?.type === 'goal_failed' ? `goal_failed:${(outcome.reasons || []).at(-1) || 'unknown'}`
