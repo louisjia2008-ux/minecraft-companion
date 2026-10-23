@@ -93,6 +93,12 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   });
   let readback = Promise.resolve();
   let readbackAt = 0;
+  // Commands that must take effect first (forceloading far chunks before filling them).
+  if (setup.prepare?.length) {
+    for (const command of setup.prepare) server.command(command);
+    await server.query('list', /players online/, 15000);
+    await sleep(setup.prepareMs ?? 3000);
+  }
   for (const command of setup.commands) server.command(command);
   // `list` is processed after every queued command, so its reply is a barrier.
   await server.query('list', /players online/, 15000);

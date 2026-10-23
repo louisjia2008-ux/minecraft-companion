@@ -183,11 +183,12 @@ function withinReach(bot, position, reach = 4.5) {
   return eye.distanceTo(position.offset(0.5, 0.5, 0.5)) <= reach;
 }
 
-async function digBlock(bot, ctx, block, { timeoutMs = 12000 } = {}) {
+async function digBlock(bot, ctx, block, { timeoutMs = 12000, tool: chosen = null } = {}) {
   const position = block.position;
   const originalName = block.name;
   if (!withinReach(bot, position)) return fail('out_of_reach');
-  const tool = bot.pathfinder?.bestHarvestTool?.(block);
+  // The fastest tool unless the caller picked one (to spare a better pickaxe).
+  const tool = chosen || bot.pathfinder?.bestHarvestTool?.(block);
   if (tool) {
     try { await bot.equip(tool, 'hand'); } catch (_) { /* digging by hand still works, slower */ }
   }
