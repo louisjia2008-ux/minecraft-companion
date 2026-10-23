@@ -8,9 +8,13 @@
 //   3. a part missing              -> place it (beds, torch, slab in the slit, ladders)
 //   4. a lava cell dry             -> pour lava into it, clicking its far wall
 //   5. no zombie behind the slit   -> spawn one with an egg, from the corridor
-//   6. the room not sealed         -> step out and seal it
-//   7. fewer than three villagers  -> spawn one with an egg, over the seal
-//   8. otherwise                   -> pick up the drops by the shafts, or wait down the tunnel
+//   6. (minecart) no redstone block under the corridor's end -> dig the floor, place it
+//   7. (minecart) a rail missing   -> lay it: the corridor's first, the rest once sealed
+//   8. the room not sealed         -> step out and seal the top of the entrance
+//   9. fewer than three villagers  -> spawn one with an egg, through the entrance;
+//                                     by minecart the goal waits (memory.awaiting) for
+//                                     someone else to roll them in (goals/villageIronFarm.js)
+//  10. otherwise                   -> pick up the drops by the shafts, or wait down the tunnel
 // Only iron ingots gained after the goal started count.
 //
 // The villagers still have to sleep in their beds once before they call golems:
@@ -75,11 +79,13 @@ function chooseIronFarmSite(blockAt, around, { radius = 6 } = {}) {
   return best ? best.farm : null;
 }
 
-function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3,
+function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, villagersBy = 'eggs',
   skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
+  if (villagersBy !== 'eggs' && villagersBy !== 'minecart') throw new TypeError("villagersBy must be 'eggs' or 'minecart'");
+  const byCart = villagersBy === 'minecart';
   const memory = { farm: anchor ? createIronFarm(anchor, facing) : null, baseline: null, guarded: false,
-    eggs: 0, ready: false };
+    eggs: 0, ready: false, awaiting: false };
   const blockAt = (p) => bot.blockAt(v(p));
   const props = (block) => block?.getProperties?.() || {};
   const partOk = (part) => {
@@ -99,13 +105,16 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3,
   };
   // Natural rock there before the tunnel reaches the room is not the seal.
   const sealed = () => blockAt(memory.farm.cells.seal)?.name === 'cobblestone';
+  const rails = () => (byCart ? memory.farm.rails : []);
+  const railOk = (r) => blockAt(r.position)?.name === r.block;
+  const powered = () => blockAt(memory.farm.cells.power)?.name === 'redstone_block';
 
   function guardFarm() {
     const movements = bot.pathfinder?.movements;
     if (memory.guarded || !movements || !memory.farm) return;
     memory.guarded = true;
     const f = memory.farm;
-    const noBreak = new Set([...f.solid, ...f.parts.map((p) => p.position), f.cells.seal].map(key));
+    const noBreak = new Set([...f.solid, ...f.parts.map((p) => p.position), f.cells.seal, ...rails().map((r) => r.position)].map(key));
     // Never into the zombie's cell or a lava cell, and keep out of the shafts.
     const noStep = new Set([...f.zombie, ...f.lava, ...f.shafts].map(key));
     movements.exclusionAreasBreak.push((block) => (block?.position && noBreak.has(key(block.position)) ? 100 : 0));
@@ -117,11 +126,12 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3,
     // Beds, the slab, the ladders and the seal go into dug cells: placed, those count as dug.
     const placed = new Set(f.parts.filter(partOk).flatMap((p) => (p.head ? [p.position, p.head] : [p.position])).map(key));
     if (sealed()) placed.add(key(f.cells.seal));
+    for (const r of rails()) if (railOk(r)) placed.add(key(r.position));
     const cell = f.digOrder.find((p) => !dug(p) && !placed.has(key(p))) || null;
     const nextPart = f.parts.find((p) => !partOk(p)) || null;
     const dry = f.lava.find((p) => !skills.isFluidSource(blockAt(p), 'lava')) || null;
     const done = f.digOrder.filter((p) => dug(p) || placed.has(key(p))).length + f.parts.filter(partOk).length + f.lava.length
-      - f.lava.filter((p) => !skills.isFluidSource(blockAt(p), 'lava')).length;
+      - f.lava.filter((p) => !skills.isFluidSource(blockAt(p), 'lava')).length + rails().filter(railOk).length + (byCart && powered() ? 1 : 0);
     return { cell, nextPart, dry, done };
   }
 
@@ -144,7 +154,8 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3,
     const f = feet();
     // The route may end right on top of the cell: never dig out the ground underfoot.
     if (p.x === f.x && p.z === f.z && p.y === f.y - 1) {
-      const spots = Object.values(FACINGS).map((u) => ({ x: p.x + u.x, y: p.y + 1, z: p.z + u.z }))
+      // Beside it, or down in a dug bed pit beside it (the last pit has no other neighbour).
+      const spots = Object.values(FACINGS).flatMap((u) => [0, -1].map((dy) => ({ x: p.x + u.x, y: p.y + 1 + dy, z: p.z + u.z })))
         .filter((c) => isAir(blockAt(c)) && isAir(blockAt({ ...c, y: c.y + 1 })) && isSolid(blockAt({ ...c, y: c.y - 1 })));
       for (const c of spots) {
         const moved = await goStand(ctx, c, 8000);
@@ -173,6 +184,15 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3,
     memory.eggs += 1;
     await sleep(500, ctx.signal);
     return { ok: true };
+  }
+
+  async function layRail(ctx, rail) {
+    const current = blockAt(rail.position);
+    if (!isAir(current) && current.name !== rail.block) return dig(ctx, rail.position);
+    const result = await skills.placeAt(bot, ctx, rail.position, (n) => n === rail.block, { faces: [new Vec3(0, -1, 0)], passable: true });
+    ctx.record('iron_farm_rail', { at: rail.position, block: rail.block, ok: result.ok, reason: result.reason,
+      shape: blockAt(rail.position)?.getProperties?.().shape });
+    return result;
   }
 
   const drops = () => Object.values(bot.entities).filter((e) => e.name === 'item' && DROPS.has(droppedName(e))
@@ -204,6 +224,7 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3,
   return {
     name: 'iron_farm',
     memory,
+    villagers: () => (memory.farm ? villagers() : 0),
     // Golems come at their own pace, and only after the villagers' first night.
     noProgressLimit: 60,
     isDone: () => Boolean(memory.farm) && memory.ready && gained() >= count,
@@ -252,14 +273,28 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3,
         ctx.record('iron_farm_zombie', { ok: there });
         return there ? { ok: true } : { ok: false, reason: 'no_zombie' };
       }
+      if (byCart && !powered()) {
+        if (!isAir(blockAt(c.power))) return dig(ctx, c.power);
+        const result = await skills.placeAt(bot, ctx, c.power, (n) => n === 'redstone_block', { faces: [new Vec3(0, -1, 0)] });
+        ctx.record('device_part', { part: 'power', ok: result.ok, reason: result.reason });
+        return result;
+      }
+      // The corridor's rails and the one under the entrance go in while the bot can still walk in.
+      const rail = rails().find((r, i) => !railOk(r) && (i <= 3 || sealed()));
+      if (rail) return layRail(ctx, rail);
       if (!sealed()) {
         const result = await skills.placeAt(bot, ctx, c.seal, (n) => n === 'cobblestone', {
-          faces: [new Vec3(0, -1, 0)], stand: c.villagerStand,
+          faces: [new Vec3(0, 1, 0)], stand: c.villagerStand,
         });
         ctx.record('device_part', { part: 'seal', ok: result.ok, reason: result.reason });
         return result;
       }
       const have = villagers();
+      if (byCart && !memory.ready && have < VILLAGERS) {
+        if (!memory.awaiting) ctx.record('iron_farm_awaiting_villagers', { villagers: have });
+        memory.awaiting = true;
+        return { ok: false, reason: 'awaiting_villagers' };
+      }
       if (!memory.ready && have < VILLAGERS) {
         const floor = c.corridor.map((p) => ({ ...p, y: p.y - 1 }))[memory.eggs % c.corridor.length];
         const result = await useEgg(ctx, 'villager_spawn_egg', floor, new Vec3(0, 1, 0), c.villagerStand);
@@ -270,6 +305,7 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3,
       }
       if (!memory.ready) {
         memory.ready = true;
+        memory.awaiting = false;
         ctx.record('iron_farm_ready', { villagers: have, zombie: zombieIn() });
       }
       return collect(ctx);
