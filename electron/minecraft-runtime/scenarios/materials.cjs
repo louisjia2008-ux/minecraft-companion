@@ -128,7 +128,20 @@ function fillBox(from, to, block) {
 // the mine level (y=-54..-52, deepslate below y=0 like a real world) a mix of
 // redstone, lapis, gold, coal and a few diamond veins on every side of home,
 // with sealed lava pockets the tunnel must not open.
-const DEEP = { minX: -60, maxX: 200, minZ: -56, maxZ: 26 };
+const DEEP = { minX: -100, maxX: 220, minZ: -100, maxZ: 100 };
+// Like the plain flat world, but deepslate below y=0 as in a real one.
+const DEEP_GENERATOR = { ...FLAT_GENERATOR, layers: [
+  { block: 'minecraft:bedrock', height: 1 },
+  { block: 'minecraft:deepslate', height: 64 },
+  { block: 'minecraft:stone', height: 59 },
+  { block: 'minecraft:dirt', height: 3 },
+  { block: 'minecraft:grass_block', height: 1 },
+] };
+const DEEP_PROPERTIES = { ...materialsCobblegenFlat.serverProperties, 'generator-settings': JSON.stringify(DEEP_GENERATOR) };
+// Only what earlier runs dug out is filled back in (a fresh world has nothing
+// to fill, so setup stays light however wide the mining area is). Ore and
+// depots an earlier run left behind stay: more of the same does no harm.
+const REFILL = { from: { x: -110, z: -110 }, to: { x: 230, z: 110 } };
 function deepWorld({ username, rng, difficulty, diamonds }) {
   const trees = plantTrees(rng);
   const commands = [
@@ -140,9 +153,9 @@ function deepWorld({ username, rng, difficulty, diamonds }) {
     ...resetArea(),
     ...trees.commands,
     `setblock ${CHEST.x} ${CHEST.y} ${CHEST.z} chest`,
-    // Fill in the staircases, veins and tunnels of earlier runs; deepslate below y=0.
-    ...fillBox({ x: -70, y: 0, z: -64 }, { x: 210, y: 59, z: 31 }, 'stone'),
-    ...fillBox({ x: -70, y: -60, z: -64 }, { x: 210, y: -1, z: 31 }, 'deepslate'),
+    // Fill in the staircases, depots, veins and tunnels of earlier runs.
+    ...fillBox({ ...REFILL.from, y: 0 }, { ...REFILL.to, y: 59 }, 'stone replace air'),
+    ...fillBox({ ...REFILL.from, y: -60 }, { ...REFILL.to, y: -1 }, 'deepslate replace air'),
   ];
   const at = () => ({ x: DEEP.minX + Math.floor(rng() * (DEEP.maxX - DEEP.minX)),
     z: DEEP.minZ + Math.floor(rng() * (DEEP.maxZ - DEEP.minZ)) });
@@ -152,12 +165,12 @@ function deepWorld({ username, rng, difficulty, diamonds }) {
     const z = -36 + Math.floor(rng() * 58);
     commands.push(`fill ${x} 15 ${z} ${x + 1} 16 ${z + 1} iron_ore`);
   }
-  for (let i = 0; i < 80; i += 1, counts.lava += 1) {
+  for (let i = 0; i < 160; i += 1, counts.lava += 1) {
     const p = at();
     commands.push(`setblock ${p.x} -53 ${p.z} lava`);
   }
-  const veins = [['deepslate_redstone_ore', 200], ['deepslate_lapis_ore', 80], ['deepslate_gold_ore', 80],
-    ['deepslate_coal_ore', 60], ['deepslate_diamond_ore', diamonds]];
+  const veins = [['deepslate_redstone_ore', 600], ['deepslate_lapis_ore', 240], ['deepslate_gold_ore', 240],
+    ['deepslate_coal_ore', 120], ['deepslate_diamond_ore', diamonds]];
   for (const [ore, n] of veins) {
     counts[ore] = n;
     for (let i = 0; i < n; i += 1) {
@@ -167,7 +180,9 @@ function deepWorld({ username, rng, difficulty, diamonds }) {
   }
   commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`);
   // The mine runs past view distance: its chunks are kept loaded so the fills land.
-  return { prepare: ['forceload add -70 -64 210 31'], commands, details: { trees: trees.trees.length, ...counts } };
+  // Forceloading takes at most 256 chunks a command: two strips.
+  return { prepare: [`forceload add ${REFILL.from.x} ${REFILL.from.z} ${REFILL.to.x} 0`,
+    `forceload add ${REFILL.from.x} 1 ${REFILL.to.x} ${REFILL.to.z}`], prepareMs: 15000, commands, details: { trees: trees.trees.length, ...counts } };
 }
 
 const LOOT = ['redstone', 'lapis_lazuli', 'raw_gold', 'coal', 'raw_iron'];
@@ -178,9 +193,9 @@ const branchMineRedstoneFlat = {
   description: 'Empty inventory, peaceful, flat plains with trees; iron only in veins at y=15-16, redstone and other'
     + ' ore only in deepslate veins at y=-54..-53 among sealed lava pockets; store 16 redstone in the home chest'
     + ' (stone tools, iron at y=16, iron pickaxe, staircase on down to y=-53, back up).',
-  serverProperties: materialsCobblegenFlat.serverProperties,
+  serverProperties: DEEP_PROPERTIES,
   timeoutMs: 75 * 60 * 1000,
-  setup: ({ username, rng, difficulty = 'peaceful' }) => deepWorld({ username, rng, difficulty, diamonds: 20 }),
+  setup: ({ username, rng, difficulty = 'peaceful' }) => deepWorld({ username, rng, difficulty, diamonds: 60 }),
   start: (companion) => companion.gatherMaterials({ chest: CHEST, stations: STATIONS, requirements: REDSTONE }),
   async verify({ server }) {
     const contents = await chestContents(server, CHEST);
@@ -195,9 +210,9 @@ const branchMineDiamondFlat = {
   name: 'branch-mine-diamond-flat',
   description: 'Empty inventory, peaceful, same deep world; store 3 diamonds in the home chest, and bring home'
     + ' the other ore met on the way (redstone, lapis, gold, coal).',
-  serverProperties: materialsCobblegenFlat.serverProperties,
+  serverProperties: DEEP_PROPERTIES,
   timeoutMs: 90 * 60 * 1000,
-  setup: ({ username, rng, difficulty = 'peaceful' }) => deepWorld({ username, rng, difficulty, diamonds: 80 }),
+  setup: ({ username, rng, difficulty = 'peaceful' }) => deepWorld({ username, rng, difficulty, diamonds: 240 }),
   start: (companion) => companion.gatherMaterials({ chest: CHEST, stations: STATIONS, requirements: DIAMONDS }),
   async verify({ server }) {
     const contents = await chestContents(server, CHEST);
