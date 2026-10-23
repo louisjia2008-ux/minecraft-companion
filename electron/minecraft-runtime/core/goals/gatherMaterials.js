@@ -7,6 +7,9 @@
 //   2. everything still owed carried -> store it in the chest
 //   3. planner has a step            -> gather / craft / smelt / fill a bucket / place a station
 //      (ore with nothing in sight      -> one more block of branch mine, see mining.js)
+//      (obsidian                       -> one step of casting it from buckets, see obsidian.js)
+//      (ore of the Nether              -> one step of a Nether trip, see netherQuartz.js:
+//                                         the portal's obsidian and flint and steel come first)
 // Only the chest counts as done: carried items die with the bot, stored ones
 // do not. Items in the chest are never taken back out for crafting, so the
 // planner only ever sees the inventory, asked for what the chest still lacks.
@@ -22,6 +25,9 @@ const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { materialsFor } = require('../materials');
 const { createBlacklist, posKey } = require('../blacklist');
 const mining = require('../mining');
+const obsidian = require('../obsidian');
+const nether = require('../nether');
+const { createNetherQuartzGoal } = require('./netherQuartz');
 
 const DOWN = [new Vec3(0, -1, 0)];
 // Main inventory slots (36): store what is owed before the bag overflows.
@@ -42,6 +48,11 @@ const KEEP_PICKS = 3;
 const DEPOT_CRAFT = 6;
 const SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const SPARE_PICKAXES = 3;
+// Casting obsidian floods the ground around the pit for a moment: not by the chest.
+const MOLD_FROM_HOME = 5;
+// A portal frame: ten obsidian, the four corners anything solid.
+const FRAME_OBSIDIAN = 10;
+const FRAME_CORNERS = 4;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
   skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
@@ -58,6 +69,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     pathFailures: 0,
     shortfall: {},
     mine: null,
+    cast: null,
+    trip: null,
     steps: 0,
   };
   const blacklist = createBlacklist({ ttlMs: 120000 });
@@ -258,9 +271,11 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         }
         return result;
       }
+      case 'cast':
+        return obsidian.castStep(bot, ctx, memory, { skills, actions, avoid: nearHome });
       case 'gather': {
-        const dimension = String(bot.game?.dimension || 'overworld').replace(/^minecraft:/, '');
-        if (step.dimension && step.dimension !== dimension) return { ok: false, reason: `needs_dimension:${step.dimension}` };
+        if (step.dimension === 'the_nether' && step.key === 'quartz') return netherTrip(ctx, step.count);
+        if (step.dimension && step.dimension !== nether.dimension(bot)) return { ok: false, reason: `needs_dimension:${step.dimension}` };
         const dropMatch = kb[step.key].match;
         const deep = Number.isFinite(step.mineY);
         // Ore that needs a mine is mined from the tunnel once there is one.
@@ -273,6 +288,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
           result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch, blacklist, exclude, radius: 128 });
         }
         if (result.reason === 'no_target_in_range') return deep ? mine(ctx, step, dropMatch) : explore(ctx, step.key);
+        // Gravel gives flint one time in ten: the gravel is the progress.
+        if (step.rare && result.reason === 'drops_not_collected') return { ok: true, drop: 'missed' };
         return result;
       }
       case 'smelt': {
@@ -298,7 +315,50 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     }
   }
 
+  const nearHome = (p) => [chest, ...Object.values(stations)].some((s) => s && Math.hypot(p.x - s.x, p.z - s.z) < MOLD_FROM_HOME);
+
+  // A Nether trip is one goal of its own (portal, quartz, back), run a step
+  // at a time from here. `more`: quartz still to bring, on top of what is carried.
+  function netherTrip(ctx, more) {
+    const want = countKey('quartz', ctx.perceive().inventory, kb) + Math.max(1, more);
+    if (!memory.trip || (!nether.inNether(bot) && memory.trip.target !== want)) {
+      const old = memory.trip;
+      old?.dispose?.();
+      memory.trip = createNetherQuartzGoal({ bot, count: want, skills, actions });
+      // The portals already found or built stay known.
+      if (old) Object.assign(memory.trip.memory, old.memory, { explore: {} });
+    }
+    return memory.trip.run(ctx);
+  }
+
+  // A portal to use: one remembered (or out of sight, so not known gone), or one nearby.
+  function portalKnown() {
+    const p = memory.trip?.memory.overworldPortal;
+    if (p && ['nether_portal', null].includes(nameAt(p))) return true;
+    return Boolean(nether.findPortal(bot, 48));
+  }
+
+  // Before a first Nether trip: the frame's obsidian (less any already
+  // placed), its corners, and flint and steel to light it.
+  function portalKit() {
+    if (portalKnown()) return [];
+    const site = memory.trip?.memory.site;
+    const cells = site ? nether.portalFrame(site.base, site.axis).cells : [];
+    const placed = (corner) => cells.filter((c) => Boolean(c.corner) === corner
+      && (corner ? blockAt(c.pos)?.boundingBox === 'block' : nameAt(c.pos) === 'obsidian')).length;
+    return [
+      { key: 'obsidian', count: FRAME_OBSIDIAN - placed(false) },
+      { key: 'cobblestone', count: FRAME_CORNERS - placed(true) },
+      { key: 'flint_and_steel', count: 1 },
+    ].filter((r) => r.count > 0);
+  }
+
   async function runOnce(ctx) {
+    // In the Nether there is nothing to do but the trip: quartz, then home.
+    if (nether.inNether(bot)) {
+      const quartz = owed().find((r) => r.key === 'quartz')?.count || 0;
+      return netherTrip(ctx, quartz - countKey('quartz', ctx.perceive().inventory, kb));
+    }
     if (nameAt(chest) === null) {
       ctx.record('return_home', {});
       return actions.goNear(bot, ctx, new Vec3(chest.x, chest.y, chest.z), 3, { timeoutMs: 90000 });
@@ -308,6 +368,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       ctx.record('check_chest', {});
       return store(ctx, []);
     }
+    // Lava in the mold, or the water still out: finish the cast before anything else.
+    if (obsidian.pending(bot, memory.cast)) return obsidian.castStep(bot, ctx, memory, { skills, actions, avoid: nearHome });
     const state = ctx.perceive();
     const debts = owed();
     // Everything owed that is already carried, up to what the chest lacks.
@@ -335,6 +397,10 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         const kit = belowSurface ? [{ key: 'stone_pickaxe', count: SPARE_PICKS }] : supplies(step);
         step = planNext({ requirements: [...kit, ...reqs], inventory, stations: placedStations(), kb }) || step;
       }
+    }
+    if (step?.kind === 'gather' && step.dimension === 'the_nether') {
+      const kit = portalKit();
+      if (kit.length) step = planNext({ requirements: [...kit, ...reqs], inventory, stations: placedStations(), kb }) || step;
     }
     const freeSlots = typeof bot.inventory.emptySlotCount === 'function' ? bot.inventory.emptySlotCount() : Infinity;
     // Passing by the chest (crafting and smelting happen next to it) with a
