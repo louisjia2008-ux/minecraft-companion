@@ -27,6 +27,8 @@ const ARMOR = [['head', /_helmet$/], ['torso', /_chestplate$/], ['legs', /_leggi
 const ARMOR_SLOT = { head: 5, torso: 6, legs: 7, feet: 8 };
 const ARMOR_RANK = ['leather', 'golden', 'chainmail', 'iron', 'diamond', 'netherite'];
 const SCAN_EVERY_MS = 10000;
+// Below this the fortress is left to its mobs until health is back.
+const HUNT_HEALTH = 15;
 
 function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trades = 10, roam = 400,
   skills = defaultSkills, actions = defaultActions } = {}) {
@@ -201,6 +203,19 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const blazeNear = Object.values(bot.entities).some((e) => e.name === 'blaze' && e.position?.distanceTo(here) <= 24);
     const drink = await fireProof(ctx, { danger: blazeNear });
     if (!drink.ok) return drink;
+    // Hurt: no new fights. Back off from whatever is near and let health come
+    // back (a full stomach regenerates), then hunt again.
+    if (state.health < HUNT_HEALTH) {
+      const near = state.hostiles.find((h) => h.distance <= 12 && h.name !== 'zombified_piglin');
+      if (near) {
+        ctx.record('fall_back', { health: Math.round(state.health), from: near.name });
+        const moved = await actions.fleeFrom(bot, ctx, near.position, { distance: 16, timeoutMs: 10000 });
+        return moved.ok || bot.entity.position.distanceTo(here) >= 4 ? { ok: true, waited: true } : moved;
+      }
+      actions.haltBody(bot);
+      await sleep(2000, ctx.signal);
+      return { ok: true, waited: true };
+    }
     const target = Object.values(bot.entities).find((e) => mobs.includes(e.name) && e.position
       && e.position.distanceTo(here) <= 32 && Math.abs(e.position.y - here.y) <= 6 && !blacklist.has(`mob:${e.id}`));
     if (target) {

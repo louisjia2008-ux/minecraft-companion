@@ -87,16 +87,25 @@ async function locate(server, structure, x, z) {
 }
 
 /**
- * A nether start between a fortress and a bastion that lie close together, so a
- * real expedition (find both, walk between them) fits in an hour. The bot is
- * never told where they are: it has to see them from the loaded chunks.
+ * Where the bot starts in the nether. `both`: between a fortress and a bastion
+ * that lie close together, so the whole expedition fits in the time limit.
+ * `fortress` / `bastion`: 60-110 blocks from one of them, in a random
+ * direction. The bot is never told where they are: it has to see them in the
+ * loaded chunks.
  */
-async function pickExpeditionStart(server, rng, run) {
+async function pickExpeditionStart(server, rng, run, near) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const angle = rng() * Math.PI * 2;
     const r = 400 + rng() * 2600 + run * 300;
     const px = Math.round(Math.cos(angle) * r);
     const pz = Math.round(Math.sin(angle) * r);
+    if (near !== 'both') {
+      const target = await locate(server, near === 'fortress' ? 'fortress' : 'bastion_remnant', px, pz);
+      if (!target) continue;
+      const a = rng() * Math.PI * 2;
+      const d = 60 + rng() * 50;
+      return { [near]: target, nether: { x: Math.round(target.x + Math.cos(a) * d), z: Math.round(target.z + Math.sin(a) * d) }, attempt };
+    }
     const fortress = await locate(server, 'fortress', px, pz);
     if (!fortress) continue;
     const bastion = await locate(server, 'bastion_remnant', fortress.x, fortress.z);
@@ -107,55 +116,64 @@ async function pickExpeditionStart(server, rng, run) {
     const nether = { x: Math.round((fortress.x + bastion.x) / 2) + jitter(), z: Math.round((fortress.z + bastion.z) / 2) + jitter() };
     return { fortress, bastion, nether, attempt };
   }
-  throw new Error('no fortress and bastion close together');
+  throw new Error(`no ${near === 'both' ? 'fortress and bastion close together' : near} found`);
 }
 
-const netherStructuresGiven = {
-  name: 'nether-structures-given',
-  description: `Expedition kit given (portal materials, diamond armour + gold helmet, looting sword, fire resistance, golden apples,
-  ${GOLD} gold); find a fortress (${EXPEDITION.blazeRods} blaze rods, ${EXPEDITION.witherSkulls} wither skeleton skull) and a bastion
-  (${EXPEDITION.trades} piglin trades), then come home. Structures are not told to the bot.`,
-  serverProperties: {
-    'level-type': 'minecraft:flat', 'generator-settings': JSON.stringify(FLAT_GENERATOR),
-    'level-seed': 20261023, difficulty: 'easy', 'allow-nether': true,
-  },
-  defaultDifficulty: 'easy',
-  timeoutMs: 75 * 60 * 1000,
-  async setup({ username, run, rng, difficulty = 'easy', server }) {
-    const pick = await pickExpeditionStart(server, rng, run);
-    const x = pick.nether.x * 8;
-    const z = pick.nether.z * 8;
-    return {
-      commands: [
-        `difficulty ${difficulty}`,
-        'gamerule doDaylightCycle false', 'gamerule doWeatherCycle false', 'gamerule doMobSpawning true',
-        'gamerule doImmediateRespawn true', 'gamerule keepInventory false', 'gamerule spawnRadius 0',
-        'time set noon', 'weather clear',
-        `execute in minecraft:overworld run tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5}`,
-        `execute in minecraft:overworld run setworldspawn ${x} ${GROUND} ${z + 10}`,
-        `clear ${username}`, `effect clear ${username}`, `gamemode survival ${username}`,
-        `effect give ${username} minecraft:instant_health 1 5`, `effect give ${username} minecraft:saturation 1 20`,
-        ...EXPEDITION_KIT.map(([item, count]) => `give ${username} ${item} ${count}`),
-      ],
-      details: { start: { x, z }, netherStart: pick.nether, fortress: pick.fortress, bastion: pick.bastion },
-    };
-  },
-  start: (companion) => companion.netherExpedition(EXPEDITION),
-  async verify({ server, username, goal }) {
-    const rods = await countOnPlayer(server, username, 'blaze_rod');
-    const skulls = await countOnPlayer(server, username, 'wither_skeleton_skull');
-    const gold = await countOnPlayer(server, username, 'gold_ingot');
-    const dimension = await playerDimension(server, username);
-    const m = goal?.memory || {};
-    const at = (p) => (p ? `${p.x},${p.y},${p.z}` : null);
-    const trades = m.trades || 0;
-    return {
-      pass: rods >= EXPEDITION.blazeRods && skulls >= EXPEDITION.witherSkulls && trades >= EXPEDITION.trades
-        && gold <= GOLD - EXPEDITION.trades && dimension === 'overworld',
-      details: { rodsOnServer: rods, skullsOnServer: skulls, goldOnServer: gold, trades, barter: m.barter, kills: m.kills,
-        dimension, fortress: at(m.fortress), bastion: at(m.bastion), visited: m.visited, netherPortal: at(m.netherPortal) },
-    };
-  },
-};
+function expeditionScenario({ name, near, targets, timeoutMs }) {
+  const wants = [targets.blazeRods && `${targets.blazeRods} blaze rods`, targets.witherSkulls && `${targets.witherSkulls} wither skeleton skull`,
+    targets.trades && `${targets.trades} piglin trades`].filter(Boolean).join(', ');
+  return {
+    name,
+    description: `Expedition kit given (portal materials, diamond armour + gold helmet, looting sword, fire resistance, golden apples,
+  ${GOLD} gold); start near ${near === 'both' ? 'a fortress and a bastion' : `a ${near}`} (not told to the bot); ${wants}; then come home.`,
+    serverProperties: {
+      'level-type': 'minecraft:flat', 'generator-settings': JSON.stringify(FLAT_GENERATOR),
+      'level-seed': 20261023, difficulty: 'easy', 'allow-nether': true,
+    },
+    defaultDifficulty: 'easy',
+    timeoutMs,
+    async setup({ username, run, rng, difficulty = 'easy', server }) {
+      const pick = await pickExpeditionStart(server, rng, run, near);
+      const x = pick.nether.x * 8;
+      const z = pick.nether.z * 8;
+      return {
+        commands: [
+          `difficulty ${difficulty}`,
+          'gamerule doDaylightCycle false', 'gamerule doWeatherCycle false', 'gamerule doMobSpawning true',
+          'gamerule doImmediateRespawn true', 'gamerule keepInventory false', 'gamerule spawnRadius 0',
+          'time set noon', 'weather clear',
+          `execute in minecraft:overworld run tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5}`,
+          `execute in minecraft:overworld run setworldspawn ${x} ${GROUND} ${z + 10}`,
+          `clear ${username}`, `effect clear ${username}`, `gamemode survival ${username}`,
+          `effect give ${username} minecraft:instant_health 1 5`, `effect give ${username} minecraft:saturation 1 20`,
+          ...EXPEDITION_KIT.map(([item, count]) => `give ${username} ${item} ${count}`),
+        ],
+        details: { start: { x, z }, netherStart: pick.nether, fortress: pick.fortress || null, bastion: pick.bastion || null },
+      };
+    },
+    start: (companion) => companion.netherExpedition(targets),
+    async verify({ server, username, goal }) {
+      const rods = await countOnPlayer(server, username, 'blaze_rod');
+      const skulls = await countOnPlayer(server, username, 'wither_skeleton_skull');
+      const gold = await countOnPlayer(server, username, 'gold_ingot');
+      const dimension = await playerDimension(server, username);
+      const m = goal?.memory || {};
+      const at = (p) => (p ? `${p.x},${p.y},${p.z}` : null);
+      const trades = m.trades || 0;
+      return {
+        pass: rods >= targets.blazeRods && skulls >= targets.witherSkulls && trades >= targets.trades
+          && gold <= GOLD - targets.trades && dimension === 'overworld',
+        details: { rodsOnServer: rods, skullsOnServer: skulls, goldOnServer: gold, trades, barter: m.barter, kills: m.kills,
+          dimension, fortress: at(m.fortress), bastion: at(m.bastion), visited: m.visited, netherPortal: at(m.netherPortal) },
+      };
+    },
+  };
+}
 
-module.exports = { netherQuartzGiven, netherStructuresGiven };
+const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION, timeoutMs: 75 * 60 * 1000 });
+const netherFortressGiven = expeditionScenario({ name: 'nether-fortress-given', near: 'fortress',
+  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, trades: 0 }, timeoutMs: 45 * 60 * 1000 });
+const netherBastionGiven = expeditionScenario({ name: 'nether-bastion-given', near: 'bastion',
+  targets: { blazeRods: 0, witherSkulls: 0, trades: EXPEDITION.trades }, timeoutMs: 30 * 60 * 1000 });
+
+module.exports = { netherQuartzGiven, netherStructuresGiven, netherFortressGiven, netherBastionGiven };
