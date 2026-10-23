@@ -157,6 +157,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const threat = nearest(state);
       if (!threat || state.sheltered) return 0;
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
+      // A brute on the bot outruns it: running only takes the hits in the back.
+      if (threat.name === 'piglin_brute' && threat.distance <= BRUTE_FIGHT) return 0;
       return state.health <= t.escapeHealth && threat.distance <= t.escapeRange ? 1 : 0;
     },
     run: (ctx) => actions.fleeFrom(bot, ctx, nearest(ctx.perceive())?.position || bot.entity.position),

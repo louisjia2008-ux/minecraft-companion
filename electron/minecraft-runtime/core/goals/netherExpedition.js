@@ -249,7 +249,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const brutes = Object.values(bot.entities).filter((e) => e.name === 'piglin_brute' && e.position);
     return Object.values(bot.entities)
       .filter((e) => structures.isAdultPiglin(bot, e) && near(e, here, range) && !blacklist.has(`piglin:${e.id}`)
-        && Math.abs(e.position.y - here.y) <= 4 && !brutes.some((b) => near(b, e.position, 12)))
+        && Math.abs(e.position.y - here.y) <= 4 && !brutes.some((b) => near(b, e.position, 12) || near(b, here, 16)))
       .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0] || null;
   }
 
@@ -265,6 +265,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (!wearsGold()) return fail('no_gold_armour');
     const ingot = bot.inventory.items().find((i) => i.name === 'gold_ingot');
     if (!ingot) return fail('no_gold');
+    if (structures.piglinBusy(piglin)) {
+      // Still looking at the last ingot: it would ignore another one.
+      await waitUntil(() => !structures.piglinBusy(bot.entities[piglin.id]), { timeoutMs: 8000, signal: ctx.signal });
+      if (!bot.entities[piglin.id]) return fail('piglin_gone');
+    }
+    // Thrown from right on top of it, the ingot flies past and lands at the bot's own feet.
+    if (piglin.position.distanceTo(bot.entity.position) < 1.5) {
+      await actions.fleeFrom(bot, ctx, piglin.position.clone(), { distance: 2.5, timeoutMs: 3000 });
+    }
     if (piglin.position.distanceTo(bot.entity.position) > 3) {
       const moved = await actions.goNear(bot, ctx, piglin.position.clone(), 2, { timeoutMs: 20000 });
       if (!bot.entities[piglin.id]) return fail('piglin_gone');
@@ -289,7 +298,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       if (isAbort(error)) throw error;
       return fail('toss_failed');
     }
-    ctx.record('barter_offer', { piglin: piglin.id, distance: Math.round(piglin.position.distanceTo(bot.entity.position) * 10) / 10 });
+    ctx.record('barter_offer', { piglin: piglin.id, busy: structures.piglinBusy(piglin), distance: Math.round(piglin.position.distanceTo(bot.entity.position) * 10) / 10 });
     // The thrown ingot shows up as an item entity a tick or two later.
     let thrown = null;
     await waitUntil(() => { thrown = goldOnGround(bot.entity.position, 12).find((e) => !known.has(e.id)) || null; return Boolean(thrown); },
@@ -305,7 +314,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const taken = await waitUntil(() => (!thrown || !bot.entities[thrown.id]) && goldNow() < goldBefore,
       { timeoutMs: 8000, signal: ctx.signal }) && goldNow() < goldBefore;
     if (!taken) {
-      blacklist.add(`piglin:${piglin.id}`, 'ignored_gold', 60000);
+      blacklist.add(`piglin:${piglin.id}`, 'ignored_gold', 20000);
       if (thrown && bot.entities[thrown.id]) {
         await actions.collectDrops(bot, ctx, bot.entities[thrown.id].position, (n) => n === 'gold_ingot', { radius: 3, timeoutMs: 6000 });
       }
@@ -358,10 +367,18 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.visited.bastion = true;
       ctx.record('structure_entered', { kind: 'bastion', position: posKey(here.floored()) });
     }
+    // A brute in sight: no bartering here, step out of its way first.
+    const brute = Object.values(bot.entities).find((e) => e.name === 'piglin_brute' && e.position && near(e, here, 16));
+    if (brute) {
+      ctx.record('avoid_brute', { distance: Math.round(brute.position.distanceTo(here)) });
+      const moved = await actions.fleeFrom(bot, ctx, brute.position.clone(), { distance: 20, timeoutMs: 15000 });
+      return moved.ok || bot.entity.position.distanceTo(here) >= 4 ? { ok: true, waited: true } : moved;
+    }
     // Piglins further off or on another level: walk over to the nearest one
     // that no brute stands beside, then barter from up close.
     const far = Object.values(bot.entities)
-      .filter((e) => structures.isAdultPiglin(bot, e) && near(e, here, 64) && !blacklist.has(`goto-piglin:${e.id}`)
+      .filter((e) => structures.isAdultPiglin(bot, e) && near(e, here, 64) && !near(e, here, 3) && !blacklist.has(`goto-piglin:${e.id}`)
+        && !blacklist.has(`piglin:${e.id}`)
         && !Object.values(bot.entities).some((b) => b.name === 'piglin_brute' && b.position && near(b, e.position, 10)))
       .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0];
     if (far) {
