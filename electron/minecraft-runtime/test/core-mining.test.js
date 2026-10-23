@@ -100,3 +100,24 @@ test('the way out and back follows the tunnel the bot dug, a few blocks per leg'
   while (await walkTunnel(bot, ctx, mine, 'front', actions));
   assert.deepEqual(walked, ['0,10,0', '6,4,0', '8,2,0']);
 });
+
+test('a front that every leg falls short of is given up instead of walked at forever', async () => {
+  const { mineStep } = require('../core/mining');
+  const { Vec3 } = require('vec3');
+  const cells = { '0,10,0': null, '1,9,0': '0,10,0', '2,8,0': '1,9,0' };
+  const memory = { mine: { entrance: { x: 0, y: 10, z: 0 }, front: { x: 2, y: 8, z: 0 }, surfaceY: 10, dir: 0, phase: 'main',
+    mainSteps: 0, steps: 2, turns: 0, branch: null, cells, walkFailures: 0 } };
+  // Each leg "arrives" one cell short: the bot never stands at the front.
+  const bot = { entity: { position: new Vec3(1.5, 9, 0.5) }, registry: { blocksByName: {} },
+    inventory: { emptySlotCount: () => 20 } };
+  const actions = { goTo: async () => ({ ok: true }) };
+  const events = [];
+  const ctx = { record: (type) => events.push(type) };
+  const blacklist = { has: () => false };
+  for (let i = 0; i < 60 && memory.mine; i += 1) {
+    await mineStep(bot, ctx, memory, { blocks: () => false, dropMatch: () => false, y: 8, blacklist, actions });
+  }
+  assert.equal(memory.mine, null);
+  assert.ok(events.includes('mine_abandoned'));
+  assert.equal(memory.mineDir, 1);
+});

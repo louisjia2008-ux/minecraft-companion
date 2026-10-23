@@ -28,6 +28,7 @@ const DOWN = [new Vec3(0, -1, 0)];
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
 const MINE_FROM_HOME = 8;
+const SPARE_PICKAXES = 3;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
   skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
@@ -97,6 +98,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       }
       start = bot.entity.position.floored();
     }
+    // An unlit tunnel fills with monsters: carry torches while there is coal for them.
+    const have = (n) => countKey(n, ctx.perceive().inventory, kb);
+    if (have('torch') === 0 && have('coal') > 0 && have('stick') > 0 && !blacklist.has('torch')) {
+      const made = await skills.craft(bot, ctx, { item: 'torch', times: Math.min(2, have('coal'), have('stick')) });
+      if (!made.ok) blacklist.add('torch', made.reason, 60000);
+    }
     return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions });
   }
 
@@ -117,7 +124,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   async function runStep(ctx, step) {
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
-    if (step.kind !== 'gather') {
+    // Everything but ore deep down is found on the surface: climb out of the mine first.
+    if (step.kind !== 'gather' || !Number.isFinite(step.mineY)) {
       const up = await climbOut(ctx);
       if (up) return up;
     }
@@ -128,8 +136,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         return skills.placeAt(bot, ctx, spot, (n) => n === step.station, { faces: DOWN });
       }
       case 'craft': {
-        const result = await skills.craft(bot, ctx, { item: step.item, times: step.times,
+        const craft = (times) => skills.craft(bot, ctx, { item: step.item, times,
           tablePosition: step.table ? stations.crafting_table : null });
+        // A stone pickaxe lasts about 60 blocks of tunnel, and the table is
+        // at home: make spares while here if the bag has enough for them.
+        let result = step.item === 'stone_pickaxe' && step.times < SPARE_PICKAXES ? await craft(SPARE_PICKAXES) : null;
+        if (!result?.ok) result = await craft(step.times);
         // Short of something the plan thought was there: plan for it explicitly for a while.
         for (const m of result.missing || []) {
           const family = familyOf(m.name, kb);

@@ -900,6 +900,27 @@ async function digIn(bot, ctx, { sealMatch, avoid = () => false }) {
   return { ok: true, bunker: { top: { x: top.x, y: top.y, z: top.z } } };
 }
 
+/**
+ * Throws away up to `count` of each named item, stack by stack: one
+ * bot.toss() call only ever empties a single slot.
+ */
+async function tossStacks(bot, ctx, items) {
+  for (const { name, count } of items) {
+    let left = count ?? Infinity;
+    for (const stack of bot.inventory.items().filter((i) => i.name === name)) {
+      if (left <= 0) break;
+      const n = Math.min(left, stack.count);
+      try {
+        await runCancellable(() => (n === stack.count ? bot.tossStack(stack) : bot.toss(stack.type, null, n)),
+          { signal: ctx.signal, timeoutMs: 3000, timeoutCode: 'toss_timeout' });
+        left -= n;
+      } catch (error) {
+        if (isAbort(error)) throw error;
+      }
+    }
+  }
+}
+
 /** Opens the seal and climbs back up, filling the shaft behind the bot. */
 async function digOut(bot, ctx, bunker) {
   const top = new Vec3(bunker.top.x, bunker.top.y, bunker.top.z);
@@ -961,5 +982,5 @@ async function useBed(bot, ctx, { position }) {
   }
 }
 
-module.exports = { gatherOne, craft, placeAt, pourLiquid, scoopLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest, storeItems, takeItems,
-  storeInChest, fillBucket, useBed, digIn, digOut, inventoryCounts, entityInside, aimAtFace };
+module.exports = { gatherOne, craft, placeAt, pourLiquid, scoopLiquid, isFluidSource, smelt, huntOne, sheepWool, pickBerries, explore, useChest,
+  storeItems, storeInChest, takeItems, fillBucket, useBed, digIn, digOut, tossStacks, inventoryCounts, entityInside, aimAtFace };

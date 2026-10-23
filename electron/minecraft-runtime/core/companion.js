@@ -2,11 +2,13 @@
 // Wires the brain to a live Mineflayer bot: perception, survival behaviors,
 // conservative movement settings and the decision tick.
 
+const { Vec3 } = require('vec3');
 const { pathfinder, Movements } = require('mineflayer-pathfinder');
 const { createBrain } = require('./brain');
 const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createRecovery } = require('./behaviors/recovery');
+const { createNightRest } = require('./behaviors/nightRest');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
@@ -39,9 +41,12 @@ function configureMovements(bot) {
   movements.maxDropDown = 4; // a 4-block drop costs one heart; 3 strands the bot on tree tops
   movements.infiniteLiquidDropdownDistance = false;
   movements.canOpenDoors = true;
-  // Fences and gates are someone's pen: walk around or through, never dig them.
+  // Fences and gates are someone's pen; the furniture and machine parts are
+  // home (chasing a skeleton out of the house once broke the bed, and the bot
+  // slept outside after that). Paths walk around or through, never dig them.
+  const KEEP = /(_fence|_fence_gate|_bed|_door|^chest|^trapped_chest|^furnace|^crafting_table|^hopper|^barrel)$/;
   for (const block of Object.values(bot.registry.blocksByName)) {
-    if (/_fence(_gate)?$/.test(block.name)) movements.blocksCantBreak.add(block.id);
+    if (KEEP.test(block.name)) movements.blocksCantBreak.add(block.id);
   }
   // Water is allowed but costly: banning it left the bot unable to reach
   // anything across a lake (all the animals on the far shore).
@@ -71,10 +76,21 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   const recovery = createRecovery({ bot });
   // Animals the current goal keeps (a ranch's herd) are not hunted for food.
   let spare = () => false;
-  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors];
   let director = null;
+  let brain = null;
+  // Nights after the house is done: home to bed, whatever goal runs. The
+  // homestead goal keeps handling its own nights while it builds.
+  const nightRest = createNightRest({ bot, home: () => {
+    const house = director?.memory.homestead?.memory?.house;
+    if (!house || brain?.status().goal?.name === 'homestead') return null;
+    const bed = house.furniture.bed.position;
+    const block = bot.blockAt(new Vec3(bed.x, bed.y, bed.z));
+    // Out of sight means far away (it digs in there); seen and gone means sleep without it.
+    return { bed: !block || block.name.endsWith('_bed') ? bed : null, centre: house.interiorCenter };
+  } });
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors, nightRest];
   const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
-  const brain = createBrain({
+  brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
     onEvent: (event) => {
@@ -88,7 +104,9 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   recovery.attach(brain);
   // With no player task the director picks the next goal itself; off unless asked for.
   const { cards, stageOf } = createDefaultCards({ bot });
-  director = createDirector({ brain, perceive: () => perceive(bot), cards, stageOf, onEvent });
+  // Its goals go through useGoal too, so an autonomous ranch also spares its herd.
+  const directorBrain = { status: () => brain.status(), setGoal: useGoal, clearGoal: (reason) => brain.clearGoal(reason) };
+  director = createDirector({ brain: directorBrain, perceive: () => perceive(bot), cards, stageOf, onEvent });
   if (autonomy) director.enable();
   const timer = setInterval(() => {
     try { director.tick(); } catch (error) { onEvent({ type: 'autonomy_error', at: Date.now(), reason: String(error?.message || error) }); }
