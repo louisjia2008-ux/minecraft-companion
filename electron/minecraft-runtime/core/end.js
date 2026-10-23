@@ -195,6 +195,15 @@ function overVoid(bot, x, y, z) {
   return true;
 }
 
+/** No solid block within `depth` below `p`: a step there is a fall the bot may not survive. */
+function deepDrop(bot, x, y, z, depth = 4) {
+  for (let yy = Math.floor(y) - 1; yy >= Math.floor(y) - depth; yy -= 1) {
+    const b = bot.blockAt(new Vec3(x, yy, z));
+    if (!b || b.boundingBox === 'block') return false;
+  }
+  return true;
+}
+
 /**
  * End movement: no pathfinder bridging or towers (gaps over the void are
  * crossed with bridgeToward, one confirmed block at a time), every cell beside
@@ -329,7 +338,7 @@ async function bridgeStep(bot, ctx, target, { avoidLiquids = false } = {}) {
  * Bridges straight toward `target` until standing over solid ground that is
  * not just the bridge (or `maxBlocks` steps). Then the pathfinder takes over.
  */
-async function bridgeToward(bot, ctx, target, { maxSteps = 48 } = {}) {
+async function bridgeToward(bot, ctx, target, { maxSteps = 48, stopOnLand = true } = {}) {
   let steps = 0;
   for (; steps < maxSteps; steps += 1) {
     const feet = bot.entity.position.floored();
@@ -340,7 +349,7 @@ async function bridgeToward(bot, ctx, target, { maxSteps = 48 } = {}) {
     const f = bot.entity.position.floored();
     const landed = [[1, 0], [-1, 0], [0, 1], [0, -1]]
       .filter(([x, z]) => /end_stone/.test(bot.blockAt(f.offset(x, -1, z))?.name || '') && !overVoid(bot, f.x + x, f.y, f.z + z)).length >= 3;
-    if (landed) { steps += 1; break; }
+    if (landed && stopOnLand) { steps += 1; break; }
   }
   return { ok: true, steps };
 }
@@ -636,7 +645,7 @@ async function walkTo(bot, ctx, p, range = 1, timeoutMs = 60000) {
 }
 
 module.exports = {
-  inEnd, ARROW, PEARL, flightInfo, bridgeStep, bridgeToward, descendSpiral, stranded, digShelter, leaveShelter, pillarUp, digPillarDown, direction, fly, aim, clearFlight, shootArrow, throwPearl, hold, overVoid, applyEndMovements,
+  inEnd, ARROW, PEARL, flightInfo, bridgeStep, bridgeToward, descendSpiral, stranded, digShelter, leaveShelter, pillarUp, digPillarDown, direction, fly, aim, clearFlight, shootArrow, throwPearl, hold, overVoid, deepDrop, applyEndMovements,
   wearArmor, dragonOf, dragonPhase, dragonHealth, crystalsOf, caged, cloudOver, exitPortalLit, surfaceAt, firingSpots, headAim, headPosition, headPart,
   walkTo, PERCHED, DYING, waitUntil, goals,
 };

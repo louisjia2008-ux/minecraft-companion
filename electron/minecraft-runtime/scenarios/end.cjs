@@ -193,12 +193,19 @@ const endCityGiven = {
     await wait(8000);
     server.command('execute in minecraft:the_end run kill @e[type=minecraft:ender_dragon]');
     await wait(15000);
+    // For reading the log only (the bot is never told): the cities nearest the outer ring.
+    const cities = [];
+    for (const [x, z] of [[1000, 0], [-1000, 0], [0, 1000], [0, -1000], [-700, -700]]) {
+      const m = await server.query(`execute in minecraft:the_end positioned ${x} 60 ${z} run locate structure minecraft:end_city`,
+        /(nearest minecraft:end_city is at \[[^\]]*\][^)]*\)|Could not find)/, 20000).catch(() => null);
+      cities.push(`${x},${z}: ${m ? (Array.isArray(m) ? m[0] : String(m)).slice(0, 80) : '?'}`);
+    }
     return {
       commands: [
         ...CITY_KIT.map(([item, count]) => `give ${username} ${item} ${count}`),
         `execute in minecraft:the_end positioned 0 0 30 run spreadplayers ~ ~ 0 8 under 75 false ${username}`,
       ],
-      details: {},
+      details: { cities },
     };
   },
   start: (companion) => companion.endCity(),

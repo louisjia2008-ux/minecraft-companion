@@ -148,9 +148,12 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     // Back where the last search started (pulled back, or walking in circles): turn.
     if (memory.searchFrom && here.distanceTo(memory.searchFrom) < 8) memory.blocked = true;
     memory.searchFrom = here;
-    if (!memory.heading || memory.blocked) {
+    // Sweep: straight out for a while, then fan to either side of it.
+    const sweep = [0, 0, 0.9, 0.9, -0.9, -0.9][Math.floor(memory.explored / 4) % 6];
+    if (!memory.heading || memory.blocked || memory.sweep !== sweep) {
+      memory.sweep = sweep;
       const base = city.outward(bot);
-      const turn = memory.blocked ? (Math.random() - 0.5) * Math.PI : 0;
+      const turn = sweep + (memory.blocked ? (Math.random() - 0.5) * Math.PI : 0);
       memory.heading = new Vec3(base.x * Math.cos(turn) - base.z * Math.sin(turn), 0, base.x * Math.sin(turn) + base.z * Math.cos(turn));
       memory.blocked = false;
     }
@@ -159,7 +162,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     memory.explored += 1;
     // On a bridge or an island's lip the pathfinder walks off the edge: keep bridging.
     const feet = here.floored();
-    if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([x, z]) => end.overVoid(bot, feet.x + x, feet.y, feet.z + z))) {
+    if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([x, z]) => end.deepDrop(bot, feet.x + x, feet.y, feet.z + z))) {
       const bridged = await end.bridgeToward(bot, ctx, new Vec3(target.x, feet.y, target.z), { maxSteps: 40 });
       memory.bridged += bridged.steps || 0;
       if ((bridged.steps || 0) > 0) return { ok: true };
@@ -169,8 +172,9 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     const walked = await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(target.x, target.z, 4), { timeoutMs: 20000, arrived: () => true });
     if (bot.entity.position.distanceTo(here) >= 12) return { ok: true };
     ctx.record('explore_walk_short', { moved: Math.round(bot.entity.position.distanceTo(here)), reason: walked.reason || null });
-    // Walked to the island's edge: bridge across.
-    const bridged = await end.bridgeToward(bot, ctx, new Vec3(target.x, bot.entity.position.y, target.z), { maxSteps: 40 });
+    // Walked to the island's edge, or the pathfinder is lost in its hills:
+    // straight on, digging through and bridging over whatever is in the way.
+    const bridged = await end.bridgeToward(bot, ctx, new Vec3(target.x, bot.entity.position.y, target.z), { maxSteps: 32, stopOnLand: false });
     memory.bridged += bridged.steps || 0;
     ctx.record('explore_bridge', { steps: bridged.steps || 0, reason: bridged.reason || bridged.stopped || null });
     if (bot.entity.position.distanceTo(here) >= 6) return { ok: true };

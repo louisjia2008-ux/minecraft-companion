@@ -47,7 +47,8 @@ function installFallGuard(bot, onEvent = () => {}) {
     // The server's look ray reaches 4.5 blocks from the eyes (1.62 up), so
     // pour inside 2.8 blocks; even a fast fall spends a tick in that window.
     if (height <= 2.8 && bot.heldItem?.name === 'water_bucket') {
-      bot.activateItem();
+      // After this tick's position packet: the server checks reach from there.
+      queueMicrotask(() => bot.activateItem());
       onEvent({ type: 'water_landing', at: Date.now(), height: Math.round(armed.from - ground.position.y) });
       armed = null;
     }

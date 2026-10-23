@@ -120,20 +120,35 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       const d = bot.entities[dragon.id];
       return d && end.PERCHED.has(end.dragonPhase(bot, d)) && end.dragonPhase(bot, d) !== 3;
     };
-    // Beside the neck, behind the head: the breath cloud lands 2.5 blocks in
-    // front of the head with a radius of 5, the wings reach out beside the body.
+    // Beside the head, just ahead of the wings. The wings push away anything
+    // within 6 blocks fore and aft of the body (out to 10 sideways) on every
+    // tick the dragon is not hurting; the breath cloud lands 2.5 blocks in
+    // front of the head and grows from radius 2.5. The server takes hits on
+    // the head from a few blocks out.
     const spot = () => {
       const d = bot.entities[dragon.id] || dragon;
-      const h = end.headPosition(d);
       const forward = new Vec3(Math.sin(d.yaw), 0, Math.cos(d.yaw));
       const side = new Vec3(forward.z, 0, -forward.x);
-      const sign = bot.entity.position.minus(h).dot(side) >= 0 ? 1 : -1;
-      return h.minus(forward.scaled(2.5)).plus(side.scaled(2.5 * sign));
+      const sign = bot.entity.position.minus(d.position).dot(side) >= 0 ? 1 : -1;
+      return d.position.plus(forward.scaled(6.8)).plus(side.scaled(4.5 * sign));
     };
     const there = () => {
       const p = spot();
       return Math.hypot(bot.entity.position.x - p.x, bot.entity.position.z - p.z) <= 1.2;
     };
+    // Behind its head: go round wide, out of reach of the wings, not past them.
+    {
+      const d = bot.entities[dragon.id] || dragon;
+      const forward = new Vec3(Math.sin(d.yaw), 0, Math.cos(d.yaw));
+      const side = new Vec3(forward.z, 0, -forward.x);
+      const rel = bot.entity.position.minus(d.position);
+      if (rel.dot(forward) < 6.5) {
+        const sign = rel.dot(side) >= 0 ? 1 : -1;
+        const wide = d.position.plus(side.scaled(12 * sign)).plus(forward.scaled(8));
+        await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(wide.x, wide.z, 1.5), { timeoutMs: 10000, arrived: () => !sitting() });
+        if (!sitting()) return { ok: true };
+      }
+    }
     if (!there()) {
       const p = spot();
       await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(p.x, p.z, 1), {
