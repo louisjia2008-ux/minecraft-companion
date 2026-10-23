@@ -131,8 +131,11 @@ function furnishedPlacementFixture(t, initialPosition, options = {}) {
     readConfig: () => ({ mcExecutorMode: 'strict-executor' }), parseJsonObjectFromText: JSON.parse,
     broadcast: () => {}, broadcastMinecraftError: () => {}, allowAutonomousMaintenance: () => false });
   agent.attachBot(bot);
-  agent.__testSetReconnectTask({ taskId: 'placement-physics', status: 'running', source: 'deskpet',
-    logs: [], currentStepIndex: 0, currentStep: 'mine_resource', plan: { steps: [] } });
+  const task = { taskId: 'placement-physics', status: 'running', source: 'deskpet',
+    executionGeneration: 0, cancellationToken: new CancellationToken(),
+    logs: [], currentStepIndex: 0, currentStep: 'mine_resource', plan: { steps: [] } };
+  task.movementLease = agent.__testClaimMovementLease('task', task.taskId);
+  agent.__testSetReconnectTask(task);
   t.after(() => {
     clearInterval(timer);
     clearTimeout(derivedTimer);

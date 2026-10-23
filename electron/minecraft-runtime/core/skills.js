@@ -31,7 +31,7 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     .filter((p) => !blacklist.has(posKey(p)) && !exclude(p))
     .map((p) => bot.blockAt(p))
     // Digging next to water or lava floods the pit the bot is standing in.
-    .filter((b) => b && !touchesLiquid(bot, b.position))
+    .filter((b) => b && !bot.companionProtectBlock?.(b) && !touchesLiquid(bot, b.position))
     // Exposed blocks first: keeps mining inside one open pit instead of
     // digging a fresh hole through the soil for every single stone.
     // Logs left hanging in a tall canopy need climbing: try anything else first.
@@ -117,7 +117,7 @@ async function clearCraftingLeftovers(bot, ctx) {
   const cursor = bot.inventory.selectedItem;
   if (!grid && !cursor && !bot.currentWindow) return true;
   return withCursorConfirmation(bot, async () => {
-    try { bot.closeWindow(bot.currentWindow || bot.inventory); } catch (_) { /* ignore */ }
+    try { bot.closeWindow(bot.currentWindow || bot.inventory); } catch { /* ignore */ }
     return waitUntil(() => !bot.inventory.slots.slice(0, 5).some(Boolean) && !bot.inventory.selectedItem,
       { timeoutMs: 1500, signal: ctx.signal });
   });
@@ -531,7 +531,7 @@ async function smelt(bot, ctx, { input, count, furnacePosition, memory }) {
     if (isAbort(error)) throw error;
     return fail('smelt_failed');
   } finally {
-    try { furnace.close(); } catch (_) { /* ignore */ }
+    try { furnace.close(); } catch { /* ignore */ }
   }
   const gained = () => [...outputs].reduce((sum, name) => sum + Math.max(0,
     actions.countItems(bot, (n) => n === name) - (before[name] || 0)), 0);
@@ -668,7 +668,7 @@ async function storeItems(bot, ctx, { position, items }) {
     if (isAbort(error)) throw error;
     return fail('chest_failed');
   } finally {
-    try { chest?.close(); } catch (_) { /* ignore */ }
+    try { chest?.close(); } catch { /* ignore */ }
   }
   // Mineflayer syncs the inventory only once the window is closed.
   const freed = Object.keys(stored).length > 0
@@ -701,7 +701,7 @@ async function takeItems(bot, ctx, { position, itemMatch }) {
     if (isAbort(error)) throw error;
     return fail('chest_failed');
   } finally {
-    try { chest?.close(); } catch (_) { /* ignore */ }
+    try { chest?.close(); } catch { /* ignore */ }
   }
   // Mineflayer syncs the inventory only once the window is closed.
   const gained = await waitUntil(() => count() > before, { timeoutMs: 2000, signal: ctx.signal });
@@ -728,7 +728,7 @@ async function useChest(bot, ctx, { position, itemMatch }) {
     if (isAbort(error)) throw error;
     return fail('chest_failed');
   } finally {
-    try { chest?.close(); } catch (_) { /* ignore */ }
+    try { chest?.close(); } catch { /* ignore */ }
   }
 }
 
@@ -778,7 +778,7 @@ async function storeInChest(bot, ctx, { position, wants = [] }) {
     if (isAbort(error)) throw error;
     return fail('chest_failed');
   } finally {
-    try { chest?.close(); } catch (_) { /* ignore */ }
+    try { chest?.close(); } catch { /* ignore */ }
   }
 }
 
@@ -829,7 +829,7 @@ async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48 }) {
   for (const aim of [target.position.offset(0.5, 0.85, 0.5), centre]) {
     await bot.lookAt(aim, true);
     await sleep(100, ctx.signal);
-    try { bot.activateItem(); } catch (_) { /* checked below */ }
+    try { bot.activateItem(); } catch { /* checked below */ }
     const filled = await waitUntil(() => actions.countItems(bot, (n) => n === full) > before, { timeoutMs: 1500, signal: ctx.signal });
     if (filled) return { ok: true, filled: full };
   }

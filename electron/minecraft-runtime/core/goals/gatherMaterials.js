@@ -122,7 +122,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     }
     const m = memory.mine;
     if (m?.junction && !m.depot && m.y === step.mineY && step.mineY <= DEPOT_BELOW) return buildDepot(ctx);
-    return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions });
+    return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions, skills });
   }
 
   const carrying = (name) => bot.inventory.items().filter((i) => i.name === name).reduce((n, i) => n + i.count, 0);
@@ -381,7 +381,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       }
       const result = await runOnce(ctx);
       if (result.ok) {
-        memory.steps += 1;
+        if (result.progress !== false) memory.steps += 1;
         memory.pathFailures = 0;
         if (!result.moved) memory.exploreStreak = 0;
       } else if (['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck'].includes(result.reason)) {

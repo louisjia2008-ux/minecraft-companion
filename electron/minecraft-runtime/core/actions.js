@@ -14,8 +14,8 @@ const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
 
 function haltBody(bot) {
-  try { bot.pathfinder?.setGoal(null); } catch (_) { /* ignore */ }
-  try { bot.clearControlStates?.(); } catch (_) { /* ignore */ }
+  try { bot.pathfinder?.setGoal(null); } catch { /* ignore */ }
+  try { bot.clearControlStates?.(); } catch { /* ignore */ }
 }
 
 // Climbing out of a mine needs pillaring: allow it, with dirt or cobblestone,
@@ -184,13 +184,14 @@ function withinReach(bot, position, reach = 4.5) {
 }
 
 async function digBlock(bot, ctx, block, { timeoutMs = 12000, tool: chosen = null } = {}) {
+  if (bot.companionProtectBlock?.(block)) return fail('protected_home');
   const position = block.position;
   const originalName = block.name;
   if (!withinReach(bot, position)) return fail('out_of_reach');
   // The fastest tool unless the caller picked one (to spare a better pickaxe).
   const tool = chosen || bot.pathfinder?.bestHarvestTool?.(block);
   if (tool) {
-    try { await bot.equip(tool, 'hand'); } catch (_) { /* digging by hand still works, slower */ }
+    try { await bot.equip(tool, 'hand'); } catch { /* digging by hand still works, slower */ }
   }
   const current = bot.blockAt(position);
   if (!current || current.name !== originalName) return fail('block_changed');
@@ -214,7 +215,7 @@ async function digBlock(bot, ctx, block, { timeoutMs = 12000, tool: chosen = nul
 }
 
 function droppedItemName(entity) {
-  try { return entity.getDroppedItem?.()?.name || null; } catch (_) { return null; }
+  try { return entity.getDroppedItem?.()?.name || null; } catch { return null; }
 }
 
 function nearbyDrops(bot, origin, radius, matchName) {
@@ -271,7 +272,7 @@ async function eat(bot, ctx, { timeoutMs = 5000 } = {}) {
   const foodBefore = bot.food;
   try {
     await bot.equip(food, 'hand');
-  } catch (error) {
+  } catch {
     return fail('equip_failed');
   }
   try {
@@ -305,12 +306,12 @@ async function equipBestWeapon(bot) {
     .filter((entry) => entry.score >= 0)
     .sort((a, b) => b.score - a.score)[0];
   if (best && bot.heldItem?.name !== best.item.name) {
-    try { await bot.equip(best.item, 'hand'); } catch (_) { /* fight with whatever is held */ }
+    try { await bot.equip(best.item, 'hand'); } catch { /* fight with whatever is held */ }
   }
   const shield = bot.inventory.items().find((item) => item.name === 'shield');
   const offhand = bot.inventory.slots?.[45];
   if (shield && offhand?.name !== 'shield') {
-    try { await bot.equip(shield, 'off-hand'); } catch (_) { /* optional */ }
+    try { await bot.equip(shield, 'off-hand'); } catch { /* optional */ }
   }
 }
 

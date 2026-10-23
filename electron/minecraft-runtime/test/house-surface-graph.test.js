@@ -36,6 +36,7 @@ for(const unfinished of [false,true])test(`a distant food detour freshly walks t
  if(unfinished){
   const original=f.bot.pathfinder.getPathFromTo.bind(f.bot.pathfinder);
   f.bot.pathfinder.getPathFromTo=function*(profile,from,goal,options){
+  yield* []; // Terminal-only modeled native iterator; no intermediate slice.
    const iterator=original(profile,from,goal,options);let result;
    for(let i=0;i<30;i++){const n=iterator.next();if(n.value)result=n.value;if(n.done||result?.result?.status!=='partial')break;}
    if(Math.hypot(goal.x-from.x,goal.z-from.z)>20&&result?.result?.status==='success')
@@ -623,6 +624,7 @@ for(const retained of [false,true])test(`an unfinished long native search offers
  const checkpoint=retained?{schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,nodes:{[id]:{position:anchor,parent:null,expanded:true}},order:[id],frontier:[],blockedEdges:[{from:id,target:{x:16,y:1,z:0},reason:'native_probe_inconclusive',observedProbe:{status:'timeout',conclusive:false}}],current:id,resumeNode:id,visits:1,probes:0}:undefined;
  const f=fixture(t,{checkpoint}),original=f.bot.pathfinder.getPathFromTo.bind(f.bot.pathfinder);let shortProbes=0;
  f.bot.pathfinder.getPathFromTo=function*(profile,from,goal,options){
+  yield* []; // Terminal-only modeled native iterator; no intermediate slice.
   const iterator=original(profile,from,goal,options);let result;
   for(let i=0;i<20;i++){const n=iterator.next();if(n.value)result=n.value;if(n.done||result?.result?.status!=='partial')break;}
   if(Math.hypot(goal.x-from.x,goal.z-from.z)>=12&&result?.result?.status==='success'){
@@ -718,7 +720,7 @@ test('an incompatible old suffix exposes a fresh recovery target after failed co
   nodes:{'0,1,0':{position:anchor,parent:null,expanded:true},'16,1,0':{position:branch,parent:'0,1,0',expanded:true}},
   order:['0,1,0','16,1,0'],frontier:[],blockedEdges:[],current:'16,1,0',resumeNode:'16,1,0',visits:2,probes:0};
  const f=fixture(t,{checkpoint,initialPosition:new Vec3(40.5,1,16.5)});
- f.bot.pathfinder.getPathFromTo=function*(){return {result:{status:'noPath',path:[]}};};
+ f.bot.pathfinder.getPathFromTo=function*(){yield* [];return {result:{status:'noPath',path:[]}};};
  const graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true});
  await assert.rejects(graph.returnToAnchor({rejoinInterruptedSuffix:true,via:[anchor]}),error=>{
   assert.equal(error.code,'dry_graph_rejoin_unconfirmed');assert.equal(error.reconnect.reason,'foreign_suffix_after_unconfirmed_connectors');

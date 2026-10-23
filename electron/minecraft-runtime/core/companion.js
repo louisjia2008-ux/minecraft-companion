@@ -9,6 +9,7 @@ const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createRecovery } = require('./behaviors/recovery');
 const { createNightRest } = require('./behaviors/nightRest');
+const { createHomeMaintenance } = require('./behaviors/homeMaintenance');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
@@ -67,6 +68,7 @@ function configureMovements(bot) {
 
 function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false } = {}) {
   if (!bot) throw new TypeError('bot is required');
+  const priorHomeProtection = bot.companionProtectBlock;
   installInventoryCompatibility(bot);
   const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
@@ -88,8 +90,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     // Out of sight means far away (it digs in there); seen and gone means sleep without it.
     return { bed: !block || block.name.endsWith('_bed') ? bed : null, centre: house.interiorCenter };
   } });
-  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors, nightRest];
-  const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
+  const homeMaintenance = createHomeMaintenance({ bot, home: () => director?.memory.homestead,
+    activeGoal: () => brain?.status().goal?.name });
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors,
+    nightRest, homeMaintenance];
+  const usedGoals = new Set();
+  const useGoal = (goal) => { usedGoals.add(goal); spare = goal.spares || (() => false); brain.setGoal(goal); };
   brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
@@ -176,37 +182,37 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     caneFarm(options = {}) {
       const goal = createCaneFarmGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     mobFarm(options = {}) {
       const goal = createMobFarmGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     ironFarm(options = {}) {
       const goal = createIronFarmGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     carpetDuper(options = {}) {
       const goal = createCarpetDuperGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     railDuper(options = {}) {
       const goal = createRailDuperGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     fishing(options = {}) {
       const goal = createFishingGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     setGoal(goal) {
@@ -233,8 +239,14 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       bot.removeListener('death', onDeath);
       removeEdgeNudge();
       await brain.dispose();
+      for (const goal of usedGoals) await goal.dispose?.();
+      usedGoals.clear();
       for (const behavior of behaviors) behavior.dispose?.();
       recovery.dispose();
+      if (bot.companionProtectBlock === director.memory.homestead?.memory.protectBlock) {
+        if (priorHomeProtection === undefined) delete bot.companionProtectBlock;
+        else bot.companionProtectBlock = priorHomeProtection;
+      }
       haltBody(bot);
     },
   };

@@ -26,7 +26,9 @@ function isHostileMobEntity(entity, registry) {
   if (HOSTILE_MOB_NAMES.has(name)) return true;
   const definition = getEntityDefinition(entity, registry);
   return Boolean(name && (definition?.type === "hostile" || entity.type === "hostile"
-    || definition?.category === "Hostile mobs"));
+    // minecraft-data also places nonliving end crystals in this category.
+    // Category is only a fallback for living mobs such as the modern ghast.
+    || definition?.category === "Hostile mobs" && ["mob", "living"].includes(definition.type)));
 }
 function getObservedEntityHealth(entity,registry){
   const index=getEntityDefinition(entity,registry)?.metadataKeys?.indexOf('health');

@@ -68,7 +68,7 @@ function rangedCoverConfirmed(bot,position,threats){
 async function seekHouseRangedCover(deps,{deadline,boundaryOrigin}){
  const bot=deps.getBot(),profile=bot.pathfinder.movements,origin=(boundaryOrigin||bot.entity.position).clone(),client=bot._client;
  const active=()=>{deps.assertActive();if(deps.getBot()!==bot||bot._client!==client||bot.pathfinder.movements!==profile||Date.now()>=deadline||bot.health<=0||bot.entity.position.distanceTo(origin)>12.5)throw Object.assign(Error('远程避险达到原归属、生命或12米预算'),{code:'house_ranged_cover_limit'});};
- const threats=()=>Object.values(bot.entities||{}).filter(e=>isHouseRangedThreatEntity(e)&&e.isValid!==false&&e.position?.distanceTo(bot.entity.position)<=24);
+ const threats=()=>Object.values(bot.entities||{}).filter(e=>isHouseRangedThreatEntity(e)&&e.isValid!==false&&getObservedEntityHealth(e,bot.registry)!==0&&e.position?.distanceTo(bot.entity.position)<=24);
  active();if(!threats().length)return {moved:false,covered:false,threatGone:true};
  if(rangedCoverConfirmed(bot,bot.entity.position,threats())){
   const landingDeadline=Math.min(deadline,Date.now()+1000);
@@ -84,6 +84,10 @@ async function seekHouseRangedCover(deps,{deadline,boundaryOrigin}){
   active();if(Date.now()-began>120)break;
   samples++;
   const p=origin.floored().offset(x,y,z),center=p.offset(.5,0,.5);if(center.distanceTo(origin)>12||!naturalWalkingFoot(bot,p))continue;
+  // A scoped recorded-mine profile forbids leaving its observed prefix.
+  // Unreachable covered endpoints must not consume all twelve native probes
+  // ahead of a reachable protective cell on that same prefix.
+  if(profile.exclusionAreasStep?.some(area=>area(bot.blockAt(p))===Infinity))continue;
   if(Object.values(bot.entities||{}).some(e=>['creeper','spider','cave_spider','zombie','husk','drowned'].includes(e.name)&&e.isValid!==false&&e.position?.distanceTo(center)<4.5))continue;
   const covered=rangedCoverConfirmed(bot,center,near),distance=Math.min(...near.map(e=>e.position.distanceTo(center)));
   // A few extra exposed meters do not resolve archers and led to repeated

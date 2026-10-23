@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createHmac, randomBytes, timingSafeEqual } = require('node:crypto');
-const { createHouseWholeAcceptance, getHouseWholePlanDigest, bindingHash, hash, endOperationFor } = require('../vendor/server/minecraft/houseWholeAcceptance');
+const { createHouseWholeAcceptance, getHouseWholePlanDigest, hash, endOperationFor } = require('../vendor/server/minecraft/houseWholeAcceptance');
 const { createMinecraftActionRegistry } = require('../vendor/server/action/actionRegistry');
 const registry = createMinecraftActionRegistry();
 const copy = value => JSON.parse(JSON.stringify(value));
@@ -72,7 +72,7 @@ function fixture(t, policy = {}) {
         const body = JSON.parse(bytes);
         return { digestMatches: hash(bytes.toString()) === artifact.digest,
           evidenceMatches: body.authority === authority && hash(body) === hash(expected) };
-      } catch (_) { return { digestMatches: false, evidenceMatches: false }; }
+      } catch { return { digestMatches: false, evidenceMatches: false }; }
     },
     nativeVerifier: async request => {
       const override = overrides.get(request.reference);

@@ -9,6 +9,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { createServer } = require('node:net');
 const { once } = require('node:events');
+const { createOutputBuffer } = require('./serverOutput.cjs');
 
 async function freePort() {
   const probe = createServer();
@@ -19,8 +20,22 @@ async function freePort() {
   return port;
 }
 
-async function startVanillaServer({ java, jar, dir, properties = {}, memory = '2G', log = () => {} }) {
+function installDataPacks(dir, packs) {
+  for (const [name, files] of Object.entries(packs || {})) {
+    if (!/^[\w-]+$/.test(name)) throw new Error(`Invalid observer data-pack name: ${name}`);
+    const root = path.resolve(dir, 'world/datapacks', name);
+    for (const [file, contents] of Object.entries(files)) {
+      const target = path.resolve(root, file);
+      if (!target.startsWith(root + path.sep)) throw new Error(`Invalid observer data-pack path: ${file}`);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, contents);
+    }
+  }
+}
+
+async function startVanillaServer({ java, jar, dir, properties = {}, dataPacks = {}, memory = '2G', log = () => {} }) {
   fs.mkdirSync(dir, { recursive: true });
+  installDataPacks(dir, dataPacks);
   const port = await freePort();
   const merged = {
     'server-ip': '127.0.0.1', 'server-port': port, 'online-mode': false, 'enforce-secure-profile': false,
@@ -35,13 +50,13 @@ async function startVanillaServer({ java, jar, dir, properties = {}, memory = '2
 
   const child = spawn(java, [`-Xmx${memory}`, '-jar', jar, 'nogui'], { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'] });
   const logStream = fs.createWriteStream(path.join(dir, 'server.log'));
-  let buffer = '';
+  const output = createOutputBuffer();
+  let queryQueue = Promise.resolve();
   const waiters = new Set();
   const onData = (chunk) => {
     const text = chunk.toString();
     logStream.write(chunk);
-    buffer += text;
-    if (buffer.length > 1_000_000) buffer = buffer.slice(-200_000);
+    output.append(text);
     for (const waiter of [...waiters]) waiter.check();
   };
   child.stdout.on('data', onData);
@@ -58,7 +73,7 @@ async function startVanillaServer({ java, jar, dir, properties = {}, memory = '2
     return new Promise((resolve, reject) => {
       const waiter = {
         check() {
-          const match = buffer.slice(from).match(pattern);
+          const match = output.textFrom(from).match(pattern);
           if (match) { finish(); resolve(match); }
         },
         fail(error) { finish(); reject(error); },
@@ -76,10 +91,32 @@ async function startVanillaServer({ java, jar, dir, properties = {}, memory = '2
   }
 
   /** Sends a command and returns the first output line matching `pattern`. */
-  async function query(text, pattern, timeoutMs = 5000) {
-    const from = buffer.length;
+  async function queryNow(text, pattern, timeoutMs = 5000) {
+    const from = output.offset();
     command(text);
     return waitFor(pattern, { from, timeoutMs });
+  }
+
+  function queued(action) {
+    const result = queryQueue.then(action);
+    queryQueue = result.catch(() => {});
+    return result;
+  }
+
+  // Queries with the same reply pattern must never race (e.g. two block tests).
+  function query(text, pattern, timeoutMs = 5000) {
+    return queued(() => queryNow(text, pattern, timeoutMs));
+  }
+
+  function execute(text, timeoutMs = 15000) {
+    return queued(async () => {
+      const from = output.offset();
+      command(text);
+      // Console commands are processed in order. This barrier captures the
+      // command's own response, including explicit failures, not just exit 0.
+      await queryNow('list', /players online/, timeoutMs);
+      return output.textFrom(from);
+    });
   }
 
   async function stop() {
@@ -92,7 +129,7 @@ async function startVanillaServer({ java, jar, dir, properties = {}, memory = '2
   }
 
   await waitFor(/Done \([^)]+\)! For help/, { timeoutMs: 240000 });
-  return { port, command, query, waitFor, stop, offset: () => buffer.length };
+  return { port, command, query, execute, waitFor, stop, offset: () => output.offset() };
 }
 
-module.exports = { startVanillaServer };
+module.exports = { startVanillaServer, installDataPacks };

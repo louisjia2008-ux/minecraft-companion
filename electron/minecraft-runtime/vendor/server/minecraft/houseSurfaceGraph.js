@@ -820,7 +820,12 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
   // exact adapter the checkpoint is unavailable, including on a later resume.
   for (const node of Object.values(state.nodes)) if (node.transport) waterTransport(node);
   for (const edge of state.frontier) if (edge.transport) waterTransport(edge);
-  function probe(target, { observedReturnRetry = false, observedSuffix = null, frontierWitness = null, assertProbeActive = active } = {}) {
+  function probe(target, { observedReturnRetry = false, observedSuffix = null, frontierWitness = null, assertProbeActive: assertRequestedProbeActive = active } = {}) {
+    const healthAtProbe = bot.health;
+    const assertProbeActive = () => {
+      assertRequestedProbeActive(); assertVitals();
+      if (bot.health < healthAtProbe - .01) throw fail('dry_graph_survival_limit', 'Actual damage invalidated the captured native reachability probe');
+    };
     lastProbeResult = null;
     active(); state.probes++;
     if (state.probes > maxEdges) throw fail('dry_graph_probe_limit', 'Finite native reachability budget exhausted');
@@ -832,7 +837,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
       active(); return null;
     }
     const goal = new goals.GoalBlock(target.x, target.y, target.z);
-    const observed = runSurfaceGraphNativeProbe(bot, movements, goal, { assertActive: active, isOwnerCurrent: owner, pathprobe: deps.pathprobe });
+    const observed = runSurfaceGraphNativeProbe(bot, movements, goal, { assertActive: assertProbeActive, isOwnerCurrent: owner, pathprobe: deps.pathprobe });
     let result = observed.result; lastProbeFacts = observed.facts;
     if (observedReturnRetry && !lastProbeFacts.conclusive && lastProbeFacts.status !== 'noPath') {
       assertProbeActive();
@@ -1887,7 +1892,12 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
           // not replace its hazard/deadline reason with the resulting lease
           // change, or treat that failed capability as another frontier edge.
           if (guardFailures.has(error)) throw error;
-          await readyExplorationBoundary();active();
+          // This leg already owns the exact native relocation receipt. Drain
+          // remaining defense first, but do not let the boundary observer
+          // commit the same body as a new graph origin before validating the
+          // original leg's fromNode below.
+          if(error.code==='house_site_defense_relocated'){await deps.ready?.();active();}
+          else {await readyExplorationBoundary();active();}
           const recovered=recoveredOutboundWater.get(error);
           if(recovered&&recovered.pending===state.pendingWater&&owner()&&bot.pathfinder.movements===movements){
             // The adapter proved a return to its original bank, not a crossing.
@@ -1979,7 +1989,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
       // unwind that obsolete operation. No old crossing/visit gets credit.
       if(state.pendingWater&&rejoinInterruptedSuffix&&!returnToCurrentOnly
         &&hasGroundedBodySupport(bot)&&naturalWalkingFoot(bot,bot.entity.position.floored())){
-        const reconnect={observedReturnRetry:true,observedSuffix:{nodeId:state.current,from:plain(bot.entity.position),to:plain(anchor)}};
+        const reconnect={}; // A fresh camp connector has no historical retry authority.
         // A pending old crossing is not proof of a dry camp route. Probe the
         // new connector first; if water separates us, keep its typed recovery.
         if(probe(anchor,reconnect)){
@@ -1993,11 +2003,19 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
       await recoverPendingWater();
       // Prefer a short freshly verified approach or a nearby recorded branch
       // before attempting a longer independent connector after a food detour.
-      if (!returnToCurrentOnly && rejoinInterruptedSuffix && state.current && !state.nodes[key(bot.entity.position)]
+      // Preserve an exact local suffix when it can actually be rejoined.
+      // A stale/foreign/distant suffix remains only context for choosing a
+      // separately probed fresh connector to a real recorded ancestor.
+      const suffixIndex=Array.isArray(via)?via.findLastIndex(p=>p&&key(p)===state.current):-1;
+      const localSuffix=suffixIndex>=0&&via.length>0&&via.every(p=>p&&['x','y','z'].every(k=>Number.isSafeInteger(p[k])))
+        &&!via.slice(suffixIndex+1).some(p=>state.nodes[key(p)])
+        &&via.slice(suffixIndex).some(p=>(!Number.isSafeInteger(rejoinMinimumY)||p.y>=rejoinMinimumY)&&vec(p).distanceTo(bot.entity.position)<=32);
+      if (!returnToCurrentOnly && rejoinInterruptedSuffix && !localSuffix && state.current && !state.nodes[key(bot.entity.position)]
+        && (!Number.isSafeInteger(rejoinMinimumY)||anchor.y>=rejoinMinimumY)
         && Math.hypot(bot.entity.position.x-anchor.x,bot.entity.position.y-anchor.y,bot.entity.position.z-anchor.z)<=32
-        && probe(anchor,{observedReturnRetry:true,observedSuffix:{nodeId:state.current,from:plain(bot.entity.position),to:plain(anchor)}})
+        && probe(anchor)
         && hasGroundedBodySupport(bot) && naturalWalkingFoot(bot,bot.entity.position.floored())) {
-        await observedReturnMove(anchor,{observedReturnRetry:true,observedSuffix:{nodeId:state.current,from:plain(bot.entity.position),to:plain(anchor)}}); active();
+        await observedReturnMove(anchor); active();
       }
       // A checked escape staircase may leave the actor above its old cave
       // node. Reconnect freshly to a recorded ancestor instead of descending
@@ -2018,7 +2036,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
       // Fresh physical connectors are independent of an old resource suffix.
       // Never reinterpret a saved transport node as a dry waypoint; first
       // reach one actual ancestor through a new fully checked dry path.
-      if(rejoinInterruptedSuffix&&state.current&&!state.nodes[key(bot.entity.position)]
+      if(rejoinInterruptedSuffix&&!localSuffix&&state.current&&!state.nodes[key(bot.entity.position)]
         &&hasGroundedBodySupport(bot)&&inspectSurfaceBody(bot).dry){
         // A settled combat/reconnect leg can have a different dry suffix. That
         // never authorizes replaying the wrong trace. Probe a new connector to
@@ -2043,7 +2061,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
           if(cursor===key(anchor))candidates.push(p);
         }
         candidates.sort((a,b)=>vec(a).distanceTo(bot.entity.position)-vec(b).distanceTo(bot.entity.position));
-        const connectorOptions=p=>({observedReturnRetry:true,observedSuffix:{nodeId:state.current,from:plain(bot.entity.position),to:plain(p)}});
+        const connectorOptions=()=>({});
         const reachable=candidates.slice(0,8).find(p=>naturalWalkingFoot(bot,p)&&probe(p,connectorOptions(p)));
         if(reachable){await nativeMove(reachable,connectorOptions(reachable));active();initialize();}
         else if(nativeReachableHints){
@@ -2137,8 +2155,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
           if (!rejoinInterruptedSuffix || !hasGroundedBodySupport(bot) || !naturalWalkingFoot(bot,actual.floored())
             || Math.hypot(last.x-actual.x,last.y-actual.y,last.z-actual.z)>32)
             throw fail('dry_graph_rejoin_unconfirmed', 'Interrupted resource leg needs a local grounded reconnect', { reconnect: { allowed:rejoinInterruptedSuffix, grounded:hasGroundedBodySupport(bot), naturalFoot:naturalWalkingFoot(bot,actual.floored()), distance:Math.hypot(last.x-actual.x,last.y-actual.y,last.z-actual.z), actual:plain(actual), target:copy(last) } });
-          const arrived = await nativeMove(last,{observedReturnRetry:true,
-            observedSuffix:{nodeId:state.current,from:plain(bot.entity.position),to:plain(last)}});
+          const arrived = await nativeMove(last);
           if (key(arrived)!==key(last)) throw fail('dry_graph_rejoin_unconfirmed', 'Fresh suffix reconnect did not physically arrive');
           active();
         }

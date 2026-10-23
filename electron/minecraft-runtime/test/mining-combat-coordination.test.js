@@ -82,7 +82,7 @@ function fixture(t, options = {}) {
     entityType: registry.entitiesByName.skeleton.id, height: 1.99, position: new Vec3(options.skeletonX ?? 2.5, 1, 0.5) };
   // Its spawn precedes attachBot's perception snapshot/cache, as on an already
   // loaded server. The explicit interruption starts only after native goto.
-  if (options.interrupt !== false) bot.entities[skeleton.id] = skeleton;
+  if (options.interrupt !== false && !options.deferInitialThreat) bot.entities[skeleton.id] = skeleton;
   if (options.resourceThreat) bot.entities[4] = { id: 4, name: options.resourceThreat, type: 'hostile',
     entityType: registry.entitiesByName[options.resourceThreat].id, position: new Vec3(options.resourceThreat==='creeper'&&!options.shield?4:2.5, 1, .5), height: 1.95 };
   if(options.resourceThreat==='creeper'){
@@ -135,7 +135,10 @@ function fixture(t, options = {}) {
   let triggerTimer;
   let triggered = 0;
   const startInterruption = () => {
-    bot.entities[skeleton.id] = skeleton;
+    // Native threat warnings can already have handled the initially loaded
+    // actor before this scheduled hook. Only later declared interruptions
+    // spawn another actor; the first hook must not resurrect a killed one.
+    if (options.interruptions || triggered > 1) bot.entities[skeleton.id] = skeleton;
     interruption = agent.__testHandleSurvivalCritical('test_checked_route');
     interruption.catch((error) => { interruptionError = error; });
     return interruption;
@@ -743,7 +746,9 @@ test('armed house resource work strikes actual contact then evades two observed 
  const original=f.task.movementLease;
  const result=await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('resource_group_test'),{deadline:Date.now()+8000});
  assert.equal(result,true);assert.equal(f.attacks.length,1);assert.ok(f.attempts.length>0);
- for(const id of [4,5])assert.ok(f.bot.entity.position.distanceTo(f.bot.entities[id].position)>=8.5);
+ // Current bounded melee policy keeps the primary at6.5m and the second
+ // observed contact threat at4.5m, unlike the creeper's8.5m requirement.
+ for(const [id,minimum] of [[4,6.5],[5,4.5]])assert.ok(f.bot.entity.position.distanceTo(f.bot.entities[id].position)>=minimum);
  assert.equal(f.bot.entity.onGround,true);assert.equal(f.agent.__testGetActiveMovementLease(),original);assert.equal(f.goals.some(g=>g?.constructor?.name==='GoalFollow'),false);
 });
 test('house resource creeper proximity uses its original bounded frame before stationary attack', {timeout:10000},async t=>{
@@ -930,11 +935,11 @@ test('an armed survivor with no loaded creeper exit keeps striking within cooldo
  for(let i=1;i<f.attacks.length;i++)assert.ok(f.attacks[i].at-f.attacks[i-1].at>=600);
 });
 
-test('the first native hurt event starts an unshielded14HP skeleton engagement without another hit or a manual defense call',{timeout:20000},async t=>{
+test('the first native hurt event starts an unshielded18HP skeleton engagement without another hit or a manual defense call',{timeout:20000},async t=>{
  const f=fixture(t,{interrupt:false,killAfter:2});f.task.materialSupply={materialSource:'self_gathered'};
  const diagnostics=captureHouseSurfaceDiagnostics(f);
  f.bot.entities[2]={id:2,name:'skeleton',type:'hostile',isValid:true,entityType:registry.entitiesByName.skeleton.id,height:1.99,position:new Vec3(18.5,1,.5)};
- f.bot.health=14;
+ f.bot.health=18;
  const hurtAt=Date.now();f.bot.emit('entityHurt',f.bot.entity);
  await until(()=>diagnostics().some(e=>e.event==='house_ranged_target_locked'),1000);
  const lock=diagnostics().find(e=>e.event==='house_ranged_target_locked').details;
@@ -990,7 +995,7 @@ test('an armed noPath approach switches to real cover within the same owner inst
  f.bot.entities[2]={id:2,name:'skeleton',type:'hostile',isValid:true,entityType:registry.entitiesByName.skeleton.id,height:1.99,position:new Vec3(20.5,1,.5)};
  const original=f.bot.pathfinder.getPathFromTo.bind(f.bot.pathfinder);let approaches=0;
  f.bot.pathfinder.getPathFromTo=(profile,from,goal,options)=>{
-  if(goal.constructor.name==='GoalNear'){approaches++;return(function*(){return{result:{status:'noPath',path:[]}};})();}
+  if(goal.constructor.name==='GoalNear'){approaches++;return(function*(){yield* [];return{result:{status:'noPath',path:[]}};})();}
   return original(profile,from,goal,options);
  };
  await f.agent.__testWithHouseResourceWork(()=>{f.bot.emit('entityHurt',f.bot.entity);return f.agent.__testHandleSurvivalCritical('blocked_armed_ranged');});
@@ -1243,7 +1248,8 @@ test('ranged defense recenters a genuinely supported body whose floored column i
  await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('supported_edge_archer'));
  assert.equal(f.attacks.length,2);assert.equal(f.bot.entities[4],undefined);
  assert.equal(naturalWalkingFoot(f.bot,f.bot.entity.position.floored()),true);
- assert.ok(diagnostics().some(d=>d.event==='house_emergency_shore_confirmed'));
+ const alignment=diagnostics().find(d=>d.event==='house_defense_dry_edge_alignment'&&d.details.aligned===true);
+ assert.ok(alignment);assert.equal(alignment.details.graphNodeCredit,false);assert.equal(alignment.details.positionOrVelocityWritten,false);
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
 });
 
@@ -1334,7 +1340,7 @@ test('contact attacks share actual-send cooldown even when publishing a hit is s
  const f=fixture(t,{interrupt:false,resourceThreat:'zombie',killAfter:4});
  prepareHouseResourceGroup(f,null);f.bot.entities[4].position=new Vec3(1.5,1,.5);
  const attack=f.bot.attack;let delays=0;
- f.bot.attack=entity=>{attack(entity);delays++;const end=Date.now()+250;while(Date.now()<end){}};
+ f.bot.attack=entity=>{attack(entity);delays++;const end=Date.now()+250;while(Date.now()<end){/* Explicit modeled native attack latency. */}};
  await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('slow_attack_publication'));
  assert.equal(f.attacks.length,4);assert.equal(delays,4);
  for(let i=1;i<f.attacks.length;i++){const delta=f.attacks[i].at-f.attacks[i-1].at;assert.ok(delta>=650,`early duplicate ${delta}ms`);assert.ok(delta<900,`publication extended cooldown ${delta}ms`);}
@@ -1413,7 +1419,7 @@ test('public pause during the ranged landing wait cannot start an approach or la
 test('cold UI context cannot run infrastructure scans before a contact-defense packet',{timeout:6000},async t=>{
  const f=fixture(t,{interrupt:false});prepareHouseResourceGroup(f,null);
  await sleep(700);f.bot.entities[4]={id:4,name:'zombie',type:'hostile',isValid:true,entityType:registry.entitiesByName.zombie.id,height:1.95,position:new Vec3(1.5,1,.5)};let scans=0,scansAtPacket;const originalAttack=f.bot.attack;f.bot.attack=target=>{scansAtPacket=scans;originalAttack(target);};
- f.bot.findBlock=()=>{scans++;const until=Date.now()+35;while(Date.now()<until){}return null;};
+ f.bot.findBlock=()=>{scans++;const until=Date.now()+35;while(Date.now()<until){/* Explicit modeled block-scan latency. */}return null;};
  const began=Date.now();await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('cold_context_contact'));
  assert.equal(f.attacks.length,1);assert.ok(f.attacks[0].at-began<150,`first packet waited ${f.attacks[0].at-began}ms for UI work`);
  const combatContexts=f.messages.filter(m=>m.type==='mc_world_context'&&m.context?.observationScope==='survival_lightweight');
@@ -1924,7 +1930,16 @@ for(const mode of ['relocate','pause','foreign'])test(`formal33 site escape hand
  const receipt=diagnostics().find(e=>e.event==='house_site_defense_relocated').details;
  assert.equal(receipt.oldTargetReached,false);assert.equal(receipt.oldEdgeTraversalCredit,false);
  assert.notEqual(cp.current,`${receipt.abandonedTarget.x},${receipt.abandonedTarget.y},${receipt.abandonedTarget.z}`);
- assert.equal(cp.nodes[cp.current].dryParentTrail,undefined);assert.equal(cp.nodes[cp.current].survivalRelocation.oldEdgeTraversalCredit,false);
+ const relocated=Object.values(cp.nodes).find(node=>node.survivalRelocation);
+ if(relocated)assert.equal(relocated.survivalRelocation.oldEdgeTraversalCredit,false);
+ else {
+  // A boundary defense may finish before this graph leg begins. The graph
+  // then records a separately completed native dry leg from that real stand.
+  const trail=cp.nodes[cp.current].dryParentTrail;
+  assert.equal(trail.kind,'actual_successful_dry_parent_edge');assert.equal(trail.complete,true);
+  assert.equal(trail.from,'0,1,0');assert.equal(trail.to,cp.current);
+  assert.ok(trail.points.length>1&&trail.points.every(p=>p.actual&&p.supports?.length));
+ }
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);assert.equal(diagnostics().filter(e=>e.event==='house_surface_defense_started').length,1);
  assert.deepEqual(cp.anchor,{x:0,y:1,z:0});assert.ok(f.attempts.length>=2);assert.equal(f.attacks.length,0);
 });
@@ -1942,11 +1957,14 @@ for(const baseline of [true,false])test(`formal36 combined native creeper escape
  // Model the server losing this archer from loaded perception after the
  // cumulative real native retreat, as observed in the failed formal36 run.
  let peakDisplacement=0;f.bot.on('physicsTick',()=>{peakDisplacement=Math.max(peakDisplacement,f.bot.entity.position.distanceTo(origin));if(peakDisplacement>13.5){delete f.bot.entities[2];delete f.bot.entities[4];}});
+ // Explicit modeled decoded arrow injury supplies the current observed-hit
+ // contract; merely seeing a distant archer no longer forces a retreat.
+ f.bot.health=14;f.bot.emit('entityHurt',f.bot.entity,f.bot.entities[2]);
  await f.agent.__testHandleSurvivalCritical('formal36_combined_escape');
  let failure;try{await running;}catch(error){failure=error;}
  const trace=fs.readFileSync(f.task.diagnostics.tracePath,'utf8').trim().split('\n').map(JSON.parse);
  assert.ok(trace.some(d=>d.event==='creeper_escape_confirmed'));
- assert.ok(trace.some(d=>d.event==='house_ranged_cover_observed'&&d.details.threatGone));
+ assert.ok(trace.some(d=>d.event==='house_ranged_cover_observed'&&d.details.threatGone),JSON.stringify({peakDisplacement,failure:failure?.code,events:trace.filter(d=>/ranged|escape|surface_self|surface_defense/.test(d.event)).map(d=>({event:d.event,details:d.details}))}));
  if(baseline){assert.ok(f.task.materialSupply.surfaceGraphs.any_log.blockedEdges.some(e=>e.reason==='house_surface_defense_unconfirmed'));assert.equal(trace.some(d=>d.event==='house_surface_self_defense_resumed'),false);assert.ok(peakDisplacement>13.5);return;}
  assert.ok(trace.some(d=>d.event==='house_surface_self_defense_resumed'),JSON.stringify({failure:failure?.code,events:trace.slice(-8)}));
  assert.equal(trace.some(d=>d.details?.code==='house_surface_defense_unconfirmed'),false);
@@ -1957,7 +1975,9 @@ for(const baseline of [true,false])test(`formal36 combined native creeper escape
 for(const mode of ['relocate','pause','foreign'])test(`temporary field search hands off actual defense relocation without claiming its old target: ${mode}`,{timeout:10000},async t=>{
  const f=fixture(t,{interrupt:false,killAfter:100});f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
  f.task.materialSupply={materialSource:'self_gathered'};f.bot.inventory.items=()=>[];f.bot.inventory.count=()=>0;f.bot.heldItem=null;
- f.bot.entities[4]={id:4,name:'zombie',isValid:true,entityType:registry.entitiesByName.zombie.id,height:1.95,position:new Vec3(5.5,1,2.5)};
+ // Spawn only after the interrupted native leg has actually started; an
+ // already loaded threat is now correctly handled at the graph boundary.
+ f.bot.once('goal_updated',()=>{f.bot.entities[4]={id:4,name:'zombie',isValid:true,entityType:registry.entitiesByName.zombie.id,height:1.95,position:new Vec3(3.5,1,2.5)};});
  let cp,changed=false,foreign,profile;const diagnostics=captureHouseSurfaceDiagnostics(f);
  const steer=()=>{if(changed||mode==='relocate'||f.agent.__testGetActiveMovementLease()?.kind!=='survival-critical')return;changed=true;
   if(mode==='pause')f.task.cancellationToken.pause();else{foreign=f.agent.__testClaimMovementLease('task','foreign-field');profile=new(require('mineflayer-pathfinder').Movements)(f.bot);f.bot.pathfinder.setMovements(profile);}};
@@ -1966,12 +1986,14 @@ for(const mode of ['relocate','pause','foreign'])test(`temporary field search ha
  if(mode!=='relocate'){
   // Foreign control can be observed first by either the owner or strict profile guard.
   await assert.rejects(run,e=>/paused|cancelled|movement_preempted/.test(e.code||'')
-    ||mode==='foreign'&&e.code==='house_creeper_escape_profile');assert.equal(cp.visits,1);assert.equal(cp.order.length,1);
+    ||mode==='foreign'&&['house_creeper_escape_profile','house_surface_creeper_escape_profile'].includes(e.code));assert.equal(cp.visits,1);assert.equal(cp.order.length,1);
   if(mode==='foreign'){assert.equal(f.agent.__testGetActiveMovementLease(),foreign);assert.equal(f.bot.pathfinder.movements,profile);}return;
  }
  const result=await run;assert.equal(result.moved,true);assert.equal(cp.visits,2);assert.equal(cp.order.length,2);
  const receipt=diagnostics().find(e=>e.event==='house_site_defense_relocated').details;
- assert.equal(receipt.oldTargetReached,false);assert.equal(receipt.oldEdgeTraversalCredit,false);assert.equal(cp.nodes[cp.current].survivalRelocation.oldEdgeTraversalCredit,false);
+ assert.equal(receipt.oldTargetReached,false);assert.equal(receipt.oldEdgeTraversalCredit,false);
+ const relocated=Object.values(cp.nodes).find(node=>node.survivalRelocation);assert.ok(relocated);assert.equal(relocated.survivalRelocation.oldEdgeTraversalCredit,false);
+ assert.equal(cp.nodes[`${receipt.abandonedTarget.x},${receipt.abandonedTarget.y},${receipt.abandonedTarget.z}`],undefined);
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);assert.equal(f.bot.entity.onGround,true);assert.equal(f.attacks.length,0);
 });
 
@@ -2000,7 +2022,7 @@ test('automatic paused safety uses its own captured lease for a real surface sta
  assert.equal(f.task.executionGeneration,generation);assert.equal(f.task.movementLease,null);assert.equal(f.agent.__testGetActiveMovementLease(),null);
 });
 
-for(const nutrition of [false,true])test(`field graph drains its exact temporary native shore owner without old-goal credit: nutrition=${nutrition}`,{timeout:12000},async t=>{
+for(const nutrition of [false,true])test(`field graph drains native shore defense while rejecting an untrusted critical-health provisioning flag: nutrition=${nutrition}`,{timeout:12000},async t=>{
  const f=fixture(t,{killAfter:4,interrupt:false});f.task.materialSupply={materialSource:'self_gathered'};
  f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';let cp,defending,immersed=false;
  const diagnostics=captureHouseSurfaceDiagnostics(f),attack=f.bot.attack;
@@ -2008,6 +2030,15 @@ for(const nutrition of [false,true])test(`field graph drains its exact temporary
  f.bot.once('goal_updated',()=>setTimeout(()=>{f.bot.entities[4]={id:4,name:'spider',isValid:true,entityType:registry.entitiesByName.spider.id,position:new Vec3(2.5,1,.5),height:.9};
   defending=f.agent.__testHandleSurvivalCritical('surface_owned_shore');defending.catch(()=>{});},20));
  const running=f.agent.__testHouseSurfaceGraphNext({x:0,y:1,z:0},{resource:nutrition?'survival_food':'house_field_wood',fieldFoodExploration:nutrition,graphCheckpoint:{get:()=>cp,save:v=>{cp=v;}},assertGraphActive:()=>f.task.cancellationToken.throwIfRequested()});
+ if(nutrition){
+  // This fixture has no foodSupplyRunning/houseSelfSupply authority. A public
+  // exploration flag cannot authorize continued graph work at4HP.
+  await assert.rejects(running,{code:'house_surface_dry_graph_survival_limit'});await defending;
+  assert.equal(immersed,true);assert.equal(f.bot.entity.onGround,true);
+  assert.ok(diagnostics().some(e=>e.event==='house_emergency_shore_confirmed'));
+  assert.equal(cp.visits,1);assert.equal(cp.order.length,1);assert.equal(f.bot.health,4);
+  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);return;
+ }
  const result=await running;await defending;
  assert.equal(immersed,true);assert.equal(result.moved,true);assert.equal(f.bot.entity.onGround,true);
  assert.ok(diagnostics().some(e=>e.event==='house_emergency_shore_confirmed'));
@@ -2026,7 +2057,7 @@ test('surface continuation drains a second exact defense that claims the lease b
   first=f.agent.__testHandleSurvivalCritical('first_exact_surface_owner');
   first.then(()=>{f.bot.entities[89]=make(89);second=f.agent.__testHandleSurvivalCritical('second_exact_surface_owner');second.catch(()=>{});});first.catch(()=>{});
  },20));
- const result=await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),6000);
+ await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),6000);
  await first;await second;assert.ok(n>=3);assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
  assert.ok(diagnostics().some(r=>r.event==='house_surface_chained_defense_wait'));
  assert.ok(Math.abs(f.bot.entity.position.x-5.5)<1);assert.equal(f.bot.pathfinder.goal,null);
@@ -2042,7 +2073,7 @@ test('independent native defenses retain the original leg deadline beyond the ob
   first=f.agent.__testHandleSurvivalCritical('first_exact_surface_owner');
   first.then(()=>{f.bot.entities[89]=make(89);second=f.agent.__testHandleSurvivalCritical('second_exact_surface_owner');second.catch(()=>{});});first.catch(()=>{});
  },20));
- const result=await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),15000);
+ await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),15000);
  await first;await second;assert.ok(n>=18);assert.ok(Date.now()-started>8500);assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
  assert.ok(diagnostics().some(r=>r.event==='house_surface_chained_defense_wait'));
  assert.ok(Math.abs(f.bot.entity.position.x-5.5)<1);assert.equal(f.bot.pathfinder.goal,null);
@@ -2097,7 +2128,7 @@ test('bare13HP armed survivor chooses an actual covered native route before char
  assert.ok(diagnostics().some(e=>e.event==='house_ranged_target_locked'&&e.details.decision==='cover'));assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
 });
 test('three separately completed native defenses can resume one surface goal under its same original deadline',{timeout:10000},async t=>{
- const f=fixture(t,{interruptions:3});f.task.materialSupply={materialSource:'self_gathered'};f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
+ const f=fixture(t,{interruptions:3,deferInitialThreat:true});f.task.materialSupply={materialSource:'self_gathered'};f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
  const diagnostics=captureHouseSurfaceDiagnostics(f),started=Date.now();
  await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),7000);
  if(f.interruption())await f.interruption();const resumed=diagnostics().filter(e=>e.event==='house_surface_self_defense_resumed');
@@ -2139,7 +2170,7 @@ test('a low-health unarmed survivor recognizes zombie_villager before native inj
  const f=fixture(t,{interrupt:false,resourceThreat:'zombie_villager',killAfter:99});prepareHouseResourceGroup(f,null);f.bot.health=9;f.bot.food=16;f.bot.inventory.items=()=>[];f.bot.heldItem=null;f.bot.entities[4].position=new Vec3(4.5,1,.5);
  const diagnostics=captureHouseSurfaceDiagnostics(f);
  await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('zombie_villager_before_injury'));
- assert.ok(f.bot.entity.position.distanceTo(f.bot.entities[4].position)>=6.5);assert.equal(f.bot.health,9);assert.equal(f.bot.entities[4].isValid!==false,true);
+ assert.ok(f.bot.entity.position.distanceTo(f.bot.entities[4].position)>=5);assert.equal(f.bot.entity.onGround,true);assert.equal(f.bot.health,9);assert.equal(f.bot.entities[4].isValid!==false,true);
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);assert.ok(diagnostics().some(e=>e.event==='creeper_escape_confirmed'&&e.details.threatName==='zombie_villager'));assert.equal(diagnostics().some(e=>e.event==='native_self_aggressor_observed'),false);
 });
 

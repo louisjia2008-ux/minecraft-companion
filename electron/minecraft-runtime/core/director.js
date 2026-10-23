@@ -72,7 +72,7 @@ function createDirector({
   let lastIdle = false;
 
   const emit = (type, data = {}) => {
-    try { onEvent({ type, at: now(), ...data }); } catch (_) { /* observers never break the loop */ }
+    try { onEvent({ type, at: now(), ...data }); } catch { /* observers never break the loop */ }
   };
 
   function settle(type, event) {

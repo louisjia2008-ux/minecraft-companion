@@ -20,6 +20,8 @@ const { createCompanion } = require('../core/companion');
 const { acknowledgePlayerLoaded } = require('../runtime');
 const { withMinecraftProtocolCompatibility } = require('../protocolCompatibility');
 const { ownedItems, countInventory } = require('../core/perception');
+const { scenarioResult, scenarioExitCode } = require('./scenario-result.cjs');
+const { runSetup } = require('./scenario-setup.cjs');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
@@ -78,31 +80,35 @@ function inventorySnapshot(bot) {
       slots: bot.currentWindow.slots.map(item), cursor: item(bot.currentWindow.selectedItem) } };
 }
 
-async function runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir, lifecycle, traceInventory }) {
+async function runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir, lifecycle, traceInventory,
+  companionFactory = createCompanion, settleMs = 2000, hookIntervalMs = 2000 }) {
   const rng = mulberry32(seed + run * 7919);
   const eventsFile = fs.createWriteStream(path.join(runDir, `run-${String(run + 1).padStart(2, '0')}.jsonl`));
   const write = (type, data = {}) => eventsFile.write(JSON.stringify({ type, t: Date.now(), ...data }) + '\n');
+  const cleanup = [];
+  const harnessFailures = [];
+  const goalEvents = [];
+  let result = null;
+  let deaths = 0;
+  let outcome = null;
+  let startedAt = null;
+  let timedOut = false;
+  try {
   const setup = scenario.setup({ username, run, rng, difficulty });
   write('setup', { seed, run, difficulty, details: setup.details, botLifecycle: lifecycle });
   const trace = (stage) => write('inventory_state', { stage, ...inventorySnapshot(bot) });
-  const packetListeners = ['set_slot', 'set_player_inventory', 'window_items'].map((name) => {
+  ['set_slot', 'set_player_inventory', 'window_items'].map((name) => {
     const listener = (packet) => write('inventory_packet', { name, windowId: packet.windowId,
       slot: packet.slot ?? packet.slotId, stateId: packet.stateId, ...inventorySnapshot(bot) });
     if (traceInventory) bot._client.on(name, listener);
+    cleanup.push(() => bot._client.removeListener(name, listener));
     return [name, listener];
   });
   let readback = Promise.resolve();
+  cleanup.push(() => readback);
   let readbackAt = 0;
-  // Commands that must take effect first (forceloading far chunks before filling them).
-  if (setup.prepare?.length) {
-    for (const command of setup.prepare) server.command(command);
-    await server.query('list', /players online/, 15000);
-    await sleep(setup.prepareMs ?? 3000);
-  }
-  for (const command of setup.commands) server.command(command);
-  // `list` is processed after every queued command, so its reply is a barrier.
-  await server.query('list', /players online/, 15000);
-  await sleep(2000);
+  await runSetup({ server, setup, properties: scenario.serverProperties, write });
+  await sleep(settleMs);
   // A teleport into ungenerated terrain can take longer than Mineflayer's
   // fixed 10 s, especially with two servers generating at once.
   for (let attempt = 1; ; attempt += 1) {
@@ -115,13 +121,16 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   }
   if (traceInventory) trace('after_setup');
 
-  let deaths = 0;
   const onDeath = () => { deaths += 1; write('death', { position: bot.entity?.position }); };
   bot.on('death', onDeath);
-  let outcome = null;
+  cleanup.push(() => bot.removeListener('death', onDeath));
+  let captureOutcome = true;
+  const runState = {};
+  cleanup.push(() => scenario.dispose?.({ server, bot, username, state: runState, write }));
+  await scenario.initialize?.({ server, bot, username, state: runState, write });
   let resolveOutcome;
   const finished = new Promise((resolve) => { resolveOutcome = resolve; });
-  const companion = createCompanion({
+  const companion = companionFactory({
     bot,
     onEvent(event) {
       write('brain', event);
@@ -132,17 +141,20 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
           .then((match) => write('server_inventory', { data: match[0] }))
           .catch((error) => write('server_inventory_error', { reason: error.message }));
       }
-      // `stopped` covers death: the brain drops its goal when the bot dies.
+      if (captureOutcome && ['goal_set', 'goal_done', 'goal_failed', 'stopped'].includes(event.type)) {
+        goalEvents.push(event);
+        outcome = event.type === 'goal_set' ? null : event;
+      }
+      // Death interrupts actions; only genuine terminal goal events end a single-goal run.
       // An autonomous scenario outlives its goals: only finishWhen or the timeout end it.
-      if (!scenario.autonomous && (event.type === 'goal_done' || event.type === 'goal_failed' || event.type === 'stopped')) {
-        outcome = outcome || event;
+      if (!scenario.autonomous && ((event.type === 'goal_done' && scenario.finishOnGoalDone !== false) || event.type === 'goal_failed' || event.type === 'stopped')) {
         resolveOutcome();
       }
     },
   });
-  const startedAt = Date.now();
-  // Per-run scratch space for scenario hooks (injected failures and their checks).
-  const runState = {};
+  let disposed = false;
+  cleanup.push(async () => { if (!disposed) await companion.dispose(); });
+  startedAt = Date.now();
   const goal = await scenario.start(companion, runState, bot);
   // A heartbeat every minute so long runs can be followed live.
   const heartbeat = setInterval(() => {
@@ -157,50 +169,65 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     console.log(`    [${line.minute}m] ${line.running || 'idle'}${line.autonomy ? ` (auto:${line.autonomy})` : ''} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
       + ` food=${bot.food} deaths=${deaths} ${line.dimension} ${Object.entries(inv).map(([k, n]) => `${k}:${n}`).join(' ')}`);
   }, 60000);
+  cleanup.push(() => clearInterval(heartbeat));
   // Scenarios may also act on the world while the goal runs (e.g. skip a night
   // once the goal is ready for it), every two seconds.
   // One call at a time, and the last one is awaited before verify() so their
   // server queries never overlap.
   let duringCall = Promise.resolve();
   const during = scenario.during ? setInterval(() => {
-    duringCall = duringCall.then(() => scenario.during({ server, bot, goal, write }))
-      .catch((error) => write('during_failed', { error: String(error) }));
+    duringCall = duringCall.then(() => scenario.during({ server, bot, goal, state: runState, username, write }))
+      .catch((error) => { harnessFailures.push(String(error)); write('during_failed', { error: String(error) }); });
   }, 2000) : null;
+  cleanup.push(async () => { if (during) clearInterval(during); await duringCall; });
   // Scenarios may also end on a world condition (e.g. the next morning).
   const deadline = new AbortController();
+  cleanup.push(() => deadline.abort());
   const hookContext = () => ({ server, bot, username, companion, goal, state: runState, write, deaths,
-    elapsedMs: Date.now() - startedAt });
+    elapsedMs: Date.now() - startedAt, signal: deadline.signal });
   const condition = scenario.finishWhen || scenario.onTick ? (async () => {
     for (;;) {
-      await delay(2000, null, { signal: deadline.signal });
+      await delay(hookIntervalMs, null, { signal: deadline.signal });
       if (scenario.onTick) {
-        try { await scenario.onTick(hookContext()); } catch (error) { write('hook_error', { reason: error.message }); }
+        try { await scenario.onTick(hookContext()); } catch (error) { harnessFailures.push(error.message); write('hook_error', { reason: error.message }); }
       }
-      if (scenario.finishWhen?.(hookContext())) return false;
+      if (deadline.signal.aborted) return false;
+      if (await scenario.finishWhen?.(hookContext())) return false;
     }
   })().catch((error) => { if (error.name !== 'AbortError') throw error; return false; }) : new Promise(() => {});
-  const timedOut = await Promise.race([finished.then(() => false), condition,
+  cleanup.push(async () => { deadline.abort(); if (scenario.finishWhen || scenario.onTick) await condition; });
+  timedOut = await Promise.race([finished.then(() => false), condition,
     delay(scenario.timeoutMs, null, { signal: deadline.signal }).then(() => true)]);
   deadline.abort();
   clearInterval(heartbeat);
   if (during) clearInterval(during);
   await duringCall;
+  if (scenario.finishWhen || scenario.onTick) await condition;
+  captureOutcome = false;
   await companion.dispose();
+  disposed = true;
   bot.removeListener('death', onDeath);
   const durationMs = Date.now() - startedAt;
   await sleep(500);
   const verdict = await scenario.verify({ server, username, bot, goal, deaths, companion, state: runState });
-  const reason = verdict.pass ? null
-    : timedOut ? 'timeout'
-      : outcome?.type === 'goal_failed' ? `goal_failed:${(outcome.reasons || []).at(-1) || 'unknown'}`
-        : outcome?.type === 'stopped' ? `stopped:${outcome.reason}`
-          : 'verify_failed';
-  const result = { run: run + 1, pass: verdict.pass, reason, durationMs, deaths,
-    brainOutcome: outcome?.type || null, failureReasons: outcome?.reasons || [], ...verdict.details };
-  write('result', result);
-  for (const [name, listener] of packetListeners) bot._client.removeListener(name, listener);
+  result = scenarioResult({ run: run + 1, verdict, timedOut, outcome, durationMs, deaths, harnessFailures, goalEvents });
   await readback;
-  await new Promise((resolve) => eventsFile.end(resolve));
+  } catch (error) {
+    harnessFailures.push(error.message);
+    write('harness_error', { reason: error.message });
+    result = scenarioResult({ run: run + 1, verdict: { pass: false }, timedOut, outcome,
+      durationMs: startedAt === null ? 0 : Date.now() - startedAt, deaths, harnessFailures, goalEvents });
+  } finally {
+    for (const release of cleanup.reverse()) {
+      try { await release(); } catch (error) {
+        harnessFailures.push(`cleanup:${error.message}`);
+        write('cleanup_error', { reason: error.message });
+        if (result) { result.pass = false; result.reason = `harness_error:cleanup:${error.message}`; }
+      }
+    }
+    if (result) write('result', result);
+    await new Promise((resolve) => eventsFile.end(resolve));
+  }
   return result;
 }
 
@@ -247,10 +274,15 @@ async function main() {
     const scenario = SCENARIOS[name];
     const difficulty = difficultyOption || scenario.defaultDifficulty || 'peaceful';
     const batchDir = path.join(installation, 'scenario-runs', batch, name);
+    if (fs.existsSync(batchDir) && (fs.existsSync(path.join(batchDir, 'server/world'))
+      || fs.existsSync(path.join(batchDir, 'summary.json'))
+      || fs.readdirSync(batchDir).some((file) => /^run-\d+\.jsonl$/.test(file)))) {
+      throw new Error(`batch_exists: choose a fresh --batch; refusing to overwrite ${batchDir}`);
+    }
     fs.mkdirSync(batchDir, { recursive: true });
     console.log(`\n▶ ${name}: ${scenario.description}\n  runs=${runs} seed=${seed} difficulty=${difficulty}\n  output=${batchDir}`);
     const server = await startVanillaServer({ java, jar, dir: path.join(batchDir, 'server'),
-      properties: { ...scenario.serverProperties, difficulty } });
+      properties: { ...scenario.serverProperties, difficulty }, dataPacks: scenario.serverDataPacks });
     const username = 'DeskPetCore';
     let bot = null;
     const results = [];
@@ -295,9 +327,11 @@ async function main() {
       + ` median ${s.medianSeconds ?? '-'}s, deaths ${s.deaths}`
       + (Object.keys(s.failureReasons).length ? `, failures ${JSON.stringify(s.failureReasons)}` : ''));
   }
+  process.exitCode = scenarioExitCode(summaries);
 }
 
-main().catch((error) => {
+module.exports = { runOnce, summarize, main, mulberry32 };
+if (require.main === module) main().catch((error) => {
   console.error(error);
-  process.exit(1);
+  process.exitCode = 1;
 });

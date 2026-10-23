@@ -30,6 +30,9 @@ function fixture(t,options={}) {
    width:.6,height:1.8,eyeHeight:1.62,yaw:0,pitch:0,effects:{},attributes:{},isInWater:false,isInLava:false,
    isInWeb:false,isCollidedHorizontally:false,isCollidedVertically:true,elytraFlying:false}});
  const slots=Array(46).fill(null);slots[36]=new Item(registry.itemsByName[options.nested||options.hardClearance?'wooden_pickaxe':'iron_pickaxe'].id,1);slots[37]=new Item(registry.itemsByName.stick.id,16);
+ // This fixture isolates tool/route nesting in an explicitly pre-lit quarry;
+ // production torch crafting/placement has separate native contract tests.
+ if(options.nested)slots[38]=new Item(registry.itemsByName.torch.id,32);
  if(options.defender)bot.entities[22]={id:22,name:'zombie',type:'hostile',entityType:registry.entitiesByName.zombie.id,
   position:new Vec3(128,64,128),height:1.95,isValid:true};
  bot.attack=entity=>{attacks.push({position:clone(bot.entity.position),profile:bot.pathfinder.movements});
@@ -38,7 +41,7 @@ function fixture(t,options={}) {
  bot.heldItem=slots[36];
  bot.blockAt=raw=>{const p=raw.floored();if(unknown&&p.x>=7)return null;
   const name=cells.get(key(p))??(p.y>=64?'air':p.y>=61?(!options.allSand&&(options.stableCamp||p.x>=4)?'sandstone':'sand'):'stone');
-  return Object.assign(Block.fromStateId(registry.blocksByName[name].defaultState),{position:p});};
+  return Object.assign(Block.fromStateId(registry.blocksByName[name].defaultState),{position:p,...(options.nested?{light:12}:{})});};
  bot.findBlocks=query=>{
   const origin=query.point||bot.entity.position,radius=query.maxDistance||16;
   const matches=b=>b&&(typeof query.matching==='function'?query.matching(b):(Array.isArray(query.matching)?query.matching:[query.matching]).includes(b.type));
@@ -230,7 +233,14 @@ test('a quarry native dig interrupted by its own defense resumes fresh checked e
 });
 
 for(const kind of ['unknown','paused','foreign'])test(`production ${kind} entry cannot start movement or digging from saved coordinates`,{timeout:5000},async t=>{
- const f=fixture(t);if(kind==='unknown')f.setUnknown();if(kind==='paused')f.task.cancellationToken.pause();if(kind==='foreign')f.takeover();
+ const f=fixture(t);
+ // A saved selected entry must be freshly revalidated. Without this entry,
+ // current production may legitimately discover another loaded stable node.
+ const resolver=require('../vendor/server/minecraft/houseQuarryEntry').createHouseQuarryEntry({getBot:()=>f.bot,
+  getObservedGraph:()=>f.task.materialSupply.surfaceGraphs.any_log,blockAt:p=>f.bot.blockAt(p),assertActive:()=>{},
+  isOwnerContext:()=>true,isExcludedEntry:()=>false,isProtectedDig:()=>false},{camp});
+ f.task.materialSupply.quarryEntry=resolver.choose();
+ if(kind==='unknown')f.setUnknown();if(kind==='paused')f.task.cancellationToken.pause();if(kind==='foreign')f.takeover();
  const before=f.moves.length;await assert.rejects(f.run(1));assert.equal(f.moves.length,before);assert.equal(f.digs.length,0);
  assert.equal(f.task.materialSupply.quarry,undefined);
 });

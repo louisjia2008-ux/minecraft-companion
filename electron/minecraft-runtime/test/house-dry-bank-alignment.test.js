@@ -51,8 +51,8 @@ test('unknown support during native alignment retains exact-owner jump HOLD and 
 test('server floor turns water, actual unmodified physics enters water and HOLD never clears flotation',{timeout:4000},async t=>{const f=fixture(t,{dx:.25,onTick:({ticks,changes,bank})=>{if(ticks===1)for(let y=-2;y<=1;y++)changes.set(`${bank.x},${y},${bank.z}`,'water');}});const pending=f.run();pending.catch(()=>{});await assert.rejects(pending,e=>e.holding===true);await sleep(1500);assert.equal(f.session.isHolding(),true);assert.equal(f.bot.getControlState('jump'),true);assert.equal(f.bot.getControlState('sneak'),false);assert.ok(f.points.some(p=>p.wet),'original Physics truly entered water');assert.throws(()=>f.session.release(),e=>e.code==='dry_bank_alignment_release_wet');});
 test('two-second deadline closes a late native look while host remains owner',{timeout:4000},async t=>{const f=fixture(t,{look:async({bot},yaw,pitch)=>{await sleep(2300);return bot.look(yaw,pitch,true);}});const started=Date.now(),yaw=f.bot.entity.yaw;await assert.rejects(f.run(),e=>e.code==='dry_bank_alignment_timeout'&&e.recoveredToDryBank===true);assert.ok(Date.now()-started>=1900&&Date.now()-started<=2300);const count=f.controls.length;await sleep(400);assert.equal(f.looks.length,0);assert.equal(f.bot.entity.yaw,yaw);assert.equal(f.controls.length,count);});
 
-for(const [health,food] of [[15,20],[20,13]])test(`initial survival${health}/${food} rejects before motion`,async t=>{const f=fixture(t);f.bot.health=health;f.bot.food=food;await assert.rejects(f.run(),e=>e.code==='dry_bank_alignment_survival_limit');assert.equal(f.controls.length,0);assert.equal(f.looks.length,0);});
-test('food drops during native alignment, exact-owner dry stop has no later control writes',async t=>{const f=fixture(t,{onTick:({ticks,bot})=>{if(ticks===1)bot.food=13;}});await assert.rejects(f.run(),e=>e.code==='dry_bank_alignment_survival_limit'&&e.recoveredToDryBank===true);assert.equal(f.session.isHolding(),false);const count=f.controls.length;await sleep(150);assert.equal(f.controls.length,count);});
+for(const [health,food] of [[5,20],[20,5]])test(`initial survival${health}/${food} rejects before motion`,async t=>{const f=fixture(t);f.bot.health=health;f.bot.food=food;await assert.rejects(f.run(),e=>e.code==='dry_bank_alignment_survival_limit');assert.equal(f.controls.length,0);assert.equal(f.looks.length,0);});
+test('food drops below ordinary floor during native alignment, exact-owner dry stop has no later control writes',async t=>{const f=fixture(t,{onTick:({ticks,bot})=>{if(ticks===1)bot.food=5;}});await assert.rejects(f.run(),e=>e.code==='dry_bank_alignment_survival_limit'&&e.recoveredToDryBank===true);assert.equal(f.session.isHolding(),false);const count=f.controls.length;await sleep(150);assert.equal(f.controls.length,count);});
 test('same owner unsafe cleanup is HOLD, never mislabeled foreign owner',async t=>{
  let calls=0,failAt=Infinity;
  const f=fixture(t,{safety:{...safety,stableSupport:(...args)=>{calls++;if(calls===failAt)throw Object.assign(new Error('support update raced cleanup'),{code:'water_bank_unstable'});return safety.stableSupport(...args);}},onRecord:({type,session})=>{if(type==='dry_bank_alignment_tick'){failAt=calls+2;session.requestCancel('paused');}}});
@@ -64,8 +64,11 @@ test('same owner unsafe cleanup is HOLD, never mislabeled foreign owner',async t
 test('native settled confirmation survives dry release and real inertia without center drift',async t=>{const f=fixture(t,{dx:.35,dz:.35,vx:.035,vz:-.025});const out=await f.run();confirmed(f,out);assert.deepEqual(f.session.release(),{released:true});await sleep(300);assert.ok(Math.abs(f.bot.entity.position.x-f.bank.x-.5)<=.08);assert.ok(Math.abs(f.bot.entity.position.z-f.bank.z-.5)<=.08);assert.equal(f.bot.entity.onGround,true);assert.equal(f.bot.entity.isInWater,false);assert.equal(f.bot.getControlState('sneak'),false);});
 
 test('recorded low-health return aligns the actual dry bank without ordinary exploration permission',async t=>{
- const f=fixture(t,{dx:.35,recoveryReturn:true});f.bot.health=10;f.bot.food=6;
- confirmed(f,await f.run());assert.equal(f.bot.health,10);
- const ordinary=fixture(t,{dx:.35});ordinary.bot.health=10;
+ const f=fixture(t,{dx:.35,recoveryReturn:true});f.bot.health=4;f.bot.food=6;
+ confirmed(f,await f.run());assert.equal(f.bot.health,4);
+ const ordinary=fixture(t,{dx:.35});ordinary.bot.health=4;
  await assert.rejects(ordinary.run(),{code:'dry_bank_alignment_survival_limit'});
 });
+
+for(const [health,food] of [[15,20],[20,13],[6,6]])test(`ordinary controlled dry alignment accepts current survival floor ${health}/${food}`,async t=>{const f=fixture(t);f.bot.health=health;f.bot.food=food;confirmed(f,await f.run());});
+test('actual health loss during native alignment denies continued ordinary motion',async t=>{const f=fixture(t,{onTick:({ticks,bot})=>{if(ticks===1)bot.health=19;}});await assert.rejects(f.run(),e=>e.code==='dry_bank_alignment_survival_limit'&&e.recoveredToDryBank===true);assert.equal(f.session.isHolding(),false);const writes=f.controls.length;await sleep(150);assert.equal(f.controls.length,writes);});

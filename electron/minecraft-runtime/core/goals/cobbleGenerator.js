@@ -94,6 +94,21 @@ function chooseGeneratorSite(blockAt, around, { radius = 10, collector = false, 
 // Every cell the device digs, seals or keeps clear.
 const footprint = (device) => [...device.open, ...device.seal, ...device.clearAbove, ...device.parts.map((part) => part.position)];
 
+// GoalXZ resolves as soon as the horizontal coordinate matches, including
+// while falling into the work pit. Wait for a standable, settled body before
+// interpreting that early completion as a failed arrival.
+async function enterStand(bot, ctx, stand, actions = defaultActions) {
+  const inColumn = () => Math.floor(bot.entity.position.x) === stand.x && Math.floor(bot.entity.position.z) === stand.z;
+  const inStand = () => inColumn() && Math.abs(bot.entity.position.y - stand.y) < 0.5 && bot.entity.onGround !== false;
+  if (inStand()) return { ok: true };
+  const moved = await actions.goTo(bot, ctx, new goals.GoalXZ(stand.x, stand.z), { timeoutMs: 30000, arrived: inStand });
+  if (inStand()) return { ok: true };
+  if (inColumn() && (moved.ok || moved.reason === 'not_arrived')) {
+    if (await waitUntil(inStand, { timeoutMs: 1500, signal: ctx.signal })) return { ok: true };
+  }
+  return moved.ok ? { ok: false, reason: 'not_in_stand' } : moved;
+}
+
 function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harvest = 8, collector = false, avoid = null,
   skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(harvest) || harvest < 1) throw new TypeError('harvest must be a positive integer');
@@ -211,18 +226,11 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
     const c = memory.device.cells;
     const stand = new Vec3(c.stand.x, c.stand.y, c.stand.z);
     // Standing on the collector chest (0.875 high) puts the feet just below S.
-    const inStand = () => {
-      const at = bot.entity.position;
-      return Math.floor(at.x) === stand.x && Math.floor(at.z) === stand.z && Math.abs(at.y - stand.y) < 0.5;
-    };
-    if (inStand()) return { ok: true };
-    const moved = await actions.goTo(bot, ctx, new goals.GoalXZ(stand.x, stand.z), {
-      timeoutMs: 30000, arrived: inStand,
-    });
-    if (inStand()) return { ok: true };
+    const moved = await enterStand(bot, ctx, stand, actions);
+    if (moved.ok) return moved;
     ctx.record('stand_unreached', { reason: moved.reason, at: bot.entity.position.toString(),
       stand: stand.toString(), cells: Object.fromEntries(Object.entries(c).map(([k, p]) => [k, blockAt(p)?.name])) });
-    return moved.ok ? { ok: false, reason: 'not_in_stand' } : moved;
+    return moved;
   }
 
   async function harvestOnce(ctx) {
@@ -345,4 +353,4 @@ function createCobbleGeneratorGoal({ bot, anchor = null, facing = 'east', harves
   };
 }
 
-module.exports = { createCobbleGeneratorGoal, chooseGeneratorSite, evaluateGeneratorSite };
+module.exports = { createCobbleGeneratorGoal, chooseGeneratorSite, evaluateGeneratorSite, enterStand };

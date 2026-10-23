@@ -3543,12 +3543,12 @@ function createMinecraftTaskAgent(deps) {
         now - startedAt >= PHYSICAL_ACTION_STARTUP_GRACE_MS
       ) {
         clearInterval(intervalId);
-        void safeAsyncTick("movement_monitor_fault", () => recoverPhysicalAction(action, "executor_stalled"), {
+        void safeAsyncTick("movement_monitor_fault", async () => {
+          await recoverPhysicalAction(action, "executor_stalled");
+          if (activePhysicalAction?.id === action.id) activePhysicalAction = null;
+        }, {
           broadcastError: false,
         });
-        if (activePhysicalAction?.id === action.id) {
-          activePhysicalAction = null;
-        }
         return;
       }
       if (
@@ -3558,12 +3558,12 @@ function createMinecraftTaskAgent(deps) {
         now - Number(action.lastSignalAt || action.firstSignalAt) >= PHYSICAL_ACTION_STALL_MS
       ) {
         clearInterval(intervalId);
-        void safeAsyncTick("movement_monitor_fault", () => recoverPhysicalAction(action, "executor_stalled"), {
+        void safeAsyncTick("movement_monitor_fault", async () => {
+          await recoverPhysicalAction(action, "executor_stalled");
+          if (activePhysicalAction?.id === action.id) activePhysicalAction = null;
+        }, {
           broadcastError: false,
         });
-        if (activePhysicalAction?.id === action.id) {
-          activePhysicalAction = null;
-        }
         return;
       }
       if (options.continuous !== true && now - startedAt >= monitorMs) {
@@ -12732,13 +12732,21 @@ function createMinecraftTaskAgent(deps) {
     await waitForSurfaceGround(label);
     if (furnishedHouseStandingSafely(bot.entity.position) && canAct(bot.entity.position)) return;
     const candidates = furnishedHouseStanceCandidates(target, marginTest);
+    const stanceGoal = position => {
+      const x=Math.floor(position.x),z=Math.floor(position.z),upper=Math.ceil(position.y-1e-6),lower=Math.floor(position.y);
+      if(upper===lower)return new goals.GoalBlock(x,upper,z);
+      // Installed pathfinder plans a slab at the next integer node, while
+      // physical feet occupy its lower floored cell. Both identify this same
+      // freshly inspected shape; actual support/reach is checked after goto.
+      const goal=new goals.GoalCompositeAny([new goals.GoalBlock(x,upper,z),new goals.GoalBlock(x,lower,z)]);
+      Object.assign(goal,{x,y:upper,z});return goal;
+    };
     let lastError;
     if (candidates.length) {
       try {
         // Let A* select any validated stance, instead of repeatedly exhausting
         // the nearest nodes when a finished wall separates them from the bot.
-        const reachable = new goals.GoalCompositeAny(candidates.map(({ position }) =>
-          new goals.GoalBlock(Math.floor(position.x), Math.ceil(position.y - 1e-6), Math.floor(position.z))));
+        const reachable = new goals.GoalCompositeAny(candidates.map(({ position }) => stanceGoal(position)));
         // These coordinates identify this action in the movement lease only;
         // the composite's heuristic and end condition use its child goals.
         Object.assign(reachable, { x: target.x, y: target.y, z: target.z });
@@ -12757,7 +12765,7 @@ function createMinecraftTaskAgent(deps) {
       try {
         // Pathfinder indexes a slab's standing node at the next integer Y,
         // while real physics leaves the feet on its half-height collision top.
-        await gotoStance(new goals.GoalBlock(Math.floor(position.x), Math.ceil(position.y - 1e-6), Math.floor(position.z)));
+        await gotoStance(stanceGoal(position));
         await waitForSurfaceGround(label);
         if (furnishedHouseStandingSafely(bot.entity.position) && canAct(bot.entity.position)) return;
       } catch (error) {
@@ -19249,7 +19257,7 @@ function createMinecraftTaskAgent(deps) {
           source:'mineflayer.entityHurt.native_damage_event',expiresMs:15000});
         else recordTaskDiagnostic(currentTask,'native_self_hurt_observed',{sourceKnown:false,
           source:'mineflayer.entityHurt.native_damage_event',actual:toPlainPosition(bot.entity.position)});
-        void maybeHandleSurvivalCritical('native_self_aggressor').catch(error=>reportRuntimeFault('combat_interrupt_fault',error,{broadcastError:false}));
+        void maybeHandleSurvivalCritical(sourceKnown?'native_self_aggressor':'entity_hurt').catch(error=>reportRuntimeFault('combat_interrupt_fault',error,{broadcastError:false}));
       };
       bot.prependListener('entityHurt',observeSelfAggressor);
       const keepBreathing=()=>buoyancy.tick();
@@ -19548,8 +19556,9 @@ function createMinecraftTaskAgent(deps) {
         stats.loadPluginCalls += 1;
       },
       pathfinder: {
-        setMovements: () => {
+        setMovements: (movements) => {
           stats.setMovementsCalls += 1;
+          fakeBot.pathfinder.movements = movements;
         },
         setGoal: () => {
           stats.setGoalCalls += 1;
