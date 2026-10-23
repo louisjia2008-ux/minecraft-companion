@@ -38,6 +38,8 @@ const BRANCH_EVERY = 3;
 const BRANCH_LENGTH = 16;
 const TORCH_EVERY = 8;
 const MAX_TURNS = 4;
+// Directions (relative to the staircase) a boxed-in main tunnel restarts in from its foot.
+const RESTART_SIDES = [1, 3];
 
 const add = (p, dx, dy, dz) => ({ x: p.x + dx, y: p.y + dy, z: p.z + dz });
 const same = (a, b) => a.x === b.x && a.y === b.y && a.z === b.z;
@@ -155,6 +157,8 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
       const block = bot.blockAt(ore.position) || ore;
       const dug = await actions.digBlock(bot, ctx, block, { tool: pickFor(bot, block) });
       if (!dug.ok) { blacklist.add(posKey(ore.position), dug.reason); return dug; }
+      // The hole is ours, not a cave: later tunnel steps may open into it.
+      memory.mine.open = { ...memory.mine.open, [posKey(ore.position)]: true };
       return actions.collectDrops(bot, ctx, ore.position.offset(0.5, 0.5, 0.5), (n) => dropMatch(n) || isLoot(n));
     }
   }
@@ -350,6 +354,18 @@ function turn(ctx, mine, reason, memory) {
   ctx.record('mine_turn', { phase: mine.phase, reason, at: posKey(mine.front) });
   if (mine.phase === 'branch') { endBranch(mine); return { ok: true, turned: reason }; }
   mine.turns += 1;
+  if (mine.turns >= MAX_TURNS && mine.phase === 'main' && mine.junction && (mine.restarts || 0) < RESTART_SIDES.length) {
+    // The main tunnel is boxed in: start it again from the foot of the stairs,
+    // off to one side, rather than giving up the staircase and its depot.
+    const side = RESTART_SIDES[mine.restarts || 0];
+    mine.restarts = (mine.restarts || 0) + 1;
+    mine.front = { x: mine.junction.x, y: mine.junction.y, z: mine.junction.z };
+    mine.dir = (mine.junction.dir + side) % 4;
+    mine.turns = 0;
+    mine.mainSteps = 0;
+    ctx.record('mine_restart', { dir: mine.dir });
+    return { ok: true, turned: reason };
+  }
   if (mine.turns >= MAX_TURNS) {
     memory.mineDir = (mine.dir + 1) % 4;
     memory.mine = null;
@@ -371,5 +387,5 @@ async function maybeTorch(bot, ctx, mine, cell) {
   } catch (_) { /* a torch is a nicety, not progress */ }
 }
 
-module.exports = { inspectStep, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
+module.exports = { inspectStep, turn, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
   LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH };

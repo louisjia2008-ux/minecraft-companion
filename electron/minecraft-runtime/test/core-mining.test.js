@@ -148,3 +148,19 @@ test('the tunnel may cut through its own earlier tunnels; only unknown openings 
   assert.equal(step.ok, true);
   assert.deepEqual(step.dig, []);
 });
+
+test('a boxed-in main tunnel restarts from the foot of the stairs before the mine is given up', () => {
+  const { turn } = require('../core/mining');
+  const ctx = { record() {} };
+  const mine = { phase: 'main', dir: 0, turns: 0, mainSteps: 5, front: { x: 9, y: -53, z: 0 }, junction: { x: 0, y: -53, z: 0, dir: 0 } };
+  const memory = { mine };
+  for (let i = 0; i < 3; i += 1) assert.equal(turn(ctx, mine, 'cave', memory).ok, true);
+  assert.equal(turn(ctx, mine, 'cave', memory).ok, true); // 4th turn: restart off to one side
+  assert.deepEqual([mine.front, mine.dir, mine.turns, mine.restarts], [{ x: 0, y: -53, z: 0 }, 1, 0, 1]);
+  for (let i = 0; i < 4; i += 1) turn(ctx, mine, 'cave', memory);
+  assert.equal(mine.dir, 3);
+  let last;
+  for (let i = 0; i < 4; i += 1) last = turn(ctx, mine, 'cave', memory);
+  assert.equal(last.reason, 'mine_blocked:cave');
+  assert.equal(memory.mine, null);
+});

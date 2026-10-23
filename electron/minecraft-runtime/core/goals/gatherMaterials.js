@@ -37,8 +37,9 @@ const SPARE_PICKS = 5;
 // cobblestone and carried sticks) instead of with a trip home.
 const DEPOT_BELOW = 0;
 const DEPOT_PICKS = 8;
-const DEPOT_STICKS = 12;
+const DEPOT_STICKS = 24;
 const KEEP_PICKS = 3;
+const DEPOT_CRAFT = 6;
 const SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
@@ -175,16 +176,21 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     if (!depot?.chest || depot.dry) return null;
     const there = await mining.walkToCell(bot, ctx, m, m.junction, actions);
     if (there) { ctx.record('depot_walk', { ok: there.ok }); return there; }
+    // Take what the chest holds, and make more on the spot: every walk back
+    // here from a far front should last a good while.
     const taken = await skills.takeItems(bot, ctx, { position: depot.chest, itemMatch: (n) => n === 'stone_pickaxe' });
     ctx.record('depot_take', { ok: taken.ok, reason: taken.reason, taken: taken.taken });
-    if (taken.ok) return taken;
     const cobble = carrying('cobblestone') + carrying('cobbled_deepslate');
-    const times = Math.min(4, Math.floor(carrying('stick') / 2), Math.floor(cobble / 3));
-    if (times < 1) { depot.dry = true; return null; }
+    const times = Math.min(DEPOT_CRAFT, Math.floor(carrying('stick') / 2), Math.floor(cobble / 3));
+    if (times < 1) {
+      if (taken.ok) return taken;
+      depot.dry = true;
+      return null;
+    }
     const made = await skills.craft(bot, ctx, { item: 'stone_pickaxe', times, tablePosition: depot.table });
     ctx.record('depot_craft', { ok: made.ok, reason: made.reason, times });
     if (!made.ok) depot.dry = true;
-    return made;
+    return !made.ok && taken.ok ? taken : made;
   }
 
   // What to carry down a mine: spare stone pickaxes; for a deep one, sticks
