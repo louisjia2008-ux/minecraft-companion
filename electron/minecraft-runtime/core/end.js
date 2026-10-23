@@ -421,31 +421,49 @@ async function descendSpiral(bot, ctx, { maxSteps = 48, safeDrop = 3 } = {}) {
 }
 
 /**
- * A two-deep pit in the end stone where the bot waits out the dragon's
- * passes: its wings throw anything in the open off the island (or onto a
- * pillar), but cannot push a body out of a hole with walls on all sides, and
- * it cannot break end stone. Digs straight down where the bot stands.
+ * A three-deep pit in the end stone, roofed over, where the bot waits out
+ * the dragon's passes: its wings throw anything in the open off the island
+ * (or onto a pillar) but cannot push a body out of a hole with walls on all
+ * sides, it cannot break end stone, and the roof keeps the breath clouds of
+ * its fireballs (which burst on whatever they hit) above the bot's head.
  */
 async function digShelter(bot, ctx) {
   const feet = bot.entity.position.floored();
   const isStone = (p) => bot.blockAt(p)?.name === 'end_stone';
-  for (const depth of [1, 2]) {
+  for (const depth of [1, 2, 3]) {
     const below = feet.offset(0, -depth, 0);
     if (!isStone(below) || !isStone(below.offset(0, -1, 0))) return fail('no_shelter_ground');
     for (const [x, z] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (bot.blockAt(below.offset(x, 0, z))?.boundingBox !== 'block') return fail('shelter_wall_open');
   }
-  for (const depth of [1, 2]) {
+  for (const depth of [1, 2, 3]) {
     const below = feet.offset(0, -depth, 0);
     const dug = await actions.digBlock(bot, ctx, bot.blockAt(below));
     if (!dug.ok) return dug;
     await waitUntil(() => bot.entity.onGround && bot.entity.position.y < below.y + 0.5, { timeoutMs: 2000, signal: ctx.signal });
   }
-  return bot.entity.position.y <= feet.y - 1.5 ? { ok: true, top: feet } : fail('shelter_not_entered');
+  if (bot.entity.position.y > feet.y - 2.5) return fail('shelter_not_entered');
+  // The roof goes in the top cell of the pit, against the ground beside it.
+  const roof = feet.offset(0, -1, 0);
+  const item = bot.inventory.items().find((i) => BRIDGE.test(i.name));
+  if (item) {
+    try {
+      await bot.equip(item, 'hand');
+      await bot.placeBlock(bot.blockAt(roof.offset(1, 0, 0)), new Vec3(-1, 0, 0));
+    } catch (error) {
+      if (error?.code === 'aborted') throw error;
+    }
+  }
+  return { ok: true, top: feet, roofed: bot.blockAt(roof)?.boundingBox === 'block' };
 }
 
-/** Climbs out of the shelter by placing blocks under itself (jump, place, land). */
+/** Climbs out of the shelter: breaks the roof, then places blocks under itself (jump, place, land). */
 async function leaveShelter(bot, ctx, top) {
-  await pillarUp(bot, ctx, top.y, { maxSteps: 4 });
+  const roof = bot.blockAt(top.offset(0, -1, 0));
+  if (roof && roof.boundingBox === 'block') {
+    const dug = await actions.digBlock(bot, ctx, roof);
+    if (!dug.ok) return dug;
+  }
+  await pillarUp(bot, ctx, top.y, { maxSteps: 5 });
   return bot.entity.position.y >= top.y - 0.5 ? { ok: true } : fail('still_in_shelter');
 }
 

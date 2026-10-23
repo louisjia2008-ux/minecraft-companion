@@ -143,22 +143,45 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     return result;
   }
 
-  async function explore(ctx) {
-    const here = bot.entity.position.clone();
-    // Back where the last search started (pulled back, or walking in circles): turn.
-    if (memory.searchFrom && here.distanceTo(memory.searchFrom) < 8) memory.blocked = true;
-    memory.searchFrom = here;
-    // Sweep: straight out for a while, then fan to either side of it.
-    const sweep = [0, 0, 0.9, 0.9, -0.9, -0.9][Math.floor(memory.explored / 4) % 6];
-    if (!memory.heading || memory.blocked || memory.sweep !== sweep) {
-      memory.sweep = sweep;
-      const base = city.outward(bot);
-      const turn = sweep + (memory.blocked ? (Math.random() - 0.5) * Math.PI : 0);
-      memory.heading = new Vec3(base.x * Math.cos(turn) - base.z * Math.sin(turn), 0, base.x * Math.sin(turn) + base.z * Math.cos(turn));
+  /**
+   * Search rings around where the bot came out of the gateway: chunks load
+   * about 160 blocks around it, so waypoints 120 and 240 blocks out (outward
+   * first, then round) bring every city within ~400 blocks into view.
+   */
+  function waypoint(here) {
+    if (!memory.arrival) memory.arrival = here.clone();
+    if (!memory.waypoints) {
+      const out = city.outward(bot);
+      const a0 = Math.atan2(out.z, out.x);
+      memory.waypoints = [];
+      for (const [r, n] of [[120, 8], [240, 12]]) {
+        for (let i = 0; i < n; i += 1) {
+          // Alternate either side of straight out: 0, +1, -1, +2, -2 ...
+          const k = i === 0 ? 0 : (i % 2 ? (i + 1) / 2 : -i / 2);
+          const a = a0 + (k * 2 * Math.PI) / n;
+          memory.waypoints.push(new Vec3(memory.arrival.x + Math.cos(a) * r, 0, memory.arrival.z + Math.sin(a) * r));
+        }
+      }
+    }
+    while (memory.waypoints.length && (Math.hypot(memory.waypoints[0].x - here.x, memory.waypoints[0].z - here.z) < 24
+      || memory.blocked)) {
+      memory.waypoints.shift();
       memory.blocked = false;
     }
-    const target = here.plus(memory.heading.scaled(40));
-    ctx.record('city_search', { to: at(target), explored: memory.explored });
+    return memory.waypoints[0] || null;
+  }
+
+  async function explore(ctx) {
+    const here = bot.entity.position.clone();
+    // Back where the last search started (pulled back, or walking in circles): next waypoint.
+    if (memory.searchFrom && here.distanceTo(memory.searchFrom) < 8) memory.blocked = true;
+    memory.searchFrom = here;
+    const goal = waypoint(here);
+    if (!goal) return fail('search_exhausted');
+    const toGoal = Math.hypot(goal.x - here.x, goal.z - here.z);
+    memory.heading = new Vec3((goal.x - here.x) / toGoal, 0, (goal.z - here.z) / toGoal);
+    const target = here.plus(memory.heading.scaled(Math.min(40, toGoal)));
+    ctx.record('city_search', { to: at(target), waypoint: at(goal), left: memory.waypoints.length, explored: memory.explored });
     memory.explored += 1;
     // On a bridge or an island's lip the pathfinder walks off the edge: keep bridging.
     const feet = here.floored();
@@ -182,6 +205,36 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     return fail(walked.ok ? 'explore_blocked' : walked.reason);
   }
 
+  const bridgeBlocks = () => actions.countItems(bot, (n) => /^(cobblestone|end_stone|cobbled_deepslate|dirt|netherrack)$/.test(n));
+
+  /**
+   * Mines end stone at or above foot level near the bot (never the ground it
+   * stands on or the cells beside it) until it carries `target` blocks.
+   */
+  async function gatherStone(ctx, target) {
+    const id = bot.registry.blocksByName.end_stone?.id;
+    const start = bridgeBlocks();
+    let dug = 0;
+    for (let i = 0; i < 48 && bridgeBlocks() < target; i += 1) {
+      const feet = bot.entity.position.floored();
+      const found = bot.findBlocks({ matching: id, maxDistance: 5, count: 64 })
+        .filter((p) => p.y >= feet.y && actions.withinReach(bot, p, 4.2))
+        .sort((a, b) => b.y - a.y);
+      // No hill to cut into: take surface blocks two or more cells away, leaving the floor around the bot.
+      const pick = found[0] || bot.findBlocks({ matching: id, maxDistance: 4, count: 64 })
+        .find((p) => p.y === feet.y - 1 && Math.max(Math.abs(p.x - feet.x), Math.abs(p.z - feet.z)) >= 2
+          && !end.deepDrop(bot, p.x, p.y, p.z, 3) && actions.withinReach(bot, p, 4.2));
+      if (!pick) break;
+      const r = await actions.digBlock(bot, ctx, bot.blockAt(pick), { timeoutMs: 6000 });
+      if (!r.ok) break;
+      dug += 1;
+      if (dug % 6 === 0) await actions.collectDrops(bot, ctx, bot.entity.position, (n) => n === 'end_stone', { radius: 6, timeoutMs: 4000 });
+    }
+    await actions.collectDrops(bot, ctx, bot.entity.position, (n) => n === 'end_stone', { radius: 6, timeoutMs: 4000 });
+    ctx.record('stone_gathered', { dug, blocks: bridgeBlocks(), before: start });
+    return bridgeBlocks() > start ? { ok: true } : fail('no_stone_here');
+  }
+
   const done = () => hasElytra() || memory.looted.size >= chests;
 
   return {
@@ -192,7 +245,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     isDone: () => done(),
     progress: () => (memory.gatewayUsed ? 100 : 0) + memory.looted.size * 100 + (hasElytra() ? 500 : 0)
       + Math.floor(memory.explored / 2) + Math.floor(memory.bridged / 8),
-    recover() { blacklist.clear(); memory.heading = null; },
+    recover() { blacklist.clear(); memory.heading = null; memory.blocked = true; },
     async run(ctx) {
       if (!end.inEnd(bot)) return fail('not_in_end');
       enterMode();
@@ -213,13 +266,21 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
         memory.seenFrames += 1;
         return takeElytra(ctx, frame);
       }
-      const chestsLeft = city.cityChests(bot, 96).filter((p) => !memory.looted.has(posKey(p)) && !blacklist.has(posKey(p)));
+      // A scan of the loaded chunks for purpur takes seconds: once per 32
+      // blocks travelled or 20 s, and chests are looked for only near a city.
+      const now = Date.now();
+      const pos = bot.entity.position;
+      if (!memory.scan || now - memory.scan.at > 20000 || pos.distanceTo(memory.scan.from) > 32) {
+        memory.scan = { at: now, from: pos.clone(), purpur: city.findCity(bot, 160) };
+      }
+      const nearCity = memory.scan.purpur && pos.distanceTo(memory.scan.purpur) < 128;
+      const chestsLeft = !nearCity ? [] : city.cityChests(bot, 96).filter((p) => !memory.looted.has(posKey(p)) && !blacklist.has(posKey(p)));
       if (chestsLeft.length) {
         const here = bot.entity.position.clone();
         chestsLeft.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
         return lootChest(ctx, chestsLeft[0]);
       }
-      const purpur = city.findCity(bot, 160);
+      const purpur = memory.scan.purpur;
       if (purpur && bot.entity.position.distanceTo(purpur) > 12 && !blacklist.has(`city:${posKey(purpur)}`)) {
         if (!memory.cityAt) ctx.record('city_seen', { at: at(purpur) });
         memory.cityAt = purpur;
@@ -230,6 +291,11 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
         memory.bridged += bridged.steps || 0;
         if ((bridged.steps || 0) === 0) blacklist.add(`city:${posKey(purpur)}`, 'unreachable', 120000);
         return bridged;
+      }
+      // Bridging eats blocks: top up from the island's end stone first.
+      if (bridgeBlocks() < 48) {
+        const got = await gatherStone(ctx, 160);
+        if (got.ok) return got;
       }
       return explore(ctx);
     },

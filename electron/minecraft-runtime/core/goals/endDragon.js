@@ -130,7 +130,7 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       const forward = new Vec3(Math.sin(d.yaw), 0, Math.cos(d.yaw));
       const side = new Vec3(forward.z, 0, -forward.x);
       const sign = bot.entity.position.minus(d.position).dot(side) >= 0 ? 1 : -1;
-      return d.position.plus(forward.scaled(6.8)).plus(side.scaled(4.5 * sign));
+      return d.position.plus(forward.scaled(6.8)).plus(side.scaled(4 * sign));
     };
     const there = () => {
       const p = spot();
@@ -168,12 +168,12 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       }
       const d = bot.entities[dragon.id];
       const part = end.headPart(d);
-      if (eyeAt().distanceTo(part.position) > 5.5 || !there()) {
+      if (eyeAt().distanceTo(part.position) > 5.8 || !there()) {
         // It turned: back to the side of its neck.
         const p = spot();
         await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(p.x, p.z, 1), { timeoutMs: 4000,
           arrived: () => there() || !sitting() });
-        if (eyeAt().distanceTo(end.headPosition(bot.entities[dragon.id] || dragon)) > 5.5) continue;
+        if (eyeAt().distanceTo(end.headPosition(bot.entities[dragon.id] || dragon)) > 5.8) continue;
       }
       await bot.lookAt(part.position, true);
       bot.attack(part);
