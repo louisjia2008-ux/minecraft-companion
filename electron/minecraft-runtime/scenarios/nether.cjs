@@ -74,7 +74,7 @@ const GOLD = 24;
 const EXPEDITION_KIT = [
   ['obsidian', 10], ['cobblestone', 64], ['flint_and_steel', 1], ['iron_pickaxe', 1],
   ['diamond_sword[enchantments={looting:3,sharpness:3}]', 1], ['shield', 1],
-  ['golden_helmet', 1], ['iron_chestplate', 1], ['iron_leggings', 1], ['iron_boots', 1],
+  ['golden_helmet', 1], ['diamond_chestplate', 1], ['diamond_leggings', 1], ['diamond_boots', 1],
   ['cooked_beef', 32], ['gold_ingot', GOLD],
   ['potion[potion_contents={potion:"minecraft:long_fire_resistance"}]', 4],
 ];
@@ -110,13 +110,9 @@ async function pickExpeditionStart(server, rng, run) {
   throw new Error('no fortress and bastion close together');
 }
 
-async function countItem(server, username, item) {
-  return countOnPlayer(server, username, item);
-}
-
 const netherStructuresGiven = {
   name: 'nether-structures-given',
-  description: `Expedition kit given (portal materials, iron armour + gold helmet, looting sword, fire resistance,
+  description: `Expedition kit given (portal materials, diamond armour + gold helmet, looting sword, fire resistance,
   ${GOLD} gold); find a fortress (${EXPEDITION.blazeRods} blaze rods, ${EXPEDITION.witherSkulls} wither skeleton skull) and a bastion
   (${EXPEDITION.trades} piglin trades), then come home. Structures are not told to the bot.`,
   serverProperties: {
@@ -146,9 +142,9 @@ const netherStructuresGiven = {
   },
   start: (companion) => companion.netherExpedition(EXPEDITION),
   async verify({ server, username, goal }) {
-    const rods = await countItem(server, username, 'blaze_rod');
-    const skulls = await countItem(server, username, 'wither_skeleton_skull');
-    const gold = await countItem(server, username, 'gold_ingot');
+    const rods = await countOnPlayer(server, username, 'blaze_rod');
+    const skulls = await countOnPlayer(server, username, 'wither_skeleton_skull');
+    const gold = await countOnPlayer(server, username, 'gold_ingot');
     const dimension = await playerDimension(server, username);
     const m = goal?.memory || {};
     const at = (p) => (p ? `${p.x},${p.y},${p.z}` : null);
