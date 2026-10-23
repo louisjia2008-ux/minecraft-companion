@@ -7,10 +7,13 @@ const { Vec3 } = require('vec3');
 const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
-const { sleep } = require('../confirm');
+const { sleep, waitUntil } = require('../confirm');
+const { isFireResistancePotion, hasEffect } = require('../netherStructures');
 const { createBlacklist } = require('../blacklist');
 const { goals } = require('mineflayer-pathfinder');
 
+// Entity flag bit 0 is "on fire".
+const burning = (bot) => (Number(bot.entity?.metadata?.[0]) & 1) === 1 || bot.entity?.isInLava === true;
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
 
 function nearbyGhast(bot, range) {
@@ -200,6 +203,25 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       return hungry && hasSafeFood(state, state.food <= 6 || state.health <= 8) ? 1 : 0;
     },
     run: (ctx) => actions.eat(bot, ctx),
+  };
+
+  // Burning (lava, a blaze's fireball): drink fire resistance if there is any.
+  // Rides along with any other escape: it takes under two seconds.
+  const quench = {
+    name: 'quench',
+    band: BAND.ESCAPE,
+    want: () => (burning(bot) && !hasEffect(bot, 'FireResistance') && bot.inventory?.items?.().some(isFireResistancePotion) ? 1.5 : 0),
+    async run(ctx) {
+      const potion = bot.inventory.items().find(isFireResistancePotion);
+      if (!potion) return { ok: false, reason: 'no_potion' };
+      ctx.record('quench', { inLava: bot.entity.isInLava === true });
+      try {
+        await bot.equip(potion, 'hand');
+        await bot.consume();
+      } catch (_) { /* confirmed by the effect below */ }
+      const ok = await waitUntil(() => hasEffect(bot, 'FireResistance'), { timeoutMs: 2000, signal: ctx.signal });
+      return ok ? { ok: true } : { ok: false, reason: 'drink_unconfirmed' };
+    },
   };
 
   const breathe = {
@@ -429,7 +451,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
   deflect.dispose = disposeNether;
 
-  return [escape, breathe, deflect, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
+  return [quench, escape, breathe, deflect, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };
