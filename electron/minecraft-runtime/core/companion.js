@@ -22,6 +22,7 @@ const { createCarpetDuperGoal } = require('./goals/carpetDuper');
 const { createFishingGoal } = require('./goals/fishing');
 const { createRailDuperGoal } = require('./goals/railDuper');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
+const { createNetherExpeditionGoal } = require('./goals/netherExpedition');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
@@ -149,6 +150,13 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     netherQuartz(options = {}) {
       const goal = createNetherQuartzGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    /** Fortress (blaze rods, wither skulls) and bastion (piglin bartering), then home. */
+    netherExpedition(options = {}) {
+      const goal = createNetherExpeditionGoal({ bot, ...options });
       director.notePlayerGoal();
       useGoal(goal);
       return brain.tick().then(() => goal);

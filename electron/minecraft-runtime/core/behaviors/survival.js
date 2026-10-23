@@ -81,6 +81,8 @@ const { RISKY_FOODS } = defaultActions;
 const RANGED = new Set(['skeleton', 'stray', 'bogged']);
 // Pillagers come in groups from outposts that keep spawning them: keep away.
 const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
+// Piglin brutes ignore gold armour and hit for half a heart bar with their axe: keep clear of them too.
+const BRUTE_RANGE = 12;
 // Neutral mobs are left alone unless they are right next to us.
 const NEUTRAL = new Set(['enderman', 'zombified_piglin', 'piglin', 'spider', 'cave_spider']);
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
@@ -139,7 +141,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;
-    return threats(state).find((h) => h.name !== 'creeper' && !(AVOIDED.has(h.name) && h.distance > 2.5)
+    return threats(state).find((h) => h.name !== 'creeper' && !((AVOIDED.has(h.name) || h.name === 'piglin_brute') && h.distance > 2.5)
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || (RANGED.has(h.name) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
           && state.health > t.rangedHealth && armed(state)
@@ -315,6 +317,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     name: 'avoid',
     band: BAND.DEFENSE,
     want(state) {
+      const brute = threats(state).find((h) => h.name === 'piglin_brute' && h.distance <= BRUTE_RANGE);
+      if (brute) return !state.sheltered && brute.distance > 2.5 ? 1 : 0;
       const raider = threats(state).find((h) => AVOIDED.has(h.name) && h.distance <= 24);
       if (raider && !danger.some((d) => Math.hypot(d.x - raider.position.x, d.z - raider.position.z) < 32)) {
         danger.push({ x: Math.round(raider.position.x), z: Math.round(raider.position.z) });
@@ -322,10 +326,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       return raider && !state.sheltered && raider.distance > 2.5 ? 1 : 0;
     },
     async run(ctx) {
-      const raider = ctx.perceive().hostiles.find((h) => AVOIDED.has(h.name));
+      const raider = ctx.perceive().hostiles.find((h) => AVOIDED.has(h.name) || h.name === 'piglin_brute');
       if (!raider) return { ok: true };
       ctx.record('avoid', { mob: raider.name, distance: Math.round(raider.distance) });
-      return actions.fleeFrom(bot, ctx, raider.position, { distance: 32, timeoutMs: 15000 });
+      const brute = raider.name === 'piglin_brute';
+      return actions.fleeFrom(bot, ctx, raider.position, { distance: brute ? BRUTE_RANGE + 6 : 32, timeoutMs: 15000 });
     },
   };
   let hidden = null;

@@ -82,7 +82,8 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   const rng = mulberry32(seed + run * 7919);
   const eventsFile = fs.createWriteStream(path.join(runDir, `run-${String(run + 1).padStart(2, '0')}.jsonl`));
   const write = (type, data = {}) => eventsFile.write(JSON.stringify({ type, t: Date.now(), ...data }) + '\n');
-  const setup = scenario.setup({ username, run, rng, difficulty });
+  // Setup may ask the server first (e.g. where a structure is), so it can be async.
+  const setup = await scenario.setup({ username, run, rng, difficulty, server });
   write('setup', { seed, run, difficulty, details: setup.details, botLifecycle: lifecycle });
   const trace = (stage) => write('inventory_state', { stage, ...inventorySnapshot(bot) });
   const packetListeners = ['set_slot', 'set_player_inventory', 'window_items'].map((name) => {
