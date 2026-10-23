@@ -12,6 +12,7 @@ const { createMobFarm } = require('../core/blueprints/mobFarm');
 const { MOB_DROPS } = require('../core/goals/mobFarm');
 const { createCarpetDuper } = require('../core/blueprints/carpetDuper');
 const { createFishPond } = require('../core/blueprints/fishPond');
+const { createRailDuper } = require('../core/blueprints/railDuper');
 
 const HARVEST = 8;
 
@@ -341,4 +342,43 @@ const fishingFlat = {
   },
 };
 
-module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat };
+const RAILS = 8;
+
+const railDuperFlat = {
+  name: 'raildupe-flat',
+  description: `Flat plains, handed a sticky piston, 7 slime blocks, 6 cobblestone, a dead coral fan, a carpet, one rail and a stone button; build a rail duplicator and press it until ${RAILS} new rails are on the player.`,
+  serverProperties: cobbleGeneratorFlat.serverProperties,
+  timeoutMs: 8 * 60 * 1000,
+  setup({ username, rng, difficulty = 'peaceful' }) {
+    const x = Math.round((rng() - 0.5) * 16);
+    const z = Math.round((rng() - 0.5) * 16);
+    const yaw = Math.round(rng() * 360) - 180;
+    return {
+      commands: [
+        ...commonSetup(username, difficulty),
+        ...resetArea(),
+        `give ${username} stone_pickaxe`, `give ${username} sticky_piston`, `give ${username} slime_block 7`,
+        `give ${username} cobblestone 6`, `give ${username} dead_tube_coral_fan`, `give ${username} white_carpet`,
+        `give ${username} rail`, `give ${username} stone_button`,
+        `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
+      ],
+      details: { start: { x, z, yaw } },
+    };
+  },
+  start: (companion) => companion.railDuper({ count: RAILS }),
+  async verify({ server, username, goal }) {
+    const memory = goal?.memory;
+    if (!memory?.device) return { pass: false, details: { reason: 'no_site' } };
+    const d = createRailDuper(memory.device.anchor, memory.device.facing);
+    const parts = {};
+    for (const part of d.parts) {
+      parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+    }
+    const rails = await countOnPlayer(server, username, 'minecraft:rail');
+    const carpets = await countOnPlayer(server, username, 'minecraft:white_carpet');
+    const pass = Object.values(parts).every(Boolean) && rails >= RAILS;
+    return { pass, details: { device: { anchor: d.anchor, facing: d.facing }, parts, rails, carpets, presses: memory.presses } };
+  },
+};
+
+module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat };

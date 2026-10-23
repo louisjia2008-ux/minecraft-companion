@@ -249,8 +249,10 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sn
   if (stand) {
     const moved = await actions.goNear(bot, ctx, v(stand).offset(0.5, 0, 0.5), 0, { timeoutMs: 30000 });
     if (!moved.ok && bot.entity.position.floored().distanceTo(v(stand)) > 0.5) return moved;
-    ref = bot.blockAt(target.offset(0, -1, 0));
-    face = new Vec3(0, 1, 0);
+    // Against the first face asked for, else on top of the block below.
+    const toward = faces?.[0] || new Vec3(0, -1, 0);
+    ref = bot.blockAt(target.plus(toward));
+    face = toward.scaled(-1);
   } else {
     // Clicking a door, chest or bed uses it instead of placing against it.
     const allFaces = faces || [new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(0, 0, -1), new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(1, 0, 0)];
