@@ -162,7 +162,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (!m) return run();
     const saved = { towers: m.allow1by1towers, blocks: m.scafoldingBlocks, placeCost: m.placeCost };
     m.allow1by1towers = true;
-    m.scafoldingBlocks = ['cobblestone', 'netherrack'].map((n) => bot.registry.itemsByName[n]?.id).filter(Number.isInteger);
+    m.scafoldingBlocks = ['netherrack', 'cobblestone'].map((n) => bot.registry.itemsByName[n]?.id).filter(Number.isInteger);
     m.placeCost = 4;
     try {
       return await run();
@@ -216,10 +216,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return result;
     }
     if (!inFortress()) {
-      const floor = structures.fortressFloor(bot, memory.fortress, 48, 32)
-        .sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
-      if (!floor.length) return approachStructure(ctx, 'fortress');
-      return approach(ctx, 'fortress', floor);
+      let floor = structures.fortressFloor(bot, memory.fortress, 48, 32);
+      // The first brick seen can be a buried pillar foot: look for floor anywhere in sight.
+      if (!floor.length) floor = structures.fortressFloor(bot, here, 96, 32);
+      floor.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
+      if (floor.length) return approach(ctx, 'fortress', floor);
+      // Standing at that brick with no walkable floor in sight: look from elsewhere.
+      if (here.distanceTo(memory.fortress) <= 8) return explore(ctx);
+      return approachStructure(ctx, 'fortress');
     }
     if (!memory.visited.fortress) {
       memory.visited.fortress = true;
@@ -252,10 +256,13 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   /** A walk to a random floor cell 12-40 blocks away inside the structure. */
   async function patrol(ctx, centre, kind) {
     const here = bot.entity.position;
-    const floor = structures.fortressFloor(bot, centre, 64, 96)
-      .filter((p) => { const d = p.distanceTo(here); return d >= 12 && d <= 40; });
-    // Nothing else to walk to here: go and stand by the spawner (or the first brick seen).
-    if (!floor.length) return approachStructure(ctx, kind, kind === 'fortress' && memory.spawner ? memory.spawner : centre);
+    const band = (lo, hi) => (p) => { const d = p.distanceTo(here); return d >= lo && d <= hi; };
+    let floor = structures.fortressFloor(bot, here, 48, 512).filter(band(12, 40));
+    if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter(band(12, 96));
+    // Nothing else to walk to here: go and stand by the spawner (or the first brick
+    // seen); already there, look around from a lookout instead.
+    const fallback = kind === 'fortress' && memory.spawner ? memory.spawner : centre;
+    if (!floor.length) return here.distanceTo(fallback) <= 8 ? explore(ctx) : approachStructure(ctx, kind, fallback);
     const pick = floor[Math.floor(Math.random() * floor.length)];
     ctx.record('patrol', { kind, target: posKey(pick) });
     const result = await actions.goNear(bot, ctx, pick.offset(0, 1, 0), 2, { timeoutMs: 45000 });
