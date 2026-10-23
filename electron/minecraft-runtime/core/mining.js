@@ -111,6 +111,15 @@ function pickFor(bot, block) {
   return null;
 }
 
+/**
+ * A cell the mine itself opened: a tunnel cell (feet), the head room above it,
+ * the stair sweep above that, or a hole left by mined ore or the depot.
+ */
+function knownOpen(mine, c) {
+  if (mine.open?.[posKey(c)]) return true;
+  return [0, 1, 2].some((dy) => posKey({ x: c.x, y: c.y - dy, z: c.z }) in mine.cells);
+}
+
 const harvestable = (bot, block) => !block.harvestTools || Boolean(pickFor(bot, block));
 
 /** A block with an open, dry cell beside it: reachable without tunnelling to it. */
@@ -205,7 +214,7 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   }
   if (mine.phase === 'branch') dir = mine.branch.dir;
   const step = inspectStep((x, yy, z) => bot.blockAt(new Vec3(x, yy, z)), mine.front, dir,
-    { descend, surfaceY: mine.surfaceY - 1, known: (c) => posKey(c) in mine.cells || Boolean(mine.open?.[posKey(c)]) });
+    { descend, surfaceY: mine.surfaceY - 1, known: (c) => knownOpen(mine, c) });
   if (!step.ok) return turn(ctx, mine, step.reason, memory);
 
   for (const cell of step.dig) {
@@ -393,5 +402,5 @@ async function maybeTorch(bot, ctx, mine, cell) {
   } catch (_) { /* a torch is a nicety, not progress */ }
 }
 
-module.exports = { inspectStep, turn, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
+module.exports = { inspectStep, turn, knownOpen, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
   LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH };

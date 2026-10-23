@@ -185,3 +185,12 @@ test('a front that every leg falls short of is given up instead of walked at for
   assert.ok(events.includes('mine_abandoned'));
   assert.equal(memory.mineDir, 1);
 });
+
+test('an old tunnel is known open at feet, head and stair height, not beyond', () => {
+  const { knownOpen } = require('../core/mining');
+  const mine = { cells: { '5,10,0': null }, open: { '9,10,9': true } };
+  for (const y of [10, 11, 12]) assert.equal(knownOpen(mine, { x: 5, y, z: 0 }), true);
+  assert.equal(knownOpen(mine, { x: 5, y: 13, z: 0 }), false);
+  assert.equal(knownOpen(mine, { x: 5, y: 9, z: 0 }), false);
+  assert.equal(knownOpen(mine, { x: 9, y: 10, z: 9 }), true);
+});

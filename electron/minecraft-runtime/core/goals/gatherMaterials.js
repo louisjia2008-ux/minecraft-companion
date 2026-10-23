@@ -141,14 +141,15 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   async function buildDepotOnce(ctx, m) {
     const J = m.junction;
-    if (!carrying('chest') || !carrying('crafting_table')) {
+    const [dx, dz] = SIDES[(J.dir + 1) % 4];
+    const spots = { chest: { x: J.x + dx, y: J.y, z: J.z + dz }, crafting_table: { x: J.x - dx, y: J.y, z: J.z - dz } };
+    // A part placed on an earlier try is not needed in the bag any more.
+    if (Object.entries(spots).some(([item, spot]) => nameAt(spot) !== item && !carrying(item))) {
       m.depot = { failed: 'no_kit' };
       return { ok: true, depot: 'skipped' };
     }
     const there = await mining.walkToCell(bot, ctx, m, J, actions);
     if (there) return there;
-    const [dx, dz] = SIDES[(J.dir + 1) % 4];
-    const spots = { chest: { x: J.x + dx, y: J.y, z: J.z + dz }, crafting_table: { x: J.x - dx, y: J.y, z: J.z - dz } };
     for (const [item, spot] of Object.entries(spots)) {
       if (nameAt(spot) === item) continue;
       const wet = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1]]
