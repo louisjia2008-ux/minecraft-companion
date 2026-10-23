@@ -131,8 +131,11 @@ test('a swing next to a hit is not blamed while a wither skeleton could have dea
   const defend = createSurvivalBehaviors({ bot }).find((b) => b.name === 'defend');
   bot.emit('entitySwingArm', bot.entities[7]);
   bot.emit('entityHurt', bot.entity);
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
   assert.equal(defend.want(nearPiglin(bot)), 0);
-  // Caught twice within a few seconds: that pack really is attacking.
+  // Once the skeleton is gone, a swing before a hit is the pack's own.
+  delete bot.entities[9];
   bot.emit('entitySwingArm', bot.entities[7]);
   bot.emit('entityHurt', bot.entity);
   assert.equal(defend.want(nearPiglin(bot)), 1);

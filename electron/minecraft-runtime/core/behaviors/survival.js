@@ -184,7 +184,6 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const onSwing = (entity) => {
     if (entity && CALM_UNLESS_PROVOKED.has(entity.name)) swings.set(entity.id, Date.now());
   };
-  const suspects = new Map(); // mob name -> time it was last near a hit it may not have dealt
   const onHurt = (entity) => {
     if (entity !== bot.entity) return;
     const here = bot.entity.position;
@@ -195,16 +194,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     if (!culprit) return;
     // Another attacker in reach (a wither skeleton's blade, a blaze's fireball,
     // an arrow) makes the swing a coincidence; hitting the pack then turns all
-    // of it. Blame the pack only when nothing else could have done it, or when
-    // the same pack is caught twice in a few seconds.
+    // of it. Blame the pack only when nothing else could have done it.
     const other = Object.values(bot.entities || {}).some((e) => e.position && e !== bot.entity
       && ((OTHER_ATTACKERS.has(e.name) && e.position.distanceTo(here) <= 24)
         || (PROJECTILES.has(e.name) && e.position.distanceTo(here) <= 6)));
-    if (other) {
-      const last = suspects.get(culprit.name) || 0;
-      suspects.set(culprit.name, Date.now());
-      if (Date.now() - last > 5000) return;
-    }
+    if (other) return;
     for (const e of Object.values(bot.entities || {})) {
       if (e.name === culprit.name && e.position && e.position.distanceTo(culprit.position) <= 24) provoked.set(e.id, Date.now() + 60000);
     }
@@ -255,6 +249,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       } finally {
         clearInterval(tracker);
       }
+      if (result.ok) ctx.record('defend_result', { mob: threat.name, died: result.died === true, hits: result.hits });
       // Spiders drop string (wool where there are no sheep); blazes and wither
       // skeletons fought off in a fortress drop what the expedition is there for.
       if (result.ok && typeof actions.collectDrops === 'function') {

@@ -152,13 +152,34 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   }
 
   /** Walks to a reachable cell of the structure's floor near `around`; far ones in legs. */
+  /**
+   * Fortress bridges stand over lava, out of reach of any walk: while heading
+   * for a structure the bot may pillar up and bridge with cobblestone or
+   * netherrack. Placing is made costly so it still walks where it can.
+   */
+  async function withScaffolding(run) {
+    const m = bot.pathfinder?.movements;
+    if (!m) return run();
+    const saved = { towers: m.allow1by1towers, blocks: m.scafoldingBlocks, placeCost: m.placeCost };
+    m.allow1by1towers = true;
+    m.scafoldingBlocks = ['cobblestone', 'netherrack'].map((n) => bot.registry.itemsByName[n]?.id).filter(Number.isInteger);
+    m.placeCost = 4;
+    try {
+      return await run();
+    } finally {
+      m.allow1by1towers = saved.towers;
+      m.scafoldingBlocks = saved.blocks;
+      m.placeCost = saved.placeCost;
+    }
+  }
+
   async function approach(ctx, kind, cells) {
     const here = bot.entity.position;
     const target = cells.find((p) => !blacklist.has(`${kind}:${posKey(p)}`));
     if (!target) return fail(`${kind}_unreachable`);
     ctx.record('approach', { kind, target: posKey(target), distance: Math.round(target.distanceTo(here)) });
     const stand = target.offset(0, 1, 0);
-    const result = await actions.goNear(bot, ctx, stand, 2, { timeoutMs: 120000 });
+    const result = await withScaffolding(() => actions.goNear(bot, ctx, stand, 2, { timeoutMs: 120000 }));
     if (!result.ok && bot.entity.position.distanceTo(here) < 6) blacklist.add(`${kind}:${posKey(target)}`, result.reason);
     return result;
   }
@@ -245,7 +266,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function approachStructure(ctx, kind, p = memory[kind]) {
     const here = bot.entity.position;
     ctx.record('approach', { kind, target: posKey(p), distance: Math.round(p.distanceTo(here)) });
-    const result = await actions.goNear(bot, ctx, p, 4, { timeoutMs: 120000 });
+    const result = await withScaffolding(() => actions.goNear(bot, ctx, p, 4, { timeoutMs: 120000 }));
     if (!result.ok && bot.entity.position.distanceTo(here) < 6) return explore(ctx);
     return result;
   }

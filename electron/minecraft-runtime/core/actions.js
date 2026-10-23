@@ -339,7 +339,7 @@ async function attackLoop(bot, ctx, entityId, deadline, reach) {
   try {
     while (Date.now() < deadline) {
       const target = bot.entities[entityId];
-      if (!target || !target.isValid) return died || (hits > 0 && lastDistance <= reach + 2) ? { ok: true } : fail('target_lost');
+      if (!target || !target.isValid) return died || (hits > 0 && lastDistance <= reach + 2) ? { ok: true, died, hits } : fail('target_lost');
       const distance = target.position.distanceTo(bot.entity.position);
       lastDistance = distance;
       if (distance < closest - 0.5) { closest = distance; closestAt = Date.now(); }
