@@ -9,6 +9,7 @@ const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createRecovery } = require('./behaviors/recovery');
 const { createNightRest } = require('./behaviors/nightRest');
+const { createEndHazards } = require('./behaviors/endHazards');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
@@ -23,6 +24,10 @@ const { createCarpetDuperGoal } = require('./goals/carpetDuper');
 const { createFishingGoal } = require('./goals/fishing');
 const { createRailDuperGoal } = require('./goals/railDuper');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
+const { createEndDragonGoal } = require('./goals/endDragon');
+const { createEnterEndGoal } = require('./goals/enterEnd');
+const { createEndCityGoal } = require('./goals/endCity');
+const { createEndJourneyGoal } = require('./goals/endJourney');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
@@ -88,7 +93,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     // Out of sight means far away (it digs in there); seen and gone means sleep without it.
     return { bed: !block || block.name.endsWith('_bed') ? bed : null, centre: house.interiorCenter };
   } });
-  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors, nightRest];
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors, nightRest,
+    ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];
   const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
   brain = createBrain({
     perceive: () => perceive(bot),
@@ -150,6 +156,31 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     netherQuartz(options = {}) {
       const goal = createNetherQuartzGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    enterEnd(options = {}) {
+      const goal = createEnterEndGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    /** Stronghold portal, dragon, gateway and an end city, in one goal. */
+    endJourney(options = {}) {
+      const goal = createEndJourneyGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    endCity(options = {}) {
+      const goal = createEndCityGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    endDragon(options = {}) {
+      const goal = createEndDragonGoal({ bot, ...options });
       director.notePlayerGoal();
       useGoal(goal);
       return brain.tick().then(() => goal);

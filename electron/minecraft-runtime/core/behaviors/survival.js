@@ -104,8 +104,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Zombified piglins (and piglins, while the bot wears gold) leave the bot
   // alone unless provoked, and hitting one turns the whole group. Only a mob
   // of a pack that has hurt the bot counts as a threat.
+  const creepyIndex = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
   const provoked = new Map(); // entity id -> until
   const calm = (h) => {
+    // An enderman nobody has angered is no threat; bumping into one and
+    // swinging at it is what angers it.
+    if (h.name === 'enderman') return creepyIndex >= 0 && bot.entities?.[h.id]?.metadata?.[creepyIndex] !== true;
     if (!CALM_UNLESS_PROVOKED.has(h.name)) return false;
     if ((provoked.get(h.id) || 0) > Date.now()) return false;
     return h.name === 'zombified_piglin' || wearsGold(bot);
@@ -306,7 +310,6 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // An angry enderman out-damages a stone or iron sword and teleports out of
   // reach, but cannot follow into a sealed 1x1 hole: hide there until it calms
   // down or wanders off, then climb out.
-  const creepyIndex = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
   const angryEnderman = (state, range) => threats(state).find((h) => h.name === 'enderman' && h.distance <= range
     && creepyIndex >= 0 && bot.entities?.[h.id]?.metadata?.[creepyIndex] === true);
   // Remember where raiders were seen; the homestead keeps its site away from there.
@@ -334,6 +337,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.ESCAPE,
     want(state) {
       if (hidden) return 1;
+      // The End is full of them and the fight cannot wait: there an angry one
+      // is fought (defend), and only hidden from when hurt.
+      if (dimensionOf(bot) === 'the_end' && state.health >= 12) return 0;
       return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
     },
     async run(ctx) {

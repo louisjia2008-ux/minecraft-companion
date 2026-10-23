@@ -82,7 +82,9 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   const rng = mulberry32(seed + run * 7919);
   const eventsFile = fs.createWriteStream(path.join(runDir, `run-${String(run + 1).padStart(2, '0')}.jsonl`));
   const write = (type, data = {}) => eventsFile.write(JSON.stringify({ type, t: Date.now(), ...data }) + '\n');
-  const setup = scenario.setup({ username, run, rng, difficulty });
+  // Some setups need the world first (where the nearest stronghold is).
+  const setup = scenario.prepare ? await scenario.prepare({ server, username, run, rng, difficulty })
+    : scenario.setup({ username, run, rng, difficulty });
   write('setup', { seed, run, difficulty, details: setup.details, botLifecycle: lifecycle });
   const trace = (stage) => write('inventory_state', { stage, ...inventorySnapshot(bot) });
   const packetListeners = ['set_slot', 'set_player_inventory', 'window_items'].map((name) => {
@@ -95,7 +97,7 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   let readbackAt = 0;
   for (const command of setup.commands) server.command(command);
   // `list` is processed after every queued command, so its reply is a barrier.
-  await server.query('list', /players online/, 15000);
+  await server.query('list', /players online/, scenario.setupTimeoutMs || 15000);
   await sleep(2000);
   // A teleport into ungenerated terrain can take longer than Mineflayer's
   // fixed 10 s, especially with two servers generating at once.
@@ -243,8 +245,12 @@ async function main() {
     const batchDir = path.join(installation, 'scenario-runs', batch, name);
     fs.mkdirSync(batchDir, { recursive: true });
     console.log(`\n▶ ${name}: ${scenario.description}\n  runs=${runs} seed=${seed} difficulty=${difficulty}\n  output=${batchDir}`);
-    const server = await startVanillaServer({ java, jar, dir: path.join(batchDir, 'server'),
-      properties: { ...scenario.serverProperties, difficulty } });
+    // A scenario that uses up its world (the one ender dragon) gets a fresh
+    // server and world per run, seeded from the run number.
+    const startServer = (run) => startVanillaServer({ java, jar,
+      dir: path.join(batchDir, scenario.serverPerRun ? `server-run-${String(run + 1).padStart(2, '0')}` : 'server'),
+      properties: { ...scenario.serverProperties, ...(scenario.serverPerRun ? scenario.serverPerRun(run, seed) : {}), difficulty } });
+    let server = scenario.serverPerRun ? null : await startServer(0);
     const username = 'DeskPetCore';
     let bot = null;
     const results = [];
@@ -252,6 +258,11 @@ async function main() {
       for (let run = startRun - 1; run < startRun - 1 + runs; run += 1) {
         let result;
         try {
+          if (scenario.serverPerRun) {
+            if (bot) { const ended = once(bot, 'end'); bot.quit(); await ended; bot = null; }
+            await server?.stop();
+            server = await startServer(run);
+          }
           if (!bot) {
             bot = await connectBot({ port: server.port, username, version });
             bot.on('error', (error) => console.error('bot error:', error.message));
@@ -272,12 +283,13 @@ async function main() {
           + ` ${Math.round(result.durationMs / 1000)}s${result.reason ? ` (${result.reason})` : ''}`
           + `${result.logsOnServer !== undefined ? ` logs=${result.logsOnServer}` : ''}`
           + `${result.quartzOnServer !== undefined ? ` quartz=${result.quartzOnServer} dimension=${result.dimension}` : ''}`
+          + `${result.summary ? ` ${result.summary}` : ''}`
           + `${result.placed !== undefined ? ` house=${result.placed}/${result.total} furniture=${JSON.stringify(result.furniture)}`
             + ` gear=${JSON.stringify(result.gear)} chest=${result.chestUsed} bed=${result.bedUsed}` : ''}`);
       }
     } finally {
       bot?.quit();
-      await server.stop();
+      await server?.stop();
     }
     const summary = summarize(name, results);
     fs.writeFileSync(path.join(batchDir, 'summary.json'), JSON.stringify({ summary, results }, null, 2) + '\n');

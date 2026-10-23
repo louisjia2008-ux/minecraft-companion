@@ -548,6 +548,82 @@ async function digStairsUp(bot, ctx, targetY, { maxSteps = 24 } = {}) {
   return climbed;
 }
 
+/**
+ * Digs a staircase down toward `target` (a position): each step clears the
+ * two cells ahead and the one below them, then steps down onto solid floor.
+ * Never digs a block touching water or lava, and never steps onto a floor
+ * with lava under it; a blocked heading turns. Returns how many steps went down.
+ */
+/** Walks onto the cell `into` (one block over and one down), by hand. */
+async function stepInto(bot, ctx, into) {
+  const centre = into.offset(0.5, 0, 0.5);
+  try {
+    for (let i = 0; i < 40; i += 1) {
+      const p = bot.entity.position;
+      if (p.floored().y <= into.y && Math.hypot(p.x - centre.x, p.z - centre.z) < 0.4) break;
+      await bot.lookAt(centre.offset(0, 1.6, 0), true);
+      bot.setControlState('forward', Math.hypot(p.x - centre.x, p.z - centre.z) > 0.25);
+      await new Promise((r) => setTimeout(r, 75));
+      if (ctx.signal?.aborted) break;
+    }
+  } finally {
+    bot.setControlState('forward', false);
+  }
+}
+
+async function digStairsDown(bot, ctx, target, { maxSteps = 16 } = {}) {
+  const clearable = (p) => {
+    const b = bot.blockAt(p);
+    if (!b || FLUID.test(b.name)) return false;
+    if (b.boundingBox === 'empty') return !fluidNext(bot, p);
+    return bot.canDigBlock(b) && b.diggable !== false && !fluidNext(bot, p);
+  };
+  const floorOk = (p) => {
+    const b = bot.blockAt(p);
+    return b && b.boundingBox === 'block' && !FLUID.test(b.name) && !/magma/.test(b.name)
+      && !FLUID.test(bot.blockAt(p.offset(0, -1, 0))?.name || '');
+  };
+  let down = 0;
+  for (let step = 0; step < maxSteps; step += 1) {
+    const feet = bot.entity.position.floored();
+    if (feet.y <= target.y) break;
+    const dx = target.x - feet.x;
+    const dz = target.z - feet.z;
+    const toward = Math.abs(dx) >= Math.abs(dz) ? [Math.sign(dx) || 1, 0] : [0, Math.sign(dz) || 1];
+    const order = [toward, ...SIDES.filter(([x, z]) => x !== toward[0] || z !== toward[1])];
+    const next = order.find(([x, z]) => {
+      const ahead = feet.offset(x, 0, z);
+      return clearable(ahead.offset(0, 1, 0)) && clearable(ahead) && clearable(ahead.offset(0, -1, 0)) && floorOk(ahead.offset(0, -2, 0));
+    });
+    if (!next) {
+      ctx.record?.('stairs_blocked', { at: `${feet.x},${feet.y},${feet.z}`, sides: order.map(([x, z]) => {
+        const a = feet.offset(x, 0, z);
+        return [clearable(a.offset(0, 1, 0)), clearable(a), clearable(a.offset(0, -1, 0)), floorOk(a.offset(0, -2, 0))].map(Number).join('');
+      }) });
+      break;
+    }
+    const ahead = feet.offset(next[0], 0, next[1]);
+    for (const p of [ahead.offset(0, 1, 0), ahead, ahead.offset(0, -1, 0)]) {
+      const b = bot.blockAt(p);
+      if (b && b.boundingBox !== 'empty') {
+        const dug = await digBlock(bot, ctx, b, { timeoutMs: 8000 });
+        if (!dug.ok) return down;
+      }
+    }
+    const into = ahead.offset(0, -1, 0);
+    const moved = await goToOnce(bot, ctx, new goals.GoalBlock(into.x, into.y, into.z), { timeoutMs: 5000 });
+    // The pathfinder can call a one-block step down done before the body
+    // drops; walk it by hand.
+    if (bot.entity.position.floored().y >= feet.y) await stepInto(bot, ctx, into);
+    if (bot.entity.position.floored().y >= feet.y) {
+      ctx.record?.('stairs_step_failed', { reason: moved.reason || null, into: `${into.x},${into.y},${into.z}` });
+      return down;
+    }
+    down += 1;
+  }
+  return down;
+}
+
 /** Climbs back to the surface reference level if the bot is below it. */
 async function surface(bot, ctx) {
   if (!Number.isFinite(bot.companionSurfaceY) || bot.entity.position.y >= bot.companionSurfaceY - 1) return null;
@@ -562,6 +638,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, gatherClimbBlocks, digStairsUp, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
-  equipBestWeapon, haltBody, weaponScore, RISKY_FOODS,
+  recentre, surface, underground, unstick, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };

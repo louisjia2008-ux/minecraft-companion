@@ -134,7 +134,7 @@ function createBrain({
       behavior: behavior.name,
     };
     emit('behavior_started', { behavior: behavior.name, band: behavior.band });
-    const entry = { behavior, controller, preempted: false };
+    const entry = { behavior, controller, preempted: false, startedAt: now() };
     entry.promise = Promise.resolve()
       .then(() => behavior.run(ctx))
       .then(normalizeResult, (error) => ({ ok: false, reason: describe(error) }))
@@ -144,7 +144,13 @@ function createBrain({
         if (behavior.isGoal) settleGoal(safePerceive(), result, entry.preempted);
         emit('behavior_finished', { behavior: behavior.name, ok: result.ok, reason: result.reason });
         if (running === entry) running = null;
-        if (!disposed) queueMicrotask(() => { tick().catch(() => {}); });
+        // A behavior that settled at once (nothing to wait for) must not chain
+        // ticks as microtasks: that starves the event loop, and with it every
+        // packet that would change the world it is waiting on.
+        if (!disposed) {
+          if (now() - entry.startedAt < 5) setTimeout(() => { tick().catch(() => {}); }, 50);
+          else queueMicrotask(() => { tick().catch(() => {}); });
+        }
         return result;
       });
     running = entry;
