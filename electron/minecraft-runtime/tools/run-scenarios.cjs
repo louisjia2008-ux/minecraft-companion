@@ -151,6 +151,15 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     console.log(`    [${line.minute}m] ${line.running || 'idle'}${line.autonomy ? ` (auto:${line.autonomy})` : ''} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
       + ` food=${bot.food} deaths=${deaths} ${line.dimension} ${Object.entries(inv).map(([k, n]) => `${k}:${n}`).join(' ')}`);
   }, 60000);
+  // Scenarios may also act on the world while the goal runs (e.g. skip a night
+  // once the goal is ready for it), every two seconds.
+  // One call at a time, and the last one is awaited before verify() so their
+  // server queries never overlap.
+  let duringCall = Promise.resolve();
+  const during = scenario.during ? setInterval(() => {
+    duringCall = duringCall.then(() => scenario.during({ server, bot, goal, write }))
+      .catch((error) => write('during_failed', { error: String(error) }));
+  }, 2000) : null;
   // Scenarios may also end on a world condition (e.g. the next morning).
   const deadline = new AbortController();
   const hookContext = () => ({ server, bot, username, companion, goal, state: runState, write, deaths,
@@ -168,6 +177,8 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     delay(scenario.timeoutMs, null, { signal: deadline.signal }).then(() => true)]);
   deadline.abort();
   clearInterval(heartbeat);
+  if (during) clearInterval(during);
+  await duringCall;
   await companion.dispose();
   bot.removeListener('death', onDeath);
   const durationMs = Date.now() - startedAt;
