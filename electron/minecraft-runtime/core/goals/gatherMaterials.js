@@ -20,7 +20,7 @@ const defaultActions = require('../actions');
 const { planNext } = require('../planner');
 const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { materialsFor } = require('../materials');
-const { createBlacklist } = require('../blacklist');
+const { createBlacklist, posKey } = require('../blacklist');
 const mining = require('../mining');
 
 const DOWN = [new Vec3(0, -1, 0)];
@@ -28,6 +28,18 @@ const DOWN = [new Vec3(0, -1, 0)];
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
 const MINE_FROM_HOME = 8;
+// Stone pickaxes taken down a mine: they wear out on the rock instead of the
+// iron one (a deep staircase digs a few hundred blocks; one lasts 131).
+const SPARE_PICKS = 5;
+// A mine this deep gets a supply depot at the foot of its staircase: a chest
+// stocked with stone pickaxes and a crafting table, so a worn-out pickaxe is
+// replaced down there (from the chest, or crafted from the tunnel's
+// cobblestone and carried sticks) instead of with a trip home.
+const DEPOT_BELOW = 0;
+const DEPOT_PICKS = 8;
+const DEPOT_STICKS = 12;
+const KEEP_PICKS = 3;
+const SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
   skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
@@ -77,10 +89,13 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     return skills.explore(bot, ctx, memory.explore);
   }
 
-  async function store(ctx, wants) {
-    ctx.record('store', { items: wants.map((w) => `${w.key}x${w.count}`) });
+  // `loot`: also put away ore picked up on the way (diamonds, coal, ...).
+  async function store(ctx, wants, { loot = false } = {}) {
+    const extra = loot ? [...new Set(bot.inventory.items().map((i) => i.name).filter(mining.isLoot))] : [];
+    ctx.record('store', { items: wants.map((w) => `${w.key}x${w.count}`), loot: extra });
     const result = await skills.storeInChest(bot, ctx, { position: chest,
-      wants: wants.map((w) => ({ match: kb[w.key].match, count: w.count })) });
+      wants: [...wants.map((w) => ({ match: kb[w.key].match, count: w.count })),
+        ...extra.map((name) => ({ match: (n) => n === name, count: Infinity }))] });
     if (result.contents) memory.chest = result.contents;
     return result;
   }
@@ -97,7 +112,92 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       }
       start = bot.entity.position.floored();
     }
+    const m = memory.mine;
+    if (m?.junction && !m.depot && m.y === step.mineY && step.mineY <= DEPOT_BELOW) return buildDepot(ctx);
     return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions });
+  }
+
+  const carrying = (name) => bot.inventory.items().filter((i) => i.name === name).reduce((n, i) => n + i.count, 0);
+
+  // Chest on one side of the staircase's foot, crafting table on the other.
+  // A depot that will not come together after a few tries is done without.
+  async function buildDepot(ctx) {
+    const m = memory.mine;
+    const result = await buildDepotOnce(ctx, m);
+    if (!result.ok && (m.depotTries = (m.depotTries || 0) + 1) >= 3) {
+      m.depot = { failed: result.reason };
+      ctx.record('depot_failed', { reason: result.reason });
+    }
+    return result;
+  }
+
+  async function buildDepotOnce(ctx, m) {
+    const J = m.junction;
+    if (!carrying('chest') || !carrying('crafting_table')) {
+      m.depot = { failed: 'no_kit' };
+      return { ok: true, depot: 'skipped' };
+    }
+    const there = await mining.walkToCell(bot, ctx, m, J, actions);
+    if (there) return there;
+    const [dx, dz] = SIDES[(J.dir + 1) % 4];
+    const spots = { chest: { x: J.x + dx, y: J.y, z: J.z + dz }, crafting_table: { x: J.x - dx, y: J.y, z: J.z - dz } };
+    for (const [item, spot] of Object.entries(spots)) {
+      if (nameAt(spot) === item) continue;
+      const wet = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1]]
+        .some(([x, y, z]) => mining.LIQUID.test(nameAt({ x: spot.x + x, y: spot.y + y, z: spot.z + z }) || ''));
+      if (wet) { m.depot = { failed: 'liquid' }; return { ok: true, depot: 'skipped' }; }
+      // A chest only opens with room above its lid: that cell is dug out too.
+      const cells = item === 'chest' ? [{ ...spot, y: spot.y + 1 }, spot] : [spot];
+      for (const cell of cells) {
+        const block = blockAt(cell);
+        if (!block || block.boundingBox === 'empty') continue;
+        const dug = await actions.digBlock(bot, ctx, block, { tool: mining.pickFor(bot, block) });
+        if (!dug.ok) return dug;
+        m.open = { ...m.open, [posKey(cell)]: true };
+      }
+      const placed = await skills.placeAt(bot, ctx, spot, (n) => n === item, { faces: DOWN });
+      if (!placed.ok) return placed;
+    }
+    const spare = carrying('stone_pickaxe') - KEEP_PICKS;
+    const stocked = await skills.storeInChest(bot, ctx, { position: spots.chest,
+      wants: spare > 0 ? [{ match: (n) => n === 'stone_pickaxe', count: spare }] : [] });
+    if (!stocked.ok) return stocked;
+    m.depot = { chest: spots.chest, table: spots.crafting_table };
+    ctx.record('depot_built', { chest: posKey(spots.chest), picks: stocked.stored?.stone_pickaxe || 0 });
+    return { ok: true, depot: 'built' };
+  }
+
+  // Out of stone pickaxes down the mine: take one from the depot, or craft
+  // some there. Null when the depot cannot help (none, or nothing left to make them from).
+  async function restock(ctx) {
+    const m = memory.mine;
+    const depot = m?.depot;
+    if (!depot?.chest || depot.dry) return null;
+    const there = await mining.walkToCell(bot, ctx, m, m.junction, actions);
+    if (there) { ctx.record('depot_walk', { ok: there.ok }); return there; }
+    const taken = await skills.takeItems(bot, ctx, { position: depot.chest, itemMatch: (n) => n === 'stone_pickaxe' });
+    ctx.record('depot_take', { ok: taken.ok, reason: taken.reason, taken: taken.taken });
+    if (taken.ok) return taken;
+    const cobble = carrying('cobblestone') + carrying('cobbled_deepslate');
+    const times = Math.min(4, Math.floor(carrying('stick') / 2), Math.floor(cobble / 3));
+    if (times < 1) { depot.dry = true; return null; }
+    const made = await skills.craft(bot, ctx, { item: 'stone_pickaxe', times, tablePosition: depot.table });
+    ctx.record('depot_craft', { ok: made.ok, reason: made.reason, times });
+    if (!made.ok) depot.dry = true;
+    return made;
+  }
+
+  // What to carry down a mine: spare stone pickaxes; for a deep one, sticks
+  // to make more at the depot, and the depot itself until it is built.
+  function supplies(step) {
+    const m = memory.mine;
+    const deepMine = step.mineY <= DEPOT_BELOW;
+    const needsDepot = deepMine && !(m?.depot && m.y <= step.mineY);
+    return [
+      { key: 'stone_pickaxe', count: needsDepot ? DEPOT_PICKS : SPARE_PICKS },
+      ...(deepMine ? [{ key: 'stick', count: DEPOT_STICKS }] : []),
+      ...(needsDepot ? [{ key: 'chest', count: 1 }, { key: 'crafting_table', count: 1 }] : []),
+    ];
   }
 
   // Everything but mining happens up top: out of the mine along its own tunnel, a leg at a time.
@@ -117,7 +217,10 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   async function runStep(ctx, step) {
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
-    if (step.kind !== 'gather') {
+    // Ore that needs a mine is the only thing done down there; anything else
+    // (a tree for sticks, a station, a craft) walks out along the tunnel first
+    // rather than letting the pathfinder dig straight up to it.
+    if (step.kind !== 'gather' || !Number.isFinite(step.mineY)) {
       const up = await climbOut(ctx);
       if (up) return up;
     }
@@ -198,14 +301,31 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       if (entry.until < Date.now()) { delete memory.shortfall[key]; continue; }
       reqs.unshift({ key, count: countKey(key, inventory, kb) + entry.extra });
     }
-    const step = planNext({ requirements: reqs, inventory, stations: placedStations(), kb });
+    let step = planNext({ requirements: reqs, inventory, stations: placedStations(), kb });
+    // About to go (back) down a mine from up top: take its supplies along.
+    // Down there, running out of stone pickaxes sends the bot to the depot,
+    // and only up for more when the depot cannot help.
+    const belowSurface = memory.mine && bot.entity.position.y < memory.mine.surfaceY - 1;
+    if (step?.kind === 'gather' && Number.isFinite(step.mineY)) {
+      if (!belowSurface && memory.mine?.depot) memory.mine.depot.dry = false;
+      const outOfPicks = countKey('stone_pickaxe', inventory, kb) < 1;
+      if (belowSurface && outOfPicks) {
+        const restocked = await restock(ctx);
+        if (restocked) return restocked;
+      }
+      if (!belowSurface || outOfPicks) {
+        const kit = belowSurface ? [{ key: 'stone_pickaxe', count: SPARE_PICKS }] : supplies(step);
+        step = planNext({ requirements: [...kit, ...reqs], inventory, stations: placedStations(), kb }) || step;
+      }
+    }
     const freeSlots = typeof bot.inventory.emptySlotCount === 'function' ? bot.inventory.emptySlotCount() : Infinity;
     // Passing by the chest (crafting and smelting happen next to it) with a
     // whole item of the list in the bag: store it now, a death would lose it.
     const whole = carried.some((w) => w.count >= debts.find((r) => r.key === w.key).count);
     const nearChest = bot.entity.position.distanceTo(new Vec3(chest.x + 0.5, chest.y, chest.z + 0.5)) <= NEAR_CHEST;
     if (carried.length && (!step || freeSlots <= FREE_SLOTS_TO_STORE || (whole && nearChest))) {
-      return (await climbOut(ctx)) || store(ctx, carried);
+      // The last trip home also empties the bag of ore found on the way.
+      return (await climbOut(ctx)) || store(ctx, carried, { loot: !step });
     }
     if (step) return runStep(ctx, step);
     // Nothing left to plan and nothing to store, yet the chest still lacks something.

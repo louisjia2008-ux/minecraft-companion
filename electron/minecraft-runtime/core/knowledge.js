@@ -158,6 +158,10 @@ const KNOWLEDGE = {
     match: exact('redstone'),
     sources: [{ kind: 'gather', blocks: exact('redstone_ore', 'deepslate_redstone_ore'), tool: 'iron_tier_pickaxe', mineY: -53 }],
   },
+  diamond: {
+    match: exact('diamond'),
+    sources: [{ kind: 'gather', blocks: exact('diamond_ore', 'deepslate_diamond_ore'), tool: 'iron_tier_pickaxe', mineY: -53 }],
+  },
   quartz: {
     match: exact('quartz'),
     sources: [{ kind: 'gather', blocks: exact('nether_quartz_ore'), tool: 'pickaxe', dimension: 'the_nether' }],

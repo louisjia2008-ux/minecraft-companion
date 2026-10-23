@@ -25,6 +25,15 @@ const GRAVITY = new Set(['sand', 'red_sand', 'gravel', 'suspicious_sand', 'suspi
 // Rubble kept when the bag fills up: one stack of stone for sealing and climbing.
 const RUBBLE = new Set(['cobblestone', 'cobbled_deepslate', 'dirt', 'gravel', 'granite', 'diorite', 'andesite', 'tuff',
   'calcite', 'flint', 'sand', 'netherrack']);
+// Ore a player takes whenever it shows in a tunnel wall, whatever the trip is
+// for, and what it drops. Copper is left: common, bulky and not worth a slot.
+const LOOT_ORES = new Set(['coal', 'iron', 'gold', 'redstone', 'lapis', 'diamond', 'emerald']
+  .flatMap((o) => [`${o}_ore`, `deepslate_${o}_ore`]));
+const LOOT_DROPS = new Set(['coal', 'raw_iron', 'raw_gold', 'redstone', 'lapis_lazuli', 'diamond', 'emerald']);
+const isLoot = (name) => LOOT_DROPS.has(name);
+// Cheapest pickaxe first: stone wears out on the rock, not the iron one the deep ore needs.
+const PICKS = ['stone_pickaxe', 'wooden_pickaxe', 'iron_pickaxe', 'golden_pickaxe', 'diamond_pickaxe', 'netherite_pickaxe'];
+const CHEAP_PICKS = PICKS.slice(0, 2);
 const BRANCH_EVERY = 3;
 const BRANCH_LENGTH = 16;
 const TORCH_EVERY = 8;
@@ -43,7 +52,7 @@ const isPassable = (b) => b.boundingBox === 'empty' && !LIQUID.test(b.name);
  * Only cells that are dug have their surroundings checked. A cell that is
  * already open below `surfaceY` is a cave and is not entered.
  */
-function inspectStep(blockAt, from, dir, { descend = false, surfaceY = Infinity } = {}) {
+function inspectStep(blockAt, from, dir, { descend = false, surfaceY = Infinity, known = () => false } = {}) {
   const [dx, dz] = DIRS[dir];
   const target = add(from, dx, descend ? -1 : 0, dz);
   // Going down a stair the head sweeps through the cell above the target's head.
@@ -61,7 +70,7 @@ function inspectStep(blockAt, from, dir, { descend = false, surfaceY = Infinity 
     if (!block) return fail('unloaded');
     if (LIQUID.test(block.name)) return fail('liquid');
     if (isPassable(block)) {
-      if (cell.y < surfaceY) return fail('cave');
+      if (cell.y < surfaceY && !known(cell)) return fail('cave');
       continue;
     }
     if (GRAVITY.has(block.name)) return fail('gravity');
@@ -77,11 +86,28 @@ function inspectStep(blockAt, from, dir, { descend = false, surfaceY = Infinity 
       if (!block) return fail('unloaded');
       if (LIQUID.test(block.name)) return fail('liquid');
       if (fy === 1 && GRAVITY.has(block.name)) return fail('gravity');
-      if (isPassable(block) && near.y < surfaceY) return fail('cave');
+      if (isPassable(block) && near.y < surfaceY && !known(near)) return fail('cave');
     }
   }
   return { ok: true, target, dig };
 }
+
+/**
+ * The cheapest carried pickaxe that harvests `block`, or null. Plain rock
+ * (anything a stone pickaxe harvests that is not ore) only ever gets a stone
+ * or wooden one: the better pickaxes are kept for the ore that needs them.
+ */
+function pickFor(bot, block) {
+  const items = bot.inventory.items();
+  const rock = !LOOT_ORES.has(block.name) && !/_ore$/.test(block.name);
+  for (const name of rock ? CHEAP_PICKS : PICKS) {
+    const item = items.find((i) => i.name === name);
+    if (item && (!block.harvestTools || block.harvestTools[item.type])) return item;
+  }
+  return null;
+}
+
+const harvestable = (bot, block) => !block.harvestTools || Boolean(pickFor(bot, block));
 
 /** A block with an open, dry cell beside it: reachable without tunnelling to it. */
 function exposed(bot, p) {
@@ -116,16 +142,20 @@ async function tossRubble(bot, ctx) {
  */
 async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, start = null, actions = defaultActions }) {
   const feet = bot.entity.position.floored();
-  // Ore already open to the tunnel first.
+  // Ore already open to the tunnel first: the ore asked for, and any other
+  // ore worth taking that the carried pickaxes can harvest.
   if (memory.mine) {
-    const ore = visibleOre(bot, blocks, bot.entity.position).filter((b) => !blacklist.has(posKey(b.position)))[0];
+    const wanted = (name) => blocks(name) || LOOT_ORES.has(name);
+    const ore = visibleOre(bot, wanted, bot.entity.position)
+      .filter((b) => !blacklist.has(posKey(b.position)) && harvestable(bot, b))[0];
     if (ore) {
-      ctx.record('mine_ore', { block: ore.name, position: posKey(ore.position) });
+      ctx.record(blocks(ore.name) ? 'mine_ore' : 'mine_loot', { block: ore.name, position: posKey(ore.position) });
       const reach = await actions.goToDig(bot, ctx, ore, { timeoutMs: 15000 });
       if (!reach.ok) { blacklist.add(posKey(ore.position), reach.reason); return reach; }
-      const dug = await actions.digBlock(bot, ctx, bot.blockAt(ore.position) || ore);
+      const block = bot.blockAt(ore.position) || ore;
+      const dug = await actions.digBlock(bot, ctx, block, { tool: pickFor(bot, block) });
       if (!dug.ok) { blacklist.add(posKey(ore.position), dug.reason); return dug; }
-      return actions.collectDrops(bot, ctx, ore.position.offset(0.5, 0.5, 0.5), dropMatch);
+      return actions.collectDrops(bot, ctx, ore.position.offset(0.5, 0.5, 0.5), (n) => dropMatch(n) || isLoot(n));
     }
   }
   if (typeof bot.inventory.emptySlotCount === 'function' && bot.inventory.emptySlotCount() <= 3) {
@@ -134,11 +164,12 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   }
   if (!memory.mine) {
     const from = start || { x: feet.x, y: feet.y, z: feet.z };
-    memory.mine = { entrance: from, front: from, surfaceY: from.y, dir: memory.mineDir ?? 0, phase: 'descend',
+    memory.mine = { entrance: from, front: from, surfaceY: from.y, y, dir: memory.mineDir ?? 0, phase: 'descend',
       mainSteps: 0, steps: 0, turns: 0, branch: null, cells: { [posKey(from)]: null }, walkFailures: 0 };
     ctx.record('mine_start', { at: posKey(from), y });
   }
   const mine = memory.mine;
+  if (retarget(mine, y)) ctx.record('mine_deeper', { from: posKey(mine.front), y });
   // Back to the front first (after a trip home, a death, a fight).
   if (!feet.equals(new Vec3(mine.front.x, mine.front.y, mine.front.z))) {
     ctx.record('mine_return', { front: posKey(mine.front) });
@@ -155,17 +186,25 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   }
 
   let dir = mine.dir;
-  let descend = mine.phase === 'descend' && mine.front.y > y;
-  if (mine.phase === 'descend' && !descend) { mine.phase = 'main'; mine.mainSteps = 0; }
+  let descend = mine.phase === 'descend' && mine.front.y > mine.y;
+  if (mine.phase === 'descend' && !descend) {
+    // The foot of the staircase: where the main tunnel and its supply depot start.
+    mine.phase = 'main';
+    mine.mainSteps = 0;
+    mine.junction = { ...mine.front, dir: mine.dir };
+  }
   if (mine.phase === 'branch') dir = mine.branch.dir;
   const step = inspectStep((x, yy, z) => bot.blockAt(new Vec3(x, yy, z)), mine.front, dir,
-    { descend, surfaceY: mine.surfaceY - 1 });
+    { descend, surfaceY: mine.surfaceY - 1, known: (c) => posKey(c) in mine.cells || Boolean(mine.open?.[posKey(c)]) });
   if (!step.ok) return turn(ctx, mine, step.reason, memory);
 
   for (const cell of step.dig) {
     const block = bot.blockAt(new Vec3(cell.x, cell.y, cell.z));
     if (!block || block.boundingBox === 'empty') continue;
-    const dug = await actions.digBlock(bot, ctx, block);
+    const tool = pickFor(bot, block);
+    // Out of stone pickaxes: fetch more rather than wear out the iron one on rock.
+    if (!tool && block.harvestTools) return fail('no_spare_pickaxe');
+    const dug = await actions.digBlock(bot, ctx, block, { tool });
     if (!dug.ok) return dug;
     if (blocks(block.name)) await actions.collectDrops(bot, ctx, block.position.offset(0.5, 0.5, 0.5), dropMatch, { timeoutMs: 3000 });
   }
@@ -184,6 +223,7 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
 }
 
 const LEG = 6;
+const NEAR_TUNNEL = 6;
 const near = (a, b, d = 1.5) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) <= d;
 const unkey = (k) => { const [x, y, z] = k.split(',').map(Number); return { x, y, z }; };
 
@@ -209,19 +249,28 @@ function chain(mine, k) {
  * hillside; short legs along known open cells do not. Returns null when
  * there is nowhere to go (already there, or not in the tunnel).
  */
-async function walkTunnel(bot, ctx, mine, towards, actions = defaultActions) {
+async function walkTunnel(bot, ctx, mine, towards, actions = defaultActions, { stopAt = null } = {}) {
   const go = async (p, timeoutMs = 20000) => {
     const result = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z),
       { timeoutMs, arrived: (at) => near(at.floored(), p, 0.5) });
     if (result.ok) mine.walkFailures = 0;
     return result;
   };
-  const here = cellAt(mine, bot.entity.position.floored());
-  if (!here) return towards === 'out' ? null : go(mine.entrance, 90000); // outside: to the entrance first
+  const feet = bot.entity.position.floored();
+  const here = cellAt(mine, feet);
+  if (!here) {
+    // Just off the tunnel (in the hole an ore left): step back to the closest cell.
+    const closest = Object.keys(mine.cells).map(unkey)
+      .map((p) => ({ p, d: Math.hypot(p.x - feet.x, p.y - feet.y, p.z - feet.z) })).sort((a, b) => a.d - b.d)[0];
+    if (closest && closest.d <= NEAR_TUNNEL) return go(closest.p);
+    return towards === 'out' ? null : go(mine.entrance, 90000); // outside: to the entrance first
+  }
   const up = chain(mine, here);
   let target;
   if (towards === 'out') {
-    target = up[Math.min(LEG, up.length - 1)];
+    // `stopAt`: a cell on the way out (the depot at the foot of the stairs).
+    const stop = stopAt ? up.indexOf(stopAt) : -1;
+    target = up[Math.min(LEG, stop >= 0 ? stop : up.length - 1)];
   } else {
     const down = chain(mine, posKey(mine.front)); // front ... entrance
     const at = down.indexOf(here);
@@ -236,12 +285,44 @@ async function walkTunnel(bot, ctx, mine, towards, actions = defaultActions) {
   return go(unkey(target));
 }
 
+/**
+ * One leg towards a cell of the mine (its depot): along the tunnel when the
+ * cell is on the way out from here, else a short direct walk. Null when there.
+ */
+async function walkToCell(bot, ctx, mine, cell, actions = defaultActions) {
+  const key = posKey(cell);
+  const feet = bot.entity.position.floored();
+  if (near(feet, cell, 0.5)) return null;
+  const here = cellAt(mine, feet);
+  if (here && chain(mine, here).includes(key)) return walkTunnel(bot, ctx, mine, 'out', actions, { stopAt: key });
+  return actions.goTo(bot, ctx, new goals.GoalBlock(cell.x, cell.y, cell.z),
+    { timeoutMs: 30000, arrived: (at) => near(at.floored(), cell, 0.5) });
+}
+
 /** Below the mine's entrance: one leg back up towards it, else null. */
 function leaveMine(bot, ctx, memory, actions = defaultActions) {
   const mine = memory.mine;
   if (!mine || bot.entity.position.y >= mine.surfaceY - 1) return null;
   ctx.record('mine_leave', { at: posKey(bot.entity.position.floored()) });
   return walkTunnel(bot, ctx, mine, 'out', actions);
+}
+
+/**
+ * Ore deeper than the mine (redstone after iron): the staircase carries on
+ * down from the front, so the way out stays one tunnel. Shallower ore is
+ * mined where the mine already is; every ore list includes its deepslate form.
+ * Returns true when the mine was sent deeper.
+ */
+function retarget(mine, y) {
+  if (mine.y === undefined) mine.y = y;
+  if (y >= mine.y) return false;
+  mine.y = y;
+  mine.phase = 'descend';
+  mine.branch = null;
+  mine.turns = 0;
+  mine.junction = null;
+  mine.depot = null; // a new level gets its own
+  return true;
 }
 
 /** Moves the plan on after a step: count main tunnel steps, open and close branches. */
@@ -290,4 +371,5 @@ async function maybeTorch(bot, ctx, mine, cell) {
   } catch (_) { /* a torch is a nicety, not progress */ }
 }
 
-module.exports = { inspectStep, mineStep, leaveMine, walkTunnel, visibleOre, exposed, advance, DIRS, BRANCH_EVERY, BRANCH_LENGTH };
+module.exports = { inspectStep, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
+  LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH };

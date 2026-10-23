@@ -3,7 +3,7 @@
 // and how the main tunnel and its side branches advance.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { inspectStep, advance, BRANCH_EVERY, BRANCH_LENGTH } = require('../core/mining');
+const { inspectStep, advance, retarget, BRANCH_EVERY, BRANCH_LENGTH } = require('../core/mining');
 
 // Solid stone everywhere below y=10, air above; `put` overrides single cells.
 function grid(put = {}) {
@@ -99,4 +99,52 @@ test('the way out and back follows the tunnel the bot dug, a few blocks per leg'
   walked.length = 0;
   while (await walkTunnel(bot, ctx, mine, 'front', actions));
   assert.deepEqual(walked, ['0,10,0', '6,4,0', '8,2,0']);
+  // In the hole an ore left two blocks off the branch: back to the nearest cell, then on.
+  bot.entity.position = new Vec3(10.5, 2, -3.5);
+  walked.length = 0;
+  while (await walkTunnel(bot, ctx, mine, 'front', actions));
+  assert.deepEqual(walked, ['8,2,-4', '8,2,0']);
+});
+
+test('deeper ore sends the same mine down again from its front; shallower ore stays put', () => {
+  const mine = { y: 16, phase: 'branch', front: { x: 60, y: 16, z: 4 }, branch: { origin: { x: 60, y: 16, z: -3 } }, turns: 2 };
+  assert.equal(retarget(mine, 16), false);
+  assert.equal(retarget(mine, 40), false);
+  assert.equal(mine.phase, 'branch');
+  assert.equal(retarget(mine, -53), true);
+  assert.deepEqual([mine.y, mine.phase, mine.branch, mine.turns], [-53, 'descend', null, 0]);
+  assert.deepEqual(mine.front, { x: 60, y: 16, z: 4 });
+  // A mine recorded before it carried its height adopts the first one asked for.
+  const old = { phase: 'main' };
+  assert.equal(retarget(old, 16), false);
+  assert.equal(old.y, 16);
+});
+
+test('rock is dug with the cheapest pickaxe that harvests it; ore worth taking is known', () => {
+  const { pickFor, isLoot, LOOT_ORES } = require('../core/mining');
+  const items = [{ name: 'iron_pickaxe', type: 3 }, { name: 'wooden_pickaxe', type: 1 }, { name: 'stone_pickaxe', type: 2 }];
+  const bot = { inventory: { items: () => items } };
+  const anyPick = { 1: true, 2: true, 3: true };
+  assert.equal(pickFor(bot, { name: 'deepslate', harvestTools: anyPick }).name, 'stone_pickaxe');
+  assert.equal(pickFor(bot, { name: 'deepslate_diamond_ore', harvestTools: { 3: true } }).name, 'iron_pickaxe');
+  items.splice(0, 1);
+  assert.equal(pickFor(bot, { name: 'deepslate_diamond_ore', harvestTools: { 3: true } }), null);
+  // Rock never gets the iron pickaxe, even with nothing cheaper left.
+  items.splice(0, items.length, { name: 'iron_pickaxe', type: 3 });
+  assert.equal(pickFor(bot, { name: 'deepslate', harvestTools: anyPick }), null);
+  assert.equal(pickFor(bot, { name: 'deepslate_coal_ore', harvestTools: anyPick }).name, 'iron_pickaxe');
+  assert.ok(LOOT_ORES.has('deepslate_diamond_ore') && LOOT_ORES.has('coal_ore') && !LOOT_ORES.has('copper_ore'));
+  assert.ok(isLoot('diamond') && isLoot('raw_iron') && !isLoot('cobblestone'));
+});
+
+test('the tunnel may cut through its own earlier tunnels; only unknown openings are caves', () => {
+  const solid = { name: 'stone', boundingBox: 'block', diggable: true };
+  const air = { name: 'air', boundingBox: 'empty' };
+  // Level step east from (0,10,0); the target cell (1,10,0) and its head are an old tunnel of ours.
+  const blockAt = (x, y, z) => ((x === 1 && (y === 10 || y === 11) && z === 0) || (x === 0 && (y === 10 || y === 11) && z === 0) ? air : solid);
+  assert.equal(inspectStep(blockAt, { x: 0, y: 10, z: 0 }, 0, { surfaceY: 50 }).reason, 'cave');
+  const known = (c) => c.x === 1 && c.z === 0;
+  const step = inspectStep(blockAt, { x: 0, y: 10, z: 0 }, 0, { surfaceY: 50, known });
+  assert.equal(step.ok, true);
+  assert.deepEqual(step.dig, []);
 });
