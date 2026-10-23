@@ -16,6 +16,7 @@ const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
 const { createCaneFarmGoal } = require('./goals/caneFarm');
 const { createMobFarmGoal } = require('./goals/mobFarm');
+const { createIronFarmGoal } = require('./goals/ironFarm');
 const { createCarpetDuperGoal } = require('./goals/carpetDuper');
 const { createFishingGoal } = require('./goals/fishing');
 const { createRailDuperGoal } = require('./goals/railDuper');
@@ -162,6 +163,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     },
     mobFarm(options = {}) {
       const goal = createMobFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    ironFarm(options = {}) {
+      const goal = createIronFarmGoal({ bot, ...options });
       director.notePlayerGoal();
       brain.setGoal(goal);
       return brain.tick().then(() => goal);

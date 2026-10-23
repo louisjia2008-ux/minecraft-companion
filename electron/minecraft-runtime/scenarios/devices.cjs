@@ -13,6 +13,7 @@ const { MOB_DROPS } = require('../core/goals/mobFarm');
 const { createCarpetDuper } = require('../core/blueprints/carpetDuper');
 const { createFishPond } = require('../core/blueprints/fishPond');
 const { createRailDuper } = require('../core/blueprints/railDuper');
+const { createIronFarm } = require('../core/blueprints/ironFarm');
 
 const HARVEST = 8;
 
@@ -381,4 +382,81 @@ const railDuperFlat = {
   },
 };
 
-module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat };
+const IRON = 3;
+const NIGHT_MS = 120000;
+
+// Easy difficulty (the zombie needs it) at a fixed noon. The villagers and the
+// zombie come from spawn eggs; the night they must sleep through is skipped
+// with /time once the goal has moved them in, as a player sleeping would.
+const ironFarmFlat = {
+  name: 'ironfarm-flat',
+  description: `Flat plains on solid stone, easy difficulty, handed an iron pickaxe, 3 beds, a torch, a stone slab, 2 ladders, 2 lava buckets, a zombie spawn egg and 3 villager spawn eggs; dig an underground iron farm, move in the zombie and the villagers, and pick up ${IRON} iron ingots from it.`,
+  serverProperties: mobFarmFlat.serverProperties,
+  defaultDifficulty: 'easy',
+  timeoutMs: 20 * 60 * 1000,
+  setup({ username, rng, difficulty = 'easy' }) {
+    const x = Math.round((rng() - 0.5) * 16);
+    const z = Math.round((rng() - 0.5) * 16);
+    const yaw = Math.round(rng() * 360) - 180;
+    return {
+      commands: [
+        ...commonSetup(username, difficulty),
+        ...resetUnderground(),
+        `give ${username} iron_pickaxe`, `give ${username} white_bed 3`, `give ${username} torch 2`,
+        `give ${username} stone_slab`, `give ${username} ladder 2`, `give ${username} lava_bucket 2`,
+        `give ${username} zombie_spawn_egg`, `give ${username} villager_spawn_egg 3`, `give ${username} bread 16`,
+        `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
+      ],
+      details: { start: { x, z, yaw } },
+    };
+  },
+  start: (companion) => companion.ironFarm({ count: IRON }),
+  // Night falls once the villagers are in, and lasts until all three have
+  // slept (a freshly spawned villager first has to claim its bed).
+  async during({ server, goal, write }) {
+    const memory = goal?.memory;
+    if (!memory?.ready || memory.night === 'done' || memory.nightBusy) return;
+    memory.nightBusy = true;
+    try {
+      if (!memory.night) {
+        memory.night = Date.now();
+        server.command('time set 13000');
+        write('night', { phase: 'dusk' });
+        return;
+      }
+      const match = await server.query('execute if entity @e[type=villager,nbt={Brain:{memories:{"minecraft:last_slept":{}}}}]',
+        /Test (passed|failed)(?:, count: (\d+))?/);
+      const slept = match[2] ? Number(match[2]) : 0;
+      if (slept >= 3 || Date.now() - memory.night > NIGHT_MS) {
+        memory.night = 'done';
+        server.command('time set 1000');
+        write('night', { phase: 'morning', slept });
+      }
+    } finally {
+      memory.nightBusy = false;
+    }
+  },
+  async verify({ server, username, goal }) {
+    const memory = goal?.memory;
+    if (!memory?.farm) return { pass: false, details: { reason: 'no_site' } };
+    const f = createIronFarm(memory.farm.anchor, memory.farm.facing);
+    const parts = {};
+    for (const part of f.parts) {
+      parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+    }
+    for (const [i, p] of f.lava.entries()) parts[`lava${i}`] = await testBlock(server, p, 'minecraft:lava[level=0]');
+    parts.seal = await testBlock(server, f.cells.seal, 'minecraft:cobblestone');
+    const count = async (selector) => {
+      const match = await server.query(`execute if entity ${selector}`, /Test (passed|failed)(?:, count: (\d+))?/);
+      return match[2] ? Number(match[2]) : 0;
+    };
+    const a = f.anchor;
+    const villagers = await count(`@e[type=villager,x=${a.x - 4},y=${f.levels.feet - 2},z=${a.z - 4},dx=8,dy=4,dz=8]`);
+    const zombies = await count(`@e[type=zombie,x=${a.x - 4},y=${f.levels.feet - 1},z=${a.z - 4},dx=8,dy=3,dz=8]`);
+    const iron = await countOnPlayer(server, username, 'minecraft:iron_ingot');
+    const pass = Object.values(parts).every(Boolean) && villagers >= 3 && iron >= IRON;
+    return { pass, details: { device: { anchor: f.anchor, facing: f.facing }, parts, villagers, zombies, iron, eggs: memory.eggs } };
+  },
+};
+
+module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat, ironFarmFlat };
