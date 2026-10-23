@@ -56,17 +56,19 @@ test('cells by lava cost more, standing in or over lava is effectively banned', 
 });
 
 test('nether movements are applied once and fully restored', () => {
-  const movements = { maxDropDown: 4, blocksCantBreak: new Set([1]), exclusionAreasStep: [() => 0] };
+  const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set([1]), exclusionAreasStep: [() => 0] };
   const bot = { ...makeWorld(), pathfinder: { movements },
     registry: { blocksByName: { nether_gold_ore: { id: 7 }, obsidian: { id: 8 } } } };
   const restore = nether.applyNetherMovements(bot);
   assert.equal(movements.maxDropDown, 3);
+  assert.ok(movements.digCost > 1, 'digging costs more than walking around');
   assert.ok(movements.blocksCantBreak.has(7) && movements.blocksCantBreak.has(8));
   assert.equal(movements.exclusionAreasStep.length, 2);
   nether.applyNetherMovements(bot)();
   assert.equal(movements.exclusionAreasStep.length, 2, 'a second apply is a no-op');
   restore();
   assert.equal(movements.maxDropDown, 4);
+  assert.equal(movements.digCost, 1);
   assert.deepEqual([...movements.blocksCantBreak], [1]);
   assert.equal(movements.exclusionAreasStep.length, 1);
 });

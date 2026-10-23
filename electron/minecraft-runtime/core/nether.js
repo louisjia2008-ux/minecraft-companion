@@ -235,9 +235,12 @@ const NEVER_BREAK = ['nether_gold_ore', 'gilded_blackstone', 'gold_block', 'ches
 function applyNetherMovements(bot) {
   const m = bot.pathfinder?.movements;
   if (!m || m.companionNether) return () => {};
-  const saved = { maxDropDown: m.maxDropDown, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length };
+  const saved = { maxDropDown: m.maxDropDown, digCost: m.digCost, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length };
   m.companionNether = true;
   m.maxDropDown = 3;
+  // Netherrack breaks in an instant, so plain paths tunnel straight through
+  // hills: one long walk wore out an iron pickaxe. Walk around when there is a way.
+  m.digCost = 6;
   for (const name of NEVER_BREAK) {
     const id = bot.registry.blocksByName[name]?.id;
     if (Number.isInteger(id)) m.blocksCantBreak.add(id);
@@ -245,6 +248,7 @@ function applyNetherMovements(bot) {
   m.exclusionAreasStep.push((block) => (block?.position ? lavaRisk(bot, block.position) : 0));
   return () => {
     m.maxDropDown = saved.maxDropDown;
+    m.digCost = saved.digCost;
     m.blocksCantBreak = saved.cantBreak;
     m.exclusionAreasStep.length = saved.steps;
     m.companionNether = false;

@@ -83,6 +83,7 @@ const RANGED = new Set(['skeleton', 'stray', 'bogged']);
 const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 // Piglin brutes ignore gold armour and hit for half a heart bar with their axe: keep clear of them too.
 const BRUTE_RANGE = 12;
+const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull']);
 // One that got this close outruns the bot: turn and fight it.
 const BRUTE_FIGHT = 4;
 // Neutral mobs are left alone unless they are right next to us.
@@ -180,9 +181,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       } finally {
         clearInterval(tracker);
       }
-      // Spiders drop string (wool where there are no sheep); pick up what fell.
+      // Spiders drop string (wool where there are no sheep); blazes and wither
+      // skeletons fought off in a fortress drop what the expedition is there for.
       if (result.ok && typeof actions.collectDrops === 'function') {
-        await actions.collectDrops(bot, ctx, last, (n) => n === 'string', { radius: 6, timeoutMs: 4000 });
+        await actions.collectDrops(bot, ctx, last, (n) => KEPT_DROPS.has(n), { radius: 6, timeoutMs: 4000 });
       }
       return result;
     },

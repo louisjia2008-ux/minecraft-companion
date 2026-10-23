@@ -196,8 +196,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.visited.fortress = true;
       ctx.record('structure_entered', { kind: 'fortress', position: posKey(here.floored()) });
     }
-    memory.spawner = memory.spawner || structures.findSpawners(bot, memory.fortress, 96)[0] || null;
-    if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner) });
+    if (!memory.spawner) {
+      memory.spawner = structures.findSpawners(bot, memory.fortress, 96)[0] || null;
+      if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner) });
+    }
     // Blazes come from the spawner; wither skeletons spawn anywhere in the fortress.
     // Wait by the spawner a while, then walk the corridors for a bit.
     const now = Date.now();

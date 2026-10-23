@@ -72,7 +72,7 @@ const netherQuartzGiven = {
 const EXPEDITION = { blazeRods: 6, witherSkulls: 1, trades: 10 };
 const GOLD = 24;
 const EXPEDITION_KIT = [
-  ['obsidian', 10], ['cobblestone', 64], ['flint_and_steel', 1], ['iron_pickaxe', 1],
+  ['obsidian', 10], ['cobblestone', 64], ['flint_and_steel', 1], ['diamond_pickaxe', 1],
   ['diamond_sword[enchantments={looting:3,sharpness:3}]', 1], ['shield', 1],
   ['golden_helmet', 1], ['diamond_chestplate', 1], ['diamond_leggings', 1], ['diamond_boots', 1],
   ['cooked_beef', 32], ['gold_ingot', GOLD],
