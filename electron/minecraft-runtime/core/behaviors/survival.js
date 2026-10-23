@@ -48,6 +48,32 @@ function lavaShore(bot, radius = 16) {
   return best?.p || null;
 }
 
+/**
+ * With no shore to climb: the top lava cell nearest the bot that has a solid
+ * block beside it, where a placed block makes a step out.
+ */
+function lavaStep(bot, radius = 16) {
+  const feet = bot.entity.position.floored();
+  let surface = feet.y;
+  while (surface < feet.y + 4 && bot.blockAt(feet.offset(0, surface - feet.y + 1, 0))?.name === 'lava') surface += 1;
+  const sides = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
+  let best = null;
+  for (let dx = -radius; dx <= radius; dx += 1) {
+    for (let dz = -radius; dz <= radius; dz += 1) {
+      const d = Math.hypot(dx, dz);
+      if (best && d >= best.d) continue;
+      const cell = new Vec3(feet.x + dx, surface, feet.z + dz);
+      if (bot.blockAt(cell)?.name !== 'lava') continue;
+      const wall = sides.map((f) => cell.plus(f)).find((p) => {
+        const b = bot.blockAt(p);
+        return b && b.boundingBox === 'block' && !/magma/.test(b.name);
+      });
+      if (wall) best = { cell, wall, d };
+    }
+  }
+  return best;
+}
+
 /** True when no full block lies on the straight line between two points. */
 function clearLine(bot, from, to) {
   const d = to.minus(from);
@@ -112,8 +138,11 @@ const RANGED = new Set(['skeleton', 'stray', 'bogged']);
 const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 // Piglin brutes ignore gold armour and hit for half a heart bar with their axe: keep clear of them too.
 const BRUTE_RANGE = 12;
+const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled_deepslate', 'dirt', 'basalt', 'soul_soil']);
 const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
 const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull']);
+// Hoglins too: their charge tosses the bot, into lava as often as not.
+const CHARGERS = new Set(['piglin_brute', 'hoglin']);
 // One that got this close outruns the bot: turn and fight it.
 const BRUTE_FIGHT = 4;
 // Neutral mobs are left alone unless they are right next to us.
@@ -189,7 +218,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;
-    return threats(state).find((h) => h.name !== 'creeper' && !((AVOIDED.has(h.name) && h.distance > 2.5) || (h.name === 'piglin_brute' && h.distance > BRUTE_FIGHT))
+    return threats(state).find((h) => h.name !== 'creeper' && !((AVOIDED.has(h.name) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT))
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || (RANGED.has(h.name) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
           && state.health > t.rangedHealth && armed(state)
@@ -204,7 +233,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (!threat || state.sheltered) return 0;
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
       // A brute or hoglin on the bot outruns it: running only takes the hits in the back.
-      if ((threat.name === 'piglin_brute' || threat.name === 'hoglin') && threat.distance <= BRUTE_FIGHT) return 0;
+      if (CHARGERS.has(threat.name) && threat.distance <= BRUTE_FIGHT) return 0;
       return state.health <= t.escapeHealth && threat.distance <= t.escapeRange ? 1 : 0;
     },
     run: (ctx) => actions.fleeFrom(bot, ctx, nearest(ctx.perceive())?.position || bot.entity.position),
@@ -287,31 +316,56 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
 
-  // Swimming in lava (knocked or slipped in): the pathfinder cannot plan from
-  // there, so swim for the nearest shore by hand, jumping all the way.
+  // Swimming in lava (a hoglin's toss, a slip): the pathfinder cannot plan from
+  // there. Swim for the nearest shore it can climb; with only cliffs around,
+  // swim to one, put a block on the lava against it and climb onto that.
+  async function swimTo(ctx, point, until, maxTicks = 150) {
+    try {
+      for (let i = 0; i < maxTicks && !until(); i += 1) {
+        await bot.lookAt(point, true);
+        for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, true);
+        await sleep(100, ctx.signal);
+      }
+    } finally {
+      for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, false);
+    }
+  }
   const leaveLava = {
     name: 'leave_lava',
     band: BAND.ESCAPE,
     want: () => (bot.entity?.isInLava === true ? 2 : 0),
     async run(ctx) {
-      const shore = lavaShore(bot);
-      ctx.record('leave_lava', { shore: shore ? `${shore.x},${shore.y},${shore.z}` : null });
       bot.pathfinder?.setGoal(null);
-      try {
-        for (let i = 0; i < 150 && bot.entity.isInLava; i += 1) {
-          const target = shore ? shore.offset(0.5, 1.2, 0.5) : bot.entity.position.offset(0, 3, 0);
-          await bot.lookAt(target, true);
-          bot.setControlState('jump', true);
-          bot.setControlState('forward', Boolean(shore));
-          bot.setControlState('sprint', Boolean(shore));
-          await sleep(100, ctx.signal);
-        }
-        // A few steps more to stand clear of the edge.
-        if (shore) await sleep(400, ctx.signal);
-      } finally {
-        for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, false);
+      const out = () => !bot.entity.isInLava;
+      const shore = lavaShore(bot);
+      if (shore) {
+        ctx.record('leave_lava', { shore: `${shore.x},${shore.y},${shore.z}` });
+        await swimTo(ctx, shore.offset(0.5, 1.2, 0.5), out);
+        if (out()) await sleep(400, ctx.signal);
+        return out() ? { ok: true } : { ok: false, reason: 'still_in_lava' };
       }
-      return bot.entity.isInLava ? { ok: false, reason: 'still_in_lava' } : { ok: true };
+      const step = lavaStep(bot);
+      const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
+      ctx.record('leave_lava', { shore: null, step: step ? `${step.cell.x},${step.cell.y},${step.cell.z}` : null, block: block?.name || null });
+      if (!step || !block) {
+        await swimTo(ctx, bot.entity.position.offset(0, 3, 0), out, 20);
+        return { ok: false, reason: step ? 'no_step_block' : 'no_shore' };
+      }
+      const centre = step.cell.offset(0.5, 0.5, 0.5);
+      await swimTo(ctx, centre, () => out() || Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z) <= 2.2);
+      if (!out()) {
+        try {
+          await bot.equip(block, 'hand');
+          const wall = bot.blockAt(step.wall);
+          await bot.lookAt(step.wall.offset(0.5, 0.5, 0.5).plus(step.cell.minus(step.wall).scaled(0.5)), true);
+          await bot.placeBlock(wall, step.cell.minus(step.wall));
+        } catch (_) { /* checked below */ }
+        const placed = bot.blockAt(step.cell)?.boundingBox === 'block';
+        ctx.record('lava_step', { placed });
+        if (placed) await swimTo(ctx, step.cell.offset(0.5, 1.2, 0.5), out, 50);
+      }
+      if (out()) await sleep(300, ctx.signal);
+      return out() ? { ok: true } : { ok: false, reason: 'still_in_lava' };
     },
   };
 
@@ -436,7 +490,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     name: 'avoid',
     band: BAND.DEFENSE,
     want(state) {
-      const brute = threats(state).find((h) => h.name === 'piglin_brute' && h.distance <= BRUTE_RANGE);
+      const brute = threats(state).find((h) => CHARGERS.has(h.name) && h.distance <= BRUTE_RANGE);
       if (brute) return !state.sheltered && brute.distance > BRUTE_FIGHT ? 1 : 0;
       const raider = threats(state).find((h) => AVOIDED.has(h.name) && h.distance <= 24);
       if (raider && !danger.some((d) => Math.hypot(d.x - raider.position.x, d.z - raider.position.z) < 32)) {
@@ -445,10 +499,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       return raider && !state.sheltered && raider.distance > 2.5 ? 1 : 0;
     },
     async run(ctx) {
-      const raider = ctx.perceive().hostiles.find((h) => AVOIDED.has(h.name) || h.name === 'piglin_brute');
+      const raider = ctx.perceive().hostiles.find((h) => AVOIDED.has(h.name) || CHARGERS.has(h.name));
       if (!raider) return { ok: true };
       ctx.record('avoid', { mob: raider.name, distance: Math.round(raider.distance) });
-      const brute = raider.name === 'piglin_brute';
+      const brute = CHARGERS.has(raider.name);
       return actions.fleeFrom(bot, ctx, raider.position, { distance: brute ? BRUTE_RANGE + 6 : 32, timeoutMs: 15000 });
     },
   };
