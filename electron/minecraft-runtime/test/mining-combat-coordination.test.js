@@ -2026,6 +2026,15 @@ for(const nutrition of [false,true])test(`field graph drains native shore defens
  const f=fixture(t,{killAfter:4,interrupt:false});f.task.materialSupply={materialSource:'self_gathered'};
  f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';let cp,defending,immersed=false;
  const diagnostics=captureHouseSurfaceDiagnostics(f),attack=f.bot.attack;
+ const emit=f.bot.emit;
+ // Deterministically withhold the next ordinary-work tick after the captured
+ // survival lease is returned. Native physics/pathfinder still own every
+ // shore movement; the handoff must enforce vitals before that next tick.
+ f.bot.emit=function(event,...args){
+  if(nutrition&&immersed&&event==='physicsTick'&&f.agent.__testGetActiveMovementLease()===f.task.movementLease)return false;
+  return emit.call(this,event,...args);
+ };
+ t.after(()=>{f.bot.emit=emit;});
  f.bot.attack=e=>{attack(e);if(!immersed){immersed=true;if(nutrition)f.bot.health=4;f.change('water',f.bot.entity.position.floored());f.bot.entity.isInWater=true;}};
  f.bot.once('goal_updated',()=>setTimeout(()=>{f.bot.entities[4]={id:4,name:'spider',isValid:true,entityType:registry.entitiesByName.spider.id,position:new Vec3(2.5,1,.5),height:.9};
   defending=f.agent.__testHandleSurvivalCritical('surface_owned_shore');defending.catch(()=>{});},20));

@@ -1188,14 +1188,14 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
     }
   }
   async function observeResourceWorkOrigin({observedCurrent,sharedDeadlineMs=Infinity}={}) {
-    await deps.ready?.();active();if(!owner())throw fail('dry_graph_movement_preempted','Resource observation lost its captured movement owner');
+    await deps.ready?.();active();assertVitals();if(!owner())throw fail('dry_graph_movement_preempted','Resource observation lost its captured movement owner');
     const from=state.current,origin=state.nodes[from]?.position;
     if(!origin||observedCurrent!==from||state.pendingWater||state.pendingDryTrail)return {confirmed:false,reason:'original_transport_or_cursor_changed'};
     const iceCoast=require('./houseCreeperEscape').actualFullCubeContacts(bot).some(c=>['ice','frosted_ice','packed_ice','blue_ice'].includes(c.name));
     const originalDeadline=Math.min(Date.now()+35000,sharedDeadlineMs);
     let deadline=Math.min(originalDeadline,Date.now()+(iceCoast?3000:1200));
     while(Date.now()<deadline){
-      const defended=await deps.ready?.();active();
+      const defended=await deps.ready?.();active();assertVitals();
       if(defended===true)deadline=Math.min(originalDeadline,Date.now()+(iceCoast?3000:1200));
       if(Date.now()>=deadline)break;
       if(!owner())throw fail('dry_graph_movement_preempted','Resource observation lost its captured movement owner');
@@ -1898,6 +1898,10 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
           // original leg's fromNode below.
           if(error.code==='house_site_defense_relocated'){await deps.ready?.();active();}
           else {await readyExplorationBoundary();active();}
+          // A completed defense may restore the work lease before the next
+          // physics tick. Recheck the current capability before any graph
+          // landing/visit is adopted, including ordinary and provisioning work.
+          assertVitals();
           const recovered=recoveredOutboundWater.get(error);
           if(recovered&&recovered.pending===state.pendingWater&&owner()&&bot.pathfinder.movements===movements){
             // The adapter proved a return to its original bank, not a crossing.
