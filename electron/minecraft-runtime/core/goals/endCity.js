@@ -31,7 +31,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     const gateways = city.findGateway(bot, 160).filter((g) => !blacklist.has(posKey(g.position)));
     if (gateways.length === 0) {
       // The gateways ring the island 96 blocks out: walk out toward that ring.
-      const here = bot.entity.position;
+      const here = bot.entity.position.clone();
       const a = Math.atan2(here.z, here.x) + (memory.explored % 2 ? 0.6 : 0);
       memory.explored += 1;
       const stand = end.surfaceAt(bot, Math.round(Math.cos(a) * 70), Math.round(Math.sin(a) * 70));
@@ -39,7 +39,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       if (!stand) return fail('no_gateway_in_sight');
       return end.walkTo(bot, ctx, stand, 3, 60000);
     }
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     gateways.sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here));
     const gateway = gateways[0];
     if (!blacklist.has(`tower:${posKey(gateway.position)}`)) return towerPearl(ctx, gateway);
@@ -74,7 +74,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
   async function towerPearl(ctx, gateway) {
     const g = gateway.position;
     const tag = `tower:${posKey(g)}`;
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     const columns = [[3, 0], [-3, 0], [0, 3], [0, -3]].map(([x, z]) => end.surfaceAt(bot, g.x + x, g.z + z, { yMax: g.y - 2 }))
       .filter((s) => s && bot.blockAt(s.offset(0, -1, 0))?.name === 'end_stone' && g.y - s.y <= 30)
       .sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
@@ -144,7 +144,10 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
   }
 
   async function explore(ctx) {
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
+    // Back where the last search started (pulled back, or walking in circles): turn.
+    if (memory.searchFrom && here.distanceTo(memory.searchFrom) < 8) memory.blocked = true;
+    memory.searchFrom = here;
     if (!memory.heading || memory.blocked) {
       const base = city.outward(bot);
       const turn = memory.blocked ? (Math.random() - 0.5) * Math.PI : 0;
@@ -165,9 +168,11 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     }
     const walked = await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(target.x, target.z, 4), { timeoutMs: 45000, arrived: () => true });
     if (bot.entity.position.distanceTo(here) >= 12) return { ok: true };
+    ctx.record('explore_walk_short', { moved: Math.round(bot.entity.position.distanceTo(here)), reason: walked.reason || null });
     // Walked to the island's edge: bridge across.
     const bridged = await end.bridgeToward(bot, ctx, new Vec3(target.x, bot.entity.position.y, target.z), { maxSteps: 40 });
     memory.bridged += bridged.steps || 0;
+    ctx.record('explore_bridge', { steps: bridged.steps || 0, reason: bridged.reason || bridged.stopped || null });
     if (bot.entity.position.distanceTo(here) >= 6) return { ok: true };
     memory.blocked = true;
     return fail(walked.ok ? 'explore_blocked' : walked.reason);
@@ -206,7 +211,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       }
       const chestsLeft = city.cityChests(bot, 96).filter((p) => !memory.looted.has(posKey(p)) && !blacklist.has(posKey(p)));
       if (chestsLeft.length) {
-        const here = bot.entity.position;
+        const here = bot.entity.position.clone();
         chestsLeft.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
         return lootChest(ctx, chestsLeft[0]);
       }

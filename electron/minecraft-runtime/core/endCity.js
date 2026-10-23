@@ -40,7 +40,7 @@ function pearlSpots(bot, gateway) {
       }
     }
   }
-  const here = bot.entity.position;
+  const here = bot.entity.position.clone();
   // Flattest arrival first; distance to walk breaks ties.
   return spots.sort((a, b) => (Math.abs(a.slope) - Math.abs(b.slope)) * 40
     + (a.stand.distanceTo(here) - b.stand.distanceTo(here)) * 0.05);
@@ -53,7 +53,7 @@ function findCity(bot, maxDistance = 160) {
   const ids = CITY_BLOCKS.map((n) => bot.registry.blocksByName[n]?.id).filter(Number.isInteger);
   const found = bot.findBlocks({ matching: ids, maxDistance, count: 64 });
   if (found.length === 0) return null;
-  const here = bot.entity.position;
+  const here = bot.entity.position.clone();
   found.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
   return found[0];
 }

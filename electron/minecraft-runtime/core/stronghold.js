@@ -10,6 +10,7 @@ const { waitUntil, sleep } = require('./confirm');
 const { dimension } = require('./nether');
 const { hold } = require('./end');
 
+const FALLING = /sand|gravel|concrete_powder/;
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const flat = (v) => new Vec3(v.x, 0, v.z);
 
@@ -163,7 +164,7 @@ async function enterPortal(bot, ctx, ring) {
   const center = ring.center;
   // Stand outside the middle of one side, facing the centre.
   const sides = [[3, 0], [-3, 0], [0, 3], [0, -3]].map(([dx, dz]) => center.offset(dx, 0, dz));
-  const here = bot.entity.position;
+  const here = bot.entity.position.clone();
   sides.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
   for (const side of sides) {
     const stand = [side, side.offset(0, 1, 0)].find((p) => bot.blockAt(p)?.boundingBox === 'empty'
@@ -194,7 +195,7 @@ async function enterPortal(bot, ctx, ring) {
  * water (a stronghold under the sea is reached from the nearest shore).
  */
 function landNear(bot, center, { maxRadius = 160 } = {}) {
-  const here = bot.entity.position;
+  const here = bot.entity.position.clone();
   let best = null;
   for (let r = 0; r <= maxRadius; r += 8) {
     const n = r === 0 ? 1 : 24;
@@ -207,6 +208,8 @@ function landNear(bot, center, { maxRadius = 160 } = {}) {
         if (!b) break;
         if (b.name === 'air' || b.name === 'cave_air' || b.boundingBox === 'empty' && !/water|lava/.test(b.name) && !b.name.endsWith('leaves')) continue;
         if (/water|lava|ice|kelp|seagrass|leaves/.test(b.name) || b.boundingBox !== 'block') break;
+        // Sand and gravel cave in on a staircase dug through them.
+        if ([0, 1, 2, 3].some((d) => FALLING.test(bot.blockAt(new Vec3(x, y - d, z))?.name || ''))) break;
         const p = new Vec3(x, y + 1, z);
         const score = r * 2 + p.distanceTo(here) * 0.5;
         if (!best || score < best.score) best = { p, score };

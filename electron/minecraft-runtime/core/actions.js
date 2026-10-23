@@ -604,13 +604,19 @@ async function digStairsDown(bot, ctx, target, { maxSteps = 16 } = {}) {
     }
     const ahead = feet.offset(next[0], 0, next[1]);
     for (const p of [ahead.offset(0, 1, 0), ahead, ahead.offset(0, -1, 0)]) {
-      const b = bot.blockAt(p);
-      if (b && b.boundingBox !== 'empty') {
+      // Sand or gravel overhead falls into the cell again: dig until it stays open.
+      for (let tries = 0; tries < 8; tries += 1) {
+        const b = bot.blockAt(p);
+        if (!b || b.boundingBox === 'empty') break;
+        if (tries === 0) haltBody(bot);
         const dug = await digBlock(bot, ctx, b, { timeoutMs: 8000 });
-        if (!dug.ok) {
-          ctx.record?.('stairs_dig_failed', { block: b.name, at: `${p.x},${p.y},${p.z}`, reason: dug.reason || null });
-          return down;
+        // Unconfirmed: sand fell back in, or the server dropped the break; dig again.
+        if (dug.ok || (dug.reason === 'dig_unconfirmed' && tries < 7)) {
+          await new Promise((r) => setTimeout(r, 250));
+          continue;
         }
+        ctx.record?.('stairs_dig_failed', { block: b.name, at: `${p.x},${p.y},${p.z}`, reason: dug.reason || null });
+        return down;
       }
     }
     const into = ahead.offset(0, -1, 0);

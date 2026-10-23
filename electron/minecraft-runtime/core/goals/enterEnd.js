@@ -54,7 +54,7 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
 
   async function travel(ctx) {
     const last = memory.sightings.at(-1);
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     const sinceThrow = Math.hypot(here.x - last.at.x, here.z - last.at.z);
     // Two sightings from one line never cross: step aside before the second throw.
     if (memory.sightings.length === 1 && last.travel >= 9 && sinceThrow >= 40) return sight(ctx);
@@ -80,6 +80,7 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
     return gone >= 6 ? { ok: true } : fail(moved.ok ? 'walk_blocked' : moved.reason);
   }
 
+  const here0 = () => bot.entity.position;
   async function reachRing(ctx) {
     const ring = memory.ring;
     // Lit already: hop in.
@@ -89,11 +90,25 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
       if (result.ok) memory.entered = true;
       return result;
     }
+    // The room's silverfish spawner keeps a swarm on the bot while it fills
+    // the frames: break it first (it stands on the stairs up to the portal).
+    const spawner = Math.abs(here0().y - ring.center.y) <= 8 && !memory.spawnerSkipped
+      ? bot.findBlock({ matching: bot.registry.blocksByName.spawner?.id, maxDistance: 14, point: ring.center }) : null;
+    if (spawner) {
+      ctx.record('spawner_break', { at: at(spawner.position) });
+      if (!actions.withinReach(bot, spawner.position, 4.2)) {
+        const moved = await actions.goNear(bot, ctx, spawner.position, 2, { timeoutMs: 30000 });
+        if (!moved.ok && !actions.withinReach(bot, spawner.position, 4.4)) { memory.spawnerSkipped = true; return moved; }
+      }
+      const dug = await actions.digBlock(bot, ctx, bot.blockAt(spawner.position), { timeoutMs: 15000 });
+      if (!dug.ok) memory.spawnerSkipped = true;
+      return dug;
+    }
     const empty = ring.frames.map((f) => bot.blockAt(f.position)).filter((b) => b && !stronghold.hasEye(b));
     if (empty.length > (bot.inventory.items().filter((i) => i.name === 'ender_eye').reduce((n, i) => n + i.count, 0))) {
       return fail('not_enough_eyes', { empty: empty.length });
     }
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     empty.sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here));
     const frame = empty[0];
     if (frame.position.distanceTo(here) > 12) {
@@ -138,7 +153,7 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
     isDone: () => end.inEnd(bot),
     progress() {
       if (end.inEnd(bot)) return 100000;
-      const here = bot.entity.position;
+      const here = bot.entity.position.clone();
       let closeness = 0;
       if (memory.ring) {
         const d = here.distanceTo(memory.ring.center);

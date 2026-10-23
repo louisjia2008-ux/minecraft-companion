@@ -302,22 +302,22 @@ async function bridgeStep(bot, ctx, target, { avoidLiquids = false } = {}) {
     const placed = await waitUntil(() => bot.blockAt(ahead.offset(0, -1, 0))?.boundingBox === 'block', { timeoutMs: 1500, signal: ctx.signal });
     if (!placed) return fail('bridge_place_failed');
   }
-  // Step onto it in short pulses, stopping on its centre: a pulse moves at
-  // most a quarter block, so the far edge is never reached.
+  // Step onto it sneaking, stopping on its centre: the physics never lets a
+  // sneaking body walk off an edge, whatever the timing.
   const centre = ahead.offset(0.5, 0, 0.5);
   try {
     bot.setControlState('sprint', false);
-    for (let i = 0; i < 40; i += 1) {
+    bot.setControlState('sneak', true);
+    for (let i = 0; i < 60; i += 1) {
       const p = bot.entity.position;
       if (Math.hypot(p.x - centre.x, p.z - centre.z) < 0.3) break;
       await bot.lookAt(centre.offset(0, 1.6, 0), true);
       bot.setControlState('forward', true);
-      await sleep(60, ctx.signal);
-      bot.setControlState('forward', false);
-      await sleep(40, ctx.signal);
+      await sleep(50, ctx.signal);
     }
   } finally {
     bot.setControlState('forward', false);
+    bot.setControlState('sneak', false);
   }
   const now = bot.entity.position.floored();
   ctx.record('bridge_step', { to: `${ahead.x},${ahead.y},${ahead.z}`, ms: Date.now() - started, at: `${now.x},${now.y},${now.z}` });
@@ -612,7 +612,7 @@ function firingSpots(bot, center, target, { radii = [12, 16, 20, 26, 32, 40], ki
       }
     }
   }
-  const here = bot.entity.position;
+  const here = bot.entity.position.clone();
   return spots.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
 }
 

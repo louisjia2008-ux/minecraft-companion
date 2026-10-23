@@ -50,7 +50,7 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
 
   async function approach(ctx) {
     // From the platform (x = 100) in to about 20 blocks from the portal.
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     const flat = Math.hypot(here.x, here.z) || 1;
     const target = new Vec3(here.x / flat * 22, here.y, here.z / flat * 22);
     const stand = end.surfaceAt(bot, Math.round(target.x), Math.round(target.z));
@@ -145,7 +145,12 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
     await actions.equipBestWeapon(bot);
     const before = memory.damage;
     let swings = 0;
-    for (let i = 0; i < 30 && sitting(); i += 1) {
+    for (let i = 0; i < 36 && sitting(); i += 1) {
+      // Thrown by a wing: hands off the bucket and the look until landed.
+      if (!bot.entity.onGround) {
+        await waitUntil(() => bot.entity.onGround, { timeoutMs: 6000, signal: ctx.signal });
+        return fail('thrown_off');
+      }
       const d = bot.entities[dragon.id];
       const part = end.headPart(d);
       if (eyeAt().distanceTo(part.position) > 5.5 || !there()) {
@@ -158,7 +163,9 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       await bot.lookAt(part.position, true);
       bot.attack(part);
       swings += 1;
-      await sleep(650, ctx.signal);
+      // The wings knock back only while the dragon is not hurting (10 ticks
+      // after a hit): a hit every ~10.5 ticks keeps them from ever doing it.
+      await sleep(480, ctx.signal);
     }
     ctx.record('dragon_melee', { swings, damage: Math.round(memory.damage - before), health: end.dragonHealth(bot) });
     return swings > 0 ? { ok: true } : fail('melee_out_of_reach');
@@ -171,7 +178,7 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
    */
   async function uncage(ctx, crystal) {
     const c = crystal.position.floored();
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([x, z]) => ({ x, z,
       stand: end.surfaceAt(bot, c.x + x * 3, c.z + z * 3, { yMax: c.y - 4 }) }))
       .filter((s) => s.stand && bot.blockAt(s.stand.offset(0, -1, 0))?.name === 'end_stone')
@@ -221,15 +228,60 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
   const inShelter = () => memory.shelter && bot.entity.position.y < memory.shelter.y - 1
     && Math.hypot(bot.entity.position.x - memory.shelter.x - 0.5, bot.entity.position.z - memory.shelter.z - 0.5) < 0.8;
 
+  // The flying dragon's velocity, from its synced positions (blocks per tick).
+  const track = { p: null, t: 0, v: new Vec3(0, 0, 0) };
+  const onMove = (entity) => {
+    if (entity?.name !== 'ender_dragon') return;
+    const now = Date.now();
+    if (track.p && now - track.t >= 100) {
+      const ticks = (now - track.t) / 50;
+      track.v = entity.position.minus(track.p).scaled(1 / ticks);
+    }
+    if (!track.p || now - track.t >= 100) { track.p = entity.position.clone(); track.t = now; }
+  };
+  bot.on('entityMoved', onMove);
+
+  /**
+   * One arrow at the flying dragon when it is close and in the clear. Its
+   * body takes a quarter of the damage, but a dragon that will not land
+   * (it circles the bot in its pit) dies of these too.
+   */
+  async function shootFlying(ctx, dragon) {
+    const centre = () => {
+      const d = bot.entities[dragon.id] || dragon;
+      const p = d.position.offset(0, 2, 0);
+      const ticks = Math.min(20, p.distanceTo(bot.entity.position) / 2.6);
+      return p.plus(track.v.scaled(ticks));
+    };
+    const origin = bot.entity.position.offset(0, 1.52, 0);
+    const shot = end.aim(origin, centre(), end.ARROW);
+    if (!shot || !end.clearFlight(bot, origin, shot, centre(), end.ARROW, { radius: 2.5 })) return null;
+    const before = memory.damage;
+    const fired = await end.shootArrow(bot, ctx, centre, { drawMs: 1000 });
+    if (!fired.ok) return fired;
+    memory.arrows += 1;
+    await sleep(600, ctx.signal);
+    const hit = memory.damage > before;
+    ctx.record('dragon_shot', { hit, health: end.dragonHealth(bot) });
+    // A miss is still the fight going on, not a stall.
+    return { ok: true, waited: !hit };
+  }
+
   /** Waits for a perch in a pit near the portal, out of reach of the dragon's wings. */
   async function watch(ctx) {
+    const dragon = end.dragonOf(bot);
+    if (dragon && ![...end.PERCHED, end.DYING].includes(end.dragonPhase(bot, dragon))
+      && dragon.position.distanceTo(bot.entity.position) < 40 && memory.crystalsLeft === 0) {
+      const shot = await shootFlying(ctx, dragon);
+      if (shot) return shot;
+    }
     if (inShelter()) {
       // Recovery and survival leave a sheltered bot where it is.
       bot.companionSheltered = true;
       await sleep(500, ctx.signal);
       return { ok: true, waited: true };
     }
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     const a = Math.atan2(here.z, here.x);
     for (const r of [9, 11, 13, 8, 15]) {
       const stand = end.surfaceAt(bot, Math.round(Math.cos(a) * r), Math.round(Math.sin(a) * r));
@@ -273,7 +325,7 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
         ctx.record('pillar_descent', { steps: down.steps ?? 0, reason: down.reason || null, y: Math.floor(bot.entity.position.y) });
         return down;
       }
-      const here = bot.entity.position;
+      const here = bot.entity.position.clone();
       if (Math.hypot(here.x, here.z) > 60) return approach(ctx);
       const dragon = end.dragonOf(bot);
       const phase = end.dragonPhase(bot, dragon);
@@ -286,6 +338,7 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
         return { ok: true, waited: true };
       }
       const crystals = end.crystalsOf(bot);
+      memory.crystalsLeft = crystals.length;
       for (const c of crystals) memory.crystalsSeen.add(key(c));
       const nearest = (a, b) => a.position.distanceTo(here) - b.position.distanceTo(here);
       const open = crystals.filter((c) => !crystalBlacklist.has(key(c)) && (memory.opened.has(key(c)) || !end.caged(bot, c)))
@@ -313,6 +366,7 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       bot.companionSheltered = false;
       bot.removeListener('entityUpdate', onMeta);
       bot.removeListener('entityGone', onGone);
+      bot.removeListener('entityMoved', onMove);
     },
   };
 }

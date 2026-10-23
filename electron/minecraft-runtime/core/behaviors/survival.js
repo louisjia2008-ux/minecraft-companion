@@ -338,8 +338,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     want(state) {
       if (hidden) return 1;
       // The End is full of them and the fight cannot wait: there an angry one
-      // is fought (defend), and only hidden from when hurt.
-      if (dimensionOf(bot) === 'the_end' && state.health >= 12) return 0;
+      // is fought (defend). A bunker dug mid-fight left the bot to the dragon.
+      if (dimensionOf(bot) === 'the_end') return 0;
       return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
     },
     async run(ctx) {
