@@ -83,6 +83,8 @@ const RANGED = new Set(['skeleton', 'stray', 'bogged']);
 const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 // Piglin brutes ignore gold armour and hit for half a heart bar with their axe: keep clear of them too.
 const BRUTE_RANGE = 12;
+// One that got this close outruns the bot: turn and fight it.
+const BRUTE_FIGHT = 4;
 // Neutral mobs are left alone unless they are right next to us.
 const NEUTRAL = new Set(['enderman', 'zombified_piglin', 'piglin', 'spider', 'cave_spider']);
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
@@ -141,7 +143,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;
-    return threats(state).find((h) => h.name !== 'creeper' && !((AVOIDED.has(h.name) || h.name === 'piglin_brute') && h.distance > 2.5)
+    return threats(state).find((h) => h.name !== 'creeper' && !((AVOIDED.has(h.name) && h.distance > 2.5) || (h.name === 'piglin_brute' && h.distance > BRUTE_FIGHT))
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || (RANGED.has(h.name) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
           && state.health > t.rangedHealth && armed(state)
@@ -318,7 +320,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.DEFENSE,
     want(state) {
       const brute = threats(state).find((h) => h.name === 'piglin_brute' && h.distance <= BRUTE_RANGE);
-      if (brute) return !state.sheltered && brute.distance > 2.5 ? 1 : 0;
+      if (brute) return !state.sheltered && brute.distance > BRUTE_FIGHT ? 1 : 0;
       const raider = threats(state).find((h) => AVOIDED.has(h.name) && h.distance <= 24);
       if (raider && !danger.some((d) => Math.hypot(d.x - raider.position.x, d.z - raider.position.z) < 32)) {
         danger.push({ x: Math.round(raider.position.x), z: Math.round(raider.position.z) });

@@ -119,6 +119,13 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       m.heading = Math.atan2(home.z - here.z, home.x - here.x) + (Math.random() - 0.5);
       m.blocked = false;
     }
+    // Done with the bastion: its brutes are no company, head away from it first.
+    const bastion = memory.bastion && !tradeWork() && here.distanceTo(memory.bastion) < 80 ? memory.bastion : null;
+    if (bastion && !m.leftBastion) {
+      m.leftBastion = true;
+      m.heading = Math.atan2(here.z - bastion.z, here.x - bastion.x) + (Math.random() - 0.5) * 0.6;
+      m.blocked = false;
+    }
     if (m.heading === undefined || m.blocked) {
       m.tried = m.tried || [];
       const options = Array.from({ length: 8 }, (_, i) => (i * Math.PI) / 4).filter((a) => !m.tried.slice(-3).includes(a));
@@ -267,8 +274,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       }
     }
     actions.haltBody(bot);
-    const before = new Map(bot.inventory.items().map((i) => [i.name, 0]));
-    for (const i of bot.inventory.items()) before.set(i.name, (before.get(i.name) || 0) + i.count);
+    const totals = () => {
+      const t = new Map();
+      for (const i of bot.inventory.items()) t.set(i.name, (t.get(i.name) || 0) + i.count);
+      return t;
+    };
+    const before = totals();
+    const goldBefore = before.get('gold_ingot') || 0;
+    const known = new Set(goldOnGround(bot.entity.position, 12).map((e) => e.id));
     try {
       await bot.lookAt(piglin.position.offset(0, 0.3, 0), true);
       await bot.toss(ingot.type, null, 1);
@@ -277,30 +290,45 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return fail('toss_failed');
     }
     ctx.record('barter_offer', { piglin: piglin.id, distance: Math.round(piglin.position.distanceTo(bot.entity.position) * 10) / 10 });
-    // Taken: the ingot leaves the ground (and shows in the piglin's off-hand).
-    const taken = await waitUntil(() => goldOnGround(bot.entity.position, 8).length === 0 || structures.piglinBusy(bot.entities[piglin.id]),
-      { timeoutMs: 6000, signal: ctx.signal });
+    // The thrown ingot shows up as an item entity a tick or two later.
+    let thrown = null;
+    await waitUntil(() => { thrown = goldOnGround(bot.entity.position, 12).find((e) => !known.has(e.id)) || null; return Boolean(thrown); },
+      { timeoutMs: 2000, signal: ctx.signal });
+    const goldNow = () => totals().get('gold_ingot') || 0;
+    if (!thrown) {
+      // Never seen on the ground: count it only if it is not back in the bag after the pickup delay.
+      await sleep(2500, ctx.signal);
+      if (goldNow() >= goldBefore || goldOnGround(bot.entity.position, 12).some((e) => !known.has(e.id))) return fail('toss_unseen');
+    }
+    // Taken: the ingot leaves the ground and does not come back into the bag
+    // (the bot itself may pick it up again after two seconds).
+    const taken = await waitUntil(() => (!thrown || !bot.entities[thrown.id]) && goldNow() < goldBefore,
+      { timeoutMs: 8000, signal: ctx.signal }) && goldNow() < goldBefore;
     if (!taken) {
       blacklist.add(`piglin:${piglin.id}`, 'ignored_gold', 60000);
-      const back = goldOnGround(bot.entity.position, 8)[0];
-      if (back) await actions.collectDrops(bot, ctx, back.position, (n) => n === 'gold_ingot', { radius: 3, timeoutMs: 6000 });
+      if (thrown && bot.entities[thrown.id]) {
+        await actions.collectDrops(bot, ctx, bot.entities[thrown.id].position, (n) => n === 'gold_ingot', { radius: 3, timeoutMs: 6000 });
+      }
       return fail('gold_not_taken');
     }
-    // It looks at the gold for six seconds, then throws the loot towards the player.
-    await waitUntil(() => !structures.piglinBusy(bot.entities[piglin.id]), { timeoutMs: 10000, signal: ctx.signal });
-    await sleep(800, ctx.signal);
-    const where = bot.entities[piglin.id]?.position?.clone() || bot.entity.position.clone();
+    // Whoever took it looks at the gold for six seconds, then throws the loot towards the player.
+    const takenAt = Date.now();
+    await waitUntil(() => Date.now() - takenAt > 6500 && !structures.piglinBusy(bot.entities[piglin.id]),
+      { timeoutMs: 12000, signal: ctx.signal });
+    await sleep(1000, ctx.signal);
     memory.trades += 1;
-    await actions.collectDrops(bot, ctx, where, (n) => structures.BARTER_LOOT.has(n), { radius: 8, timeoutMs: 8000 });
-    const gained = {};
-    for (const i of bot.inventory.items()) {
-      if (i.name === 'gold_ingot') continue;
-      const had = before.get(i.name) || 0;
-      gained[i.name] = (gained[i.name] || -had) + i.count;
+    const where = bot.entities[piglin.id]?.position?.clone() || bot.entity.position.clone();
+    for (const origin of [where, bot.entity.position.clone()]) {
+      await actions.collectDrops(bot, ctx, origin, (n) => structures.BARTER_LOOT.has(n), { radius: 8, timeoutMs: 6000 });
     }
-    for (const [name, n] of Object.entries(gained)) {
-      if (n > 0) memory.barter[name] = (memory.barter[name] || 0) + n;
-      else delete gained[name];
+    const after = totals();
+    const gained = {};
+    for (const [name, n] of after) {
+      const d = n - (before.get(name) || 0);
+      if (name !== 'gold_ingot' && structures.BARTER_LOOT.has(name) && d > 0) {
+        gained[name] = d;
+        memory.barter[name] = (memory.barter[name] || 0) + d;
+      }
     }
     ctx.record('barter', { trades: memory.trades, gained });
     return { ok: true, trades: memory.trades };

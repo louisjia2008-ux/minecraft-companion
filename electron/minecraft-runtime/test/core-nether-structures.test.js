@@ -85,7 +85,9 @@ test('a piglin brute is kept away from even though the bot wears gold', () => {
   const state = (name, distance) => ({ alive: true, health: 20, food: 20, position: bot.entity.position, inventory: {},
     hostiles: [{ id: 1, name, distance, position: new Vec3(distance, 64, 0) }] });
   assert.equal(avoid.want(state('piglin_brute', 8)), 1);
-  assert.equal(defend.want(state('piglin_brute', 4)), 0, 'not fought unless right next to the bot');
+  assert.equal(defend.want(state('piglin_brute', 6)), 0, 'not fought from afar');
+  assert.equal(defend.want(state('piglin_brute', 3)), 1, 'fought once it is on the bot');
+  assert.equal(avoid.want(state('piglin_brute', 3)), 0);
   assert.equal(avoid.want(state('piglin_brute', 20)), 0);
   assert.equal(avoid.want(state('piglin', 3)), 0);
 });
