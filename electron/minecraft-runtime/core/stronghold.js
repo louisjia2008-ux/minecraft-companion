@@ -49,7 +49,8 @@ async function throwEye(bot, ctx) {
   // A surviving eye drops where it stopped and falls to the ground; pick it up.
   let drop = null;
   await waitUntil(() => {
-    drop = Object.values(bot.entities).find((e) => e.name === 'item' && !itemsBefore.has(e.id)
+    // Not filtered by itemsBefore: the drop can arrive under an id seen before.
+    drop = Object.values(bot.entities).find((e) => e.name === 'item'
       && Math.hypot(e.position.x - last.x, e.position.z - last.z) < 3 && e.position.y <= last.y + 1
       && actions.droppedItemName(e) === 'ender_eye') || null;
     return drop !== null;

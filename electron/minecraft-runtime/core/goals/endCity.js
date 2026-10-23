@@ -42,6 +42,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     const here = bot.entity.position;
     gateways.sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here));
     const gateway = gateways[0];
+    if (!blacklist.has(`tower:${posKey(gateway.position)}`)) return towerPearl(ctx, gateway);
     const spots = city.pearlSpots(bot, gateway);
     ctx.record('gateway_target', { gateway: at(gateway.position), spots: spots.length });
     if (spots.length === 0) {
@@ -60,6 +61,47 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     const jumped = await waitUntil(() => bot.entity.position.distanceTo(from) > 200, { timeoutMs: 6000, signal: ctx.signal });
     ctx.record('pearl_thrown', { gateway: at(gateway.position), from: at(from), high, through: jumped });
     if (!jumped) return fail('pearl_missed');
+    memory.gatewayUsed = true;
+    try { await bot.waitForChunksToLoad(); } catch (_) { /* re-checked next run */ }
+    await waitUntil(() => bot.entity.onGround, { timeoutMs: 5000, signal: ctx.signal });
+    return { ok: true };
+  }
+
+  /**
+   * Towers up three blocks out from the gateway to its own level and throws
+   * the pearl straight in: from there a pearl cannot clip the bedrock caps.
+   */
+  async function towerPearl(ctx, gateway) {
+    const g = gateway.position;
+    const tag = `tower:${posKey(g)}`;
+    const here = bot.entity.position;
+    const columns = [[3, 0], [-3, 0], [0, 3], [0, -3]].map(([x, z]) => end.surfaceAt(bot, g.x + x, g.z + z, { yMax: g.y - 2 }))
+      .filter((s) => s && bot.blockAt(s.offset(0, -1, 0))?.name === 'end_stone' && g.y - s.y <= 30)
+      .sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
+    if (columns.length === 0) { blacklist.add(tag, 'no_column'); return fail('no_tower_column'); }
+    const stand = columns[0];
+    const onColumn = () => { const f = bot.entity.position.floored(); return f.x === stand.x && f.z === stand.z; };
+    if (!onColumn()) {
+      const moved = await end.walkTo(bot, ctx, stand, 0, 60000);
+      if (!onColumn()) { blacklist.add(tag, moved.reason || 'not_at_column'); return moved.ok ? fail('not_at_column') : moved; }
+    }
+    const placed = await end.pillarUp(bot, ctx, g.y - 1, { maxSteps: g.y - stand.y + 2 });
+    ctx.record('gateway_tower', { gateway: at(g), placed, y: Math.floor(bot.entity.position.y) });
+    const from = bot.entity.position.clone();
+    let jumped = false;
+    if (bot.entity.position.floored().y >= g.y - 1) {
+      const thrown = await end.throwPearl(bot, ctx, g.offset(0.5, 0.5, 0.5));
+      if (thrown.ok) {
+        memory.pearls += 1;
+        jumped = await waitUntil(() => bot.entity.position.distanceTo(from) > 200, { timeoutMs: 6000, signal: ctx.signal });
+      }
+    }
+    ctx.record('pearl_thrown', { gateway: at(g), from: at(from), tower: true, through: jumped });
+    if (!jumped) {
+      blacklist.add(tag, 'missed');
+      await end.digPillarDown(bot, ctx);
+      return fail('pearl_missed');
+    }
     memory.gatewayUsed = true;
     try { await bot.waitForChunksToLoad(); } catch (_) { /* re-checked next run */ }
     await waitUntil(() => bot.entity.onGround, { timeoutMs: 5000, signal: ctx.signal });
@@ -112,6 +154,15 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     const target = here.plus(memory.heading.scaled(40));
     ctx.record('city_search', { to: at(target), explored: memory.explored });
     memory.explored += 1;
+    // On a bridge or an island's lip the pathfinder walks off the edge: keep bridging.
+    const feet = here.floored();
+    if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([x, z]) => end.overVoid(bot, feet.x + x, feet.y, feet.z + z))) {
+      const bridged = await end.bridgeToward(bot, ctx, new Vec3(target.x, feet.y, target.z), { maxSteps: 40 });
+      memory.bridged += bridged.steps || 0;
+      if ((bridged.steps || 0) > 0) return { ok: true };
+      memory.blocked = true;
+      return fail(bridged.reason || 'explore_blocked');
+    }
     const walked = await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(target.x, target.z, 4), { timeoutMs: 45000, arrived: () => true });
     if (bot.entity.position.distanceTo(here) >= 12) return { ok: true };
     // Walked to the island's edge: bridge across.

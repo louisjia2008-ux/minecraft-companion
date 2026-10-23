@@ -20,7 +20,7 @@ function installFallGuard(bot, onEvent = () => {}) {
   let armed = null;
   const groundBelow = () => {
     const p = bot.entity.position;
-    for (let d = 0; d <= 48; d += 1) {
+    for (let d = 0; d <= 160; d += 1) {
       const b = bot.blockAt(new Vec3(p.x, Math.floor(p.y) - d - 1, p.z));
       if (!b) return null;
       if (b.boundingBox === 'block') return b;
@@ -44,8 +44,9 @@ function installFallGuard(bot, onEvent = () => {}) {
     }
     if (!armed) return;
     bot.look(e.yaw, -Math.PI / 2, true).catch(() => {});
-    // The look ray reaches 4.5 blocks from the eyes; pour a tick early.
-    if (height <= 2.6 - vy * 0.5 && bot.heldItem?.name === 'water_bucket') {
+    // The server's look ray reaches 4.5 blocks from the eyes (1.62 up), so
+    // pour inside 2.8 blocks; even a fast fall spends a tick in that window.
+    if (height <= 2.8 && bot.heldItem?.name === 'water_bucket') {
       bot.activateItem();
       onEvent({ type: 'water_landing', at: Date.now(), height: Math.round(armed.from - ground.position.y) });
       armed = null;

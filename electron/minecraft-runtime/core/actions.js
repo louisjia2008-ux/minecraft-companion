@@ -607,7 +607,10 @@ async function digStairsDown(bot, ctx, target, { maxSteps = 16 } = {}) {
       const b = bot.blockAt(p);
       if (b && b.boundingBox !== 'empty') {
         const dug = await digBlock(bot, ctx, b, { timeoutMs: 8000 });
-        if (!dug.ok) return down;
+        if (!dug.ok) {
+          ctx.record?.('stairs_dig_failed', { block: b.name, at: `${p.x},${p.y},${p.z}`, reason: dug.reason || null });
+          return down;
+        }
       }
     }
     const into = ahead.offset(0, -1, 0);

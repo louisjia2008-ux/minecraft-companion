@@ -84,12 +84,13 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       crystalBlacklist.add(k, 'no_firing_spot');
       return fail('no_firing_spot');
     }
-    const stand = spots[0];
+    // A breath cloud lingers over the best spot: shoot from the next clear one.
+    const stand = spots.find((p) => !end.cloudOver(bot, p, 1.5)) || spots[0];
     ctx.record('crystal_target', { crystal: `${Math.round(target.x)},${Math.round(target.y)},${Math.round(target.z)}`,
       stand: `${stand.x},${stand.y},${stand.z}`, options: spots.length });
     const moved = await end.walkTo(bot, ctx, stand, 1, 60000);
     if (!moved.ok && bot.entity.position.distanceTo(stand) > 4) {
-      spots.shift();
+      spots.splice(spots.indexOf(stand), 1);
       return moved;
     }
     for (let i = 0; i < 4; i += 1) {
@@ -104,7 +105,7 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       return { ok: true };
     }
     // Four misses from here: the aim is off from this spot; try the next one.
-    spots.shift();
+    spots.splice(spots.indexOf(stand), 1);
     return fail('crystal_missed');
   }
 
@@ -294,7 +295,9 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
         return shootCrystal(ctx, open[0]);
       }
       const cagedLeft = crystals.filter((c) => !memory.opened.has(key(c)) && !crystalBlacklist.has(`cage:${key(c)}`)).sort(nearest);
-      if (cagedLeft.length) {
+      // Up a tower the dragon's wings throw the bot off: only climb while it is away.
+      const away = (c) => !dragon || dragon.position.distanceTo(c.position) > 60;
+      if (cagedLeft.length && away(cagedLeft[0])) {
         if (inShelter()) return leave(ctx);
         return uncage(ctx, cagedLeft[0]);
       }

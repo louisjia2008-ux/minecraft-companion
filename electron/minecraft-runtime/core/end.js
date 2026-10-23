@@ -550,6 +550,14 @@ function caged(bot, crystal) {
   return false;
 }
 
+/** Lingering breath clouds (the dragon's breath and fireballs) over `p`, with `margin` to spare. */
+function cloudOver(bot, p, margin = 1) {
+  const index = bot.registry.entitiesByName.area_effect_cloud?.metadataKeys?.indexOf('radius') ?? -1;
+  return Object.values(bot.entities).some((e) => e.name === 'area_effect_cloud' && e.position
+    && Math.hypot(e.position.x - p.x - 0.5, e.position.z - p.z - 0.5) <= (Number(e.metadata?.[index]) || 3) + margin
+    && Math.abs(e.position.y - p.y) <= 3);
+}
+
 /** Exit portal lit: the server has counted the dragon as killed. */
 // Checked every brain tick: a direct look at the portal's few columns, cached.
 let litCache = { at: 0, bot: null, value: false };
@@ -628,6 +636,6 @@ async function walkTo(bot, ctx, p, range = 1, timeoutMs = 60000) {
 
 module.exports = {
   inEnd, ARROW, PEARL, flightInfo, bridgeStep, bridgeToward, descendSpiral, stranded, digShelter, leaveShelter, pillarUp, digPillarDown, direction, fly, aim, clearFlight, shootArrow, throwPearl, hold, overVoid, applyEndMovements,
-  wearArmor, dragonOf, dragonPhase, dragonHealth, crystalsOf, caged, exitPortalLit, surfaceAt, firingSpots, headAim, headPosition, headPart,
+  wearArmor, dragonOf, dragonPhase, dragonHealth, crystalsOf, caged, cloudOver, exitPortalLit, surfaceAt, firingSpots, headAim, headPosition, headPart,
   walkTo, PERCHED, DYING, waitUntil, goals,
 };
