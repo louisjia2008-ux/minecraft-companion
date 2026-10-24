@@ -232,6 +232,17 @@ const NEVER_BREAK = ['nether_gold_ore', 'gilded_blackstone', 'gold_block', 'ches
  * on every cell next to lava or fire, never stand on magma, never dig gold.
  * Returns a function that restores the overworld settings.
  */
+const LAVA_STEP_RESERVE = 16;
+/**
+ * Blocks to bridge and tower with in the nether: netherrack, which every walk
+ * here digs up. Cobblestone only once the netherrack is gone, and never the
+ * last 16: those are the steps out of a lava sea.
+ */
+function netherScaffolding(bot) {
+  const count = (name) => (bot.inventory?.items?.() || []).filter((i) => i.name === name).reduce((n, i) => n + (i.count || 1), 0);
+  const names = count('netherrack') >= 4 || count('cobblestone') <= LAVA_STEP_RESERVE ? ['netherrack'] : ['netherrack', 'cobblestone'];
+  return names.map((n) => bot.registry.itemsByName?.[n]?.id).filter(Number.isInteger);
+}
 function applyNetherMovements(bot) {
   const m = bot.pathfinder?.movements;
   if (!m || m.companionNether) return () => {};
@@ -242,9 +253,7 @@ function applyNetherMovements(bot) {
   // Netherrack breaks in an instant, so plain paths tunnel straight through
   // hills: one long walk wore out an iron pickaxe. Walk around when there is a way.
   m.digCost = 6;
-  // Bridge and tower with netherrack, which every walk here digs up; the
-  // cobblestone brought along is kept for steps out of a lava sea.
-  m.scafoldingBlocks = ['netherrack'].map((n) => bot.registry.itemsByName?.[n]?.id).filter(Number.isInteger);
+  m.scafoldingBlocks = netherScaffolding(bot);
   for (const name of NEVER_BREAK) {
     const id = bot.registry.blocksByName[name]?.id;
     if (Number.isInteger(id)) m.blocksCantBreak.add(id);
@@ -285,6 +294,7 @@ function lavaNear(bot, range = 2) {
 }
 
 module.exports = {
+  netherScaffolding,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, travel, leavePortal,
   applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };

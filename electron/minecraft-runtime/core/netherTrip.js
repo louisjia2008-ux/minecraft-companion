@@ -29,6 +29,9 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
 
   function enterNetherMode() {
     if (!restoreMovements) restoreMovements = nether.applyNetherMovements(bot);
+    // What it can build with changes as it digs and places.
+    const m = bot.pathfinder?.movements;
+    if (m?.companionNether) m.scafoldingBlocks = nether.netherScaffolding(bot);
   }
   function leaveNetherMode() {
     restoreMovements?.();

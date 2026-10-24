@@ -27,9 +27,9 @@ async function withClimbing(bot, targetY, run) {
   if (!movements || !Number.isFinite(targetY) || targetY - bot.entity.position.y <= 3 || !underground(bot)) return run();
   const saved = { towers: movements.allow1by1towers, scaffold: movements.scafoldingBlocks };
   movements.allow1by1towers = true;
-  // In the nether, netherrack: the cobblestone is kept for steps out of lava.
-  movements.scafoldingBlocks = (movements.companionNether ? ['netherrack'] : CLIMB_BLOCKS)
-    .map((name) => bot.registry.itemsByName[name]?.id).filter(Number.isInteger);
+  // In the nether, mostly netherrack: some cobblestone is kept for steps out of lava.
+  movements.scafoldingBlocks = movements.companionNether ? require('./nether').netherScaffolding(bot)
+    : CLIMB_BLOCKS.map((name) => bot.registry.itemsByName[name]?.id).filter(Number.isInteger);
   try {
     return await run();
   } finally {

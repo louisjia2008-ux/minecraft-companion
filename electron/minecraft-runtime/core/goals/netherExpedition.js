@@ -164,8 +164,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (!m) return run();
     const saved = { towers: m.allow1by1towers, blocks: m.scafoldingBlocks, placeCost: m.placeCost };
     m.allow1by1towers = true;
-    // Netherrack only: cobblestone is the reserve for climbing out of lava.
-    m.scafoldingBlocks = ['netherrack'].map((n) => bot.registry.itemsByName[n]?.id).filter(Number.isInteger);
+    m.scafoldingBlocks = nether.netherScaffolding(bot);
     m.placeCost = 4;
     try {
       return await run();

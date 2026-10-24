@@ -65,6 +65,10 @@ test('nether movements are applied once and fully restored', () => {
   assert.ok(movements.blocksCantBreak.has(7) && movements.blocksCantBreak.has(8));
   assert.equal(movements.exclusionAreasStep.length, 2);
   assert.deepEqual(movements.scafoldingBlocks, [21], 'cobblestone is kept for lava steps');
+  bot.inventory = { items: () => [{ name: 'cobblestone', count: 40 }] };
+  assert.deepEqual(nether.netherScaffolding(bot), [21, 20], 'cobblestone above the reserve once netherrack runs out');
+  bot.inventory = { items: () => [{ name: 'cobblestone', count: 16 }] };
+  assert.deepEqual(nether.netherScaffolding(bot), [21]);
   nether.applyNetherMovements(bot)();
   assert.equal(movements.exclusionAreasStep.length, 2, 'a second apply is a no-op');
   restore();
