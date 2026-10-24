@@ -274,3 +274,46 @@ const endFullNatural = {
 };
 
 module.exports.endFullNatural = endFullNatural;
+
+// ---- the water-bucket landing ----------------------------------------------
+
+// Three falls from 20, 35 and 60 blocks over the main island: the fall guard
+// alone (no goal running) must pour the bucket in time every time.
+const endWaterLanding = {
+  name: 'end-water-landing',
+  description: 'In the End with a water bucket and no goal: dropped from 20, 35 and 60 blocks; must survive all three.',
+  serverProperties: {
+    'level-type': 'minecraft:flat', 'generator-settings': JSON.stringify(FLAT_GENERATOR),
+    difficulty: 'easy', 'view-distance': 8,
+  },
+  serverPerRun: (run, seed) => ({ 'level-seed': seed + run * 101 }),
+  autonomous: true,
+  defaultDifficulty: 'easy',
+  timeoutMs: 5 * 60 * 1000,
+  setupTimeoutMs: 60000,
+  async prepare({ server, username, difficulty = 'easy' }) {
+    for (const command of baseCommands(username, difficulty)) server.command(command);
+    if (!(await enterEndByPortal(server, username))) throw new Error('not in the End');
+    await wait(5000);
+    server.command('execute in minecraft:the_end run kill @e[type=minecraft:ender_dragon]');
+    return { commands: [`give ${username} water_bucket 1`, `give ${username} cobblestone 16`], details: {} };
+  },
+  start: () => null,
+  async onTick({ server, username, state, elapsedMs, write }) {
+    const drops = [20, 35, 60];
+    state.next = state.next ?? 0;
+    if (state.next >= drops.length || elapsedMs < 15000 + state.next * 25000) return;
+    // Over open ground away from the pillars and the portal.
+    const ground = 62;
+    server.command(`execute in minecraft:the_end run tp ${username} 20.5 ${ground + drops[state.next]} 20.5`);
+    write('drop', { height: drops[state.next] });
+    state.next += 1;
+  },
+  finishWhen: ({ state, elapsedMs }) => (state.next ?? 0) >= 3 && elapsedMs > 15000 + 3 * 25000,
+  async verify({ server, username, deaths }) {
+    const dimension = await playerDimension(server, username);
+    return { pass: dimension === 'the_end' && !deaths, details: { dimension, summary: `dim=${dimension}` } };
+  },
+};
+
+module.exports.endWaterLanding = endWaterLanding;
