@@ -304,7 +304,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       try {
         await bot.equip(potion, 'hand');
         await bot.consume();
-      } catch (_) { /* confirmed by the effect below */ }
+      } catch { /* confirmed by the effect below */ }
       const ok = await waitUntil(() => hasEffect(bot, 'FireResistance'), { timeoutMs: 2000, signal: ctx.signal });
       return ok ? { ok: true } : { ok: false, reason: 'drink_unconfirmed' };
     },
@@ -325,7 +325,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       try {
         await bot.equip(apple, 'hand');
         await bot.consume();
-      } catch (_) { /* confirmed by the effect below */ }
+      } catch { /* confirmed by the effect below */ }
       const ok = await waitUntil(() => hasEffect(bot, 'Regeneration'), { timeoutMs: 2000, signal: ctx.signal });
       return ok ? { ok: true } : { ok: false, reason: 'eat_unconfirmed' };
     },
@@ -377,7 +377,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           const wall = bot.blockAt(step.wall);
           await bot.lookAt(step.wall.offset(0.5, 0.5, 0.5).plus(step.cell.minus(step.wall).scaled(0.5)), true);
           await bot.placeBlock(wall, step.cell.minus(step.wall));
-        } catch (_) { /* checked below */ }
+        } catch { /* checked below */ }
         const placed = bot.blockAt(step.cell)?.boundingBox === 'block';
         ctx.record('lava_step', { placed });
         if (placed) await swimTo(ctx, step.cell.offset(0.5, 1.2, 0.5), out, 50);

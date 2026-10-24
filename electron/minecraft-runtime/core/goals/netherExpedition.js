@@ -311,7 +311,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   }
 
   const goldOnGround = (origin, radius) => Object.values(bot.entities).filter((e) => e.name === 'item'
-    && near(e, origin, radius) && (() => { try { return e.getDroppedItem?.()?.name === 'gold_ingot'; } catch (_) { return false; } })());
+    && near(e, origin, radius) && (() => { try { return e.getDroppedItem?.()?.name === 'gold_ingot'; } catch { return false; } })());
 
   /** Tosses one gold ingot to a piglin and picks up what it throws back. */
   async function barter(ctx, piglin) {
