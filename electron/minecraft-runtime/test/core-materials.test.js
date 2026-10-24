@@ -52,7 +52,7 @@ test('redstone needs an iron pickaxe; quartz is gathered in the Nether', () => {
 
 test('every machine part can be planned from an empty inventory', () => {
   for (const key of ['bucket', 'water_bucket', 'lava_bucket', 'hopper', 'redstone', 'stone', 'glass', 'sugar_cane',
-    'redstone_torch', 'repeater', 'piston', 'observer', 'bow', 'dispenser']) {
+    'redstone_torch', 'repeater', 'piston', 'observer', 'bow', 'dispenser', 'obsidian', 'flint_and_steel']) {
     const step = planNext({ requirements: [{ key, count: 1 }], inventory: {} });
     assert.notEqual(step.kind, 'unplannable', `${key}: ${JSON.stringify(step)}`);
   }
@@ -258,14 +258,78 @@ test('a requirement already in the chest is done after one look', async () => {
   assert.equal(sim.log.stores, 1);
 });
 
-test('quartz outside the Nether fails with a clear reason instead of wandering', async () => {
+test('obsidian is cast with a diamond pickaxe, a water bucket and a lava bucket', () => {
+  const obsidian = [{ key: 'obsidian', count: 10 }];
+  const table = { crafting_table: true };
+  const pick = planNext({ requirements: obsidian, inventory: { diamond: 3, stick: 2 }, stations: table });
+  assert.deepEqual([pick.kind, pick.item], ['craft', 'diamond_pickaxe']);
+  // An iron pickaxe does not mine obsidian.
+  const mine = planNext({ requirements: obsidian, inventory: { iron_pickaxe: 1, stick: 2 }, stations: table });
+  assert.deepEqual([mine.kind, mine.key], ['gather', 'diamond']);
+  const water = planNext({ requirements: obsidian, inventory: { diamond_pickaxe: 1, bucket: 2 } });
+  assert.deepEqual([water.kind, water.liquid], ['fill', 'water']);
+  const lava = planNext({ requirements: obsidian, inventory: { diamond_pickaxe: 1, bucket: 1, water_bucket: 1 } });
+  assert.deepEqual([lava.kind, lava.liquid], ['fill', 'lava']);
+  const cast = planNext({ requirements: obsidian, inventory: { diamond_pickaxe: 1, lava_bucket: 1, water_bucket: 1, obsidian: 3 } });
+  assert.deepEqual([cast.kind, cast.key, cast.count], ['cast', 'obsidian', 7]);
+});
+
+test('flint and steel takes an iron ingot and flint, which gravel only sometimes drops', () => {
+  const step = planNext({ requirements: [{ key: 'flint_and_steel', count: 1 }], inventory: { iron_ingot: 1 } });
+  assert.deepEqual([step.kind, step.key, step.rare], ['gather', 'flint', true]);
+  assert.ok(step.blocks('gravel'));
+  const craft = planNext({ requirements: [{ key: 'flint_and_steel', count: 1 }], inventory: { iron_ingot: 1, flint: 1 } });
+  assert.deepEqual([craft.kind, craft.item, craft.table], ['craft', 'flint_and_steel', false]);
+});
+
+// One run of the goal straight from its run(), with the steps it planned.
+async function runOnceWith(sim, goal) {
+  const records = [];
+  const ctx = { perceive: sim.perceive, record: (type, data) => records.push({ type, ...data }), signal: new AbortController().signal };
+  const result = await goal.run(ctx);
+  return { result, records, steps: records.filter((r) => r.type === 'plan_step') };
+}
+
+function quartzSim(inventory) {
   const sim = simulate({ failRate: 0 });
-  Object.assign(sim.inventory, { iron_pickaxe: 1, cobblestone: 6, redstone: 2 });
+  Object.assign(sim.bot, { registry: { blocksByName: {} }, findBlocks: () => [] });
+  sim.bot.inventory.slots = [];
+  Object.assign(sim.inventory, inventory);
   sim.world.set('1,0,0', 'crafting_table');
   const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'observer', count: 1 }],
     stations: STATIONS, skills: sim.skills, actions: sim.actions });
-  const { events } = await runGoal(sim, goal, { limit: 400 });
-  const failed = events.find((e) => e.type === 'goal_failed');
-  assert.ok(failed);
-  assert.ok(failed.reasons.every((r) => r === 'needs_dimension:the_nether'), JSON.stringify(failed.reasons));
+  goal.memory.chest = {};
+  return { sim, goal };
+}
+
+test('quartz with no portal around first gathers the frame: obsidian, corners, flint and steel', async () => {
+  const { sim, goal } = quartzSim({ iron_pickaxe: 1, cobblestone: 6, redstone: 2, diamond_pickaxe: 1, water_bucket: 1, lava_bucket: 1 });
+  const first = await runOnceWith(sim, goal);
+  assert.deepEqual(first.steps.map((s) => [s.kind, s.key, s.for]), [['cast', 'obsidian', 'obsidian']]);
+  // Kit in the bag: the trip itself starts (and here finds no flat ground for a portal).
+  Object.assign(sim.inventory, { obsidian: 10, cobblestone: 10, flint_and_steel: 1, iron_sword: 1 });
+  const trip = await runOnceWith(sim, goal);
+  assert.deepEqual(trip.steps.map((s) => [s.kind, s.key]), [['gather', 'quartz']]);
+  assert.equal(trip.result.reason, 'no_portal_site');
+  assert.equal(goal.memory.trip.target, 1);
+});
+
+test('in the Nether the goal only runs the trip, never walks to the chest', async () => {
+  const { sim, goal } = quartzSim({ iron_pickaxe: 1 });
+  sim.bot.game.dimension = 'the_nether';
+  let walked = false;
+  sim.actions.goNear = async () => { walked = true; return { ok: true }; };
+  sim.actions.goTo = async () => ({ ok: false, reason: 'NoPath' });
+  sim.skills.gatherOne = async () => ({ ok: false, reason: 'no_target_in_range' });
+  const { result, steps } = await runOnceWith(sim, goal);
+  assert.equal(steps.length, 0);
+  assert.ok(goal.memory.trip);
+  assert.equal(result.ok, false);
+  assert.equal(walked, false);
+  // Badly hurt with nothing to eat: the trip heads home (here: no portal known to head for).
+  sim.bot.health = 5;
+  sim.actions.pickFood = () => null;
+  const hurt = await runOnceWith(sim, goal);
+  assert.ok(hurt.records.some((r) => r.type === 'retreat'));
+  assert.equal(hurt.result.reason, 'nether_portal_lost');
 });

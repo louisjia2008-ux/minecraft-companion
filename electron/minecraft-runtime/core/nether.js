@@ -295,6 +295,6 @@ function lavaNear(bot, range = 2) {
 
 module.exports = {
   netherScaffolding,
-  dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, travel, leavePortal,
+  dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
   applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };

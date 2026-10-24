@@ -106,6 +106,18 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
     return memory.netherPortal;
   }
 
+  /** The obsidian frame whose bottom interior holds `cell`, or null. */
+  function frameAround(cell) {
+    for (const axis of ['x', 'z']) {
+      for (const u of [1, 2]) {
+        const base = axis === 'x' ? cell.offset(-u, -1, 0) : cell.offset(0, -1, -u);
+        const frame = nether.portalFrame(base, axis);
+        if (frame.cells.every((c) => c.corner || bot.blockAt(c.pos)?.name === 'obsidian')) return { base, axis };
+      }
+    }
+    return null;
+  }
+
   /** One nether step towards home: walk back to the arrival portal, then go through. */
   async function toOverworld(ctx) {
     const portal = netherPortal();
@@ -118,6 +130,15 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
     if ((memory.homeMisses || 0) >= 2 && Math.hypot(bot.entity.position.x - portal.x, bot.entity.position.z - portal.z) > 2) {
       ctx.record('portal_column', { misses: memory.homeMisses });
       await actions.goTo(bot, ctx, new goals.GoalNearXZ(portal.x, portal.z, 1), { timeoutMs: 30000, arrived: () => true });
+    }
+    // A ghast's blast puts a portal out; the frame stays. Light it again
+    // (the corners do not matter to a portal, only the ten obsidian).
+    if (bot.blockAt(portal)?.name !== 'nether_portal') {
+      const frame = frameAround(portal);
+      if (frame) {
+        ctx.record('portal_relight', { portal: `${portal.x},${portal.y},${portal.z}` });
+        return nether.ignite(bot, ctx, nether.portalFrame(frame.base, frame.axis));
+      }
     }
     const result = await goThrough(ctx, portal);
     memory.homeMisses = result.ok ? 0 : (memory.homeMisses || 0) + 1;

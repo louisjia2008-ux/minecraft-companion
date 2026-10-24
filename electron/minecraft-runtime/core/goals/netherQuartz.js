@@ -13,6 +13,7 @@ const nether = require('../nether');
 const { createBlacklist } = require('../blacklist');
 const { createPortalTrip } = require('../netherTrip');
 const { findStructure } = require('../netherStructures');
+const { sleep } = require('../confirm');
 
 const isQuartz = (n) => n === 'quartz';
 const isQuartzOre = (n) => n === 'nether_quartz_ore';
@@ -20,6 +21,10 @@ const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 // Blazes and wither skeletons spawn in and around a fortress, and a portal
 // can open right beside one. Quartz is everywhere else: mine away from it.
 const FORTRESS_BERTH = 40;
+// Hurt in the Nether with nothing to eat: home to heal before going on.
+const RETREAT_HEALTH = 8;
+// Back in the overworld, fed: wait to heal this far before going through again.
+const READY_HEALTH = 16;
 
 function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
@@ -31,17 +36,28 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
   async function overworldStep(ctx, state) {
     trip.leaveNetherMode();
     if (quartz(state) >= count) return { ok: true };
+    // Nothing to mine quartz with: going through would only mean coming back.
+    if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
+    // Health comes back on a full stomach; the Nether is no place to wait for it.
+    if (bot.health < READY_HEALTH && bot.food >= 18) {
+      ctx.record('rest', { health: Math.round(bot.health) });
+      await sleep(5000, ctx.signal);
+      return { ok: true, resting: true };
+    }
     return trip.toNether(ctx, state);
   }
 
   async function netherStep(ctx, state) {
     trip.enterNetherMode();
     trip.netherPortal();
-    if (quartz(state) >= count) {
+    // Badly hurt with nothing to eat, or the pickaxe worn out: home, and back when fit.
+    const hasPick = bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'));
+    const retreat = !hasPick || (bot.health <= RETREAT_HEALTH && !actions.pickFood?.(bot));
+    if (quartz(state) >= count || retreat) {
+      if (retreat) ctx.record('retreat', { health: Math.round(bot.health), pickaxe: hasPick });
       if (!memory.netherPortal) return fail('nether_portal_lost');
-      return trip.goThrough(ctx, memory.netherPortal);
+      return trip.toOverworld(ctx);
     }
-    if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
     const home = memory.netherPortal;
     if (!memory.fortress) {
       const found = findStructure(bot, 'fortress');
