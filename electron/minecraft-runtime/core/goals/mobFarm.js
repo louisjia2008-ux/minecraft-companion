@@ -20,7 +20,7 @@ const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const { createMobFarm } = require('../blueprints/mobFarm');
 const { FACINGS } = require('../blueprints/cobbleGenerator');
-const { waitUntil } = require('../confirm');
+const { waitUntil, sleep, abortError } = require('../confirm');
 
 const LIQUID = new Set(['water', 'lava', 'bubble_column']);
 const GRAVITY = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|.*_concrete_powder)$/;
@@ -163,6 +163,40 @@ function createMobFarmGoal({ bot, anchor = null, facing = 'east', count = 4,
     return result;
   }
 
+  // Recover only the unfinished collector cell, without chasing animals or
+  // treating a successful attack packet as a cleared placement cell.
+  async function clearCollectorBat(ctx, position) {
+    const target = v(position);
+    const overlaps = (entity) => entity && defaultSkills.entityInside({ entities: { target: entity } }, target);
+    const candidate = (entity) => entity?.name === 'bat' && entity.isValid !== false && overlaps(entity);
+    if (typeof bot.attack !== 'function' || typeof bot.lookAt !== 'function'
+      || typeof bot.entityAtCursor !== 'function' || typeof bot.world?.raycast !== 'function') return false;
+    const eye = () => bot.entity.position.offset(0, bot.entity.eyeHeight || 1.62, 0);
+    const aim = (entity) => entity.position.offset(0, (entity.height || 0.9) / 2, 0);
+    const near = (entity) => candidate(entity) && eye().distanceTo(aim(entity)) <= 3;
+    const bat = Object.values(bot.entities).filter(near)
+      .sort((a, b) => eye().distanceTo(aim(a)) - eye().distanceTo(aim(b)))[0];
+    if (!bat) return false;
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    await bot.lookAt(aim(bat), true);
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    // Re-read after aiming: the bat may already have left, or another creature
+    // may stand in the ray. The native cursor must still identify this bat.
+    const current = bot.entities[bat.id];
+    if (!near(current)) return false;
+    const start = eye();
+    const delta = aim(current).minus(start);
+    const distance = delta.norm();
+    if (distance === 0 || bot.world.raycast(start, delta.scaled(1 / distance), distance)
+      || bot.entityAtCursor(3)?.id !== current.id) return false;
+    bot.attack(current);
+    ctx.record('mob_collector_clear', { target: key(position), entity: current.id, action: 'hit_bat' });
+    // Exactly one native hit per recovery, with the ordinary sword cooldown.
+    // No synthetic kill/drop/progress credit is granted, even if it vanishes.
+    await sleep(625, ctx.signal);
+    return !defaultSkills.entityInside(bot, target);
+  }
+
   async function collect(ctx) {
     const f = memory.farm;
     if (!inStand()) {
@@ -227,9 +261,12 @@ function createMobFarmGoal({ bot, anchor = null, facing = 'east', count = 4,
         const part = s.nextPart;
         if (!isAir(blockAt(part.position))) return dig(ctx, part.position); // wrong block or facing
         const toward = new Vec3(part.against.x - part.position.x, part.against.y - part.position.y, part.against.z - part.position.z);
-        const result = await skills.placeAt(bot, ctx, part.position, (n) => n === part.block, {
+        const place = () => skills.placeAt(bot, ctx, part.position, (n) => n === part.block, {
           faces: [toward], sneak: Boolean(part.sneak), verify: () => partOk(part),
         });
+        let result = await place();
+        if (part.key === 'hopper' && result.reason === 'cell_occupied_by_entity'
+          && await clearCollectorBat(ctx, part.position)) result = await place();
         ctx.record('device_part', { part: part.key, ok: result.ok, reason: result.reason, facing: facingOf(blockAt(part.position)) });
         return result;
       }

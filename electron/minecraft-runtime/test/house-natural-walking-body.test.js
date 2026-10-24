@@ -95,11 +95,14 @@ test('fresh facts require shape/state evidence; a remembered plant name alone is
   const f=fixture('leaf_litter',origins[0]),body=graph.inspectSurfaceBody(f.bot),fact=body.cells.find(c=>c.name==='leaf_litter');
   assert.equal(isNaturalWalkingBodyFact(fact),true);assert.equal(isNaturalWalkingBodyFact({...fact,shapes:null}),false);assert.equal(isNaturalWalkingBodyFact({...fact,boundingBox:null}),false);assert.equal(isNaturalWalkingBodyFact({...fact,stateId:null}),false);
 });
-test('camp actual anchor can stand in plants while all ten stored facility targets still require AIR',async()=>{
+test('camp permits replaceable plants but rejects a foreign container at a stored facility target',async()=>{
   const f=fixture('short_grass',origins[0]),bounds=[{minX:100,maxX:110,minY:0,maxY:150,minZ:100,maxZ:110}];
   const first=site.inspectNaturalSiteSearchCamp({bot:f.bot,anchor:origins[0],constructionBounds:bounds,blockAt:p=>f.bot.blockAt(new Vec3(p.x,p.y,p.z)),assertActive:f.active});assert.equal(first.valid,true);
   const target=first.camp.stations.crafting_table,read=f.bot.blockAt;f.bot.blockAt=q=>key(q.floored())===key(target)?block('fern',q.floored()):read(q);
-  const after=site.inspectNaturalSiteSearchCamp({bot:f.bot,anchor:origins[0],camp:first.camp,constructionBounds:bounds,blockAt:p=>f.bot.blockAt(new Vec3(p.x,p.y,p.z)),assertActive:f.active});assert.equal(after.valid,false);assert.equal(after.camp,undefined);
+  const after=site.inspectNaturalSiteSearchCamp({bot:f.bot,anchor:origins[0],camp:first.camp,constructionBounds:bounds,blockAt:p=>f.bot.blockAt(new Vec3(p.x,p.y,p.z)),assertActive:f.active});assert.equal(after.valid,true);assert.deepEqual(after.camp,first.camp);
+  assert.equal(f.writes.length,0,'A reservation cannot clear plants or authorize placement');
+  f.bot.blockAt=q=>key(q.floored())===key(target)?block('chest',q.floored()):read(q);
+  const foreign=site.inspectNaturalSiteSearchCamp({bot:f.bot,anchor:origins[0],camp:first.camp,constructionBounds:bounds,blockAt:p=>f.bot.blockAt(new Vec3(p.x,p.y,p.z)),assertActive:f.active});assert.equal(foreign.valid,false);assert.equal(foreign.camp,undefined);
 });
 for(const mode of ['foreign','paused'])test(`owner ${mode} in a fresh plant body read produces no graph or reservation writes`,async()=>{
   const f=fixture('short_grass',origins[0]),read=f.bot.blockAt;let saves=0,calls=0,changed=false;

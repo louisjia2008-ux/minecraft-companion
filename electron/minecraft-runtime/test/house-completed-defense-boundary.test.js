@@ -1,7 +1,7 @@
 'use strict';
 // Production boundary closure with modeled completed-frame authority; actor
 // movement is installed native Physics. Not Java combat acceptance.
-const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),{Vec3}=require('vec3'),{goals}=require('mineflayer-pathfinder');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),{goals}=require('mineflayer-pathfinder');
 const filename=path.join(__dirname,'house-surface-graph.test.js'),source=fs.readFileSync(filename,'utf8'),native=new Module(filename,module);native.filename=filename;native.paths=Module._nodeModulePaths(__dirname);native._compile(source.slice(0,source.indexOf('\nfor(const unfinished'))+'\nmodule.exports={fixture};',filename);
 const host=fs.readFileSync(path.join(__dirname,'../vendor/server/minecraftTaskAgent.js'),'utf8'),start=host.indexOf('    let pendingBoundaryDefense=null,graphQueryState=null;'),end=host.indexOf("    recordTaskDiagnostic(ownerTask,'house_graph_query_native_threats'",start),callback=host.slice(start,end);
 for(const mode of ['fight','escape','failed','foreign','pause'])test(`world147 completed defense records actual graph boundary only for original successful owner: ${mode}`,async t=>{

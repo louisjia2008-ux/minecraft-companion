@@ -30,6 +30,9 @@ function fixture(t,options={}) {
    width:.6,height:1.8,eyeHeight:1.62,yaw:0,pitch:0,effects:{},attributes:{},isInWater:false,isInLava:false,
    isInWeb:false,isCollidedHorizontally:false,isCollidedVertically:true,elytraFlying:false}});
  const slots=Array(46).fill(null);slots[36]=new Item(registry.itemsByName[options.nested||options.hardClearance?'wooden_pickaxe':'iron_pickaxe'].id,1);slots[37]=new Item(registry.itemsByName.stick.id,16);
+ // This fixture isolates tool/route nesting in an explicitly pre-lit quarry;
+ // production torch crafting/placement has separate native contract tests.
+ if(options.nested)slots[38]=new Item(registry.itemsByName.torch.id,32);
  if(options.defender)bot.entities[22]={id:22,name:'zombie',type:'hostile',entityType:registry.entitiesByName.zombie.id,
   position:new Vec3(128,64,128),height:1.95,isValid:true};
  bot.attack=entity=>{attacks.push({position:clone(bot.entity.position),profile:bot.pathfinder.movements});
@@ -37,8 +40,9 @@ function fixture(t,options={}) {
  bot.inventory={slots,items:()=>slots.filter(Boolean),count:type=>slots.filter(i=>i?.type===type).reduce((n,i)=>n+i.count,0),emptySlotCount:()=>slots.slice(9,45).filter(i=>!i).length};
  bot.heldItem=slots[36];
  bot.blockAt=raw=>{const p=raw.floored();if(unknown&&p.x>=7)return null;
-  const name=cells.get(key(p))??(p.y>=64?'air':p.y>=61?(!options.allSand&&(options.stableCamp||p.x>=4)?'sandstone':'sand'):'stone');
-  return Object.assign(Block.fromStateId(registry.blocksByName[name].defaultState),{position:p});};
+  const stable=options.stableCamp||(options.stableAwayFromCamp?Math.max(Math.abs(p.x),Math.abs(p.z))>=4:p.x>=4);
+  const name=cells.get(key(p))??(p.y>=64?'air':p.y>=61?(!options.allSand&&stable?'sandstone':'sand'):'stone');
+  return Object.assign(Block.fromStateId(registry.blocksByName[name].defaultState),{position:p,...(options.nested?{light:12}:{})});};
  bot.findBlocks=query=>{
   const origin=query.point||bot.entity.position,radius=query.maxDistance||16;
   const matches=b=>b&&(typeof query.matching==='function'?query.matching(b):(Array.isArray(query.matching)?query.matching:[query.matching]).includes(b.type));
@@ -114,7 +118,9 @@ function fixture(t,options={}) {
   heldItem:bot.heldItem?.name,targetDig:bot.targetDigBlock?.name,progress:task.progressText,inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
   diggingPackets:packets.filter(p=>p.name==='block_dig').slice(-6),quarry:task.materialSupply.quarry}));
   clearInterval(timer);clearTimeout(digDefenseTimer);bot.stopDigging();agent.__testSetReconnectTask(null);agent.detachBot('manual_disconnect');agent.dispose();for(const k of Object.keys(env)){if(previous[k]===undefined)delete process.env[k];else process.env[k]=previous[k];}fs.rmSync(dir,{recursive:true,force:true});});
- return{agent,bot,task,cells,moves,digs,equips,packets,poses,crafts,attacks,digDefense:()=>digDefending,ticks:()=>ticks,setUnknown:()=>{unknown=true;},run:(amount,name='cobblestone')=>agent.__testHouseQuarryRaw(name,amount,{anchor:house}),takeover:()=>agent.__testClaimMovementLease('manual','foreign-entry-owner')};
+ return{agent,bot,task,cells,moves,digs,equips,packets,poses,crafts,attacks,digDefense:()=>digDefending,ticks:()=>ticks,
+  diagnostics:()=>task.diagnostics?.tracePath&&fs.existsSync(task.diagnostics.tracePath)?fs.readFileSync(task.diagnostics.tracePath,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[],
+  setUnknown:()=>{unknown=true;},run:(amount,name='cobblestone')=>agent.__testHouseQuarryRaw(name,amount,{anchor:house}),takeover:()=>agent.__testClaimMovementLease('manual','foreign-entry-owner')};
 }
 
 test('production factory physically supplies sand camp from observed stable entry and returns with natural dig transactions',{timeout:20000},async t=>{
@@ -180,7 +186,10 @@ test('a loaded all-sand region ends entry discovery after eight actual native ad
 });
 
 test('entry discovery retains its original deadline and native profile through its captured defense',{timeout:30000},async t=>{
- const f=fixture(t,{noGraph:true,defender:true});let triggered=false,defending,triggerTimer;
+ // This case exercises an owned defense, not a promise to explore east within
+ // eight finite attempts. Every direction has a real stable column beyond the
+ // sand camp; the asymmetric and all-sand discovery cases remain separate.
+ const f=fixture(t,{noGraph:true,defender:true,stableAwayFromCamp:true});let triggered=false,defending,triggerTimer;
  t.after(()=>clearTimeout(triggerTimer));
  f.bot.on('goal_updated',goal=>{
   if(!goal||triggered)return;triggered=true;
@@ -189,12 +198,40 @@ test('entry discovery retains its original deadline and native profile through i
    defending=f.agent.__testHandleSurvivalCritical('test_entry_discovery_defense');defending.catch(()=>{});
   },20);
  });
+ const began=Date.now();
+ try{
  await f.run(1);await defending;
  assert.equal(f.attacks.length,1);assert.equal(f.bot.entities[22],undefined);
  assert.equal(f.attacks[0].profile.canDig,false);assert.equal(f.attacks[0].profile.allowParkour,false);
  assert.equal(f.task.materialSupply.quarryEntry.routeKind,'observed_graph_node');
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
  assert.ok(f.bot.entity.position.floored().equals(new Vec3(camp.x,camp.y,camp.z)));
+ assert.equal(hasGroundedBodySupport(f.bot),true);
+ const events=f.diagnostics(),started=events.filter(e=>e.event==='house_surface_defense_started'),resumed=events.filter(e=>e.event==='house_surface_self_defense_resumed');
+ const discovery=events.filter(e=>e.event==='house_quarry_entry_native_discovery');
+ assert.equal(started.length,1,'The original surface move really captured one defense frame');
+ assert.equal(resumed.length,1,'The same native move really resumed after that defense');
+ assert.equal(started[0].details.previousLease,f.task.movementLease.token);
+ assert.notEqual(started[0].details.survivalLease,f.task.movementLease.token);
+ assert.equal(started[0].details.sameProfile,true);
+ assert.equal(resumed[0].details.originalDeadline,started[0].details.originalDeadline);
+ assert.ok(discovery.length>0&&discovery.length<=8);
+ assert.equal(new Set(discovery.map(e=>e.details.originalDeadline)).size,1);
+ assert.ok(discovery[0].details.originalDeadline>=began+120000);
+ assert.ok(discovery[0].details.originalDeadline<=discovery[0].at+120000);
+ assert.ok(resumed[0].at<started[0].details.originalDeadline);
+ assert.ok(started[0].details.originalDeadline<=discovery[0].details.originalDeadline);
+ assert.ok(discovery.some(e=>e.details.moved===true));
+ assert.ok(f.digs.length>0,'Stable entry discovery still supplies material through actual native dig transactions');
+ assert.ok(f.digs.every(d=>Math.max(Math.abs(d.feet.x),Math.abs(d.feet.z))>=4),'No quarry digging from the sand camp');
+ }finally{
+  const events=f.diagnostics(),graph=f.task.materialSupply.surfaceGraphs.any_log;
+  t.diagnostic(JSON.stringify({scope:'offline captured entry defense before cleanup',position:clone(f.bot.entity.position),onGround:f.bot.entity.onGround,
+   originalLease:f.task.movementLease.token,activeLease:f.agent.__testGetActiveMovementLease()?.token,
+   graph:graph?{order:graph.order,visits:graph.visits,probes:graph.probes,blockedEdges:graph.blockedEdges.slice(-8)}:null,
+   moves:f.moves,attacks:f.attacks.map(a=>({position:a.position,canDig:a.profile.canDig,allowParkour:a.profile.allowParkour})),
+   events:events.filter(e=>['house_surface_defense_started','house_surface_self_defense_resumed','house_quarry_entry_native_discovery','house_surface_native_probe_unsettled'].includes(e.event)).map(e=>({at:e.at,event:e.event,details:e.details}))}));
+ }
 });
 
 test('production quarry shares protection for the actual discovered surface return trail',{timeout:30000},async t=>{
@@ -230,7 +267,14 @@ test('a quarry native dig interrupted by its own defense resumes fresh checked e
 });
 
 for(const kind of ['unknown','paused','foreign'])test(`production ${kind} entry cannot start movement or digging from saved coordinates`,{timeout:5000},async t=>{
- const f=fixture(t);if(kind==='unknown')f.setUnknown();if(kind==='paused')f.task.cancellationToken.pause();if(kind==='foreign')f.takeover();
+ const f=fixture(t);
+ // A saved selected entry must be freshly revalidated. Without this entry,
+ // current production may legitimately discover another loaded stable node.
+ const resolver=require('../vendor/server/minecraft/houseQuarryEntry').createHouseQuarryEntry({getBot:()=>f.bot,
+  getObservedGraph:()=>f.task.materialSupply.surfaceGraphs.any_log,blockAt:p=>f.bot.blockAt(p),assertActive:()=>{},
+  isOwnerContext:()=>true,isExcludedEntry:()=>false,isProtectedDig:()=>false},{camp});
+ f.task.materialSupply.quarryEntry=resolver.choose();
+ if(kind==='unknown')f.setUnknown();if(kind==='paused')f.task.cancellationToken.pause();if(kind==='foreign')f.takeover();
  const before=f.moves.length;await assert.rejects(f.run(1));assert.equal(f.moves.length,before);assert.equal(f.digs.length,0);
  assert.equal(f.task.materialSupply.quarry,undefined);
 });

@@ -87,7 +87,7 @@ function plotState(bot, plot) {
 async function equip(bot, match) {
   const item = bot.inventory.items().find((i) => match(i.name));
   if (!item) return false;
-  try { await bot.equip(item, 'hand'); } catch (_) { return false; }
+  try { await bot.equip(item, 'hand'); } catch { return false; }
   return bot.heldItem && match(bot.heldItem.name);
 }
 

@@ -2,8 +2,11 @@
 'use strict';
 // Regression suites for `npm run regression`. Each entry runs one scenario
 // `runs` times on its own fresh server; the suite fails when a scenario's pass
-// rate drops below `minPassRate`. Gates sit at the rate the scenario reaches
-// today, so a lower rate means the change made things worse.
+// rate drops below `minPassRate`. The full acceptance suite requires every
+// registered scenario and every round to pass. The scenario CLI also exits
+// nonzero on any failed round, including in the historical quick suite.
+
+const { SCENARIOS } = require('./index.cjs');
 
 const QUICK = [
   { scenario: 'collect-logs-flat', runs: 3, minPassRate: 1 },
@@ -17,12 +20,10 @@ const QUICK = [
 const SUITES = {
   // Bed, bunker, farming and ranching skills: about half an hour with two at once.
   quick: QUICK,
-  // Adds natural terrain and the whole homestead chain: several hours.
-  full: [
-    ...QUICK,
-    { scenario: 'collect-logs-natural', runs: 3, minPassRate: 2 / 3 },
-    { scenario: 'homestead-flat', runs: 1, minPassRate: 1 },
-  ],
+  // Preserve the existing repeated rounds, then cover every other scenario.
+  full: Object.keys(SCENARIOS).map((scenario) => ({ scenario,
+    runs: QUICK.find((entry) => entry.scenario === scenario)?.runs
+      || (scenario === 'collect-logs-natural' ? 3 : 1), minPassRate: 1 })),
 };
 
 module.exports = { SUITES };

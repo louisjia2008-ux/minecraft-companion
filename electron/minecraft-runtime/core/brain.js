@@ -23,11 +23,12 @@ function createBrain({
   const failures = new Map(); // name -> { count, until }
   let goal = null; // { def, best, stalls, reasons }
   let running = null; // { behavior, controller, promise }
+  let deferredTick = null; // a tick put off a turn after a behavior that settled at once
   let deciding = false;
   let disposed = false;
 
   const emit = (type, data = {}) => {
-    try { onEvent({ type, at: now(), ...data }); } catch (_) { /* observers never break the loop */ }
+    try { onEvent({ type, at: now(), ...data }); } catch { /* observers never break the loop */ }
   };
 
   function goalBehavior() {
@@ -148,7 +149,12 @@ function createBrain({
         // ticks as microtasks: that starves the event loop, and with it every
         // packet that would change the world it is waiting on.
         if (!disposed) {
-          if (now() - entry.startedAt < 5) setTimeout(() => { tick().catch(() => {}); }, 50);
+          if (now() - entry.startedAt < 5) {
+            deferredTick = new Promise((resolve) => setImmediate(() => {
+              deferredTick = null;
+              tick().catch(() => {}).then(resolve);
+            }));
+          }
           else queueMicrotask(() => { tick().catch(() => {}); });
         }
         return result;
@@ -165,7 +171,7 @@ function createBrain({
   }
 
   function safePerceive() {
-    try { return perceive(); } catch (_) { return null; }
+    try { return perceive(); } catch { return null; }
   }
 
   async function tick() {
@@ -249,7 +255,7 @@ function createBrain({
       };
     },
     /** Resolves once the currently running behavior (if any) has settled. */
-    idle: () => running?.promise ?? Promise.resolve(),
+    idle: () => running?.promise ?? deferredTick ?? Promise.resolve(),
   };
 }
 
@@ -266,7 +272,7 @@ function safeProgress(def, state) {
   try {
     const value = Number(def.progress(state));
     return Number.isFinite(value) ? value : -Infinity;
-  } catch (_) {
+  } catch {
     return -Infinity;
   }
 }

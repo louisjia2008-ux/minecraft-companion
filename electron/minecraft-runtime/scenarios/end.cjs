@@ -296,7 +296,9 @@ const endWaterLanding = {
     if (!(await enterEndByPortal(server, username))) throw new Error('not in the End');
     await wait(5000);
     server.command('execute in minecraft:the_end run kill @e[type=minecraft:ender_dragon]');
-    return { commands: [`give ${username} water_bucket 1`, `give ${username} cobblestone 16`], details: {} };
+    // A pumpkin head: a stray enderman's stare must not turn this into a fight.
+    server.command(`item replace entity ${username} armor.head with minecraft:carved_pumpkin`);
+    return { commands: [`give ${username} water_bucket 1`, `give ${username} cobblestone 16`, `give ${username} iron_sword 1`], details: {} };
   },
   start: () => null,
   async onTick({ server, username, state, elapsedMs, write }) {

@@ -119,7 +119,7 @@ function createHouseCreeperEscape(deps, limits = {}) {
       if (guardError || safeStop) return; guardError = error; closed = true;
       error.observedEscape = { threatId: primaryId, actual: plain(bot.entity.position), velocity: plain(bot.entity.velocity), onGround: bot.entity.onGround,
         health: bot.health, food: bot.food, traveled, ticks, elapsedMs: Date.now() - began, target: plan.target };
-      stopOwn(); try { deps.onFailure?.(error); } catch {} rejectGuard(error);
+      stopOwn(); try { deps.onFailure?.(error); } catch { /* A reporting hook must not prevent the original rejection. */ } rejectGuard(error);
     };
     const inspect = () => {
       if (safeStop || guardError) return;

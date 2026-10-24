@@ -1,10 +1,10 @@
-/* global process, fetch, URL, AbortSignal */
+/* global process, fetch, URL, AbortController, setTimeout, clearTimeout */
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { access, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -12,6 +12,7 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 export const MINECRAFT_VERSION = '1.21.8';
 export const JAVA_MAJOR = 21;
+export const DOWNLOAD_TIMEOUTS = Object.freeze({ headersMs: 300_000, idleMs: 300_000, totalMs: 900_000 });
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRoot = resolve(dirname(scriptPath), '..', '..', '.minecraft-local-test');
 const manifestUrl = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
@@ -61,15 +62,47 @@ async function exists(path) {
   }
 }
 
-async function download(url, path) {
+export async function download(url, path) {
   if (new URL(url).protocol !== 'https:') throw new Error('Downloads must use HTTPS.');
   const temporary = `${path}.partial-${process.pid}`;
+  const controller = new AbortController();
+  const abort = (code, message) => {
+    if (controller.signal.aborted) return;
+    const error = new Error(message);
+    error.code = code;
+    controller.abort(error);
+  };
+  // The absolute limit never moves. Only received bytes renew the separate idle limit.
+  const totalTimer = setTimeout(() => abort('download_total_timeout', 'Download exceeded the 900 second total deadline.'), DOWNLOAD_TIMEOUTS.totalMs);
+  let stageTimer = setTimeout(() => abort('download_headers_timeout', 'Download response headers timed out after 300 seconds.'), DOWNLOAD_TIMEOUTS.headersMs);
+  const resetIdle = () => {
+    clearTimeout(stageTimer);
+    stageTimer = setTimeout(() => abort('download_idle_timeout', 'Download made no progress for 300 seconds.'), DOWNLOAD_TIMEOUTS.idleMs);
+  };
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(300_000) });
-    if (!response.ok || !response.body) throw new Error(`Download failed (${response.status}): ${url}`);
-    await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary, { flags: 'wx' }));
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(stageTimer);
+    if (!response.ok || !response.body) {
+      const error = new Error(`Download failed (${response.status}): ${url}`);
+      controller.abort(error);
+      throw error;
+    }
+    resetIdle();
+    const progress = new Transform({ transform(chunk, encoding, callback) {
+      if (chunk.length > 0) resetIdle();
+      callback(null, chunk);
+    } });
+    await pipeline(Readable.fromWeb(response.body), progress, createWriteStream(temporary, { flags: 'wx' }), { signal: controller.signal });
+    controller.signal.throwIfAborted();
     await rename(temporary, path);
-  } finally { await rm(temporary, { force: true }); }
+  } catch (error) {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(totalTimer);
+    clearTimeout(stageTimer);
+    await rm(temporary, { force: true });
+  }
 }
 
 async function readMetadata(url, path, { offline, refresh }) {
@@ -80,7 +113,7 @@ async function readMetadata(url, path, { offline, refresh }) {
   return JSON.parse(await readFile(path, 'utf8'));
 }
 
-async function verifiedDownload(url, path, algorithm, expected, size, offline) {
+export async function verifiedDownload(url, path, algorithm, expected, size, offline) {
   if (await verifyFile(path, algorithm, expected, size)) return 'reused';
   if (offline) throw new Error(`Offline checksum verification failed or the file is missing: ${path}`);
   const verified = `${path}.verified-${process.pid}`;

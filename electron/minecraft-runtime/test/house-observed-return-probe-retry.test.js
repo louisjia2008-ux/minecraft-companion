@@ -98,7 +98,7 @@ test('a suffix without its original node receives no retry or movement',async t=
  assert.equal(f.calls.length,0);assert.equal(f.moves.length,0);
 });
 
-for(const opts of [{health:15},{food:13}])test(`insufficient survival state ${JSON.stringify(opts)} cannot extend a known return`,async t=>{
+for(const opts of [{health:5},{food:5}])test(`insufficient survival state ${JSON.stringify(opts)} cannot extend a known return`,async t=>{
   const f=fixture(t,opts);await assert.rejects(f.graph.returnToAnchor(),e=>e.code==='dry_graph_survival_limit');assert.equal(f.calls.some(c=>c.timeoutMs===500),false);assert.equal(f.moves.length,0);
 });
 
@@ -138,8 +138,11 @@ test('interrupted suffix uses a fresh guarded physical connector before replay, 
 test('interrupted suffix reconnect needs explicit permission from trusted caller',async t=>{
  const f=fixture(t,{actualX:20.5,coldProbe:false});await assert.rejects(f.graph.returnToAnchor({via:[{x:16,y:2,z:0},{x:17,y:2,z:0}]}),e=>e.code==='dry_graph_rejoin_unconfirmed');assert.equal(f.moves.length,0);
 });
-test('interrupted suffix beyond32m cannot start a connector',async t=>{
- const f=fixture(t,{actualX:65.5,coldProbe:false});await assert.rejects(f.graph.returnToAnchor({via:[{x:16,y:2,z:0},{x:17,y:2,z:0}],rejoinInterruptedSuffix:true}),e=>e.code==='dry_graph_rejoin_unconfirmed');assert.equal(f.moves.length,0);
+test('a distant stale suffix can return through a fresh conclusive96m dry connector without historical retry',{timeout:6000},async t=>{
+ const f=fixture(t,{actualX:65.5,coldProbe:false}),before=clone(f.state());
+ const result=await f.graph.returnToAnchor({via:[{x:16,y:2,z:0},{x:17,y:2,z:0}],rejoinInterruptedSuffix:true});
+ assert.equal(result.confirmed,true);assert.deepEqual(result.actual,anchor);assert.ok(f.positions.length>20);
+ assert.equal(f.calls.some(c=>c.timeoutMs===500),false);assert.equal(f.state().visits,before.visits);assert.deepEqual(f.state().order,before.order);
 });
 test('fresh connector cannot borrow the historical500ms retry after UNKNOWN',async t=>{
  const f=fixture(t,{actualX:20.5});await assert.rejects(f.graph.returnToAnchor({via:[{x:16,y:2,z:0},{x:17,y:2,z:0}],rejoinInterruptedSuffix:true}),e=>e.code==='dry_graph_probe_inconclusive');assert.equal(f.moves.length,0);assert.equal(f.calls.some(c=>c.timeoutMs===500),false);
@@ -198,3 +201,5 @@ test('recorded construction connector has a bounded endpoint-guarded probe and n
  assert.throws(()=>api.runRecordedConstructionConnectorProbe(f.bot,f.graph.movements,goal,{...options,recordedEntry:{x:1,y:2,z:0}}),{code:'dry_graph_invalid_probe'});
  assert.throws(()=>api.runRecordedConstructionConnectorProbe(f.bot,f.graph.movements,goal,{...options,isOwnerCurrent:()=>false}),{code:'dry_graph_movement_preempted'});
 });
+
+for(const opts of [{health:15},{food:13},{health:6,food:6}])test(`recorded controlled dry return accepts current survival floor ${JSON.stringify(opts)}`,{timeout:6000},async t=>{const f=fixture(t,{...opts,coldProbe:false});const r=await f.graph.returnToAnchor();assert.equal(r.confirmed,true);assert.deepEqual(r.actual,anchor);assert.equal(f.state().visits,2);});

@@ -9,7 +9,7 @@ const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const registry = require('prismarine-registry')('1.21.8');
 const Block = require('prismarine-block')(registry);
 const { CancellationToken } = require('../vendor/server/minecraft/agentControl');
-const { createLoadedDryGraph, dryFoot, hasGroundedBodySupport, getSurfaceGraphProtectedPositions } = require('../vendor/server/minecraft/houseSurfaceGraph');
+const { createLoadedDryGraph, dryFoot, hasGroundedBodySupport } = require('../vendor/server/minecraft/houseSurfaceGraph');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const clone = value => JSON.parse(JSON.stringify(value));
 const point = p => ({ x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) });
