@@ -341,7 +341,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   // Before a first Nether trip: the frame's obsidian (less any already
   // placed), its corners, and flint and steel to light it.
   function portalKit(inventory) {
-    if (portalKnown()) return [];
+    // A sword for the Nether's monsters, on every trip (a death there loses it).
+    const sword = [{ key: 'stone_sword', count: 1 }];
+    if (portalKnown()) return sword;
     const site = memory.trip?.memory.site;
     const cells = site ? nether.portalFrame(site.base, site.axis).cells : [];
     const placed = (corner) => cells.filter((c) => Boolean(c.corner) === corner
@@ -352,6 +354,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       // Any solid block makes a corner: cobblestone if there is enough, else dirt (no tool needed).
       { key: countKey('cobblestone', inventory, kb) >= corners ? 'cobblestone' : 'dirt', count: corners },
       { key: 'flint_and_steel', count: 1 },
+      ...sword,
     ].filter((r) => r.count > 0);
   }
 

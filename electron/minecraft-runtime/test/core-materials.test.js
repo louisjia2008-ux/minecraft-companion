@@ -287,7 +287,7 @@ async function runOnceWith(sim, goal) {
   const records = [];
   const ctx = { perceive: sim.perceive, record: (type, data) => records.push({ type, ...data }), signal: new AbortController().signal };
   const result = await goal.run(ctx);
-  return { result, steps: records.filter((r) => r.type === 'plan_step') };
+  return { result, records, steps: records.filter((r) => r.type === 'plan_step') };
 }
 
 function quartzSim(inventory) {
@@ -307,7 +307,7 @@ test('quartz with no portal around first gathers the frame: obsidian, corners, f
   const first = await runOnceWith(sim, goal);
   assert.deepEqual(first.steps.map((s) => [s.kind, s.key, s.for]), [['cast', 'obsidian', 'obsidian']]);
   // Kit in the bag: the trip itself starts (and here finds no flat ground for a portal).
-  Object.assign(sim.inventory, { obsidian: 10, cobblestone: 10, flint_and_steel: 1 });
+  Object.assign(sim.inventory, { obsidian: 10, cobblestone: 10, flint_and_steel: 1, iron_sword: 1 });
   const trip = await runOnceWith(sim, goal);
   assert.deepEqual(trip.steps.map((s) => [s.kind, s.key]), [['gather', 'quartz']]);
   assert.equal(trip.result.reason, 'no_portal_site');
@@ -326,4 +326,10 @@ test('in the Nether the goal only runs the trip, never walks to the chest', asyn
   assert.ok(goal.memory.trip);
   assert.equal(result.ok, false);
   assert.equal(walked, false);
+  // Badly hurt with nothing to eat: the trip heads home (here: no portal known to head for).
+  sim.bot.health = 5;
+  sim.actions.pickFood = () => null;
+  const hurt = await runOnceWith(sim, goal);
+  assert.ok(hurt.records.some((r) => r.type === 'retreat'));
+  assert.equal(hurt.result.reason, 'nether_portal_lost');
 });

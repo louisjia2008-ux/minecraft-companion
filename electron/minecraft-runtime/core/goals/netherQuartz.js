@@ -11,10 +11,15 @@ const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const nether = require('../nether');
 const { createBlacklist } = require('../blacklist');
+const { sleep } = require('../confirm');
 
 const isQuartz = (n) => n === 'quartz';
 const isQuartzOre = (n) => n === 'nether_quartz_ore';
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
+// Hurt in the Nether with nothing to eat: home to heal before going on.
+const RETREAT_HEALTH = 8;
+// Back in the overworld, fed: wait to heal this far before going through again.
+const READY_HEALTH = 16;
 
 function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
@@ -66,6 +71,12 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
   async function overworldStep(ctx, state) {
     leaveNetherMode();
     if (quartz(state) >= count) return { ok: true };
+    // Health comes back on a full stomach; the Nether is no place to wait for it.
+    if (bot.health < READY_HEALTH && bot.food >= 18) {
+      ctx.record('rest', { health: Math.round(bot.health) });
+      await sleep(5000, ctx.signal);
+      return { ok: true, resting: true };
+    }
     const remembered = memory.overworldPortal && bot.blockAt(memory.overworldPortal)?.name === 'nether_portal'
       ? memory.overworldPortal : null;
     // Far from a remembered portal (respawned at world spawn): walk back first.
@@ -107,7 +118,9 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     if (!memory.netherPortal || bot.blockAt(memory.netherPortal)?.name !== 'nether_portal') {
       memory.netherPortal = nether.findPortal(bot, 128) || memory.netherPortal;
     }
-    if (quartz(state) >= count) {
+    const retreat = bot.health <= RETREAT_HEALTH && !actions.pickFood?.(bot);
+    if (quartz(state) >= count || retreat) {
+      if (retreat) ctx.record('retreat', { health: Math.round(bot.health) });
       if (!memory.netherPortal) return fail('nether_portal_lost');
       return goThrough(ctx, memory.netherPortal);
     }
