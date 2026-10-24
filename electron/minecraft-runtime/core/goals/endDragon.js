@@ -225,13 +225,19 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
     }
     ctx.record('cage_climb', { crystal: at(c), from: at(bot.entity.position) });
     // Coming back mid-climb: get down again before its wings or a fireball arrive.
+    // The last few blocks take seconds: finish them unless it is right here.
+    // From three below the crystal the top bars are still within reach.
+    const reachY = c.y - 3;
     const danger = () => {
       const d = end.dragonOf(bot);
-      return Boolean(d) && (d.position.distanceTo(bot.entity.position) < 40 || [STRAFE, CHARGE].includes(end.dragonPhase(bot, d)));
+      if (!d) return false;
+      const near = d.position.distanceTo(bot.entity.position);
+      if (bot.entity.position.y >= reachY - 4) return near < 16;
+      return near < 40 || [STRAFE, CHARGE].includes(end.dragonPhase(bot, d));
     };
     const placed = await end.pillarUp(bot, ctx, c.y, { maxSteps: c.y - side.stand.y + 2, stop: danger });
     const feet = bot.entity.position.floored();
-    if (feet.y < c.y) {
+    if (feet.y < reachY) {
       ctx.record('cage_climb_short', { placed, y: feet.y, need: c.y });
       await end.digPillarDown(bot, ctx);
       return fail('cage_climb_short');

@@ -242,6 +242,11 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     return null;
   }
 
+  const atEdge = () => {
+    const feet = bot.entity.position.floored();
+    return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([x, z]) => end.deepDrop(bot, feet.x + x, feet.y, feet.z + z));
+  };
+
   async function explore(ctx) {
     const here = bot.entity.position.clone();
     // Back where the last search started (pulled back, or walking in circles): next waypoint.
@@ -262,7 +267,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       const hop = await pearlHop(ctx, memory.heading);
       if (hop) return hop;
     }
-    if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([x, z]) => end.deepDrop(bot, feet.x + x, feet.y, feet.z + z))) {
+    if (atEdge()) {
       const bridged = await end.bridgeToward(bot, ctx, new Vec3(target.x, feet.y, target.z), { maxSteps: 40 });
       memory.bridged += bridged.steps || 0;
       if ((bridged.steps || 0) > 0) return { ok: true };
@@ -362,6 +367,14 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
         if (!memory.cityAt) ctx.record('city_seen', { at: at(purpur) });
         memory.cityAt = purpur;
         const before = bot.entity.position.clone();
+        // Still on a bridge or a lip: the pathfinder walks off it. Bridge on.
+        if (atEdge()) {
+          const bridged = await end.bridgeToward(bot, ctx, new Vec3(purpur.x, before.y, purpur.z), { maxSteps: 48 });
+          memory.bridged += bridged.steps || 0;
+          if ((bridged.steps || 0) > 0) return { ok: true };
+          blacklist.add(`city:${posKey(purpur)}`, 'unreachable', 120000);
+          return fail(bridged.reason || 'city_blocked');
+        }
         const moved = await actions.goNear(bot, ctx, purpur, 4, { timeoutMs: 90000 });
         if (moved.ok || bot.entity.position.distanceTo(before) > 8) return moved.ok ? moved : { ok: true };
         const bridged = await end.bridgeToward(bot, ctx, new Vec3(purpur.x, bot.entity.position.y, purpur.z), { maxSteps: 48 });

@@ -317,6 +317,7 @@ async function bridgeStep(bot, ctx, target, { avoidLiquids = false } = {}) {
   const centre = ahead.offset(0.5, 0, 0.5);
   try {
     bot.setControlState('sprint', false);
+    bot.companionSneaking = true;
     bot.setControlState('sneak', true);
     for (let i = 0; i < 60; i += 1) {
       const p = bot.entity.position;
@@ -328,6 +329,7 @@ async function bridgeStep(bot, ctx, target, { avoidLiquids = false } = {}) {
   } finally {
     bot.setControlState('forward', false);
     bot.setControlState('sneak', false);
+    bot.companionSneaking = false;
   }
   const now = bot.entity.position.floored();
   ctx.record('bridge_step', { to: `${ahead.x},${ahead.y},${ahead.z}`, ms: Date.now() - started, at: `${now.x},${now.y},${now.z}` });

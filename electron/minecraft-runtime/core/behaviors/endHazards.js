@@ -11,6 +11,7 @@ const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
 const { dimension } = require('../nether');
 const { sleep } = require('../confirm');
+const end = require('../end');
 
 /**
  * Water-bucket landing. Runs on every physics tick (a behavior tick is far too
@@ -64,8 +65,44 @@ function installFallGuard(bot, onEvent = () => {}) {
   return () => bot.removeListener('physicsTick', onTick);
 }
 
+/**
+ * Void brake. The pathfinder cuts corners and overshoots drops; out on a city
+ * tower or a bridge that is a step into the void. While walking toward a
+ * column with nothing under it, hold sneak: the physics never lets a sneaking
+ * body leave an edge, and drops onto real blocks are left alone.
+ */
+function installVoidBrake(bot, onEvent = () => {}) {
+  let braking = false;
+  const release = () => {
+    if (braking && !bot.companionSneaking) bot.setControlState('sneak', false);
+    braking = false;
+  };
+  const onTick = () => {
+    const e = bot.entity;
+    if (!e?.position || dimension(bot) !== 'the_end' || !e.onGround || e.isInWater) { release(); return; }
+    const v = e.velocity || { x: 0, z: 0 };
+    const speed = Math.hypot(v.x, v.z);
+    const moving = speed > 0.01 || bot.controlState.forward || bot.controlState.back || bot.controlState.left || bot.controlState.right;
+    if (!moving) { release(); return; }
+    let dx = v.x;
+    let dz = v.z;
+    if (speed <= 0.01) { const d = end.direction(e.yaw, 0); dx = d.x; dz = d.z; }
+    const n = Math.hypot(dx, dz) || 1;
+    const y = e.position.y;
+    const ahead = [0.4, 0.8].some((r) => end.overVoid(bot, Math.floor(e.position.x + (dx / n) * r), y, Math.floor(e.position.z + (dz / n) * r)));
+    if (ahead) {
+      if (!braking) onEvent({ type: 'void_brake', at: Date.now(), x: Math.floor(e.position.x), y: Math.floor(y), z: Math.floor(e.position.z) });
+      braking = true;
+      bot.setControlState('sneak', true);
+    } else release();
+  };
+  bot.on('physicsTick', onTick);
+  return () => { bot.removeListener('physicsTick', onTick); release(); };
+}
+
 function createEndHazards({ bot, actions = defaultActions, skills = defaultSkills, onEvent } = {}) {
-  const removeFallGuard = installFallGuard(bot, onEvent);
+  const removeGuards = [installFallGuard(bot, onEvent), installVoidBrake(bot, onEvent)];
+  const removeFallGuard = () => removeGuards.forEach((f) => f());
   const radiusIndex = bot.registry?.entitiesByName?.area_effect_cloud?.metadataKeys?.indexOf('radius') ?? -1;
   const cloudAt = () => {
     if (dimension(bot) !== 'the_end' || !bot.entity?.position) return null;
@@ -94,7 +131,7 @@ function createEndHazards({ bot, actions = defaultActions, skills = defaultSkill
     if (dimension(bot) !== 'the_end' || !bot.inventory.items().some((i) => i.name === 'bucket')
       || bot.inventory.items().some((i) => i.name === 'water_bucket')) return null;
     const id = bot.registry.blocksByName.water?.id;
-    return bot.findBlocks({ matching: id, maxDistance: 4, count: 8 })
+    return bot.findBlocks({ matching: id, maxDistance: 12, count: 8 })
       .map((p) => bot.blockAt(p)).find((b) => skills.isFluidSource(b, 'water')) || null;
   };
   const retrieveWater = {
@@ -132,7 +169,68 @@ function createEndHazards({ bot, actions = defaultActions, skills = defaultSkill
       return { ok: true };
     },
   };
-  return [leaveBreath, retrieveWater, rideLevitation];
+  // Shulkers on city walls fire homing bullets. A bullet is swatted with the
+  // sword when it gets close; the shulker itself takes arrows only while its
+  // shell is open, which it is whenever it is firing.
+  const peekIndex = bot.registry?.entitiesByName?.shulker?.metadataKeys?.indexOf('peek') ?? -1;
+  const giveUp = new Map(); // shulker id -> until
+  const hasBow = () => bot.inventory.items().some((i) => i.name === 'bow')
+    && bot.inventory.items().some((i) => i.name === 'arrow' || i.name === 'spectral_arrow');
+  const near = (name, range) => {
+    const here = bot.entity?.position;
+    if (!here) return [];
+    return Object.values(bot.entities).filter((e) => e.name === name && e.position && e.position.distanceTo(here) <= range)
+      .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here));
+  };
+  const shulkerTarget = () => {
+    if (!hasBow() || !bot.entity?.onGround) return null;
+    const from = bot.entity.position.offset(0, 1.52, 0);
+    return near('shulker', 20).find((e) => {
+      if ((giveUp.get(e.id) || 0) > Date.now()) return false;
+      const at = e.position.offset(0, 0.5, 0);
+      const shot = end.aim(from, at, end.ARROW);
+      return shot && end.clearFlight(bot, from, shot, at, end.ARROW, { radius: 0.3 });
+    }) || null;
+  };
+  const fightShulker = {
+    name: 'fight_shulker',
+    band: BAND.DEFENSE,
+    want: () => {
+      if (dimension(bot) !== 'the_end') return 0;
+      if (near('shulker_bullet', 4).length) return 1;
+      return shulkerTarget() ? 0.9 : 0;
+    },
+    async run(ctx) {
+      const bullet = near('shulker_bullet', 4)[0];
+      if (bullet) {
+        const sword = bot.inventory.items().find((i) => /_sword$/.test(i.name));
+        if (sword && bot.heldItem?.name !== sword.name) await bot.equip(sword, 'hand').catch(() => {});
+        await bot.lookAt(bullet.position, true).catch(() => {});
+        bot.attack(bullet);
+        ctx.record('bullet_swatted');
+        await sleep(250, ctx.signal);
+        return { ok: true };
+      }
+      const shulker = shulkerTarget();
+      if (!shulker) return { ok: true };
+      ctx.record('shulker_target', { at: `${Math.floor(shulker.position.x)},${Math.floor(shulker.position.y)},${Math.floor(shulker.position.z)}` });
+      const open = () => Number(bot.entities[shulker.id]?.metadata?.[peekIndex]) > 0;
+      for (let i = 0; i < 6 && bot.entities[shulker.id]; i += 1) {
+        if (near('shulker_bullet', 4).length) return { ok: true }; // swat first
+        if (!open()) await end.waitUntil(open, { timeoutMs: 3000, signal: ctx.signal });
+        const shot = await end.shootArrow(bot, ctx, shulker.position.offset(0, 0.5, 0), { drawMs: 1000 });
+        if (!shot.ok) break;
+        await sleep(300, ctx.signal);
+      }
+      if (!bot.entities[shulker.id]) {
+        ctx.record('shulker_killed');
+        return { ok: true };
+      }
+      giveUp.set(shulker.id, Date.now() + 60000);
+      return { ok: false, reason: 'shulker_survived' };
+    },
+  };
+  return [leaveBreath, retrieveWater, rideLevitation, fightShulker];
 }
 
 module.exports = { createEndHazards };
