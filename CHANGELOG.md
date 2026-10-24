@@ -6,6 +6,13 @@ Scope: **source developer preview v0.1.0-alpha.1**. Tested freeze: `a22a73a4a729
 
 Preserved offline failures and interrupted campaigns are detailed in [VALIDATION.md](VALIDATION.md). In particular, full6 naturally failed 3324/3325; full7 passes only after a test-only clock correction with production and original budgets retained. Full02 has30 passed rounds and2 interrupted rounds, and does not supply passes to full03.
 
+### Canopy and existing finite-recheck test contracts
+
+- Preserve82eb CI400820:3337/3338,one canopy assertion failure(actualy5 versus1),zero other terminal statuses,naturalexit1. Exact original cause remains UNKNOWN without failure-time telemetry. Its passing resource case and three-leg native pond return do not override prior failures.
+- Bound only the positive canopy fixture to a single origin leaf column while retaining actual four-block descent,all original assertions,8s test/6s leg/10ms Physics and a case-local existing production settlement adapter. Retain the old half-plane in an explicit UNKNOWN zero-descent-credit regression. Controlled mechanism evidence is separate from an exact CI replay.
+- Observe both existing100/500ms finite rechecks in the resource regression,including explicit100UNKNOWN followed by a real native500 recheck. Require latest matching,unconsumed,non-modeled success before any motor. Do not add budgets,retries or synthesized successes.
+- Preserve e632/full15 historical complete PASS3340/3340 plus host74/security6/legacy25/setup18/lint/typecheck with unchanged source. Bind the final contract fixture freeze,full16,consumers,privacy and exact-final CI independently in RELEASE_ATTESTATION.json.
+
 ### Observed-resource waypoint contract
 
 - Preserve CI400809 on4c10 and local full14 on82eb: each naturally failed3337/3338 on the same strict z=0 assertion, observing z=-8 and z=-12 respectively. Missing failure-time probe/body telemetry leaves exact original first causes UNKNOWN. The independently passing82eb clean07 does not override either failure.

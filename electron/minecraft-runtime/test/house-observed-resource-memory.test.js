@@ -52,18 +52,22 @@ function assertActualObservedResourceWaypoint(f,graph,before,result) {
  assert.equal(entry.lastApproach.nodeKey,actualKey);assert.equal(entry.lastApproach.resourceArrival,'NOT_CONFIRMED');
  assert.equal(entry.standingArrival,'NOT_CONFIRMED');
 }
-function modelPositiveXAxisProbeUnknown(t,f) {
- const probes=[],motors=[],original=f.bot.pathfinder.getPathFromTo;let consumed=0;
+function modelPositiveXAxisProbeUnknown(t,f,{selectedFrontierUnknown=false}={}) {
+ const probes=[],motors=[],original=f.bot.pathfinder.getPathFromTo;let consumed=0,selectedRecheckModeled=false;
  function* observed(movements,start,goal,options={}) {
-   const iterator=original.call(this,movements,start,goal,options),finite=options.optimizePath===false&&options.timeout===100;
+   const iterator=original.call(this,movements,start,goal,options),finite=options.optimizePath===false&&[100,500].includes(options.timeout)&&options.tickTimeout===10;
    const origin={x:start.x,y:start.y,z:start.z},target={x:goal.x,y:goal.y,z:goal.z};
-   const downgrade=finite&&key(start.floored())===key(anchor)&&goal.x>0&&goal.z===0;
+   const axisUnknown=finite&&key(start.floored())===key(anchor)&&goal.x>0&&goal.z===0;
+   const previous=probes.findLast(p=>key(new Vec3(p.origin.x,p.origin.y,p.origin.z).floored())===key(start.floored())&&key(p.target)===key(goal));
+   const selectedUnknown=selectedFrontierUnknown&&!selectedRecheckModeled&&finite&&options.timeout===100&&!axisUnknown&&previous?.status==='success';
+   if(selectedUnknown)selectedRecheckModeled=true;
+   const downgrade=axisUnknown||selectedUnknown;
    try {for(;;){const step=iterator.next();if(step.done)return step.value;
      const native=step.value.result;assert.ok(native&&typeof native.status==='string');
      // Explicit finite UNKNOWN model. Native search still runs; no result is ever upgraded to success.
      const result=downgrade?{...native,status:'timeout'}:native;
      if(finite)probes.push({sequence:probes.length+1,origin,target,nativeStatus:native.status,status:result.status,
-       modeledUnknown:downgrade,pathCount:native.path?.length??0,visits:f.graphState()?.visits,moves:f.moves.length});
+       modeledUnknown:downgrade,modeledSelectedFrontierUnknown:selectedUnknown,timeoutMs:options.timeout,pathCount:native.path?.length??0,visits:f.graphState()?.visits,moves:f.moves.length});
      yield {...step.value,result};if(downgrade)return;
    }} finally {iterator.return?.();}
  }
@@ -123,8 +127,8 @@ test('real installed native graph approaches an observed resource through a guar
 });
 
 
-test('an explicitly UNKNOWN positive-X native probe grants no arrival while a separately proved improving waypoint is actually reached',{timeout:10000},async t=>{
- const f=fixture(t);f.memory.query();const before=copy(f.graphState()),observed=modelPositiveXAxisProbeUnknown(t,f),graph=f.startGraph();
+test('explicitly UNKNOWN axis and selected-frontier probes grant no arrival until an independently proved permitted native recheck succeeds',{timeout:10000},async t=>{
+ const f=fixture(t);f.memory.query();const before=copy(f.graphState()),observed=modelPositiveXAxisProbeUnknown(t,f,{selectedFrontierUnknown:true}),graph=f.startGraph();
  assert.equal(f.state().entries[0].resourceArrival,'NOT_CONFIRMED');
  try {
    const result=await graph.next(),state=graph.getState();
@@ -139,8 +143,12 @@ test('an explicitly UNKNOWN positive-X native probe grants no arrival while a se
    assert.ok(state.blockedEdges.some(e=>e.target.x>0&&e.target.z===0&&e.reason==='native_probe_inconclusive'&&e.observedProbe.conclusive===false));
    assert.equal(observed.motors.length,f.moves.length);assert.equal(observed.motors.length,1);
    assert.ok(observed.motors.every(m=>m.visitsBefore===1));
+   const selectedUnknown=observed.probes.filter(p=>p.modeledSelectedFrontierUnknown);assert.equal(selectedUnknown.length,1);assert.equal(selectedUnknown[0].timeoutMs,100);assert.equal(selectedUnknown[0].status,'timeout');
+   const motorProof=observed.probes.find(p=>p.sequence===observed.motors[0].proofSequence);
+   assert.equal(motorProof.timeoutMs,500);assert.equal(motorProof.status,'success');assert.equal(motorProof.modeledUnknown,false);
+   assert.deepEqual(motorProof.target,selectedUnknown[0].target);assert.ok(motorProof.sequence>selectedUnknown[0].sequence);
  } finally {
-   t.diagnostic(JSON.stringify({scope:'explicit positive-X UNKNOWN model; other probes and goto/Physics remain native; not exact CI replay',probes:observed.probes,motors:observed.motors,actual:f.bot.entity.position,visits:f.graphState()?.visits,resourceArrival:f.state().entries[0].resourceArrival}));
+   t.diagnostic(JSON.stringify({scope:'explicit axis UNKNOWN and selected100ms UNKNOWN; permitted500ms fresh probe and goto/Physics remain native; not exact CI replay',probes:observed.probes,motors:observed.motors,actual:f.bot.entity.position,visits:f.graphState()?.visits,resourceArrival:f.state().entries[0].resourceArrival}));
  }
 });
 

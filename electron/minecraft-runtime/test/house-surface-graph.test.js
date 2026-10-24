@@ -535,14 +535,69 @@ test('native graph leg timer calls the shared failure hook once with exact deadl
  await sleep(100);assert.equal(f.attempts.length,1);assert.equal(graph.getState().visits,1);assert.equal(f.bot.pathfinder.goal,null);
 });
 
-test('explicit terrain recovery walks off a four block canopy using original physics',{timeout:8000},async t=>{
- const f=fixture(t,{initialY:5,worldAt:p=>p.y<1?'stone':p.y===4&&p.x<=0?'oak_leaves':'air'});
+
+function canopyCaseNativeMotor(f) {
+ const {settleNativeGoto}=require('../vendor/server/minecraft/houseNativeGotoSettlement'),records=[];
+ f.deps.actualnativegoto=(goal,profile,budget)=>{
+   assert.ok(Number.isFinite(budget.deadline));assert.equal(f.bot.pathfinder.movements,profile);
+   records.push({target:{x:goal.x,y:goal.y,z:goal.z},deadline:budget.deadline,startedAt:Date.now()});
+   return settleNativeGoto({getBot:()=>f.bot,assertActive:()=>{f.deps.assertActive();assert.equal(f.bot.pathfinder.movements,profile);},
+     isExpectedStop:budget.isExpectedNativeStop,allowPendingTimeout:budget.isExpectedNativeTimeout},{goal,deadline:budget.deadline});
+ };
+ return records;
+}
+
+test('explicit terrain recovery walks off a four-block-high single-column canopy using original physics',{timeout:8000},async t=>{
+ const f=fixture(t,{initialY:5,worldAt:p=>p.y<1?'stone':p.y===4&&p.x===0&&p.z===0?'oak_leaves':'air'});
+ canopyCaseNativeMotor(f);
  const graph=createLoadedDryGraph(f.deps,{anchor:{x:0,y:5,z:0},terrainRecovery:true,adaptiveLocalFrontier:true,legTimeoutMs:6000});
  const result=await graph.next();
  assert.equal(result.moved,true);assert.equal(f.bot.entity.onGround,true);assert.equal(result.actual.y,1);
  assert.ok(f.points.some(p=>p.y>1&&p.y<4));assert.equal(f.waterTicks.length,0);
  assert.equal(graph.movements.canDig,false,'ordinary native planner still cannot dig arbitrary blocks');
 });
+
+test('UNKNOWN descents on a canopy half-plane grant no drop credit while an independently probed canopy waypoint is actually reached',{timeout:8000},async t=>{
+ const f=fixture(t,{initialY:5,worldAt:p=>p.y<1?'stone':p.y===4&&p.x<=0?'oak_leaves':'air'}),probes=[],motors=[],records=canopyCaseNativeMotor(f);
+ const original=f.bot.pathfinder.getPathFromTo;let consumed=0;
+ function* observed(profile,from,goal,options={}) {
+   const iterator=original.call(this,profile,from,goal,options),finite=options.optimizePath===false&&[100,500].includes(options.timeout)&&options.tickTimeout===10;
+   const origin=from.clone(),target={x:goal.x,y:goal.y,z:goal.z},downgrade=finite&&from.floored().equals(new Vec3(0,5,0))&&goal.x>0&&goal.y===1;
+   try {for(;;){const step=iterator.next();if(step.done)return step.value;const native=step.value.result;
+     // Explicit UNKNOWN model, never an upgraded path or a request to move on partial results.
+     const result=downgrade?{...native,status:'timeout'}:native;
+     if(finite)probes.push({sequence:probes.length+1,origin,target,timeoutMs:options.timeout,nativeStatus:native.status,status:result.status,modeledUnknown:downgrade,visits:f.checkpoint()?.visits,attempts:f.attempts.length});
+     yield {...step.value,result};if(downgrade)return;
+   }} finally {iterator.return?.();}
+ }
+ f.bot.pathfinder.getPathFromTo=observed;
+ const onGoal=goal=>{
+   if(!goal)return;
+   const proof=probes.findLast(p=>p.origin.floored().equals(f.bot.entity.position.floored())&&p.target.x===goal.x&&p.target.y===goal.y&&p.target.z===goal.z);
+   assert.ok(proof);assert.equal(proof.status,'success');assert.equal(proof.modeledUnknown,false);assert.ok(proof.sequence>consumed);consumed=proof.sequence;
+   motors.push({target:proof.target,proofSequence:proof.sequence,visitsBefore:f.checkpoint().visits});
+ };
+ f.bot.on('goal_updated',onGoal);
+ t.after(()=>{f.bot.removeListener('goal_updated',onGoal);if(f.bot.pathfinder.getPathFromTo===observed)f.bot.pathfinder.getPathFromTo=original;});
+ const graph=createLoadedDryGraph(f.deps,{anchor:{x:0,y:5,z:0},terrainRecovery:true,adaptiveLocalFrontier:true,legTimeoutMs:6000});
+ try {
+   const result=await graph.next(),state=graph.getState(),actual=f.bot.entity.position.floored(),id=`${actual.x},${actual.y},${actual.z}`;
+   assert.equal(result.moved,true);assert.equal(f.bot.entity.onGround,true);assert.equal(result.actual.y,5);
+   assert.deepEqual(result.actual,{x:actual.x,y:actual.y,z:actual.z});assert.equal(hasGroundedBodySupport(f.bot),true);
+   assert.equal(f.bot.blockAt(actual.offset(0,-1,0)).name,'oak_leaves');assert.equal(state.current,id);assert.equal(state.resumeNode,id);
+   assert.deepEqual(state.nodes[id].position,result.actual);assert.ok(state.order.includes(id));assert.equal(state.visits,2);
+   const refused=probes.filter(p=>p.modeledUnknown);assert.ok(refused.length>0);assert.ok(refused.every(p=>p.status==='timeout'&&p.visits===1&&p.attempts===0));
+   assert.ok(state.blockedEdges.some(e=>e.target.y===1&&e.reason==='native_probe_inconclusive'&&e.observedProbe.conclusive===false));
+   assert.ok(f.attempts.every(p=>p.y===5));assert.ok(Object.values(state.nodes).every(n=>n.position.y===5));
+   assert.equal(motors.length,f.attempts.length);assert.equal(motors.length,1);assert.equal(motors[0].visitsBefore,1);
+   assert.equal(f.points.some(p=>p.y<5),false,'No declined descent acquired physical drop or arrival credit');
+   assert.equal(f.waterTicks.length,0);assert.equal(graph.movements.canDig,false);
+   assert.ok(records.every(v=>v.deadline>v.startedAt&&v.deadline<=v.startedAt+6000));
+ } finally {
+   t.diagnostic(JSON.stringify({scope:'half-plane canopy with explicit positive-X descent UNKNOWN; other finite native probes and goto/Physics remain real; not exact CI replay',probes,motors,actual:f.bot.entity.position,visits:f.checkpoint()?.visits,records}));
+ }
+});
+
 test('terrain recovery permits bounded survivable drops at partial health and keeps critical-health exploration constrained',t=>{
  for(const health of [6,8,13,18]){
   const f=fixture(t);f.bot.health=health;const graph=createLoadedDryGraph(f.deps,{anchor:{x:0,y:1,z:0},terrainRecovery:true});

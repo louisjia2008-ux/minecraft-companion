@@ -2,6 +2,16 @@
 
 **Frozen a22 offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
 
+## 树冠方向假设与有限复核观察修复
+
+[82eb原PR20 CI400820](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40082045342)完整runtime3337/3338、1fail、0cancel/skip/todo，自然exit1，1153849.012046ms；唯一失败是`explicit terrain recovery walks off a four block canopy using original physics`，2183.291301ms后actual.y=5、断言要求1。其余原检查通过，完整原日志、首次收据和原窗口均保留；没有失败时探测/姿态信息，精确原首因仍UNKNOWN。本次资源记忆用例通过不能覆盖它先前两次固定轴向失败；池塘本次真实归家为三腿，仍按实际记录而不改称两腿。
+
+原树冠是y4且x≤0的无限半平面。`terrainRecovery`授权有界下落，并不保证每次next一定选择下降。透明原例一次实际到(16,1,16)通过；独立受控仅将真实正X/y1有限下降探测降为UNKNOWN后，原断言自然失败5≠1，但机器人实际到(-16,5,16)，始终y5，有原生支撑和真实访问；15个下降候选不获运动/下树信用。此为机制验证，不是原CI精确重放。
+
+本轮只改离线测试：保留原y5→y1、实际中间高度、无水和禁止dig的全部正例断言，把正例树冠改为单原点叶柱；仅该case使用既有生产settlement与原leg绝对deadline。单原点叶柱使所有非原点的合法候选都落在y1，排除8/4/2圈UNKNOWN后1圈仍在树冠顶的方向假设；先前3x3候选局部2/2通过仅保留为候选历史，不称最终结构证明。新增原半平面UNKNOWN情况下真实支持路点与零下降信用回归，原8s test/6s leg/10ms Physics不变。另修资源回归观察器只识别100ms而遗漏生产已有500ms selected-frontier复核的边界：仅观测原100/500ms、tick10、optimizePath:false，仍要求最新matching、未消费、真实成功、非模型证明；明确模型100UNKNOWN后，500复核仍必须由原生搜索实际完成。不新增任何生产预算、重试、成功或位置赋值。
+
+先前e632冻结`e63234198487678b48247b06344983892dfac00e`、sourceHash`ffc4ed235296d170b3fd9491ec97d145f2cd04390e740e8f0fa0fd2628c00eca`的完整full15已自然3340/3340通过，0fail/cancel/skip/todo、480978.570291ms，其余六项原命令同冻结全部通过，874文件前后不变。该历史PASS与原CI400820失败、后续最终冻结的原样完整full16/消费者/隐私/PR及main CI分别绑定，不互相覆盖。
+
 ## 资源记忆的固定轴向断言失败
 
 [4c10的原PR20 CI400809](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40080926710)完整runtime3337/3338、1fail、0cancel/skip/todo，自然exit1，1049193.857859ms。唯一失败是`house-observed-resource-memory.test.js`的实际路点正例：2987.199371ms后`actual.z=-8`而断言要求0。随后82eb本地原样完整full14也自然记录3337/3338、同一断言失败，实际z=-12、1511.181334ms；整轮480577.20775ms，其余六项原命令全部自然通过，874文件源码前后不变。两次真实失败均保留完整日志/首次收据；没有缺失遥测的精确原生探测、姿态或调度首因推断。
