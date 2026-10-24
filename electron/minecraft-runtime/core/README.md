@@ -2,11 +2,11 @@
 
 与 `vendor/server/minecraftTaskAgent.js` 并行开发的新核心，还没有接入桌面应用。目前先通过场景测试平台在真实 vanilla 1.21.8 服务器上单独验证，稳定后再逐项替换旧代理的能力。
 
-> **正式游戏验收：a22冻结24场景32/32轮PASS。最新离线验收：14b9冻结3335/3335PASS。** 新core尚未接入Electron，v0.1.0-alpha.1仅源码开发预览。本文保留实现与先前PR说明；较早的10/10、20/20、旧E2E等数字仍为历史自报，不继承为当前证据。当前命令、完整逐轮结果、失败历史与恢复成本统一见根[VALIDATION.md](../../../VALIDATION.md)和[STATUS.md](../../../STATUS.md)。
+> **正式游戏验收：a22 冻结 24场景32/32轮 PASS。最新离线验收：1f3 冻结 full13，3338/3338 PASS，自然 exit0，0 fail/cancel/skip/todo。** v0.1.0-alpha.1 仅源码开发预览，新 core 尚未接入 Electron。本文保留的先前 10/10、20/20、旧 E2E 等数字属于历史自报；当前完整结果、命令、失败历史与恢复成本见根 [VALIDATION.md](../../../VALIDATION.md) 和 [STATUS.md](../../../STATUS.md)。
 
-正式full03绑定 `a22a73a4a7294ab5409b6e74ee882b2603ab528b` /sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`，于2026-10-24 02:15:09.845—03:27:27.151 UTC完成24场景32/32轮。后续测试修复冻结 **`14b9ac5ee0dc413076414324476c6ef9756781fc`** /874files/sourceHash `6a1c7b63189fb900d2c69e02990afa492ace25b941356ffc40508f65973a16d8`，原样完整full11 **3335/3335自然exit0，0fail/cancel/skip/todo**；同冻结host74、security6、legacy25、setup18、lint/typecheck全部自然通过，源码前后无变化。
+正式 full03 绑定 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，于 2026-10-24 02:15:09.845—03:27:27.151 UTC 完成全部 24 场景 32 轮。最新离线代码冻结为 `1f3d03ff3e9b2711ca75c8c4bc0c87d91a34bfe7`，874 文件、sourceHash `722e3143c519a0feaf14fc518814d103f8ebea8c32addf7d58e6653ca6876aad`；完整 full13：**3338/3338 PASS，自然 exit0，0 fail/cancel/skip/todo**；七项原命令：**全部自然 exit0：runtime3338/3338、host74/74、security6/6、legacy25/25、setup18/18，lint/typecheck通过；874文件源码前后不变**。
 
-此前池塘夹具、安装器下载、首次main CI及PR20四失败均保留原始结果与UNKNOWN边界。最新修复仅调整三个离线测试的生产适配、fresh探测与有限时序合同，未改变生产core/vendor或正式游戏预算。相对a22，core执行文件显式排除本README后保持字节等价；文档更新不称为整个core目录未改。a22游戏结果不冒充后续SHA的新游戏长跑，最终五文档提交、新消费者/隐私/PR/main CI与公开资产由发行附件单独绑定。
+后续修复仅调整离线测试的地形前提、原生探测适配和有限探测合同。池塘的实际归家正例、第二次 UNKNOWN 拒绝及后续原生探测安全合同分别验证；`NATIVE_PROBE_UNKNOWN_SAFE_STOP` 不代表游戏流程完成。原失败与诊断中错误预期保留在 [VALIDATION.md](../../../VALIDATION.md)。相对 a22，core 执行文件明确排除本 README 后保持字节等价，原正式游戏结果保留其原始身份。最终五份文档、消费者、隐私、PR/main CI 和公开资产由发行验收单分别绑定。
 
 ## 当前优先级、维护与修复边界
 

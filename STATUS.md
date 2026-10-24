@@ -2,7 +2,19 @@
 
 **正式游戏验收通过，离线检查按冻结快照记录。** 测试冻结 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，867 文件 sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`。原样完整 runtime full7 自然通过 3326/3326；正式 full03 于 2026-10-24 02:15:09.845—03:27:27.151 UTC 自然完成，24 场景、32/32 轮全部通过，原始结果、退出码与源码/driver 一致。 源码归档、干净安装与发布验证的最终收据随 release 单独提供，和本页的游戏验收快照分别绑定。[正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
 
-## 最新离线修复冻结
+## 最新地表探测夹具冻结
+
+代码冻结 **`1f3d03ff3e9b2711ca75c8c4bc0c87d91a34bfe7`**，874文件，sourceHash `722e3143c519a0feaf14fc518814d103f8ebea8c32addf7d58e6653ca6876aad`。原样完整 runtime full13：**3338/3338 PASS，自然 exit0，0 fail/cancel/skip/todo**。同冻结七项原命令：**全部自然 exit0：runtime3338/3338、host74/74、security6/6、legacy25/25、setup18/18，lint/typecheck通过；874文件源码前后不变**。完整结果以该轮自然终态为准，旧full11或定向测试不能代替本轮完整结果。
+
+本轮仅改地表图离线测试：让saved05读原生partial的预探测与生产一致使用`optimizePath:false`，保留真实非空partial的整数搜索节点检查；将池塘用例拆为明确模型的完整物理通行、第二次fresh UNKNOWN零未验证移动负例、以及“模型初始长UNKNOWN提示＋后续真实原生探测”的有限安全集成。后者仅以严格事实区分`NATIVE_RETURN_CONFIRMED`和`NATIVE_PROBE_UNKNOWN_SAFE_STOP`；安全拒绝不叫游戏流程通过。原12s/10s及100ms/500ms探测规则、Physics和正式游戏预算不变，原完整full12失败保留。新最终文档/消费者/隐私/PR与main CI分别绑定外置验收单。
+
+## 历史矿道入口防御修复与full12失败
+
+代码冻结 **`057f5ce1fb30263b93b7f62512837c14bfda12a4`**，874文件，sourceHash `0fc1d15a9dcaa8cbaf238487ed237c39debec2f4af9e163b3e3a140c232097d8`。原样完整 runtime full12：**3333/3335，2fail，自然exit1，0cancel/skip/todo**，耗时472577.846041ms。其余六项原命令同冻结自然通过：host74/74、security6/6、legacy25/25、setup18/18及lint/typecheck；sourceChanges[]。矿道入口防御修复用例已通过；新增失败为saved05斜坡规划夹具与池塘第二次fresh探测用例。新最终五文档提交及其消费者/隐私/PR与main CI结果仍由外置发行验收单分别绑定。
+
+[PR20后续CI](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40075916022)在4f411上自然记录3334/3335、唯一矿道入口防御用例失败，精确失败时探测/姿态/探索图未记录，原首因仍UNKNOWN。独立受控对照只把正X方向有限原生探测降级UNKNOWN：旧单侧稳定地形实际走完8个其他方向节点后正确拒绝采矿；只改为营地四周均有稳定列后，同原生运动/防御/断言下取得材料并真实回营地。此机制反例不冒充原CI重放。窄修复仅该离线测试：防御用例不再暗含必须向东探索的假设，并增加同profile/两租约/原deadline及落稳采料断言；原30s/120s/8次/Physics、其他不对称和全沙用例保留。详情见[验证报告](VALIDATION.md)。
+
+## 历史full11离线修复冻结
 
 代码冻结 **`14b9ac5ee0dc413076414324476c6ef9756781fc`**，874文件，sourceHash `6a1c7b63189fb900d2c69e02990afa492ace25b941356ffc40508f65973a16d8`。原样完整 full11 **3335/3335 PASS，自然exit0，0fail/cancel/skip/todo**，耗时475088.889666ms；host74/74、security6/6、legacy25/25、setup18/18及lint/typecheck同冻结全部自然通过，sourceChanges[]且工作区干净。
 
@@ -32,7 +44,9 @@
 
 | 层次 | 已观察结果 | 边界 |
 |---|---|---|
-| 最新原样完整 runtime full11 | **3335/3335 PASS，自然exit0；0fail/cancel/skip/todo；sourceChanges[]** | 14b9/6a1c离线冻结；最终发行收据另行绑定 |
+| 最新原样完整 runtime full13 | **3338/3338 PASS，自然 exit0，0 fail/cancel/skip/todo** | 1f3/722e离线冻结；和a22游戏快照分开绑定 |
+| 历史原样完整 runtime full12 | **3333/3335，2fail，自然exit1；0cancel/skip/todo；sourceChanges[]** | 057/0fc1冻结；矿道防御case通过，不抹去独立斜坡/池塘失败 |
+| 历史原样完整 runtime full11 | **3335/3335 PASS，自然exit0；0fail/cancel/skip/todo；sourceChanges[]** | 14b9/6a1c离线冻结；最终发行收据另行绑定 |
 | 历史原样完整 runtime full7 | **3326/3326 PASS，自然exit0；0fail/cancel/skip/todo；sourceChanges[]** | 离线完整脚本 |
 | 当前a22宿主检查 | host74/74、security6/6、legacy acceptance25/25、lint/typecheck通过 | 保留一次70/74、4个本机listen EPERM环境失败；有监听权限后原样74/74；非GUI/provider证明 |
 | 正式 full03 | **24场景32/32轮PASS，自然exit0** | 原合同/时限/重复次数；24隔离world、场景内reuse+reset，非任意种子保证 |
