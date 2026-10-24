@@ -26,7 +26,9 @@ const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const MOLD = new Set(['grass_block', 'dirt', 'coarse_dirt', 'podzol', 'rooted_dirt', 'stone', 'andesite', 'diorite',
   'granite', 'cobblestone', 'deepslate', 'cobbled_deepslate', 'tuff', 'obsidian']);
 const DIAMOND_PICKS = new Set(['diamond_pickaxe', 'netherite_pickaxe']);
+// 9.4 s with a diamond pickaxe on the ground; five times that in water.
 const OBSIDIAN_DIG_MS = 15000;
+const WET_DIG_MS = 60000;
 
 const v = (p) => new Vec3(p.x, p.y, p.z);
 const isAir = (b) => Boolean(b) && AIR.has(b.name);
@@ -97,6 +99,7 @@ async function castStep(bot, ctx, memory, { skills = defaultSkills, actions = de
   const { pit, water } = { pit: v(memory.cast.pit), water: v(memory.cast.water) };
   const block = bot.blockAt(pit);
   const waterOut = skills.isFluidSource(bot.blockAt(water), 'water');
+  ctx.record('cast_step', { pit: block.name, water: bot.blockAt(water)?.name || null });
   if (block.name === 'obsidian') {
     // The water first: it is the only one there is, and it would run into the empty pit.
     if (waterOut && has(bot, 'bucket')) return skills.scoopLiquid(bot, ctx, water, 'water');
@@ -104,14 +107,25 @@ async function castStep(bot, ctx, memory, { skills = defaultSkills, actions = de
     if (!pick) return fail('no_diamond_pickaxe');
     const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 30000 });
     if (!reach.ok) return reach;
-    const dug = await actions.digBlock(bot, ctx, bot.blockAt(pit), { tool: pick, timeoutMs: OBSIDIAN_DIG_MS });
+    // The water runs off a few seconds after its source is gone: digging in it is slow.
+    await waitUntil(() => !bot.entity.isInWater, { timeoutMs: 8000, signal: ctx.signal });
+    const target = bot.blockAt(pit);
+    try { await bot.equip(pick, 'hand'); } catch (_) { /* digBlock equips again */ }
+    ctx.record('obsidian_dig', { digMs: bot.digTime?.(target), inWater: bot.entity.isInWater, onGround: bot.entity.onGround,
+      at: posKey(bot.entity.position.floored()), held: bot.heldItem?.name || null, effects: Object.keys(bot.entity.effects || {}) });
+    const dug = await actions.digBlock(bot, ctx, target, { tool: pick,
+      timeoutMs: bot.entity.isInWater ? WET_DIG_MS : OBSIDIAN_DIG_MS });
     if (!dug.ok) return dug;
     const got = await actions.collectDrops(bot, ctx, pit.offset(0.5, 0.5, 0.5), (n) => n === 'obsidian');
     ctx.record('obsidian_cast', { ok: got.ok });
     return got;
   }
   if (block.name === 'lava') {
-    if (!skills.isFluidSource(block, 'lava')) return fail('lava_flowing');
+    if (!skills.isFluidSource(block, 'lava')) {
+      // Never back at once with nothing done: the goal would spin on it.
+      await waitUntil(() => bot.blockAt(pit)?.name !== 'lava', { timeoutMs: 2000, signal: ctx.signal });
+      return fail('lava_flowing');
+    }
     if (waterOut) {
       // Water is out but the lava is still there: it may take a tick or two.
       const set = await waitUntil(() => bot.blockAt(pit)?.name === 'obsidian', { timeoutMs: 3000, signal: ctx.signal });

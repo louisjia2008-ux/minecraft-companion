@@ -244,7 +244,8 @@ const materialsQuartzFlat = {
   defaultDifficulty: 'easy',
   timeoutMs: 60 * 60 * 1000,
   setup({ username, run, rng, difficulty = 'easy' }) {
-    const h = { x: 3000 * (run + 1), z: 0 };
+    // Each run (and each invocation: run numbers start again at 0) somewhere new.
+    const h = { x: 3000 * (run + 1 + Math.floor(rng() * 200) * 10), z: 0 };
     quartzHome = h;
     const { chest } = quartzSpots(h);
     const trees = plantTrees(rng);

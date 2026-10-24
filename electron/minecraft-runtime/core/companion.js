@@ -13,6 +13,7 @@ const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
 const { createRanchGoal } = require('./goals/ranch');
+const { installDigTimeFix } = require('./digTime');
 const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
@@ -68,6 +69,7 @@ function configureMovements(bot) {
 function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false } = {}) {
   if (!bot) throw new TypeError('bot is required');
   installInventoryCompatibility(bot);
+  installDigTimeFix(bot);
   const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
   configureMovements(bot);
