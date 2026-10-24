@@ -84,8 +84,8 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       const n = Math.hypot(g.x, g.z) || 1;
       const p = new Vec3(Math.round(g.x - (g.x / n) * 3), 0, Math.round(g.z - (g.z / n) * 3));
       const feet = bot.entity.position.floored();
-      if (Math.hypot(feet.x - p.x, feet.z - p.z) > 1 && !memory.bridgedToGateway) {
-        memory.bridgedToGateway = true;
+      if (Math.hypot(feet.x - p.x, feet.z - p.z) > 2.5 && (memory.bridgedToGateway || 0) < 3) {
+        memory.bridgedToGateway = (memory.bridgedToGateway || 0) + 1;
         const land = end.surfaceAt(bot, Math.round(p.x - (g.x / n) * 12), Math.round(p.z - (g.z / n) * 12), { yMax: g.y - 2 });
         if (land) await end.walkTo(bot, ctx, land, 1, 60000);
         const y = bot.entity.position.floored().y;
@@ -93,7 +93,13 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
         ctx.record('gateway_bridge', { to: at(p), steps: bridged.steps || 0, reason: bridged.reason || null });
       }
       const f = bot.entity.position.floored();
-      if (Math.hypot(f.x - p.x, f.z - p.z) > 1.5) { blacklist.add(tag, 'no_column'); return fail('no_tower_column'); }
+      if (Math.hypot(f.x - p.x, f.z - p.z) > 2.5) {
+        // Over the void a pearl thrown from the ground that clips the
+        // bedrock leaves the bot on a cap with nothing under it: bridge again.
+        if ((memory.bridgedToGateway || 0) < 3) return fail('no_tower_column');
+        blacklist.add(tag, 'no_column');
+        return fail('no_tower_column');
+      }
       columns.push(f);
     }
     const stand = columns[0];

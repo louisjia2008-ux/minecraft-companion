@@ -105,6 +105,11 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
       return dug;
     }
     const empty = ring.frames.map((f) => bot.blockAt(f.position)).filter((b) => b && !stronghold.hasEye(b));
+    // All filled: the portal blocks are on their way from the server.
+    if (empty.length === 0) {
+      await end.waitUntil(() => stronghold.portalLit(bot, ring.center), { timeoutMs: 3000, signal: ctx.signal });
+      return { ok: true, waited: true };
+    }
     if (empty.length > (bot.inventory.items().filter((i) => i.name === 'ender_eye').reduce((n, i) => n + i.count, 0))) {
       return fail('not_enough_eyes', { empty: empty.length });
     }
