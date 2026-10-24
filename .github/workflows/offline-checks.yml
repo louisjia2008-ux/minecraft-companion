@@ -40,6 +40,9 @@ jobs:
       - name: Typecheck
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: npm run typecheck
+      - name: Local runtime installer tests (complete suite)
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: npm run test:minecraft:setup
       - name: Host tests (full suite)
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: npm test
