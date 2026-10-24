@@ -99,14 +99,21 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
   const near = (e, p, r) => e.position && e.position.distanceTo(v(p).offset(0.5, 0, 0.5)) <= r;
   const mobsIn = (type, cells, r) => Object.values(bot.entities).filter((e) => e.name === type && cells.some((c) => near(e, c, r)));
   const zombieIn = () => mobsIn('zombie', [memory.farm.cells.zombie], 1.2).length > 0;
+  // Standing in the corridor or on a bed: one half in the entrance is not in yet.
   const villagers = () => {
-    const beds = memory.farm.parts.filter((p) => p.head).flatMap((p) => [p.position, p.head]);
-    return mobsIn('villager', [...memory.farm.cells.corridor, ...beds], 1.2).length;
+    const f = memory.farm;
+    const beds = f.parts.filter((p) => p.head).flatMap((p) => [p.position, p.head]);
+    const cells = new Set([...f.cells.corridor, ...beds].map((p) => `${p.x},${p.z}`));
+    return Object.values(bot.entities).filter((e) => e.name === 'villager' && e.position
+      && cells.has(`${Math.floor(e.position.x)},${Math.floor(e.position.z)}`) && Math.abs(e.position.y - f.levels.feet) <= 1.5).length;
   };
   // Natural rock there before the tunnel reaches the room is not the seal.
   const sealed = () => blockAt(memory.farm.cells.seal)?.name === 'cobblestone';
   const rails = () => (byCart ? memory.farm.rails : []);
-  const railOk = (r) => blockAt(r.position)?.name === r.block;
+  const closed = () => blockAt(memory.farm.cells.entrance)?.name === 'cobblestone';
+  const isEntrance = (p) => key(p) === key(memory.farm.cells.entrance);
+  // The entrance's rail counts as done once the entrance is closed over it.
+  const railOk = (r) => blockAt(r.position)?.name === r.block || (isEntrance(r.position) && (closed() || memory.closing));
   const powered = () => blockAt(memory.farm.cells.power)?.name === 'redstone_block';
 
   function guardFarm() {
@@ -257,6 +264,7 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
           faces: [toward], stand: part.stand, verify: () => partOk(part), alsoClear: part.head ? [part.head] : [],
         });
         ctx.record('device_part', { part: part.key, ok: result.ok, reason: result.reason, facing: props(blockAt(part.position)).facing });
+        if (!result.ok && !memory.diag) { memory.diag = true; const around = []; const pp = part.position; for (let dx = -1; dx <= 2; dx += 1) for (let dy = -2; dy <= 1; dy += 1) for (let dz = -1; dz <= 1; dz += 1) around.push(`${pp.x + dx},${pp.y + dy},${pp.z + dz}=${blockAt({ x: pp.x + dx, y: pp.y + dy, z: pp.z + dz })?.name}`); ctx.record('DIAG', { at: bot.entity.position, around, ents: Object.values(bot.entities).filter((e) => e !== bot.entity && e.position.distanceTo(bot.entity.position) < 4).map((e) => `${e.name}@${e.position}`) }); }
         return result;
       }
       if (s.dry) {
@@ -297,6 +305,23 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
         if (!memory.awaiting) ctx.record('iron_farm_awaiting_villagers', { villagers: have });
         memory.awaiting = true;
         return { ok: false, reason: 'awaiting_villagers' };
+      }
+      // A villager pushed half into the entrance's one-high gap suffocates there
+      // and keeps out of bed: close it for good once all three are in.
+      if (byCart && !memory.ready && !closed()) {
+        memory.closing = true; // its rail is not laid again meanwhile
+        const there = Object.values(bot.entities).some((e) => e.name === 'villager' && e.position
+          && Math.floor(e.position.x) === c.entrance.x && Math.floor(e.position.z) === c.entrance.z);
+        if (there) {
+          await sleep(1000, ctx.signal);
+          return { ok: false, reason: 'villager_in_entrance', waited: true };
+        }
+        if (!isAir(blockAt(c.entrance))) return dig(ctx, c.entrance);
+        const result = await skills.placeAt(bot, ctx, c.entrance, (n) => n === 'cobblestone', {
+          faces: [new Vec3(0, -1, 0)], stand: c.villagerStand,
+        });
+        ctx.record('device_part', { part: 'entrance', ok: result.ok, reason: result.reason });
+        return result;
       }
       if (byCart && !memory.ready && !zombieIn()) return zombie(c.villagerStand);
       if (!memory.ready && have < VILLAGERS) {

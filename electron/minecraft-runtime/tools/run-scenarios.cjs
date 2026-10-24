@@ -97,6 +97,13 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   // `list` is processed after every queued command, so its reply is a barrier.
   await server.query('list', /players online/, 15000);
   await sleep(2000);
+  // A second batch after a pause: e.g. bringing the bot back from far off once
+  // a structure is placed, so its client loads those chunks afresh.
+  if (setup.thenCommands?.length) {
+    for (const command of setup.thenCommands) server.command(command);
+    await server.query('list', /players online/, 15000);
+    await sleep(2000);
+  }
   // A teleport into ungenerated terrain can take longer than Mineflayer's
   // fixed 10 s, especially with two servers generating at once.
   for (let attempt = 1; ; attempt += 1) {

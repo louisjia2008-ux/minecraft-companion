@@ -317,8 +317,11 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
   async function takeBackCart(ctx, cart) {
     const moved = await actions.goNear(bot, ctx, cart.position.clone(), 2, { timeoutMs: 15000 });
     if (!moved.ok) return moved;
-    // A cart breaks once its damage passes 40: two full-strength hits a second
-    // apart (it heals one a tick, and quick hits land weak).
+    // A cart breaks once its damage passes 40. Each hit adds ten times its
+    // damage and it heals one a tick, so a fist (1) never gets there: one
+    // full-strength hit with a pickaxe, axe or sword (5 or more) does.
+    const tool = bot.inventory.items().find((i) => /_(sword|axe|pickaxe)$/.test(i.name) && !/^(wooden|golden)_/.test(i.name));
+    if (tool) await bot.equip(tool, 'hand').catch(() => {});
     for (let hit = 0; hit < 6 && bot.entities[cart.id]; hit += 1) {
       try { await bot.attack(bot.entities[cart.id]); } catch (_) { break; }
       await sleep(1000, ctx.signal);
@@ -357,8 +360,11 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
     if (!path?.length) {
       ctx.record('village_no_route_to_cart', { end, target, onStub, explored: stats.explored || 0,
         ground: blockAt({ ...target, y: target.y - 1 })?.name, here: blockAt(target)?.name });
-      await sleep(2000, ctx.signal);
-      return { ok: false, reason: 'no_route_to_cart' };
+      // No way to it: break the cart (its villager gets out) and leave that one be for a while.
+      for (const e of cart.passengers || []) memory.skip.set(e.id, Date.now() + 120000);
+      const back = await takeBackCart(ctx, cart);
+      if (back.ok && memory.stub && isRail(blockAt(memory.stub))) return { ok: true };
+      return back.ok ? { ok: true } : { ok: false, reason: 'no_route_to_cart' };
     }
     const next = path[0];
     if (onStub && key(next) === key(stub)) {
@@ -384,17 +390,27 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
       ctx.record('village_cart_in_corridor', { k, rail: block?.name, powered: block?.getProperties?.().powered,
         velocity: cart.velocity ? +cart.velocity.norm().toFixed(3) : null });
       await sleep(2000, ctx.signal);
-      return { ok: false, reason: 'cart_in_corridor' };
+      return { ok: false, reason: 'cart_in_corridor', waited: true };
     }
-    // Behind the cart: the next cell out along the line, or one more step past its end.
+    // Behind the cart: the next cell out along the line, or one more step past
+    // its end; failing that (a fence, a hay bale) a cell beside that one, from
+    // where a push still has some of its push along the rails.
     const ahead = r[k - 1] || r[k];
-    let behind = r[k + 1];
-    if (!behind) behind = { x: 2 * r[k].x - ahead.x, y: r[k].y, z: 2 * r[k].z - ahead.z };
-    const moved = await goStand(ctx, behind, 15000);
-    if (!moved.ok) {
-      ctx.record('village_push_stand', { behind, reason: moved.reason });
-      return moved;
+    const back = { x: r[k].x - ahead.x, z: r[k].z - ahead.z };
+    const behind = r[k + 1] || { x: r[k].x + back.x, y: r[k].y, z: r[k].z + back.z };
+    const open = (c) => {
+      const body = [blockAt(c), blockAt({ ...c, y: c.y + 1 })];
+      return body.every((b) => isAir(b) || b.boundingBox === 'empty') && blockAt({ ...c, y: c.y - 1 })?.boundingBox === 'block';
+    };
+    const stands = [behind, { x: behind.x + back.z, y: behind.y, z: behind.z + back.x },
+      { x: behind.x - back.z, y: behind.y, z: behind.z - back.x }].filter((c, i) => i === 0 || open(c));
+    let moved = null;
+    for (const stand of stands) {
+      moved = await goStand(ctx, stand, 15000);
+      if (moved.ok) break;
+      ctx.record('village_push_stand', { stand, reason: moved.reason });
     }
+    if (!moved.ok) return moved;
     const before = k;
     const target = bot.entities[cart.id]?.position || cart.position;
     await bot.lookAt(new Vec3(target.x, bot.entity.position.y + 1.6, target.z), true);
@@ -411,7 +427,11 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
     ctx.record('village_push', { from: before, moved: moving, pushes: memory.pushes });
     // Let it roll before deciding where to push from next.
     await sleep(2500, ctx.signal);
-    return moving ? { ok: true } : { ok: false, reason: 'cart_did_not_move' };
+    if (moving) return { ok: true };
+    // Up against the carts already parked in the corridor: the villagers in
+    // there knock them about, so it gets through; keep pushing without a stall.
+    if (k <= 3) return { ok: false, reason: 'corridor_full', waited: true };
+    return { ok: false, reason: 'cart_did_not_move' };
   }
 
   async function transport(ctx) {
@@ -421,7 +441,7 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
       const from = cart.position.clone();
       await sleep(500, ctx.signal);
       // Still rolling (down the stairs, along the tunnel): let it.
-      if (bot.entities[cart.id]?.position && bot.entities[cart.id].position.distanceTo(from) > 0.3) return { ok: true };
+      if (bot.entities[cart.id]?.position && bot.entities[cart.id].position.distanceTo(from) > 0.3) return { ok: true, waited: true };
       return push(ctx, cart);
     }
     // An empty cart on the stub: its villager walked off. Take the cart and the rail back.
@@ -469,7 +489,19 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
       // Waiting for a villager to stop is no lack of progress (the brain doesn't count it).
       return { ok: false, reason: free.length ? 'villagers_walking' : 'no_villager', waited: true };
     }
-    const villager = waiting.sort((a, b) => near(a) - near(b))[0];
+    // Only one the line can reach from its end.
+    const blocked = blockedCells();
+    const mine = ours();
+    const villager = waiting.sort((a, b) => near(a) - near(b)).find((e) => {
+      const cell = cellOf(e);
+      if (railPath(blockXYZ, end, cell, { blocked, ours: mine })) return true;
+      memory.skip.set(e.id, Date.now() + 30000);
+      return false;
+    });
+    if (!villager) {
+      ctx.record('village_no_reachable_villager', { waiting: waiting.length, end });
+      return { ok: false, reason: 'no_reachable_villager', waited: true };
+    }
     memory.choosingSince = null;
     const result = await loadVillager(ctx, villager, cellOf(villager));
     if (!result.ok && result.reason !== 'no_material') memory.skip.set(villager.id, Date.now() + 10000);

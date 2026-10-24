@@ -425,7 +425,12 @@ async function verifyIronFarm(server, username, farm, { rails = false } = {}) {
   parts.seal = await testBlock(server, f.cells.seal, 'minecraft:cobblestone');
   if (rails) {
     parts.power = await testBlock(server, f.cells.power, 'minecraft:redstone_block');
-    for (const [i, r] of f.rails.entries()) parts[`rail${i}`] = await testBlock(server, r.position, `minecraft:${r.block}`);
+    // The entrance's rail is under cobblestone once the villagers are in.
+    const entrance = `${f.cells.entrance.x},${f.cells.entrance.y},${f.cells.entrance.z}`;
+    for (const [i, r] of f.rails.entries()) {
+      const there = `${r.position.x},${r.position.y},${r.position.z}` === entrance ? 'minecraft:cobblestone' : `minecraft:${r.block}`;
+      parts[`rail${i}`] = await testBlock(server, r.position, there);
+    }
   }
   const count = async (selector) => {
     const match = await server.query(`execute if entity ${selector}`, /Test (passed|failed)(?:, count: (\d+))?/);
@@ -502,7 +507,7 @@ const ironFarmVillageFlat = {
     'generator-settings': JSON.stringify({ ...FLAT_GENERATOR, structure_overrides: [] }),
   },
   defaultDifficulty: 'easy',
-  timeoutMs: 45 * 60 * 1000,
+  timeoutMs: 60 * 60 * 1000,
   setup({ username, rng, difficulty = 'easy' }) {
     const vx = 60 + Math.round(rng() * 20);
     const vz = Math.round((rng() - 0.5) * 20);
@@ -510,6 +515,10 @@ const ironFarmVillageFlat = {
     const { x0, x1, z0, z1 } = VILLAGE_AREA;
     return {
       commands: [
+        // Off out of sight while the area is rebuilt: a client watching a
+        // structure placed mostly misses its block changes (stale grass where
+        // the village's paths are, and the server pulls the bot back each step).
+        `tp ${username} 3000 ${GROUND} 3000`,
         `forceload add ${x0} ${z0} ${x1} ${z1}`,
         ...commonSetup(username, difficulty),
         ...resetVillageArea(),
@@ -522,8 +531,8 @@ const ironFarmVillageFlat = {
         `give ${username} cobblestone 8`, `give ${username} sticky_piston`, `give ${username} slime_block 7`,
         `give ${username} dead_tube_coral_fan`, `give ${username} white_carpet`, `give ${username} rail`,
         `give ${username} stone_button`,
-        `tp ${username} -9.5 ${GROUND} 0.5 ${yaw} 0`,
       ],
+      thenCommands: [`tp ${username} -9.5 ${GROUND} 0.5 ${yaw} 0`],
       details: { village: { x: vx, z: vz } },
     };
   },

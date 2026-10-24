@@ -88,6 +88,7 @@ function createIronFarm(anchor, facing = 'east') {
   const cells = {
     corridor: [at(0, Y, 0), at(0, Y, 1), at(0, Y, 2)],
     seal: at(0, Y + 1, -1),
+    entrance: at(0, Y, -1), // under the seal: closed with cobblestone once the minecart farm's villagers are in
     slit: at(-1, Y + 1, 1),
     zombie: at(-2, Y, 1),
     zombieWall: at(-3, Y + 1, 1), // clicked with the spawn egg, through the slit
@@ -110,7 +111,10 @@ function createIronFarm(anchor, facing = 'east') {
   );
   SHAFTS.forEach((l, i) => {
     // On the shaft's wall away from the corridor; facing away from that wall.
-    parts.push({ key: `ladder${i}`, block: 'ladder', position: at(1, Y + 2, l), against: at(1, Y + 2, l - 1), facing: name(lane) });
+    // Placed standing in the shaft (no lava yet): from the tunnel the tunnel's
+    // roof is in the way of that wall's face.
+    parts.push({ key: `ladder${i}`, block: 'ladder', position: at(1, Y + 2, l), against: at(1, Y + 2, l - 1), facing: name(lane),
+      stand: at(1, Y, l) });
   });
 
   // Rails from the corridor's far end out to the stairs' top, in the order

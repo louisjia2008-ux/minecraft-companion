@@ -127,6 +127,9 @@ function createRecovery({
     async run(ctx) {
       const state = ctx.perceive();
       ctx.record('unstick', { why: stuckReason(state), at: state.position?.floored?.() || state.position });
+      try { const e = bot.entity; const p = e.position; const near = []; for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 2; dy += 1) for (let dz = -1; dz <= 1; dz += 1) { const b = bot.blockAt(p.floored().offset(dx, dy, dz)); near.push(`${dx},${dy},${dz}=${b?.name}`); }
+        if (!bot.companionTickCount) { bot.companionTickCount = { n: 0, forced: 0, mount: 0 }; bot.on('physicsTick', () => { bot.companionTickCount.n += 1; }); bot.on('forcedMove', () => { bot.companionTickCount.forced += 1; }); bot.on('mount', () => { bot.companionTickCount.mount += 1; }); }
+        ctx.record('DIAG_STUCK', { ticks: { ...bot.companionTickCount }, botVehicle: bot.vehicle ? `${bot.vehicle.name}@${bot.vehicle.position}` : null, vel: e.velocity && [e.velocity.x, e.velocity.y, e.velocity.z], pos: [p.x, p.y, p.z], onGround: e.onGround, vehicle: Boolean(e.vehicle), physics: bot.physicsEnabled, controls: bot.controlState, moving: bot.pathfinder?.isMoving?.(), sleeping: bot.isSleeping, near }); } catch {}
       try {
         return await actions.unstick(bot, ctx);
       } finally {
