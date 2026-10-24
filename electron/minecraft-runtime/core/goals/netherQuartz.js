@@ -12,10 +12,14 @@ const defaultActions = require('../actions');
 const nether = require('../nether');
 const { createBlacklist } = require('../blacklist');
 const { createPortalTrip } = require('../netherTrip');
+const { findStructure } = require('../netherStructures');
 
 const isQuartz = (n) => n === 'quartz';
 const isQuartzOre = (n) => n === 'nether_quartz_ore';
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
+// Blazes and wither skeletons spawn in and around a fortress, and a portal
+// can open right beside one. Quartz is everywhere else: mine away from it.
+const FORTRESS_BERTH = 40;
 
 function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
@@ -39,13 +43,21 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     }
     if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
     const home = memory.netherPortal;
+    if (!memory.fortress) {
+      const found = findStructure(bot, 'fortress');
+      if (found) {
+        memory.fortress = found.position;
+        ctx.record('fortress_avoided', { position: `${found.position.x},${found.position.y},${found.position.z}` });
+      }
+    }
+    const nearFortress = (p) => memory.fortress && p.distanceTo(memory.fortress) < FORTRESS_BERTH;
     const result = await skills.gatherOne(bot, ctx, {
       blocks: isQuartzOre,
       dropMatch: isQuartz,
       blacklist,
       radius: 48,
       // Stay within reach of the way home.
-      exclude: (p) => home && p.distanceTo(home) > roam,
+      exclude: (p) => (home && p.distanceTo(home) > roam) || nearFortress(p),
     });
     if (result.ok || result.reason !== 'no_target_in_range') return result;
     return exploreNear(ctx, home);
@@ -59,7 +71,11 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
       m.heading = Math.atan2(home.z - here.z, home.x - here.x) + Math.PI / 2;
       return actions.goNear(bot, ctx, home, 4, { timeoutMs: 60000 });
     }
-    if (m.heading === undefined || m.blocked) {
+    if (memory.fortress && here.distanceTo(memory.fortress) < FORTRESS_BERTH * 1.5) {
+      // Head straight away from the fortress (a little to either side when blocked).
+      m.heading = Math.atan2(here.z - memory.fortress.z, here.x - memory.fortress.x) + (m.blocked ? (Math.random() - 0.5) * Math.PI : 0);
+      m.blocked = false;
+    } else if (m.heading === undefined || m.blocked) {
       m.heading = Math.random() * Math.PI * 2;
       m.blocked = false;
     }

@@ -142,3 +142,19 @@ test('a swing next to a hit is not blamed while a wither skeleton could have dea
   bot.emit('entityHurt', bot.entity);
   assert.equal(defend.want(nearPiglin(bot)), 1);
 });
+
+test('quartz next to a fortress is left alone: blazes spawn there', async () => {
+  const bricks = Array.from({ length: 30 }, (_, i) => new Vec3(10 + i, 64, 0));
+  const bot = { ...makeWorld(), pathfinder: { movements: { maxDropDown: 4, blocksCantBreak: new Set(), exclusionAreasStep: [] } },
+    registry: { blocksByName: { nether_portal: { id: 1 }, nether_bricks: { id: 2 } } },
+    inventory: { slots: [], items: () => [{ name: 'iron_pickaxe' }] },
+    findBlocks: ({ matching }) => ([].concat(matching).includes(2) ? bricks : []) };
+  let exclude = null;
+  const skills = { gatherOne: async (_b, _c, options) => { exclude = options.exclude; return { ok: true }; } };
+  const goal = createNetherQuartzGoal({ bot, count: 1, skills });
+  goal.memory.netherPortal = new Vec3(0, 64, 0);
+  const ctx = { signal: new AbortController().signal, record: () => {}, perceive: () => ({ inventory: {} }) };
+  await goal.run(ctx);
+  assert.equal(exclude(new Vec3(20, 40, 0)), true, 'ore in the fortress');
+  assert.equal(exclude(new Vec3(-50, 40, 0)), false, 'ore on the far side of the portal');
+});
