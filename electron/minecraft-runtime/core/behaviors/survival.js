@@ -69,6 +69,9 @@ function lavaStep(bot, radius = 40) {
       if (best && d >= best.d) continue;
       const cell = new Vec3(feet.x + dx, surface, feet.z + dz);
       if (bot.blockAt(cell)?.name !== 'lava') continue;
+      // Not a cell the bot itself is in: no block can be placed there.
+      const at = bot.entity.position;
+      if (Math.abs(at.x - (cell.x + 0.5)) < 0.8 && Math.abs(at.z - (cell.z + 0.5)) < 0.8) continue;
       // Room to stand on the step once it is placed.
       if (![1, 2].every((up) => { const b = bot.blockAt(cell.offset(0, up, 0)); return b?.boundingBox === 'empty' && b.name !== 'lava'; })) continue;
       const wall = sides.map((f) => cell.plus(f)).find((p) => {
@@ -345,6 +348,31 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, false);
     }
   }
+  // Jump, and once clear of the floor put a block on it: one block higher
+  // each round, until the head is out of the lava.
+  async function towerUp(ctx, block, out) {
+    try { await bot.equip(block, 'hand'); } catch { return; }
+    for (let i = 0; i < 12 && !out() && !ctx.signal?.aborted; i += 1) {
+      const floor = bot.blockAt(bot.entity.position.offset(0, -0.5, 0));
+      if (!floor || floor.boundingBox !== 'block') return;
+      if (!bot.inventory.items().some((it) => it.name === block.name)) return;
+      try {
+        await bot.look(bot.entity.yaw, -Math.PI / 2, true);
+        bot.setControlState('jump', true);
+        await waitUntil(() => bot.entity.position.y >= floor.position.y + 2, { timeoutMs: 2500, signal: ctx.signal });
+        await bot.placeBlock(floor, new Vec3(0, 1, 0));
+      } catch { /* checked by the next round's floor */ } finally {
+        bot.setControlState('jump', false);
+      }
+      await waitUntil(() => bot.entity.onGround, { timeoutMs: 1500, signal: ctx.signal }).catch(() => {});
+    }
+  }
+  // Still in lava is not a failure to back off from: the next try comes at
+  // once, before the bot sinks out of reach of the walls.
+  const lavaResult = (ctx, done) => {
+    if (!done) ctx.record('still_in_lava', {});
+    return { ok: true, waited: !done };
+  };
   const leaveLava = {
     name: 'leave_lava',
     band: BAND.ESCAPE,
@@ -357,10 +385,17 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         ctx.record('leave_lava', { shore: `${shore.x},${shore.y},${shore.z}` });
         await swimTo(ctx, shore.offset(0.5, 1.2, 0.5), out);
         if (out()) await sleep(400, ctx.signal);
-        return out() ? { ok: true } : { ok: false, reason: 'still_in_lava' };
+        return lavaResult(ctx, out());
+      }
+      const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
+      // Sunk to the floor of a deep pool: build a pillar up through the lava.
+      const feet = bot.entity.position.floored();
+      if (block && bot.entity.onGround && lavaSurface(bot, feet) - feet.y >= 2) {
+        ctx.record('leave_lava', { tower: `${feet.x},${feet.y},${feet.z}`, surface: lavaSurface(bot, feet), block: block.name });
+        await towerUp(ctx, block, out);
+        if (out()) return { ok: true };
       }
       const step = lavaStep(bot);
-      const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
       ctx.record('leave_lava', { shore: null, step: step ? `${step.cell.x},${step.cell.y},${step.cell.z}` : null, block: block?.name || null });
       if (!step || !block) {
         await swimTo(ctx, bot.entity.position.offset(0, 3, 0), out, 20);
@@ -383,7 +418,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         if (placed) await swimTo(ctx, step.cell.offset(0.5, 1.2, 0.5), out, 50);
       }
       if (out()) await sleep(300, ctx.signal);
-      return out() ? { ok: true } : { ok: false, reason: 'still_in_lava' };
+      return lavaResult(ctx, out());
     },
   };
 

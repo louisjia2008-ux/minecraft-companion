@@ -454,6 +454,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function netherStep(ctx, state) {
     trip.enterNetherMode();
     trip.netherPortal();
+    // In lava no path can be planned: getting out is leave_lava's job, and
+    // explore attempts from there would only burn the no-progress budget.
+    if (bot.entity?.isInLava) {
+      await sleep(1000, ctx.signal);
+      return { ok: true, waited: true };
+    }
     if (allDone(state)) return withScaffolding(() => trip.toOverworld(ctx));
     // Lost the kit (died, drops gone): a bare-handed fortress run only dies again.
     if (fortressWork(state) && !Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'))) return fail('no_weapon');

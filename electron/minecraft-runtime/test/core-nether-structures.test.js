@@ -130,3 +130,47 @@ test('deep in a lava sea the step goes on the surface, not where the bot sank to
   await leaveLava.run({ record() {}, signal: undefined });
   assert.deepEqual(placed[0], new Vec3(3, 31, 0));
 });
+
+test('on the floor of a deep lava pool the bot builds a pillar up instead of giving up', async () => {
+  const cells = {};
+  for (let y = 20; y <= 26; y += 1) for (let x = -1; x <= 1; x += 1) cells[`${x},${y},0`] = 'lava';
+  cells['0,19,0'] = 'netherrack';
+  const bot = world(cells);
+  bot.blockAt = world(cells).blockAt;
+  let y = 20;
+  bot.entity.position = new Vec3(0.5, y, 0.5);
+  Object.defineProperty(bot.entity, 'isInLava', { get: () => bot.entity.position.y <= 26 });
+  bot.entity.onGround = true;
+  bot.entity.yaw = 0;
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'cobblestone', count: 16 }] },
+    setControlState: (control, on) => { if (control === 'jump' && on) bot.entity.position = new Vec3(0.5, y + 2, 0.5); },
+    look: async () => {}, lookAt: async () => {}, equip: async () => {},
+    placeBlock: async (floor) => { const top = floor.position.offset(0, 1, 0); cells[`${top.x},${top.y},${top.z}`] = 'cobblestone'; bot.blockAt = world(cells).blockAt; y = top.y + 1; bot.entity.position = new Vec3(0.5, y, 0.5); } });
+  bot.registry.foodsByName = {};
+  bot.registry.blocksByName.cobblestone = { id: 99, name: 'cobblestone' };
+  const leaveLava = createSurvivalBehaviors({ bot }).find((b) => b.name === 'leave_lava');
+  const records = [];
+  const result = await leaveLava.run({ record: (type, data) => records.push([type, data]) });
+  assert.equal(result.ok, true);
+  assert.equal(bot.entity.isInLava, false);
+  assert.ok(records.some(([, d]) => d.tower), 'built a pillar');
+});
+
+test('a lava step is never the cell the bot is swimming in', async () => {
+  const cells = {};
+  for (let x = -3; x <= 0; x += 1) for (let z = 0; z <= 1; z += 1) cells[`${x},31,${z}`] = 'lava';
+  for (let y = 25; y <= 40; y += 1) for (let z = 0; z <= 1; z += 1) cells[`1,${y},${z}`] = 'netherrack';
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 31, 0.5);
+  bot.entity.isInLava = true;
+  const placed = [];
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'netherrack', count: 8 }] },
+    setControlState: () => {}, lookAt: async () => {}, equip: async () => {},
+    placeBlock: async (against, face) => { placed.push(against.position.plus(face)); } });
+  bot.registry.foodsByName = {};
+  const leaveLava = createSurvivalBehaviors({ bot }).find((b) => b.name === 'leave_lava');
+  await leaveLava.run({ record() {} });
+  assert.ok(placed.length && !placed.some((p) => p.x === 0 && p.z === 0), `placed at ${placed.join(' ')}`);
+});
