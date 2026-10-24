@@ -31,11 +31,11 @@ function fixture() {
   return { world, bot, ledger, native, cast };
 }
 
-test('full regression manifest covers every registered scenario, retains repeats, and requires all 32 rounds', () => {
+test('full regression manifest covers every registered scenario, retains repeats, and requires all 33 rounds', () => {
   const full = SUITES.full;
-  assert.equal(Object.keys(SCENARIOS).length, 24);
+  assert.equal(Object.keys(SCENARIOS).length, 25);
   assert.deepEqual(full.map((e) => e.scenario).sort(), Object.keys(SCENARIOS).sort());
-  assert.equal(full.reduce((n, e) => n + e.runs, 0), 32);
+  assert.equal(full.reduce((n, e) => n + e.runs, 0), 33);
   for (const e of full) assert.equal(e.minPassRate, 1);
   for (const e of SUITES.quick) assert.equal(full.find((f) => f.scenario === e.scenario).runs, e.runs);
   assert.equal(full.find((e) => e.scenario === 'collect-logs-natural').runs, 3);
