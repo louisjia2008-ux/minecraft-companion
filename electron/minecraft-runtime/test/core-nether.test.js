@@ -122,3 +122,20 @@ test('returning to the overworld restores the overworld movement settings', asyn
   assert.equal(movements.maxDropDown, 4);
   assert.equal(movements.exclusionAreasStep.length, 0);
 });
+
+test('a Nether portal blown out is lit again from its frame before going home', async () => {
+  // Frame along x from base 0,63,0: obsidian at u=0..3, y=63..67, interior air.
+  const blocks = {};
+  for (const c of nether.portalFrame(new Vec3(0, 63, 0), 'x').cells) if (!c.corner) blocks[`${c.pos.x},${c.pos.y},${c.pos.z}`] = 'obsidian';
+  const bot = { ...makeWorld(blocks), pathfinder: { movements: { maxDropDown: 4, blocksCantBreak: new Set(), exclusionAreasStep: [] } },
+    registry: { blocksByName: { nether_portal: { id: 1 } } },
+    inventory: { slots: [], items: () => [{ name: 'iron_pickaxe' }] }, findBlocks: () => [] };
+  const goal = createNetherQuartzGoal({ bot, count: 1 });
+  goal.memory.netherPortal = new Vec3(2, 64, 0);
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record: (type) => records.push(type), perceive: () => ({ inventory: { quartz: 1 } }) };
+  const result = await goal.run(ctx);
+  assert.ok(records.includes('portal_relight'));
+  // No flint and steel in this bag: the relight is tried and says why it failed.
+  assert.equal(result.reason, 'no_igniter');
+});

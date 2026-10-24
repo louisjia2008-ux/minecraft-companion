@@ -122,6 +122,15 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     if (quartz(state) >= count || retreat) {
       if (retreat) ctx.record('retreat', { health: Math.round(bot.health) });
       if (!memory.netherPortal) return fail('nether_portal_lost');
+      // A ghast's blast puts a portal out; the frame stays. Light it again
+      // (the corners do not matter to a portal, only the ten obsidian).
+      if (bot.blockAt(memory.netherPortal)?.name !== 'nether_portal') {
+        const frame = frameAround(memory.netherPortal);
+        if (frame) {
+          ctx.record('portal_relight', { portal: `${memory.netherPortal.x},${memory.netherPortal.y},${memory.netherPortal.z}` });
+          return nether.ignite(bot, ctx, nether.portalFrame(frame.base, frame.axis));
+        }
+      }
       return goThrough(ctx, memory.netherPortal);
     }
     if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
@@ -136,6 +145,18 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     });
     if (result.ok || result.reason !== 'no_target_in_range') return result;
     return exploreNear(ctx, home);
+  }
+
+  /** The obsidian frame whose bottom interior holds `cell`, or null. */
+  function frameAround(cell) {
+    for (const axis of ['x', 'z']) {
+      for (const u of [1, 2]) {
+        const base = axis === 'x' ? cell.offset(-u, -1, 0) : cell.offset(0, -1, -u);
+        const frame = nether.portalFrame(base, axis);
+        if (frame.cells.every((c) => c.corner || bot.blockAt(c.pos)?.name === 'obsidian')) return { base, axis };
+      }
+    }
+    return null;
   }
 
   /** Walks ~24 blocks along one heading; turns around past `roam` from the portal. */
