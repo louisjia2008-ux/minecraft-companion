@@ -71,10 +71,11 @@ const netherQuartzGiven = {
 
 const EXPEDITION = { blazeRods: 6, witherSkulls: 1, trades: 10 };
 const GOLD = 24;
+// Gold helmets wear out in a fortress fight (77 durability): two spares keep piglins calm afterwards.
 const EXPEDITION_KIT = [
   ['obsidian', 10], ['cobblestone', 64], ['flint_and_steel', 1], ['diamond_pickaxe', 1],
   ['diamond_sword[enchantments={looting:3,sharpness:3}]', 1], ['shield', 1],
-  ['golden_helmet', 1], ['diamond_chestplate', 1], ['diamond_leggings', 1], ['diamond_boots', 1],
+  ['golden_helmet', 3], ['diamond_chestplate', 1], ['diamond_leggings', 1], ['diamond_boots', 1],
   ['cooked_beef', 32], ['golden_apple', 8], ['gold_ingot', GOLD],
   ['potion[potion_contents={potion:"minecraft:long_fire_resistance"}]', 4],
 ];
