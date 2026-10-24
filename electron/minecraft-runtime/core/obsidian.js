@@ -125,7 +125,7 @@ async function castStep(bot, ctx, memory, { skills = defaultSkills, actions = de
     // The water runs off a few seconds after its source is gone: digging in it is slow.
     await waitUntil(() => !bot.entity.isInWater, { timeoutMs: 8000, signal: ctx.signal });
     const target = bot.blockAt(pit);
-    try { await bot.equip(pick, 'hand'); } catch (_) { /* digBlock equips again */ }
+    try { await bot.equip(pick, 'hand'); } catch { /* digBlock equips again */ }
     ctx.record('obsidian_dig', { digMs: bot.digTime?.(target), inWater: bot.entity.isInWater, onGround: bot.entity.onGround,
       at: posKey(bot.entity.position.floored()), held: bot.heldItem?.name || null, effects: Object.keys(bot.entity.effects || {}) });
     const dug = await actions.digBlock(bot, ctx, target, { tool: pick,
