@@ -22,14 +22,20 @@ function nearbyGhast(bot, range) {
   return Object.values(bot.entities || {}).find((e) => e.name === 'ghast' && e.position && e.position.distanceTo(here) <= range) || null;
 }
 
+/** The top lava cell above `feet`: a bot sunk deep in a lava sea is far below it. */
+function lavaSurface(bot, feet) {
+  let surface = feet.y;
+  while (surface < feet.y + 32 && bot.blockAt(feet.offset(0, surface - feet.y + 1, 0))?.name === 'lava') surface += 1;
+  return surface;
+}
+
 /**
  * The nearest solid cell, out of the lava, that a swimmer can climb onto: its
  * top no higher than one block above the lava's surface.
  */
 function lavaShore(bot, radius = 16) {
   const feet = bot.entity.position.floored();
-  let surface = feet.y;
-  while (surface < feet.y + 4 && bot.blockAt(feet.offset(0, surface - feet.y + 1, 0))?.name === 'lava') surface += 1;
+  const surface = lavaSurface(bot, feet);
   const open = (b) => b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 1) {
@@ -54,8 +60,7 @@ function lavaShore(bot, radius = 16) {
  */
 function lavaStep(bot, radius = 40) {
   const feet = bot.entity.position.floored();
-  let surface = feet.y;
-  while (surface < feet.y + 4 && bot.blockAt(feet.offset(0, surface - feet.y + 1, 0))?.name === 'lava') surface += 1;
+  const surface = lavaSurface(bot, feet);
   const sides = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 1) {
@@ -64,6 +69,8 @@ function lavaStep(bot, radius = 40) {
       if (best && d >= best.d) continue;
       const cell = new Vec3(feet.x + dx, surface, feet.z + dz);
       if (bot.blockAt(cell)?.name !== 'lava') continue;
+      // Room to stand on the step once it is placed.
+      if (![1, 2].every((up) => { const b = bot.blockAt(cell.offset(0, up, 0)); return b?.boundingBox === 'empty' && b.name !== 'lava'; })) continue;
       const wall = sides.map((f) => cell.plus(f)).find((p) => {
         const b = bot.blockAt(p);
         return b && b.boundingBox === 'block' && !/magma/.test(b.name);
@@ -361,7 +368,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       }
       const centre = step.cell.offset(0.5, 0.5, 0.5);
       // Out in a lava sea the nearest wall can be far: a long swim with fire resistance.
-      await swimTo(ctx, centre, () => out() || Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z) <= 2.2, 400);
+      // Sunk deep, it also has to come up within reach of the wall's top.
+      await swimTo(ctx, centre, () => out() || (Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z) <= 2.2
+        && bot.entity.position.y >= step.cell.y - 1.5), 400);
       if (!out()) {
         try {
           await bot.equip(block, 'hand');

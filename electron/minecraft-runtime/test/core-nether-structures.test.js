@@ -109,3 +109,24 @@ test('the expedition counts rods, skulls and trades and is only done back home',
   assert.ok(goal.progress(full) > goal.progress({ inventory: {} }));
   assert.throws(() => createNetherExpeditionGoal({ bot, trades: -1 }), TypeError);
 });
+
+test('deep in a lava sea the step goes on the surface, not where the bot sank to', async () => {
+  const cells = {};
+  for (let x = -3; x <= 3; x += 1) for (let y = 20; y <= 31; y += 1) cells[`${x},${y},0`] = 'lava';
+  for (let y = 20; y <= 40; y += 1) cells[`4,${y},0`] = 'netherrack';
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 22, 0.5);
+  bot.entity.isInLava = true;
+  const placed = [];
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'cobblestone', count: 8 }] },
+    setControlState: () => {}, lookAt: async () => {}, equip: async () => {},
+    placeBlock: async (wall, face) => { placed.push(wall.position.plus(face)); cells[`${placed[0].x},${placed[0].y},0`] = 'cobblestone'; } });
+  bot.registry.foodsByName = {};
+  bot.blockAt = world(cells).blockAt;
+  const leaveLava = createSurvivalBehaviors({ bot }).find((b) => b.name === 'leave_lava');
+  // Swimming: rise to the surface next to the wall.
+  bot.setControlState = () => { bot.entity.position = new Vec3(3.5, 31, 0.5); };
+  await leaveLava.run({ record() {}, signal: undefined });
+  assert.deepEqual(placed[0], new Vec3(3, 31, 0));
+});
