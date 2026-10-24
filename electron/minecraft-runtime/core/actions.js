@@ -100,7 +100,8 @@ async function goTo(bot, ctx, goal, options = {}) {
   }
   if (offCentre(bot) && !goal.isEnd(bot.entity.position.floored())) await recentre(bot, ctx);
   const first = await goToOnce(bot, ctx, goal, options);
-  if (first.reason !== 'no_progress') return first;
+  // A caller with its own shared recovery deadline can own the next attempt.
+  if (first.reason !== 'no_progress' || options.retryNoProgress === false) return first;
   // Stuck at the start: step into an open neighbouring cell and try once more.
   await nudge(bot, ctx);
   return goToOnce(bot, ctx, goal, options);

@@ -31,6 +31,21 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
       furnace: goal.memory.furnace });
   }
 
+  function accountAttempt(ctx, goal, before, result) {
+    // Waiting and survival preemption neither spend nor refill this budget.
+    if (ctx.signal?.aborted || result?.waited || result?.reason === 'aborted') return;
+    const after = observed(goal, ctx.perceive());
+    // A failed path can monopolize maintenance just as a no-op success can.
+    // Only observed inventory/world/body progress resets the streak.
+    if (before === after) noChange += 1;
+    else noChange = 0;
+    if (noChange >= noChangeLimit) {
+      noChange = 0;
+      retryAt = now() + retryMs;
+      ctx.record('home_maintenance_paused', { reason: 'no_observed_change', retryAt });
+    }
+  }
+
   return {
     name: 'home_maintenance',
     // A smaller want cannot preempt work in the same band. Keep house work
@@ -53,15 +68,16 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
       const goal = current();
       if (!goal?.memory.established) return { ok: true };
       const before = observed(goal, ctx.perceive());
-      const result = await goal.run(ctx);
-      const after = observed(goal, ctx.perceive());
-      if (result.ok && before === after && !result.waited) noChange += 1;
-      else noChange = 0;
-      if (noChange >= noChangeLimit) {
-        noChange = 0;
-        retryAt = now() + retryMs;
-        ctx.record('home_maintenance_paused', { reason: 'no_observed_change', retryAt });
+      let result;
+      try {
+        result = await goal.run(ctx);
+      } catch (error) {
+        if (error?.code !== 'aborted' && error?.code !== 'ABORT_ERR' && error?.name !== 'AbortError') {
+          try { accountAttempt(ctx, goal, before); } catch { /* Preserve the original repair exception. */ }
+        }
+        throw error;
       }
+      accountAttempt(ctx, goal, before, result);
       return result;
     },
   };

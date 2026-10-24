@@ -17,6 +17,7 @@ const { goals } = require('mineflayer-pathfinder');
 const defaultActions = require('./actions');
 const defaultSkills = require('./skills');
 const { posKey } = require('./blacklist');
+const { abortError } = require('./confirm');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -342,8 +343,118 @@ function findFrontier(bot, mine) {
 
 const LEG = 6;
 const NEAR_TUNNEL = 6;
+const REJOIN_MS = 20000;
+const REJOIN_LEGS = 4;
+const REJOIN_HAZARDS = new Set(['magma_block', 'cactus', 'campfire', 'soul_campfire', 'fire', 'soul_fire',
+  'wither_rose', 'sweet_berry_bush', 'powder_snow', 'nether_portal', 'end_portal', 'end_gateway']);
 const near = (a, b, d = 1.5) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) <= d;
 const unkey = (k) => { const [x, y, z] = k.split(',').map(Number); return { x, y, z }; };
+
+function rejoinGeometry(bot) {
+  const read = p => bot.blockAt(new Vec3(p.x, p.y, p.z));
+  const safe = b => b && !LIQUID.test(b.name) && !REJOIN_HAZARDS.has(b.name);
+  const falling = b => GRAVITY.has(b.name) || b.name.endsWith('_concrete_powder');
+  const clear = p => {
+    const b = read(p);
+    return safe(b) && b.boundingBox === 'empty' && Array.isArray(b.shapes) && b.shapes.length === 0;
+  };
+  // A solid ceiling at this height can safely cap the jump's apex. It must
+  // still be loaded and safe, and its shape cannot project into head room.
+  const ceiling = p => {
+    const b = read(p);
+    return safe(b) && !falling(b) && Array.isArray(b.shapes) && b.shapes.every(s => s.length === 6
+      && s.every(Number.isFinite) && s[1] >= 0);
+  };
+  const standing = p => {
+    const floor = read(add(p, 0, -1, 0));
+    return safe(floor) && floor.boundingBox === 'block' && !falling(floor) && !/_leaves$/.test(floor.name)
+      && floor.shapes?.some(s => s.length === 6 && s.every((v, i) => v === (i < 3 ? 0 : 1)))
+      && clear(p) && clear(add(p, 0, 1, 0));
+  };
+  const step = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.z - b.z) === 1
+    && b.y >= a.y && b.y <= a.y + 1 && standing(a) && standing(b)
+    && (b.y === a.y || (clear(add(a, 0, 2, 0)) && ceiling(add(a, 0, 3, 0)) && ceiling(add(b, 0, 2, 0))));
+  return { standing, step };
+}
+
+/** A short cardinal route out of a one-block ore cavity; UNKNOWN stays unsafe. */
+function cardinalRejoin(bot, from, target) {
+  if (target.y !== from.y + 1) return null;
+  const geometry = rejoinGeometry(bot);
+  if (!geometry.standing(from) || !geometry.standing(target)) return null;
+  const queue = [{ at: from, path: [] }], seen = new Set([posKey(from)]);
+  for (let i = 0; i < queue.length && i < 64; i += 1) {
+    const { at, path } = queue[i];
+    if (same(at, target)) return path;
+    if (path.length >= REJOIN_LEGS) continue;
+    const next = DIRS.flatMap(([dx, dz]) => [0, 1].map(dy => add(at, dx, dy, dz)))
+      .sort((a, b) => Math.abs(a.x - target.x) + Math.abs(a.z - target.z) + Math.abs(a.y - target.y)
+        - Math.abs(b.x - target.x) - Math.abs(b.z - target.z) - Math.abs(b.y - target.y));
+    for (const p of next) {
+      if (p.y > target.y || Math.abs(p.x - from.x) > 3 || Math.abs(p.z - from.z) > 3
+        || seen.has(posKey(p)) || !geometry.step(at, p)) continue;
+      seen.add(posKey(p));
+      queue.push({ at: p, path: [...path, p] });
+    }
+  }
+  return null;
+}
+
+async function rejoinTunnel(bot, ctx, mine, target, actions) {
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const deadline = Date.now() + REJOIN_MS, expiry = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, expiry.signal]) : expiry.signal;
+  const scoped = { ...ctx, signal };
+  const timer = setTimeout(() => { expiry.abort('path_timeout'); (actions.haltBody || defaultActions.haltBody)(bot); }, REJOIN_MS);
+  const remaining = () => Math.max(0, deadline - Date.now());
+  const check = () => {
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    return !expiry.signal.aborted && remaining() > 0;
+  };
+  const go = async p => {
+    if (!check()) return fail('path_timeout');
+    const result = await actions.goTo(bot, scoped, new goals.GoalBlock(p.x, p.y, p.z),
+      { timeoutMs: remaining(), retryNoProgress: false, arrived: at => near(at.floored(), p, 0.5) });
+    return check() ? result : fail('path_timeout');
+  };
+  try {
+    const first = await go(target);
+    if (first.ok) { mine.walkFailures = 0; return first; }
+    if (first.reason !== 'no_progress') return first;
+    const from = bot.entity.position.floored(), path = cardinalRejoin(bot, from, target);
+    if (!check()) return fail('path_timeout');
+    const profile = bot.pathfinder?.movements;
+    if (!path || !profile) return first;
+    const restricted = { canDig: false, allow1by1towers: false, scafoldingBlocks: [], canOpenDoors: false };
+    const saved = Object.fromEntries(Object.keys(restricted).map(k => [k, profile[k]]));
+    Object.assign(profile, restricted);
+    const owned = () => bot.pathfinder.movements === profile && Object.keys(restricted).every(k => profile[k] === restricted[k]);
+    try {
+      ctx.record('mine_rejoin', { target: posKey(target), via: path.map(posKey), remainingMs: remaining() });
+      for (const p of path) {
+        // State can change while a previous leg is executing. Recheck the
+        // loaded geometry before handing another short goal to the follower.
+        const safe = rejoinGeometry(bot).step(bot.entity.position.floored(), p);
+        if (!check()) return fail('path_timeout');
+        if (!safe || !owned()) return fail('no_progress');
+        const result = await go(p);
+        if (!result.ok) return result;
+        if (!owned()) return fail('no_progress');
+      }
+      if (!near(bot.entity.position.floored(), target, 0.5)) return fail('not_arrived');
+      mine.walkFailures = 0;
+      return { ok: true };
+    } finally {
+      for (const k of Object.keys(restricted)) if (profile[k] === restricted[k]) profile[k] = saved[k];
+    }
+  } catch (error) {
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    if (expiry.signal.aborted || remaining() <= 0) return fail('path_timeout');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** The tunnel cell the bot stands in (or right next to), as a key into mine.cells. */
 function cellAt(mine, feet) {
@@ -380,7 +491,7 @@ async function walkTunnel(bot, ctx, mine, towards, actions = defaultActions, { s
     // Just off the tunnel (in the hole an ore left): step back to the closest cell.
     const closest = Object.keys(mine.cells).map(unkey)
       .map((p) => ({ p, d: Math.hypot(p.x - feet.x, p.y - feet.y, p.z - feet.z) })).sort((a, b) => a.d - b.d)[0];
-    if (closest && closest.d <= NEAR_TUNNEL) return go(closest.p);
+    if (closest && closest.d <= NEAR_TUNNEL) return rejoinTunnel(bot, ctx, mine, closest.p, actions);
     return towards === 'out' ? null : go(mine.entrance, 90000); // outside: to the entrance first
   }
   const up = chain(mine, here);
@@ -506,4 +617,4 @@ async function maybeTorch(bot, ctx, mine, cell) {
 }
 
 module.exports = { inspectStep, turn, knownOpen, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
-  LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH };
+  LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH, cardinalRejoin };

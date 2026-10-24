@@ -286,3 +286,149 @@ test('apparently successful repair steps with no observed change have a bounded 
   clock = 60001;
   assert.ok(maintenance.want(s.perceive()) > 0);
 });
+
+function stalledMaintenance() {
+  const s = fixture();
+  assert.equal(s.home.isDone(s.perceive()), true);
+  s.world.set(s.key(s.house.blocks[0].position), 'air');
+  let clock = 0;
+  const records = [];
+  const maintenance = createHomeMaintenance({ bot: s.bot, home: () => s.home, now: () => clock });
+  const ctx = { ...s.ctx, record: (name, data) => records.push({ name, ...data }) };
+  const attempt = async (result) => {
+    s.home.run = async () => result;
+    assert.equal(await maintenance.run(ctx), result, 'preserve the original result object');
+  };
+  return { ...s, maintenance, ctx, records, attempt, setTime: (value) => { clock = value; } };
+}
+
+test('failed repairs without observed progress pause after three attempts and resume at the retry deadline', async () => {
+  const s = stalledMaintenance();
+  for (let i = 0; i < 3; i += 1) {
+    assert.ok(s.maintenance.want(s.perceive()) > 0);
+    await s.attempt({ ok: false, reason: 'still_below_surface' });
+  }
+  assert.equal(s.maintenance.want(s.perceive()), 0);
+  assert.equal(s.records.filter((row) => row.name === 'home_maintenance_paused').length, 1);
+  assert.equal(s.records[0].reason, 'no_observed_change');
+  assert.equal(s.records[0].retryAt, 60000);
+  s.setTime(59999);
+  assert.equal(s.maintenance.want(s.perceive()), 0);
+  s.setTime(60000);
+  assert.ok(s.maintenance.want(s.perceive()) > 0);
+});
+
+test('mixed failed and successful no-change repairs share the same bounded budget', async () => {
+  const s = stalledMaintenance();
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  await s.attempt({ ok: true });
+  assert.ok(s.maintenance.want(s.perceive()) > 0);
+  await s.attempt({ ok: false, reason: 'no_material' });
+  assert.equal(s.maintenance.want(s.perceive()), 0);
+});
+
+test('waited repairs neither consume nor refill an existing no-change budget', async () => {
+  const s = stalledMaintenance();
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  await s.attempt({ ok: true, waited: true });
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  assert.ok(s.maintenance.want(s.perceive()) > 0, 'waiting must not consume the third attempt');
+  await s.attempt({ ok: true, waited: true });
+  assert.ok(s.maintenance.want(s.perceive()) > 0);
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  assert.equal(s.maintenance.want(s.perceive()), 0, 'waiting must not erase the first two attempts');
+});
+
+test('returned aborts and aborted contexts preserve the existing retry budget', async () => {
+  const s = stalledMaintenance();
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  await s.attempt({ ok: false, reason: 'aborted' });
+  const abort = new AbortController();
+  s.home.run = async () => { abort.abort('survival_preemption'); return { ok: true }; };
+  assert.deepEqual(await s.maintenance.run({ ...s.ctx, signal: abort.signal }), { ok: true });
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  assert.ok(s.maintenance.want(s.perceive()) > 0, 'aborted attempts must not consume the budget');
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  assert.equal(s.maintenance.want(s.perceive()), 0, 'aborted attempts must not refill the budget');
+});
+
+test('abort exceptions preserve their identity and neither consume nor refill the budget', async () => {
+  const s = stalledMaintenance();
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  const errors = [Object.assign(new Error('preempted'), { code: 'aborted' }),
+    Object.assign(new Error('preempted'), { code: 'ABORT_ERR' }), new DOMException('preempted', 'AbortError')];
+  for (const error of errors) {
+    s.home.run = async () => { throw error; };
+    await assert.rejects(s.maintenance.run(s.ctx), (caught) => caught === error);
+  }
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  assert.ok(s.maintenance.want(s.perceive()) > 0);
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  assert.equal(s.maintenance.want(s.perceive()), 0);
+});
+
+test('failed repairs with real partial inventory progress reset the no-change budget', async () => {
+  const s = stalledMaintenance();
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  const result = { ok: false, reason: 'not_arrived' };
+  s.home.run = async () => { s.inventory.cobblestone += 1; return result; };
+  assert.equal(await s.maintenance.run(s.ctx), result);
+  for (let i = 0; i < 2; i += 1) await s.attempt({ ok: false, reason: 'NoPath' });
+  assert.ok(s.maintenance.want(s.perceive()) > 0, 'observed partial progress must reset the prior streak');
+  await s.attempt({ ok: false, reason: 'NoPath' });
+  assert.equal(s.maintenance.want(s.perceive()), 0);
+});
+
+test('non-abort exceptions preserve the original error while counting no observed progress', async () => {
+  const s = stalledMaintenance();
+  const error = new Error('native_path_failed');
+  s.home.run = async () => { throw error; };
+  for (let i = 0; i < 3; i += 1) await assert.rejects(s.maintenance.run(s.ctx), (caught) => caught === error);
+  assert.equal(s.maintenance.want(s.perceive()), 0);
+  assert.equal(s.records.filter((row) => row.name === 'home_maintenance_paused').length, 1);
+});
+
+test('an observation failure after a thrown repair cannot replace its original exception', async () => {
+  const s = stalledMaintenance();
+  const original = new Error('native_path_failed');
+  let observations = 0;
+  s.home.run = async () => { throw original; };
+  const ctx = { ...s.ctx, perceive() {
+    observations += 1;
+    if (observations > 1) throw new Error('observation_unavailable');
+    return s.perceive();
+  } };
+  await assert.rejects(s.maintenance.run(ctx), (caught) => caught === original);
+  assert.equal(observations, 2, 'attempt the post-failure observation without replacing the primary error');
+});
+
+test('bounded failed home maintenance yields the body to the existing mining goal', async () => {
+  const s = stalledMaintenance();
+  let calls = 0;
+  let mineSteps = 0;
+  let completed;
+  const decision = new Promise((resolve) => { completed = resolve; });
+  s.home.run = async (ctx) => {
+    calls += 1;
+    if (calls >= 4) {
+      completed('fourth_failed_home_attempt');
+      await new Promise((resolve) => ctx.signal.addEventListener('abort', resolve, { once: true }));
+      return { ok: false, reason: 'aborted' };
+    }
+    return { ok: false, reason: 'still_below_surface' };
+  };
+  const events = [];
+  const brain = createBrain({ perceive: s.perceive, behaviors: [s.maintenance], now: () => 0,
+    failureCooldownMs: 0, maxCooldownMs: 0, onEvent: (event) => events.push(event) });
+  brain.setGoal({ name: 'branch_mine', isDone: () => mineSteps >= 1, progress: () => mineSteps,
+    async run() { mineSteps += 1; completed('mining_resumed'); return { ok: true }; } });
+  try {
+    await brain.tick();
+    assert.equal(await decision, 'mining_resumed');
+    assert.equal(calls, 3);
+    assert.equal(mineSteps, 1);
+    assert.ok(events.some((event) => event.type === 'home_maintenance_paused'));
+    assert.equal(events.filter((event) => event.type === 'goal_set').length, 1);
+  } finally { await brain.dispose(); }
+});
