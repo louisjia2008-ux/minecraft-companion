@@ -145,8 +145,8 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
 
   /**
    * Search rings around where the bot came out of the gateway: chunks load
-   * about 160 blocks around it, so waypoints 120 and 240 blocks out (outward
-   * first, then round) bring every city within ~400 blocks into view.
+   * a view distance around it, so waypoints at 3/4 and 1 1/2 of that (from
+   * straight out, then round) bring every city within 2 1/2 views into sight.
    */
   function waypoint(here) {
     if (!memory.arrival) memory.arrival = here.clone();
@@ -154,11 +154,11 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       const out = city.outward(bot);
       const a0 = Math.atan2(out.z, out.x);
       memory.waypoints = [];
-      for (const [r, n] of [[120, 8], [240, 12]]) {
+      const view = Math.max(96, ((bot.settings?.viewDistance && Number(bot.settings.viewDistance)) || 10) * 16);
+      for (const [r, n] of [[view * 0.75, 8], [view * 1.5, 12]]) {
         for (let i = 0; i < n; i += 1) {
-          // Alternate either side of straight out: 0, +1, -1, +2, -2 ...
-          const k = i === 0 ? 0 : (i % 2 ? (i + 1) / 2 : -i / 2);
-          const a = a0 + (k * 2 * Math.PI) / n;
+          // Round the ring from straight out.
+          const a = a0 + (i * 2 * Math.PI) / n;
           memory.waypoints.push(new Vec3(memory.arrival.x + Math.cos(a) * r, 0, memory.arrival.z + Math.sin(a) * r));
         }
       }
@@ -271,7 +271,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       const now = Date.now();
       const pos = bot.entity.position;
       if (!memory.scan || now - memory.scan.at > 20000 || pos.distanceTo(memory.scan.from) > 32) {
-        memory.scan = { at: now, from: pos.clone(), purpur: city.findCity(bot, 160) };
+        memory.scan = { at: now, from: pos.clone(), purpur: city.findCity(bot, 256) };
       }
       const nearCity = memory.scan.purpur && pos.distanceTo(memory.scan.purpur) < 128;
       const chestsLeft = !nearCity ? [] : city.cityChests(bot, 96).filter((p) => !memory.looted.has(posKey(p)) && !blacklist.has(posKey(p)));
@@ -292,9 +292,12 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
         if ((bridged.steps || 0) === 0) blacklist.add(`city:${posKey(purpur)}`, 'unreachable', 120000);
         return bridged;
       }
-      // Bridging eats blocks: top up from the island's end stone first.
-      if (bridgeBlocks() < 48) {
-        const got = await gatherStone(ctx, 160);
+      // Bridging eats blocks: top up from an island's end stone before
+      // leaving it (out on a bridge there is nothing to mine).
+      const under = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0))?.name;
+      if (bridgeBlocks() < 160 && under === 'end_stone' && !memory.stoneTriedAt?.equals?.(bot.entity.position.floored())) {
+        memory.stoneTriedAt = bot.entity.position.floored();
+        const got = await gatherStone(ctx, 256);
         if (got.ok) return got;
       }
       return explore(ctx);

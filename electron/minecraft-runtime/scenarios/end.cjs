@@ -148,7 +148,7 @@ module.exports.PORTAL_KIT = PORTAL_KIT;
 const CITY_KIT = [
   ['iron_chestplate', 1], ['iron_leggings', 1], ['iron_boots', 1], ['carved_pumpkin', 1],
   ['iron_sword', 1], ['iron_pickaxe', 1], ['bow', 1], ['arrow', 64], ['ender_pearl', 16],
-  ['cooked_beef', 48], ['cobblestone', 320], ['water_bucket', 1],
+  ['cooked_beef', 48], ['cobblestone', 512], ['water_bucket', 1],
 ];
 // What the bot brings or digs on the way; anything else on it came from a chest or the ship.
 const NOT_LOOT = new Set([...CITY_KIT.map(([n]) => n), 'end_stone', 'purpur_block', 'purpur_pillar', 'purpur_stairs',
@@ -176,13 +176,15 @@ async function lootOnPlayer(server, username) {
 
 const endCityGiven = {
   name: 'end-city-given',
-  description: `Dragon already dead (killed by command), outer-End kit given (16 pearls, 320 cobblestone, iron gear);
+  description: `Dragon already dead (killed by command), outer-End kit given (16 pearls, 512 cobblestone, iron gear);
   pearl through the gateway, find an end city on the outer islands and loot its chests (elytra if a ship is in sight).`,
   serverProperties: {
     'level-type': 'minecraft:flat', 'generator-settings': JSON.stringify(FLAT_GENERATOR),
-    difficulty: 'easy', 'view-distance': 10,
+    difficulty: 'easy', 'view-distance': 16,
   },
   serverPerRun: (run, seed) => ({ 'level-seed': seed + run * 101 }),
+  // Cities are found by what is in view: a player's usual 16 chunks.
+  viewDistance: 16,
   defaultDifficulty: 'easy',
   timeoutMs: 60 * 60 * 1000,
   setupTimeoutMs: 60000,
@@ -235,15 +237,16 @@ module.exports.endCityGiven = endCityGiven;
 const JOURNEY_KIT = [
   ['ender_eye', 20], ['iron_chestplate', 1], ['iron_leggings', 1], ['iron_boots', 1], ['carved_pumpkin', 1],
   ['iron_helmet', 1], ['iron_sword', 1], ['iron_pickaxe', 1], ['bow', 1], ['arrow', 192], ['ender_pearl', 16],
-  ['cooked_beef', 64], ['cobblestone', 256], ['water_bucket', 1], ['torch', 16],
+  ['cooked_beef', 64], ['cobblestone', 512], ['water_bucket', 1], ['torch', 16],
 ];
 
 const endFullNatural = {
   name: 'end-full-natural',
   description: `Kit given (eyes of ender, iron gear, bow, pearls, water bucket, blocks); start 250-400 blocks from a
   stronghold in a natural world: find it, enter the End, kill the dragon, pearl through the gateway and loot an end city.`,
-  serverProperties: { difficulty: 'easy', 'view-distance': 10 },
+  serverProperties: { difficulty: 'easy', 'view-distance': 16 },
   serverPerRun: (run, seed) => ({ 'level-seed': seed + run * 101 }),
+  viewDistance: 16,
   defaultDifficulty: 'easy',
   timeoutMs: 150 * 60 * 1000,
   setupTimeoutMs: 180000,

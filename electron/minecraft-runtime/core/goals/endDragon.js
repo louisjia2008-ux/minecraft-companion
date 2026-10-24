@@ -19,6 +19,8 @@ const key = (e) => String(e.id);
 const at = (p) => `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`;
 // The exit portal sits on the column x = z = 0; the fight happens around it.
 const CENTER = new Vec3(0, 64, 0);
+// The dragon's synced phase while it circles a player to shoot a fireball at it.
+const STRAFE = 1;
 
 function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
   const crystalBlacklist = createBlacklist({ ttlMs: 240000 });
@@ -63,6 +65,12 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
     ctx.record('end_approach', { from: `${Math.round(here.x)},${Math.round(here.y)},${Math.round(here.z)}`,
       stand: stand ? `${stand.x},${stand.y},${stand.z}` : null, bridge: offIsland });
     if (offIsland) {
+      // A breath cloud on the way in: wait it out here, not walk back into it.
+      const ahead = (d) => feet.offset(Math.round(-here.x / flat * d), 0, Math.round(-here.z / flat * d));
+      if ([1, 3, 5, 7].some((d) => end.cloudOver(bot, ahead(d), 1))) {
+        await sleep(1000, ctx.signal);
+        return { ok: true, waited: true };
+      }
       const bridged = await end.bridgeToward(bot, ctx, new Vec3(0, feet.y, 0), { maxSteps: 40 });
       ctx.record('end_bridge', { steps: bridged.steps ?? 0, stopped: bridged.stopped || bridged.reason || null });
       if (!bridged.ok || bridged.steps > 0) return bridged;
@@ -290,9 +298,25 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       const shot = await shootFlying(ctx, dragon);
       if (shot) return shot;
     }
+    // Strafing a bot it cannot see, the dragon never fires and never moves
+    // on to a perch: after a while, step out so it takes its shot (the
+    // breath cloud of the fireball is walked out of) and goes back to circling.
+    const phase = dragon ? end.dragonPhase(bot, dragon) : null;
+    if (phase === STRAFE) memory.strafeSince = memory.strafeSince || Date.now();
+    else memory.strafeSince = null;
+    const now = Date.now();
     if (inShelter()) {
+      if (memory.strafeSince && now - memory.strafeSince > 15000 && bot.health >= 14) {
+        memory.exposedUntil = now + 20000;
+        ctx.record('shelter_exposed', { strafing: Math.round((now - memory.strafeSince) / 1000) });
+        return leave(ctx);
+      }
       // Recovery and survival leave a sheltered bot where it is.
       bot.companionSheltered = true;
+      await sleep(500, ctx.signal);
+      return { ok: true, waited: true };
+    }
+    if (memory.exposedUntil && now < memory.exposedUntil && bot.health >= 10) {
       await sleep(500, ctx.signal);
       return { ok: true, waited: true };
     }

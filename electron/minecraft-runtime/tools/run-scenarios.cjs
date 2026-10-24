@@ -50,9 +50,10 @@ function mulberry32(seed) {
   };
 }
 
-async function connectBot({ port, username, version }) {
+async function connectBot({ port, username, version, viewDistance }) {
   const bot = mineflayer.createBot(withMinecraftProtocolCompatibility({
     host: '127.0.0.1', port, username, auth: 'offline', version, hideErrors: false,
+    ...(viewDistance ? { viewDistance } : {}),
   }));
   const timeout = new AbortController();
   try {
@@ -264,7 +265,7 @@ async function main() {
             server = await startServer(run);
           }
           if (!bot) {
-            bot = await connectBot({ port: server.port, username, version });
+            bot = await connectBot({ port: server.port, username, version, viewDistance: scenario.viewDistance });
             bot.on('error', (error) => console.error('bot error:', error.message));
           }
           result = await runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir: batchDir,
