@@ -7,11 +7,12 @@ const {CancellationToken}=require('../vendor/server/minecraft/agentControl');
 const {Vec3}=require('vec3'),registry=require('prismarine-registry')('1.21.8'),Chunk=require('prismarine-chunk')(registry);
 const {Physics,PlayerState}=require('prismarine-physics'),{pathfinder}=require('mineflayer-pathfinder');
 const {createHouseObservedResourceMemory}=require('../vendor/server/minecraft/houseObservedResourceMemory');
+const {settleNativeGoto}=require('../vendor/server/minecraft/houseNativeGotoSettlement');
 const {createLoadedDryGraph,selectSurfaceExplorationFrontier,runSurfaceGraphNativeProbe}=require('../vendor/server/minecraft/houseSurfaceGraph');
 const copy=x=>JSON.parse(JSON.stringify(x)),anchor={x:0,y:2,z:0},key=p=>`${p.x},${p.y},${p.z}`;
 function fixture(t,{nearProtected=0,budgetMs=1000,resourceName='oak_log'}={}) {
  let owner=true,memoryCP=null,graphCP={schema:2,kind:'loaded_dry_waypoint_graph',anchor,step:16,radius:64,nodes:{'0,2,0':{position:anchor,parent:null,expanded:true}},order:['0,2,0'],current:'0,2,0',resumeNode:'0,2,0',frontier:[],blockedEdges:[],visits:1,probes:0},clock=Date.now(),fullHook=null;
- const controls=Object.fromEntries(['forward','back','left','right','jump','sprint','sneak'].map(n=>[n,false])),writes=[],moves=[];
+ const controls=Object.fromEntries(['forward','back','left','right','jump','sprint','sneak'].map(n=>[n,false])),writes=[],moves=[],settlements=[];
  const bot=Object.assign(new EventEmitter(),{registry,version:'1.21.8',health:20,food:20,entities:{},players:{},player:{ping:1},inventory:{slots:Array(46).fill(null),items:()=>[]},game:{dimension:'overworld',minY:-64,height:384},controlState:controls,jumpTicks:0,jumpQueued:false,fireworkRocketDuration:0,supportFeature:n=>registry.supportFeature(n),_client:Object.assign(new EventEmitter(),{state:'play',write:()=>{}}),entity:{position:new Vec3(.5,2,.5),velocity:new Vec3(0,-.0784000015258789,0),onGround:true,yaw:0,pitch:0,eyeHeight:1.62,height:1.8,width:.6,effects:{},attributes:{},isInWater:false,isInLava:false,isInWeb:false,isCollidedHorizontally:false,isCollidedVertically:true,elytraFlying:false}});
  require('mineflayer/lib/plugins/blocks')(bot,{version:'1.21.8'});bot._client.emit('login',{worldState:{dimension:0,name:'minecraft:overworld'}});
  const stone=registry.blocksByName.stone.defaultState,log=registry.blocksByName[resourceName].defaultState;
@@ -19,16 +20,70 @@ function fixture(t,{nearProtected=0,budgetMs=1000,resourceName='oak_log'}={}) {
  const far=new Vec3(160,2,0);bot.world.setBlockStateId(far,log);
  for(let i=0;i<nearProtected;i++)bot.world.setBlockStateId(new Vec3(2+i%10,2,2+Math.floor(i/10)),log);
  bot.look=async(yaw,pitch)=>{bot.entity.yaw=yaw;bot.entity.pitch=pitch;};bot.setControlState=(name,value)=>{writes.push({name,value,owner});controls[name]=value;};bot.clearControlStates=()=>{for(const n of Object.keys(controls))bot.setControlState(n,false);};bot.stopDigging=()=>{};bot.deactivateItem=()=>{};
- bot.physics=Physics(registry,{getBlock:bot.blockAt});pathfinder(bot);const nativeGoto=bot.pathfinder.goto.bind(bot.pathfinder);
+ bot.physics=Physics(registry,{getBlock:bot.blockAt});pathfinder(bot);
  const active=()=>{if(!owner)throw Object.assign(new Error('paused'),{code:'paused'});};
  const excluded=p=>{assert.ok(p,'Palette position must never be passed as an owned-resource coordinate');if(fullHook?.(p)===true)return true;return p.x>=2&&p.x<=11&&p.z>=2&&p.z<=8;};
  const memory=createHouseObservedResourceMemory({getBot:()=>bot,assertActive:active,isOwnerCurrent:()=>owner,getCP:()=>memoryCP,saveCP:s=>{memoryCP=copy(s);},getGraphState:()=>graphCP,isExcludedPosition:excluded,now:()=>clock},{resource:resourceName==='sand'?'sand':'any_log',names:[resourceName],queryBudgetMs:budgetMs});
  t.after(()=>{bot.pathfinder.setGoal(null);bot.clearControlStates();bot.removeAllListeners();});
- return {bot,memory,far,moves,writes,active,excluded,state:()=>memoryCP,graphState:()=>graphCP,setGraph:s=>{graphCP=copy(s);},pause:()=>{owner=false;},advanceClock:ms=>{clock+=ms;},hook:f=>{fullHook=f;},startGraph:()=>{
+ return {bot,memory,far,moves,writes,settlements,active,excluded,state:()=>memoryCP,graphState:()=>graphCP,setGraph:s=>{graphCP=copy(s);},pause:()=>{owner=false;},advanceClock:ms=>{clock+=ms;},hook:f=>{fullHook=f;},startGraph:()=>{
    graphCP=null;const timer=setInterval(()=>{bot.physics.simulatePlayer(new PlayerState(bot,controls),{getBlock:bot.blockAt}).apply(bot);bot.emit('physicsTick');},5);t.after(()=>clearInterval(timer));
-   return createLoadedDryGraph({getBot:()=>bot,assertActive:active,isMovementOwner:()=>owner,getCP:()=>graphCP,saveCP:s=>{graphCP=copy(s);},getObservedResourceTarget:()=>memory.getTarget(),onObservedResourceApproach:v=>memory.observeApproach(v),onObservedResourceTargetBlocked:(target,facts)=>memory.defer(target,facts),actualnativegoto:async(goal,movements)=>{assert.equal(movements.canDig,false);assert.equal(movements.scafoldingBlocks.length,0);moves.push({x:goal.x,y:goal.y,z:goal.z});await nativeGoto(goal);}},{anchor,step:16,radius:64,maxNodes:16,maxEdges:128,legTimeoutMs:5000,timeoutMs:15000});
+   return createLoadedDryGraph({getBot:()=>bot,assertActive:active,isMovementOwner:()=>owner,getCP:()=>graphCP,saveCP:s=>{graphCP=copy(s);},getObservedResourceTarget:()=>memory.getTarget(),onObservedResourceApproach:v=>memory.observeApproach(v),onObservedResourceTargetBlocked:(target,facts)=>memory.defer(target,facts),actualnativegoto:async(goal,movements,budget)=>{assert.equal(movements.canDig,false);assert.equal(movements.scafoldingBlocks.length,0);assert.ok(Number.isFinite(budget.deadline));
+     const observation={goal,profile:movements,deadline:budget.deadline,startedAt:Date.now(),activeChecks:0};settlements.push(observation);moves.push({x:goal.x,y:goal.y,z:goal.z});
+     // Match the existing production adapter without renewing the graph's original leg deadline.
+     return settleNativeGoto({getBot:()=>bot,assertActive:()=>{active();assert.equal(bot.pathfinder.movements,movements);observation.activeChecks++;},
+       isExpectedStop:budget.isExpectedNativeStop,allowPendingTimeout:budget.isExpectedNativeTimeout,
+       record:record=>{observation.receipt={...record,deadline:budget.deadline};}}, {goal,deadline:budget.deadline});}},{anchor,step:16,radius:64,maxNodes:16,maxEdges:128,legTimeoutMs:5000,timeoutMs:15000});
  }};
 }
+
+function assertActualObservedResourceWaypoint(f,graph,before,result) {
+ const state=graph.getState(),entry=f.state().entries[0],target=entry.position;
+ const distance=p=>(p.x-target.x)**2+(p.z-target.z)**2;
+ assert.ok(distance(result.actual)<distance(before.nodes[before.current].position)-1,'guidance must strictly reduce resource distance without prescribing one axis');
+ assert.deepEqual(result.actual,{x:f.bot.entity.position.floored().x,y:f.bot.entity.position.floored().y,z:f.bot.entity.position.floored().z});
+ assert.equal(f.bot.entity.onGround,true);
+ const actualKey=key(result.actual);assert.equal(state.current,actualKey);assert.equal(state.resumeNode,actualKey);
+ assert.ok(state.order.includes(actualKey));assert.deepEqual(state.nodes[actualKey].position,result.actual);
+ assert.ok(state.nodes[actualKey].supportPositions.length>0);
+ assert.equal(f.bot.blockAt(f.bot.entity.position.floored().offset(0,-1,0)).name,'stone');
+ assert.equal(f.bot.blockAt(f.bot.entity.position.floored().offset(0,-1,0)).boundingBox,'block');
+ assert.equal(f.bot.blockAt(f.bot.entity.position.floored()).name,'air');
+ assert.equal(f.bot.blockAt(f.bot.entity.position.floored().offset(0,1,0)).name,'air');
+ assert.equal(entry.lastApproach.nodeKey,actualKey);assert.equal(entry.lastApproach.resourceArrival,'NOT_CONFIRMED');
+ assert.equal(entry.standingArrival,'NOT_CONFIRMED');
+}
+function modelPositiveXAxisProbeUnknown(t,f,{selectedFrontierUnknown=false}={}) {
+ const probes=[],motors=[],original=f.bot.pathfinder.getPathFromTo;let consumed=0,selectedRecheckModeled=false;
+ function* observed(movements,start,goal,options={}) {
+   const iterator=original.call(this,movements,start,goal,options),finite=options.optimizePath===false&&[100,500].includes(options.timeout)&&options.tickTimeout===10;
+   const origin={x:start.x,y:start.y,z:start.z},target={x:goal.x,y:goal.y,z:goal.z};
+   const axisUnknown=finite&&key(start.floored())===key(anchor)&&goal.x>0&&goal.z===0;
+   const previous=probes.findLast(p=>key(new Vec3(p.origin.x,p.origin.y,p.origin.z).floored())===key(start.floored())&&key(p.target)===key(goal));
+   const selectedUnknown=selectedFrontierUnknown&&!selectedRecheckModeled&&finite&&options.timeout===100&&!axisUnknown&&previous?.status==='success';
+   if(selectedUnknown)selectedRecheckModeled=true;
+   const downgrade=axisUnknown||selectedUnknown;
+   try {for(;;){const step=iterator.next();if(step.done)return step.value;
+     const native=step.value.result;assert.ok(native&&typeof native.status==='string');
+     // Explicit finite UNKNOWN model. Native search still runs; no result is ever upgraded to success.
+     const result=downgrade?{...native,status:'timeout'}:native;
+     if(finite)probes.push({sequence:probes.length+1,origin,target,nativeStatus:native.status,status:result.status,
+       modeledUnknown:downgrade,modeledSelectedFrontierUnknown:selectedUnknown,timeoutMs:options.timeout,pathCount:native.path?.length??0,visits:f.graphState()?.visits,moves:f.moves.length});
+     yield {...step.value,result};if(downgrade)return;
+   }} finally {iterator.return?.();}
+ }
+ f.bot.pathfinder.getPathFromTo=observed;
+ const onGoal=goal=>{
+   if(!goal)return;
+   const actual=f.bot.entity.position.floored(),proof=probes.findLast(p=>key(new Vec3(p.origin.x,p.origin.y,p.origin.z).floored())===key(actual)&&key(p.target)===key(goal));
+   assert.ok(proof,'each actual motor needs its latest matching finite native probe');
+   assert.equal(proof.status,'success');assert.equal(proof.modeledUnknown,false);assert.ok(proof.sequence>consumed);consumed=proof.sequence;
+   motors.push({target:{x:goal.x,y:goal.y,z:goal.z},proofSequence:proof.sequence,visitsBefore:f.graphState().visits});
+ };
+ f.bot.on('goal_updated',onGoal);
+ t.after(()=>{f.bot.removeListener('goal_updated',onGoal);if(f.bot.pathfinder.getPathFromTo===observed)f.bot.pathfinder.getPathFromTo=original;});
+ return {probes,motors};
+}
+
 test('native sand observations guide toward an exposed source instead of an enclosed nearer deposit',t=>{
  const f=fixture(t,{resourceName:'sand'}),p=new Vec3(32,2,0);
  f.bot.world.setBlockStateId(p,registry.blocksByName.sand.defaultState);
@@ -68,7 +123,59 @@ test('observed target priority chooses an improving existing frontier; absent/st
 });
 test('real installed native graph approaches an observed resource through a guarded waypoint and only actual arrival adds its visit',{timeout:10000},async t=>{
  const f=fixture(t);f.memory.query();const before=copy(f.graphState()),graph=f.startGraph();assert.equal(f.state().entries[0].resourceArrival,'NOT_CONFIRMED');const result=await graph.next();
- assert.equal(result.moved,true);assert.ok(result.actual.x>0);assert.equal(result.actual.z,0);assert.equal(graph.getState().visits,2);assert.deepEqual(f.state().entries[0].lastApproach.position,result.actual);assert.equal(f.state().entries[0].resourceArrival,'NOT_CONFIRMED');assert.equal(f.moves.some(p=>p.x===160),false);assert.equal(f.bot.inventory.items().length,0);assert.equal(before.visits,1);
+ assert.equal(result.moved,true);assert.ok(result.actual.x>0);assertActualObservedResourceWaypoint(f,graph,before,result);assert.equal(graph.getState().visits,2);assert.deepEqual(f.state().entries[0].lastApproach.position,result.actual);assert.equal(f.state().entries[0].resourceArrival,'NOT_CONFIRMED');assert.equal(f.moves.some(p=>p.x===160),false);assert.equal(f.bot.inventory.items().length,0);assert.equal(before.visits,1);
+});
+
+
+test('explicitly UNKNOWN axis and selected-frontier probes grant no arrival until an independently proved permitted native recheck succeeds',{timeout:10000},async t=>{
+ const f=fixture(t);f.memory.query();const before=copy(f.graphState()),observed=modelPositiveXAxisProbeUnknown(t,f,{selectedFrontierUnknown:true}),graph=f.startGraph();
+ assert.equal(f.state().entries[0].resourceArrival,'NOT_CONFIRMED');
+ try {
+   const result=await graph.next(),state=graph.getState();
+   assert.equal(result.moved,true);assert.ok(result.actual.x>0);assertActualObservedResourceWaypoint(f,graph,before,result);
+   assert.equal(state.visits,2);assert.deepEqual(f.state().entries[0].lastApproach.position,result.actual);
+   assert.equal(f.state().entries[0].resourceArrival,'NOT_CONFIRMED');assert.equal(f.moves.some(p=>p.x===160),false);
+   assert.equal(f.bot.inventory.items().length,0);assert.equal(before.visits,1);
+   const refused=observed.probes.filter(p=>p.modeledUnknown);assert.ok(refused.length>0);
+   assert.ok(refused.every(p=>p.status==='timeout'&&p.visits===1&&p.moves===0));
+   assert.equal(f.moves.some(p=>p.x>0&&p.z===0),false);
+   assert.equal(Object.values(state.nodes).some(n=>n.position.x>0&&n.position.z===0),false);
+   assert.ok(state.blockedEdges.some(e=>e.target.x>0&&e.target.z===0&&e.reason==='native_probe_inconclusive'&&e.observedProbe.conclusive===false));
+   assert.equal(observed.motors.length,f.moves.length);assert.equal(observed.motors.length,1);
+   assert.ok(observed.motors.every(m=>m.visitsBefore===1));
+   const selectedUnknown=observed.probes.filter(p=>p.modeledSelectedFrontierUnknown);assert.equal(selectedUnknown.length,1);assert.equal(selectedUnknown[0].timeoutMs,100);assert.equal(selectedUnknown[0].status,'timeout');
+   const motorProof=observed.probes.find(p=>p.sequence===observed.motors[0].proofSequence);
+   assert.equal(motorProof.timeoutMs,500);assert.equal(motorProof.status,'success');assert.equal(motorProof.modeledUnknown,false);
+   assert.deepEqual(motorProof.target,selectedUnknown[0].target);assert.ok(motorProof.sequence>selectedUnknown[0].sequence);
+ } finally {
+   t.diagnostic(JSON.stringify({scope:'explicit axis UNKNOWN and selected100ms UNKNOWN; permitted500ms fresh probe and goto/Physics remain native; not exact CI replay',probes:observed.probes,motors:observed.motors,actual:f.bot.entity.position,visits:f.graphState()?.visits,resourceArrival:f.state().entries[0].resourceArrival}));
+ }
+});
+
+
+test('native resource waypoint settlement keeps one original motor and deadline after a modeled empty partial',{timeout:10000},async t=>{
+ const f=fixture(t);f.memory.query();const before=copy(f.graphState()),originalGoto=f.bot.pathfinder.goto,early=[],graph=f.startGraph();let calls=0,partialEvents=0;
+ const modeledGoto=goal=>{
+   calls++;const profile=f.bot.pathfinder.movements,pending=originalGoto.call(f.bot.pathfinder,goal);
+   // Only this event timing is modeled. Original native search, goal and Physics remain running.
+   f.bot.emit('path_update',{status:'partial',path:[]});partialEvents++;
+   pending.then(()=>early.push({goal,profile,actual:f.bot.entity.position.clone(),sameGoal:f.bot.pathfinder.goal===goal}),()=>{});
+   return pending;
+ };
+ f.bot.pathfinder.goto=modeledGoto;
+ t.after(()=>{if(f.bot.pathfinder.goto===modeledGoto)f.bot.pathfinder.goto=originalGoto;});
+ const result=await graph.next();
+ assert.equal(result.moved,true);assert.ok(result.actual.x>0);assertActualObservedResourceWaypoint(f,graph,before,result);
+ assert.equal(graph.getState().visits,2);assert.deepEqual(f.state().entries[0].lastApproach.position,result.actual);
+ assert.equal(f.state().entries[0].resourceArrival,'NOT_CONFIRMED');assert.equal(f.moves.some(p=>p.x===160),false);
+ assert.equal(f.bot.inventory.items().length,0);assert.equal(before.visits,1);
+ assert.equal(calls,1);assert.equal(partialEvents,1);assert.equal(early.length,1);assert.equal(f.settlements.length,1);
+ const motor=f.settlements[0];assert.equal(early[0].goal,motor.goal);assert.equal(early[0].profile,motor.profile);assert.equal(early[0].sameGoal,true);
+ assert.equal(motor.goal.isEnd(early[0].actual.floored()),false,'original goto really settled before arrival');
+ assert.ok(motor.deadline>motor.startedAt&&motor.deadline<=motor.startedAt+5000);assert.ok(Date.now()<motor.deadline);
+ assert.ok(motor.activeChecks>1);assert.equal(motor.receipt.initialEmptyPartial,true);assert.equal(motor.receipt.actualArrivalConfirmed,true);
+ assert.equal(motor.receipt.deadline,motor.deadline);assert.equal(motor.goal.isEnd(f.bot.entity.position.floored()),true);
+ t.diagnostic(JSON.stringify({scope:'modeled empty partial event, original native goto once plus real Physics; existing production settlement and original deadline',nativeGotoCalls:calls,partialEvents,earlyActual:early[0].actual,earlyTargetReached:false,actual:f.bot.entity.position,deadline:motor.deadline,settlement:motor.receipt,visits:graph.getState().visits}));
 });
 
 test('nearby deep mineshaft logs cannot displace a farther exposed surface tree',t=>{

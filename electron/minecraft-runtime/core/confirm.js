@@ -51,7 +51,7 @@ async function runCancellable(start, { signal, timeoutMs, cancel = () => {}, tim
   const interrupt = (error) => {
     if (interrupted) return;
     interrupted = error;
-    try { cancel(); } catch (_) { /* best effort */ }
+    try { cancel(); } catch { /* best effort */ }
   };
   const onAbort = () => interrupt(abortError(signal));
   signal?.addEventListener('abort', onAbort, { once: true });

@@ -43,7 +43,7 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
     if (head && /^golden_/.test(head.name)) return;
     const helmet = bot.inventory.items().find((i) => i.name === 'golden_helmet');
     if (!helmet) return;
-    try { await bot.equip(helmet, 'head'); ctx.record('equip', { item: 'golden_helmet' }); } catch (_) { /* retried next run */ }
+    try { await bot.equip(helmet, 'head'); ctx.record('equip', { item: 'golden_helmet' }); } catch { /* retried next run */ }
   }
 
   async function goThrough(ctx, portal) {

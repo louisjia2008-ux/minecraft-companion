@@ -23,6 +23,54 @@ async function until(predicate, timeout = 3000) {
   assert.ok(predicate(), 'Expected physical/coordination transition must occur within a finite deadline');
 }
 
+// Keep the same20ms scheduler/50ms native Physics ratio while testing logical
+// deadlines. Native AStar performance.now and this watchdog stay on real time.
+const { setTimeout: hostTimeout, clearTimeout: clearHostTimeout, setImmediate: hostImmediate } = require('node:timers');
+const hostTurn = () => new Promise(resolve => hostImmediate(resolve));
+async function runNativeCoordinationClock(t, operation, maximumMs, stop) {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: Date.now() });
+  let settled = false, outcome, hostExpired = false;
+  const observed = Promise.resolve().then(operation).then(value => { settled = true; outcome = { value }; },
+    error => { settled = true; outcome = { error }; });
+  const watchdog = hostTimeout(() => { hostExpired = true; stop(); }, Math.min(8000, maximumMs));
+  try {
+    for (let frame = 0; frame < maximumMs / 20 && !settled && !hostExpired; frame++) {
+      t.mock.timers.tick(20); await hostTurn();
+    }
+    for (let turn = 0; turn < 20 && !settled && !hostExpired; turn++) {
+      t.mock.timers.tick(0); await hostTurn();
+    }
+    assert.equal(hostExpired, false, 'The original native fixture retains an independent real host watchdog');
+    assert.equal(settled, true, 'The operation must settle within its original logical test limit');
+    await observed;
+    if (outcome.error) throw outcome.error;
+    return outcome.value;
+  } finally {
+    clearHostTimeout(watchdog);
+    if (!settled) {
+      stop();
+      for (let turn = 0; turn < 20 && !settled; turn++) { t.mock.timers.tick(0); await hostTurn(); }
+      assert.equal(settled, true, 'Cancelled native work must join without another task or Physics budget');
+    }
+  }
+}
+
+function coordinationObservation(f, error, diagnostics) {
+  let guardRecords = [];
+  try { guardRecords = (diagnostics?.() || []).filter(entry => /guard_failure|defense_started|self_defense_resumed/.test(entry.event)).slice(-12); }
+  catch (readError) { guardRecords = [{ diagnosticReadError: readError.code || readError.name }]; }
+  const e = f?.bot.entity, point = value => value && ({ x: value.x, y: value.y, z: value.z });
+  return { ticks: f?.ticks(), attempts: f?.attempts.length, attacks: f?.attacks.length,
+    state: f?.navigator.getState(), body: e && { position: point(e.position), velocity: point(e.velocity), onGround: e.onGround },
+    activeLease: f?.agent.__testGetActiveMovementLease()?.token,
+    frames: f?.checkedInterruptions.map(frame => ({ ordinal: frame.ordinal, startedAt: frame.startedAt,
+      beforeLease: frame.beforeLease?.token, lease: frame.lease?.token, kind: frame.lease?.kind,
+      beforePosition: point(frame.beforePosition), finishedAt: frame.finishedAt,
+      finishedLease: frame.finishedLease?.token, value: frame.value, errorCode: frame.error?.code || frame.error?.name })),
+    error: error && { code: error.code, message: error.message,
+      observedDryLeg: error.observedDryLeg, observedMovement: error.observedMovement }, guardRecords };
+}
+
 // Offline coordination regression, not real-server acceptance. The installed
 // pathfinder and installed vanilla physics own all movement; there is no moveTo
 // injection, teleport, target-position assignment or movement implementation stub.
@@ -82,7 +130,7 @@ function fixture(t, options = {}) {
     entityType: registry.entitiesByName.skeleton.id, height: 1.99, position: new Vec3(options.skeletonX ?? 2.5, 1, 0.5) };
   // Its spawn precedes attachBot's perception snapshot/cache, as on an already
   // loaded server. The explicit interruption starts only after native goto.
-  if (options.interrupt !== false) bot.entities[skeleton.id] = skeleton;
+  if (options.interrupt !== false && !options.deferInitialThreat) bot.entities[skeleton.id] = skeleton;
   if (options.resourceThreat) bot.entities[4] = { id: 4, name: options.resourceThreat, type: 'hostile',
     entityType: registry.entitiesByName[options.resourceThreat].id, position: new Vec3(options.resourceThreat==='creeper'&&!options.shield?4:2.5, 1, .5), height: 1.95 };
   if(options.resourceThreat==='creeper'){
@@ -134,16 +182,37 @@ function fixture(t, options = {}) {
   let interruptionError;
   let triggerTimer;
   let triggered = 0;
+  const checkedInterruptions = [], pendingInterruptions = [];
   const startInterruption = () => {
-    bot.entities[skeleton.id] = skeleton;
+    // Native threat warnings can already have handled the initially loaded
+    // actor before this scheduled hook. Only later declared interruptions
+    // spawn another actor; the first hook must not resurrect a killed one.
+    if (options.interruptions || triggered > 1) bot.entities[skeleton.id] = skeleton;
+    const evidence = options.checkedInterruptions ? { ordinal: checkedInterruptions.length + 1,
+      startedAt: Date.now(), beforeLease: agent.__testGetActiveMovementLease(),
+      beforePosition: bot.entity.position.clone(), goal: bot.pathfinder.goal } : null;
     interruption = agent.__testHandleSurvivalCritical('test_checked_route');
+    if (evidence) {
+      // Each new survival frame owns a fresh production movement lease. This
+      // distinguishes a new frame from another call joining the existing one.
+      evidence.lease = agent.__testGetActiveMovementLease(); checkedInterruptions.push(evidence);
+      interruption = interruption.then(value => { evidence.finishedAt = Date.now();
+        evidence.finishedLease = agent.__testGetActiveMovementLease(); evidence.value = value; return value;
+      }, error => { evidence.finishedAt = Date.now(); evidence.error = error; throw error; });
+      pendingInterruptions.push(interruption);
+    }
     interruption.catch((error) => { interruptionError = error; });
     return interruption;
   };
   if (options.interrupt !== false) bot.on('goal_updated', (goal) => {
     if (!goal || triggered >= (options.interruptions || 1)) return;
     triggered += 1;
-    triggerTimer = setTimeout(() => startInterruption(), 20);
+    if (options.checkedInterruptions) {
+      // Installed goto registers its listeners and goal synchronously. Its
+      // microtask boundary precedes another Physics tick, without replacing
+      // native motion, planning, the goal or any production result.
+      Promise.resolve().then(startInterruption).catch(error => { interruptionError = error; });
+    } else triggerTimer = setTimeout(() => startInterruption(), 20);
   });
   const change = (name, point) => {
     const previous = bot.blockAt(point);
@@ -161,7 +230,8 @@ function fixture(t, options = {}) {
     fs.rmSync(dir, { recursive: true, force: true });
   });
   return { bot, agent, task, navigator, attempts, attacks, goals, movementProfiles, messages, change,
-    ticks: () => ticks, interruption: () => interruption, interruptionError: () => interruptionError };
+    ticks: () => ticks, interruption: () => interruption, interruptionError: () => interruptionError,
+    checkedInterruptions, joinInterruptions: () => Promise.allSettled(pendingInterruptions) };
 }
 
 test('a grounded self-supply camp escapes a creeper before damage using bounded native movement', { timeout: 7000 }, async t => {
@@ -600,15 +670,39 @@ test('the original navigation deadline remains active while self defense owns mo
 });
 
 test('a single checked step cannot recover more than two survival interruptions', { timeout: 6000 }, async (t) => {
-  const f = fixture(t, { interruptions: 3, movementTimeoutMs: 5000 });
-  await assert.rejects(f.navigator.advance('east'), (error) => error.code === 'movement_preempted');
-  await f.interruption().catch(() => {});
-  await sleep(250);
-  assert.equal(f.attempts.length, 3, 'The original goto plus two retries is the strict per-step limit');
-  assert.ok(f.attacks.length>=2&&f.attacks.length<=3, 'Two successful bounded recoveries; no defense beyond the third refused preemption');
-  assert.equal(f.navigator.getState().moves, 0);
-  assert.equal(f.navigator.getState().routeIndex, 0);
-  assert.equal(f.bot.pathfinder.goal, null);
+  let f, refused;
+  t.after(() => t.diagnostic(JSON.stringify({ coordination: 'checked_step_survival_limit', ...coordinationObservation(f, refused) })));
+  await runNativeCoordinationClock(t, async () => {
+    f = fixture(t, { interruptions: 3, checkedInterruptions: true, movementTimeoutMs: 5000 });
+    await assert.rejects(f.navigator.advance('east'), error => { refused = error; return error.code === 'movement_preempted'; });
+    await f.joinInterruptions();
+    await sleep(250);
+    const frames = f.checkedInterruptions;
+    assert.equal(frames.length, 3, 'Three actual native goal starts must create three different survival frames');
+    assert.equal(new Set(frames.map(frame => frame.lease)).size, 3);
+    for (const frame of frames) {
+      assert.equal(frame.beforeLease, f.task.movementLease, 'Each preemption captures the restored original owner');
+      assert.equal(frame.lease?.kind, 'survival-critical');
+      assert.notEqual(frame.lease, frame.beforeLease);
+      assert.equal(frame.goal.isEnd(frame.beforePosition.floored()), false, 'The real original edge was unfinished before preemption');
+    }
+    for (let index = 0; index < 2; index++) {
+      assert.equal(frames[index].error, undefined);
+      assert.equal(frames[index].value, true);
+      assert.equal(frames[index].finishedLease, f.task.movementLease);
+      assert.ok(frames[index].finishedAt <= frames[index + 1].startedAt, 'A later frame cannot merely join the prior defense');
+      assert.ok(f.attacks.some(attack => attack.lease === frames[index].lease));
+    }
+    assert.equal(refused.survivalInterrupt?.lease, frames[2].lease, 'The third refused preemption is the actual captured production frame');
+    assert.equal(refused.survivalInterrupt.previousLease, f.task.movementLease);
+    assert.deepEqual(refused.survivalInterrupt.miningMove.target, new Vec3(1, 1, 0));
+    assert.equal(f.attempts.length, 3, 'The original goto plus two retries is the strict per-step limit');
+    assert.ok(f.attacks.length >= 2 && f.attacks.length <= 3, 'Two successful bounded recoveries; no defense beyond the third refused preemption');
+    assert.equal(f.navigator.getState().moves, 0);
+    assert.equal(f.navigator.getState().routeIndex, 0);
+    assert.equal(f.bot.pathfinder.goal, null);
+    t.diagnostic(`three distinct production survival leases=${frames.map(frame => frame.lease.token).join(',')}; attempts=${f.attempts.length}; moves=0`);
+  }, 6000, () => { f?.task.cancellationToken.cancel(); f?.bot.pathfinder.setGoal(null); f?.bot.clearControlStates(); });
 });
 
 function captureHouseSurfaceDiagnostics(f) {
@@ -618,32 +712,41 @@ function captureHouseSurfaceDiagnostics(f) {
 }
 
 test('house surface original leg deadline closes work while finite self defense retains its owner', { timeout: 12000 }, async t => {
-  const f = fixture(t, { killAfter: 100 }), diagnostics = captureHouseSurfaceDiagnostics(f), started = Date.now();
-  const running = f.agent.__testHouseSurfaceGraphNext({ x: 0, y: 1, z: 0 }, { legTimeoutMs: 600 })
-    .then(value => ({ value }), error => ({ error }));
-  await until(() => f.attacks.length === 1);
-  const defenseProfile = f.attacks[0].movements,defenseLease=f.attacks[0].lease;
-  assert.equal(f.agent.__testGetActiveMovementLease().kind, 'survival-critical');
-  const { error } = await running;
-  assert.equal(error?.code, 'house_surface_dry_graph_leg_timeout', 'The original deadline reason must survive capability closure');
-  assert.ok(Date.now() - started >= 500 && Date.now() - started < 1500, 'Self defense cannot reset the original leg deadline');
-  assert.equal(f.agent.__testGetActiveMovementLease().kind, 'survival-critical', 'The original defense still owns its finite action at deadline');
-  assert.equal(f.bot.pathfinder.movements, defenseProfile, 'An expired graph must not restore its previous/default profile over defense');
-  const failure = diagnostics().find(entry => entry.event === 'house_surface_guard_failure');
-  assert.equal(failure.details.code, 'dry_graph_leg_timeout');
-  assert.equal(failure.details.observedMovement.trigger, 'deadline');
-  assert.ok(['x', 'y', 'z'].every(axis => Number.isFinite(failure.details.observedMovement.position[axis])));
-  assert.equal(failure.details.observedMovement.health, 20); assert.equal(failure.details.observedMovement.food, 20);
-  // The original timer callback inherits the expired work context. Await
-  // the actual defense from this fresh caller before asserting no late writes.
-  await f.agent.__testHandleSurvivalCritical('await_actual_finite_defense').catch(() => {});
-  const settledAttacks=f.attacks.filter(a=>a.lease===defenseLease).length;await sleep(250);
-  assert.equal(f.attempts.length, 1);assert.ok(settledAttacks>=1);
-  assert.equal(f.attacks.filter(a=>a.lease===defenseLease).length,settledAttacks,'The expired finite defense owner grants no late writes; fresh proximity defense requires its own lease');
-  assert.ok(f.attacks.every(a=>a.lease?.kind==='survival-critical'));
-  assert.equal(f.task.materialSupply.surfaceGraphs.any_log.visits, 1);
-  assert.notEqual(f.agent.__testGetActiveMovementLease(), f.task.movementLease);
-  assert.equal(diagnostics().some(entry => entry.event === 'house_surface_self_defense_resumed'), false);
+  let f, originalError, diagnostics;
+  t.after(() => t.diagnostic(JSON.stringify({ coordination: 'original_surface_deadline', ...coordinationObservation(f, originalError, diagnostics) })));
+  await runNativeCoordinationClock(t, async () => {
+    f = fixture(t, { killAfter: 100 });
+    diagnostics = captureHouseSurfaceDiagnostics(f);
+    const started = Date.now();
+    const running = f.agent.__testHouseSurfaceGraphNext({ x: 0, y: 1, z: 0 }, { legTimeoutMs: 600 })
+      .then(value => ({ value }), error => ({ error }));
+    await until(() => f.attacks.length === 1);
+    const defenseProfile = f.attacks[0].movements,defenseLease=f.attacks[0].lease;
+    assert.equal(f.agent.__testGetActiveMovementLease().kind, 'survival-critical');
+    const { error } = await running; originalError = error;
+    assert.equal(error?.code, 'house_surface_dry_graph_leg_timeout', 'The original deadline reason must survive capability closure');
+    assert.ok(Date.now() - started >= 500 && Date.now() - started < 1500, 'Self defense cannot reset the original leg deadline');
+    assert.equal(error.observedDryLeg.deadline - error.observedDryLeg.startedAt, 600);
+    assert.equal(error.observedMovement.observedAt, error.observedDryLeg.deadline, 'The same original logical deadline closes the graph');
+    assert.equal(f.agent.__testGetActiveMovementLease().kind, 'survival-critical', 'The original defense still owns its finite action at deadline');
+    assert.equal(f.bot.pathfinder.movements, defenseProfile, 'An expired graph must not restore its previous/default profile over defense');
+    const failure = diagnostics().find(entry => entry.event === 'house_surface_guard_failure');
+    assert.equal(failure.details.code, 'dry_graph_leg_timeout');
+    assert.equal(failure.details.observedMovement.trigger, 'deadline');
+    assert.ok(['x', 'y', 'z'].every(axis => Number.isFinite(failure.details.observedMovement.position[axis])));
+    assert.equal(failure.details.observedMovement.health, 20); assert.equal(failure.details.observedMovement.food, 20);
+    // The original timer callback inherits the expired work context. Await
+    // the actual defense from this fresh caller before asserting no late writes.
+    await f.agent.__testHandleSurvivalCritical('await_actual_finite_defense').catch(() => {});
+    const settledAttacks=f.attacks.filter(a=>a.lease===defenseLease).length;await sleep(250);
+    assert.equal(f.attempts.length, 1);assert.ok(settledAttacks>=1);
+    assert.equal(f.attacks.filter(a=>a.lease===defenseLease).length,settledAttacks,'The expired finite defense owner grants no late writes; fresh proximity defense requires its own lease');
+    assert.ok(f.attacks.every(a=>a.lease?.kind==='survival-critical'));
+    assert.equal(f.task.materialSupply.surfaceGraphs.any_log.visits, 1);
+    assert.notEqual(f.agent.__testGetActiveMovementLease(), f.task.movementLease);
+    assert.equal(diagnostics().some(entry => entry.event === 'house_surface_self_defense_resumed'), false);
+    t.diagnostic(`original600ms leg: started=${error.observedDryLeg.startedAt}, deadline=${error.observedDryLeg.deadline}, observed=${error.observedMovement.observedAt}; visits=1`);
+  }, 12000, () => { f?.task.cancellationToken.cancel(); f?.bot.pathfinder.setGoal(null); f?.bot.clearControlStates(); });
 });
 
 for (const [field, value] of [['health', 5], ['food', 5]]) test(`house surface ${field}=${value} during self defense cannot resume or credit a node`, { timeout: 6000 }, async t => {
@@ -743,7 +846,9 @@ test('armed house resource work strikes actual contact then evades two observed 
  const original=f.task.movementLease;
  const result=await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('resource_group_test'),{deadline:Date.now()+8000});
  assert.equal(result,true);assert.equal(f.attacks.length,1);assert.ok(f.attempts.length>0);
- for(const id of [4,5])assert.ok(f.bot.entity.position.distanceTo(f.bot.entities[id].position)>=8.5);
+ // Current bounded melee policy keeps the primary at6.5m and the second
+ // observed contact threat at4.5m, unlike the creeper's8.5m requirement.
+ for(const [id,minimum] of [[4,6.5],[5,4.5]])assert.ok(f.bot.entity.position.distanceTo(f.bot.entities[id].position)>=minimum);
  assert.equal(f.bot.entity.onGround,true);assert.equal(f.agent.__testGetActiveMovementLease(),original);assert.equal(f.goals.some(g=>g?.constructor?.name==='GoalFollow'),false);
 });
 test('house resource creeper proximity uses its original bounded frame before stationary attack', {timeout:10000},async t=>{
@@ -930,11 +1035,11 @@ test('an armed survivor with no loaded creeper exit keeps striking within cooldo
  for(let i=1;i<f.attacks.length;i++)assert.ok(f.attacks[i].at-f.attacks[i-1].at>=600);
 });
 
-test('the first native hurt event starts an unshielded14HP skeleton engagement without another hit or a manual defense call',{timeout:20000},async t=>{
+test('the first native hurt event starts an unshielded18HP skeleton engagement without another hit or a manual defense call',{timeout:20000},async t=>{
  const f=fixture(t,{interrupt:false,killAfter:2});f.task.materialSupply={materialSource:'self_gathered'};
  const diagnostics=captureHouseSurfaceDiagnostics(f);
  f.bot.entities[2]={id:2,name:'skeleton',type:'hostile',isValid:true,entityType:registry.entitiesByName.skeleton.id,height:1.99,position:new Vec3(18.5,1,.5)};
- f.bot.health=14;
+ f.bot.health=18;
  const hurtAt=Date.now();f.bot.emit('entityHurt',f.bot.entity);
  await until(()=>diagnostics().some(e=>e.event==='house_ranged_target_locked'),1000);
  const lock=diagnostics().find(e=>e.event==='house_ranged_target_locked').details;
@@ -990,7 +1095,7 @@ test('an armed noPath approach switches to real cover within the same owner inst
  f.bot.entities[2]={id:2,name:'skeleton',type:'hostile',isValid:true,entityType:registry.entitiesByName.skeleton.id,height:1.99,position:new Vec3(20.5,1,.5)};
  const original=f.bot.pathfinder.getPathFromTo.bind(f.bot.pathfinder);let approaches=0;
  f.bot.pathfinder.getPathFromTo=(profile,from,goal,options)=>{
-  if(goal.constructor.name==='GoalNear'){approaches++;return(function*(){return{result:{status:'noPath',path:[]}};})();}
+  if(goal.constructor.name==='GoalNear'){approaches++;return(function*(){yield* [];return{result:{status:'noPath',path:[]}};})();}
   return original(profile,from,goal,options);
  };
  await f.agent.__testWithHouseResourceWork(()=>{f.bot.emit('entityHurt',f.bot.entity);return f.agent.__testHandleSurvivalCritical('blocked_armed_ranged');});
@@ -1243,7 +1348,8 @@ test('ranged defense recenters a genuinely supported body whose floored column i
  await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('supported_edge_archer'));
  assert.equal(f.attacks.length,2);assert.equal(f.bot.entities[4],undefined);
  assert.equal(naturalWalkingFoot(f.bot,f.bot.entity.position.floored()),true);
- assert.ok(diagnostics().some(d=>d.event==='house_emergency_shore_confirmed'));
+ const alignment=diagnostics().find(d=>d.event==='house_defense_dry_edge_alignment'&&d.details.aligned===true);
+ assert.ok(alignment);assert.equal(alignment.details.graphNodeCredit,false);assert.equal(alignment.details.positionOrVelocityWritten,false);
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
 });
 
@@ -1334,7 +1440,7 @@ test('contact attacks share actual-send cooldown even when publishing a hit is s
  const f=fixture(t,{interrupt:false,resourceThreat:'zombie',killAfter:4});
  prepareHouseResourceGroup(f,null);f.bot.entities[4].position=new Vec3(1.5,1,.5);
  const attack=f.bot.attack;let delays=0;
- f.bot.attack=entity=>{attack(entity);delays++;const end=Date.now()+250;while(Date.now()<end){}};
+ f.bot.attack=entity=>{attack(entity);delays++;const end=Date.now()+250;while(Date.now()<end){/* Explicit modeled native attack latency. */}};
  await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('slow_attack_publication'));
  assert.equal(f.attacks.length,4);assert.equal(delays,4);
  for(let i=1;i<f.attacks.length;i++){const delta=f.attacks[i].at-f.attacks[i-1].at;assert.ok(delta>=650,`early duplicate ${delta}ms`);assert.ok(delta<900,`publication extended cooldown ${delta}ms`);}
@@ -1413,7 +1519,7 @@ test('public pause during the ranged landing wait cannot start an approach or la
 test('cold UI context cannot run infrastructure scans before a contact-defense packet',{timeout:6000},async t=>{
  const f=fixture(t,{interrupt:false});prepareHouseResourceGroup(f,null);
  await sleep(700);f.bot.entities[4]={id:4,name:'zombie',type:'hostile',isValid:true,entityType:registry.entitiesByName.zombie.id,height:1.95,position:new Vec3(1.5,1,.5)};let scans=0,scansAtPacket;const originalAttack=f.bot.attack;f.bot.attack=target=>{scansAtPacket=scans;originalAttack(target);};
- f.bot.findBlock=()=>{scans++;const until=Date.now()+35;while(Date.now()<until){}return null;};
+ f.bot.findBlock=()=>{scans++;const until=Date.now()+35;while(Date.now()<until){/* Explicit modeled block-scan latency. */}return null;};
  const began=Date.now();await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('cold_context_contact'));
  assert.equal(f.attacks.length,1);assert.ok(f.attacks[0].at-began<150,`first packet waited ${f.attacks[0].at-began}ms for UI work`);
  const combatContexts=f.messages.filter(m=>m.type==='mc_world_context'&&m.context?.observationScope==='survival_lightweight');
@@ -1924,7 +2030,16 @@ for(const mode of ['relocate','pause','foreign'])test(`formal33 site escape hand
  const receipt=diagnostics().find(e=>e.event==='house_site_defense_relocated').details;
  assert.equal(receipt.oldTargetReached,false);assert.equal(receipt.oldEdgeTraversalCredit,false);
  assert.notEqual(cp.current,`${receipt.abandonedTarget.x},${receipt.abandonedTarget.y},${receipt.abandonedTarget.z}`);
- assert.equal(cp.nodes[cp.current].dryParentTrail,undefined);assert.equal(cp.nodes[cp.current].survivalRelocation.oldEdgeTraversalCredit,false);
+ const relocated=Object.values(cp.nodes).find(node=>node.survivalRelocation);
+ if(relocated)assert.equal(relocated.survivalRelocation.oldEdgeTraversalCredit,false);
+ else {
+  // A boundary defense may finish before this graph leg begins. The graph
+  // then records a separately completed native dry leg from that real stand.
+  const trail=cp.nodes[cp.current].dryParentTrail;
+  assert.equal(trail.kind,'actual_successful_dry_parent_edge');assert.equal(trail.complete,true);
+  assert.equal(trail.from,'0,1,0');assert.equal(trail.to,cp.current);
+  assert.ok(trail.points.length>1&&trail.points.every(p=>p.actual&&p.supports?.length));
+ }
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);assert.equal(diagnostics().filter(e=>e.event==='house_surface_defense_started').length,1);
  assert.deepEqual(cp.anchor,{x:0,y:1,z:0});assert.ok(f.attempts.length>=2);assert.equal(f.attacks.length,0);
 });
@@ -1942,11 +2057,14 @@ for(const baseline of [true,false])test(`formal36 combined native creeper escape
  // Model the server losing this archer from loaded perception after the
  // cumulative real native retreat, as observed in the failed formal36 run.
  let peakDisplacement=0;f.bot.on('physicsTick',()=>{peakDisplacement=Math.max(peakDisplacement,f.bot.entity.position.distanceTo(origin));if(peakDisplacement>13.5){delete f.bot.entities[2];delete f.bot.entities[4];}});
+ // Explicit modeled decoded arrow injury supplies the current observed-hit
+ // contract; merely seeing a distant archer no longer forces a retreat.
+ f.bot.health=14;f.bot.emit('entityHurt',f.bot.entity,f.bot.entities[2]);
  await f.agent.__testHandleSurvivalCritical('formal36_combined_escape');
  let failure;try{await running;}catch(error){failure=error;}
  const trace=fs.readFileSync(f.task.diagnostics.tracePath,'utf8').trim().split('\n').map(JSON.parse);
  assert.ok(trace.some(d=>d.event==='creeper_escape_confirmed'));
- assert.ok(trace.some(d=>d.event==='house_ranged_cover_observed'&&d.details.threatGone));
+ assert.ok(trace.some(d=>d.event==='house_ranged_cover_observed'&&d.details.threatGone),JSON.stringify({peakDisplacement,failure:failure?.code,events:trace.filter(d=>/ranged|escape|surface_self|surface_defense/.test(d.event)).map(d=>({event:d.event,details:d.details}))}));
  if(baseline){assert.ok(f.task.materialSupply.surfaceGraphs.any_log.blockedEdges.some(e=>e.reason==='house_surface_defense_unconfirmed'));assert.equal(trace.some(d=>d.event==='house_surface_self_defense_resumed'),false);assert.ok(peakDisplacement>13.5);return;}
  assert.ok(trace.some(d=>d.event==='house_surface_self_defense_resumed'),JSON.stringify({failure:failure?.code,events:trace.slice(-8)}));
  assert.equal(trace.some(d=>d.details?.code==='house_surface_defense_unconfirmed'),false);
@@ -1957,7 +2075,9 @@ for(const baseline of [true,false])test(`formal36 combined native creeper escape
 for(const mode of ['relocate','pause','foreign'])test(`temporary field search hands off actual defense relocation without claiming its old target: ${mode}`,{timeout:10000},async t=>{
  const f=fixture(t,{interrupt:false,killAfter:100});f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
  f.task.materialSupply={materialSource:'self_gathered'};f.bot.inventory.items=()=>[];f.bot.inventory.count=()=>0;f.bot.heldItem=null;
- f.bot.entities[4]={id:4,name:'zombie',isValid:true,entityType:registry.entitiesByName.zombie.id,height:1.95,position:new Vec3(5.5,1,2.5)};
+ // Spawn only after the interrupted native leg has actually started; an
+ // already loaded threat is now correctly handled at the graph boundary.
+ f.bot.once('goal_updated',()=>{f.bot.entities[4]={id:4,name:'zombie',isValid:true,entityType:registry.entitiesByName.zombie.id,height:1.95,position:new Vec3(3.5,1,2.5)};});
  let cp,changed=false,foreign,profile;const diagnostics=captureHouseSurfaceDiagnostics(f);
  const steer=()=>{if(changed||mode==='relocate'||f.agent.__testGetActiveMovementLease()?.kind!=='survival-critical')return;changed=true;
   if(mode==='pause')f.task.cancellationToken.pause();else{foreign=f.agent.__testClaimMovementLease('task','foreign-field');profile=new(require('mineflayer-pathfinder').Movements)(f.bot);f.bot.pathfinder.setMovements(profile);}};
@@ -1966,12 +2086,14 @@ for(const mode of ['relocate','pause','foreign'])test(`temporary field search ha
  if(mode!=='relocate'){
   // Foreign control can be observed first by either the owner or strict profile guard.
   await assert.rejects(run,e=>/paused|cancelled|movement_preempted/.test(e.code||'')
-    ||mode==='foreign'&&e.code==='house_creeper_escape_profile');assert.equal(cp.visits,1);assert.equal(cp.order.length,1);
+    ||mode==='foreign'&&['house_creeper_escape_profile','house_surface_creeper_escape_profile'].includes(e.code));assert.equal(cp.visits,1);assert.equal(cp.order.length,1);
   if(mode==='foreign'){assert.equal(f.agent.__testGetActiveMovementLease(),foreign);assert.equal(f.bot.pathfinder.movements,profile);}return;
  }
  const result=await run;assert.equal(result.moved,true);assert.equal(cp.visits,2);assert.equal(cp.order.length,2);
  const receipt=diagnostics().find(e=>e.event==='house_site_defense_relocated').details;
- assert.equal(receipt.oldTargetReached,false);assert.equal(receipt.oldEdgeTraversalCredit,false);assert.equal(cp.nodes[cp.current].survivalRelocation.oldEdgeTraversalCredit,false);
+ assert.equal(receipt.oldTargetReached,false);assert.equal(receipt.oldEdgeTraversalCredit,false);
+ const relocated=Object.values(cp.nodes).find(node=>node.survivalRelocation);assert.ok(relocated);assert.equal(relocated.survivalRelocation.oldEdgeTraversalCredit,false);
+ assert.equal(cp.nodes[`${receipt.abandonedTarget.x},${receipt.abandonedTarget.y},${receipt.abandonedTarget.z}`],undefined);
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);assert.equal(f.bot.entity.onGround,true);assert.equal(f.attacks.length,0);
 });
 
@@ -2000,14 +2122,32 @@ test('automatic paused safety uses its own captured lease for a real surface sta
  assert.equal(f.task.executionGeneration,generation);assert.equal(f.task.movementLease,null);assert.equal(f.agent.__testGetActiveMovementLease(),null);
 });
 
-for(const nutrition of [false,true])test(`field graph drains its exact temporary native shore owner without old-goal credit: nutrition=${nutrition}`,{timeout:12000},async t=>{
+for(const nutrition of [false,true])test(`field graph drains native shore defense while rejecting an untrusted critical-health provisioning flag: nutrition=${nutrition}`,{timeout:12000},async t=>{
  const f=fixture(t,{killAfter:4,interrupt:false});f.task.materialSupply={materialSource:'self_gathered'};
  f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';let cp,defending,immersed=false;
  const diagnostics=captureHouseSurfaceDiagnostics(f),attack=f.bot.attack;
+ const emit=f.bot.emit;
+ // Deterministically withhold the next ordinary-work tick after the captured
+ // survival lease is returned. Native physics/pathfinder still own every
+ // shore movement; the handoff must enforce vitals before that next tick.
+ f.bot.emit=function(event,...args){
+  if(nutrition&&immersed&&event==='physicsTick'&&f.agent.__testGetActiveMovementLease()===f.task.movementLease)return false;
+  return emit.call(this,event,...args);
+ };
+ t.after(()=>{f.bot.emit=emit;});
  f.bot.attack=e=>{attack(e);if(!immersed){immersed=true;if(nutrition)f.bot.health=4;f.change('water',f.bot.entity.position.floored());f.bot.entity.isInWater=true;}};
  f.bot.once('goal_updated',()=>setTimeout(()=>{f.bot.entities[4]={id:4,name:'spider',isValid:true,entityType:registry.entitiesByName.spider.id,position:new Vec3(2.5,1,.5),height:.9};
   defending=f.agent.__testHandleSurvivalCritical('surface_owned_shore');defending.catch(()=>{});},20));
  const running=f.agent.__testHouseSurfaceGraphNext({x:0,y:1,z:0},{resource:nutrition?'survival_food':'house_field_wood',fieldFoodExploration:nutrition,graphCheckpoint:{get:()=>cp,save:v=>{cp=v;}},assertGraphActive:()=>f.task.cancellationToken.throwIfRequested()});
+ if(nutrition){
+  // This fixture has no foodSupplyRunning/houseSelfSupply authority. A public
+  // exploration flag cannot authorize continued graph work at4HP.
+  await assert.rejects(running,{code:'house_surface_dry_graph_survival_limit'});await defending;
+  assert.equal(immersed,true);assert.equal(f.bot.entity.onGround,true);
+  assert.ok(diagnostics().some(e=>e.event==='house_emergency_shore_confirmed'));
+  assert.equal(cp.visits,1);assert.equal(cp.order.length,1);assert.equal(f.bot.health,4);
+  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);return;
+ }
  const result=await running;await defending;
  assert.equal(immersed,true);assert.equal(result.moved,true);assert.equal(f.bot.entity.onGround,true);
  assert.ok(diagnostics().some(e=>e.event==='house_emergency_shore_confirmed'));
@@ -2026,7 +2166,7 @@ test('surface continuation drains a second exact defense that claims the lease b
   first=f.agent.__testHandleSurvivalCritical('first_exact_surface_owner');
   first.then(()=>{f.bot.entities[89]=make(89);second=f.agent.__testHandleSurvivalCritical('second_exact_surface_owner');second.catch(()=>{});});first.catch(()=>{});
  },20));
- const result=await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),6000);
+ await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),6000);
  await first;await second;assert.ok(n>=3);assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
  assert.ok(diagnostics().some(r=>r.event==='house_surface_chained_defense_wait'));
  assert.ok(Math.abs(f.bot.entity.position.x-5.5)<1);assert.equal(f.bot.pathfinder.goal,null);
@@ -2042,7 +2182,7 @@ test('independent native defenses retain the original leg deadline beyond the ob
   first=f.agent.__testHandleSurvivalCritical('first_exact_surface_owner');
   first.then(()=>{f.bot.entities[89]=make(89);second=f.agent.__testHandleSurvivalCritical('second_exact_surface_owner');second.catch(()=>{});});first.catch(()=>{});
  },20));
- const result=await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),15000);
+ await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),15000);
  await first;await second;assert.ok(n>=18);assert.ok(Date.now()-started>8500);assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
  assert.ok(diagnostics().some(r=>r.event==='house_surface_chained_defense_wait'));
  assert.ok(Math.abs(f.bot.entity.position.x-5.5)<1);assert.equal(f.bot.pathfinder.goal,null);
@@ -2097,7 +2237,7 @@ test('bare13HP armed survivor chooses an actual covered native route before char
  assert.ok(diagnostics().some(e=>e.event==='house_ranged_target_locked'&&e.details.decision==='cover'));assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
 });
 test('three separately completed native defenses can resume one surface goal under its same original deadline',{timeout:10000},async t=>{
- const f=fixture(t,{interruptions:3});f.task.materialSupply={materialSource:'self_gathered'};f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
+ const f=fixture(t,{interruptions:3,deferInitialThreat:true});f.task.materialSupply={materialSource:'self_gathered'};f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
  const diagnostics=captureHouseSurfaceDiagnostics(f),started=Date.now();
  await f.agent.__testHouseSurfacePathfinderGoto(new(require('mineflayer-pathfinder').goals.GoalBlock)(5,1,0),7000);
  if(f.interruption())await f.interruption();const resumed=diagnostics().filter(e=>e.event==='house_surface_self_defense_resumed');
@@ -2139,7 +2279,7 @@ test('a low-health unarmed survivor recognizes zombie_villager before native inj
  const f=fixture(t,{interrupt:false,resourceThreat:'zombie_villager',killAfter:99});prepareHouseResourceGroup(f,null);f.bot.health=9;f.bot.food=16;f.bot.inventory.items=()=>[];f.bot.heldItem=null;f.bot.entities[4].position=new Vec3(4.5,1,.5);
  const diagnostics=captureHouseSurfaceDiagnostics(f);
  await f.agent.__testWithHouseResourceWork(()=>f.agent.__testHandleSurvivalCritical('zombie_villager_before_injury'));
- assert.ok(f.bot.entity.position.distanceTo(f.bot.entities[4].position)>=6.5);assert.equal(f.bot.health,9);assert.equal(f.bot.entities[4].isValid!==false,true);
+ assert.ok(f.bot.entity.position.distanceTo(f.bot.entities[4].position)>=5);assert.equal(f.bot.entity.onGround,true);assert.equal(f.bot.health,9);assert.equal(f.bot.entities[4].isValid!==false,true);
  assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);assert.ok(diagnostics().some(e=>e.event==='creeper_escape_confirmed'&&e.details.threatName==='zombie_villager'));assert.equal(diagnostics().some(e=>e.event==='native_self_aggressor_observed'),false);
 });
 

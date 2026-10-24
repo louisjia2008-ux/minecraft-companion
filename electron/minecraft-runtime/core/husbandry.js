@@ -86,7 +86,7 @@ function animalsIn(bot, pen, kind) {
 async function holdFood(bot, kind) {
   const item = bot.inventory.items().find((i) => FOOD[kind]?.includes(i.name));
   if (!item) return false;
-  try { await bot.equip(item, 'hand'); } catch (_) { return false; }
+  try { await bot.equip(item, 'hand'); } catch { return false; }
   return true;
 }
 
@@ -180,7 +180,7 @@ async function lure(bot, ctx, pen, entity, { followGap = 3.5 } = {}) {
   const through = await passGate(bot, ctx, pen, true, catchUp);
   if (!through.ok) {
     // Shut again so the ones already penned stay in.
-    try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
+    try { await bot.unequip('hand'); } catch { /* nothing held */ }
     await setGate(bot, ctx, pen, false);
     return through;
   }
@@ -190,7 +190,7 @@ async function lure(bot, ctx, pen, entity, { followGap = 3.5 } = {}) {
   const inside = await waitUntil(() => animal() && pen.contains(animal().position) && close(),
     { timeoutMs: 10000, signal: ctx.signal });
   if (!inside) {
-    try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
+    try { await bot.unequip('hand'); } catch { /* nothing held */ }
     // Out (or just shut the gate) so the ones already penned stay in.
     const out = pen.contains(bot.entity.position) ? await leave(bot, ctx, pen) : await setGate(bot, ctx, pen, false);
     return out.ok ? fail('animal_not_inside', { gap: Math.round(gap()) }) : out;
@@ -201,7 +201,7 @@ async function lure(bot, ctx, pen, entity, { followGap = 3.5 } = {}) {
   const fromGate = () => (animal() ? Math.hypot(animal().position.x - gateCentre.x, animal().position.z - gateCentre.z) : Infinity);
   await waitUntil(() => fromGate() > 1.2, { timeoutMs: 5000, signal: ctx.signal });
   const shut = await setGate(bot, ctx, pen, false);
-  try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
+  try { await bot.unequip('hand'); } catch { /* nothing held */ }
   if (!shut.ok) return shut;
   await sleep(1000, ctx.signal);
   const out = await leave(bot, ctx, pen);
@@ -233,7 +233,7 @@ async function breed(bot, ctx, pen, kind) {
     await sleep(300, ctx.signal);
   }
   const born = await waitUntil(() => animalsIn(bot, pen, kind).length > before, { timeoutMs: 10000, signal: ctx.signal });
-  try { await bot.unequip('hand'); } catch (_) { /* nothing held */ }
+  try { await bot.unequip('hand'); } catch { /* nothing held */ }
   await leave(bot, ctx, pen);
   return born ? { ok: true, born: true } : fail('no_baby');
 }

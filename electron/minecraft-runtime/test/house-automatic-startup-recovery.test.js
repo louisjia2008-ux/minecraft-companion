@@ -150,12 +150,12 @@ test('blocked unarmed defense reobserves the nearer second zombie between native
  assert.deepEqual(sent,[88,89]);assert.equal(f.bot.pathfinder.goal,null);
 });
 
-test('low-health original food work retreats from an observed unarmed distant attacker instead of failing the no-chase gate',{timeout:6000},async t=>{
+test('low-health original food work retreats from an observed unarmed nearby attacker instead of failing the no-chase gate',{timeout:6000},async t=>{
  const f=native.exports.fixture(t,{interrupt:false});Object.assign(f.task,task());f.task.materialSupply={materialSource:'self_gathered'};
  f.bot.inventory.items=()=>[];f.bot.heldItem=null;f.bot.health=7;f.bot.food=17;
  const tracePath=path.join(process.env.MC_AGENT_DIAGNOSTICS_DIR,'low-health-food-retreat.jsonl');
  f.task.diagnostics={traceId:'low-health-food-retreat',tracePath,startedAt:Date.now(),eventCount:0};
- const e={id:88,name:'zombie',isValid:true,entityType:f.bot.registry.entitiesByName.zombie.id,position:new Vec3(6.5,1,.5),height:1.95};f.bot.entities[88]=e;
+ const e={id:88,name:'zombie',isValid:true,entityType:f.bot.registry.entitiesByName.zombie.id,position:new Vec3(4.5,1,.5),height:1.95};f.bot.entities[88]=e;
  await f.agent.__testWithHouseResourceWork(async()=>{
   await new Promise(r=>setTimeout(r,150));
   f.bot.emit('entityHurt',f.bot.entity,e);

@@ -38,6 +38,8 @@ function perceive(bot, { hostileRange = 16, now = Date.now } = {}) {
   const hostiles = [];
   for (const entity of Object.values(bot.entities || {})) {
     if (entity === self || !isHostile(entity) || !entity.position) continue;
+    // Set by a goal for mobs it keeps penned on purpose (a farm's zombie).
+    if (bot.companionSpare?.(entity)) continue;
     const distance = entity.position.distanceTo(position);
     if (distance <= hostileRange) {
       hostiles.push({ id: entity.id, name: entity.name, distance, position: entity.position.clone() });

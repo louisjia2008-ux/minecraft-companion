@@ -1,7 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),{Vec3}=require('vec3'),{Movements}=require('mineflayer-pathfinder');
 const filename=path.join(__dirname,'house-surface-graph.test.js'),source=fs.readFileSync(filename,'utf8'),native=new Module(filename,module);native.filename=filename;native.paths=Module._nodeModulePaths(__dirname);native._compile(source.slice(0,source.indexOf('\nfor(const unfinished'))+'\nmodule.exports={fixture};',filename);
-const terrain=require('../test-support/fixtures/formal58-run145-contact-pack.json'),{createHouseCreeperEscape}=require('../vendor/server/minecraft/houseCreeperEscape');
 
 test('world162 saved saddle escape', {timeout:8000},async t=>{
 const terrain=require('../test-support/fixtures/formal58-run162-creeper-saddle.json');

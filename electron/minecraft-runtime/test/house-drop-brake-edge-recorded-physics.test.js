@@ -12,7 +12,7 @@ for(const baseline of [true,false])test(`formal34 original native descent aligns
  if(baseline){const file=path.join(__dirname,'../vendor/server/minecraft/houseSurfaceGraph.js'),old=new Module(file,module);old.filename=file;old.paths=Module._nodeModulePaths(path.dirname(file));
   const text=fs.readFileSync(file,'utf8'),needle='if(terrainRecovery&&hasGroundedBodySupport(bot)&&!naturalWalkingFoot(bot,bot.entity.position.floored()))';assert.ok(text.includes(needle));
   old._compile(text.replace(needle,'if(false&&hasGroundedBodySupport(bot)&&!naturalWalkingFoot(bot,bot.entity.position.floored()))'),file);graphAPI=old.exports;}
- const aligned=[],brakes=[];f.deps.onGroundedDropAlignment=e=>aligned.push(e);f.deps.onControlledDropBrake=e=>brakes.push(e);
+ const aligned=[],brakes=[];f.deps.onGroundedDropAlignment=e=>{if(e.aligned===true)aligned.push(e);};f.deps.onControlledDropBrake=e=>brakes.push(e);
  const graph=graphAPI.createLoadedDryGraph(f.deps,{anchor:cp.anchor,radius:384,maxNodes:256,maxEdges:8192,timeoutMs:1200000,legTimeoutMs:20000,adaptiveLocalFrontier:true,nativeReachableHints:true,terrainRecovery:true});
  const before=graph.state();
  if(baseline){await assert.rejects(graph.next(),{code:'dry_graph_drop_brake_unconfirmed'});assert.equal(graph.state().visits,before.visits);return;}
