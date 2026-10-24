@@ -700,7 +700,7 @@ test('a survivable drop can finish its original landing with15HP instead of wait
  const r=await graph.travelToObservedNode({nodeId:f.key(f.target),exactPosition:f.target});assert.equal(r.confirmed,true);assert.equal(changed,true);assert.equal(f.bot.health,15);
 });
 
-test('a grounded food detour beyond waypoint spacing freshly walks a dry route around a pond',{timeout:12000},async t=>{
+function pondFoodDetourFixture(t){
  const anchor={x:0,y:1,z:0},id='0,1,0';
  const checkpoint={schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,nodes:{[id]:{position:anchor,parent:null,expanded:true}},order:[id],frontier:[],blockedEdges:[],current:id,resumeNode:id,visits:1,probes:0};
  const f=fixture(t,{checkpoint,initialPosition:new Vec3(15.5,1,53.5),worldAt:p=>{
@@ -708,10 +708,57 @@ test('a grounded food detour beyond waypoint spacing freshly walks a dry route a
    if(p.y===0)return p.x>=8&&p.x<=18&&p.z>=35&&p.z<=42?'water':'grass_block';
    return 'air';
  }});
- const graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,legTimeoutMs:10000});
+ return {f,anchor};
+}
+function observePondNativeProbes(f,{allUnknown=false}={}){
+ const native=f.bot.pathfinder.getPathFromTo.bind(f.bot.pathfinder),probes=[];let firstUnknown=null,sequence=0;
+ f.bot.pathfinder.getPathFromTo=function*(profile,from,goal,options={}){
+  const iterator=native(profile,from,goal,options),fresh=options.optimizePath===false&&options.timeout===100;
+  const origin=from.clone(),target={x:goal.x,y:goal.y,z:goal.z};
+  try{while(true){
+   const step=iterator.next();if(step.done)return step.value;
+   const entry=step.value,result=entry.result;
+   if(fresh&&(allUnknown||!firstUnknown&&origin.distanceTo(new Vec3(goal.x,goal.y,goal.z))>32)){
+    // Keep a prefix of an actual native path, but only downgrade its verdict.
+    // UNKNOWN is a planning hint, never success or permission to execute it.
+    const path=result.path.slice(0,12),record={sequence:++sequence,origin,target,status:'timeout',nativeStatus:result.status,path};
+    probes.push(record);firstUnknown??=record;
+    yield {...entry,result:{...result,status:'timeout',path}};return;
+   }
+   if(fresh)probes.push({sequence:++sequence,origin,target,status:result.status,path:result.path});
+   yield entry;
+  }}finally{iterator.return?.();}
+ };
+ return {probes,firstUnknown:()=>firstUnknown};
+}
+test('a grounded food detour beyond waypoint spacing freshly walks a dry route around a pond',{timeout:12000},async t=>{
+ const {f,anchor}=pondFoodDetourFixture(t),observed=observePondNativeProbes(f),nativeGoto=f.bot.pathfinder.goto.bind(f.bot.pathfinder),walks=[];let consumedProbe=0;
+ f.bot.pathfinder.goto=goal=>{
+  const fresh=observed.probes.findLast(p=>p.target.x===goal.x&&p.target.y===goal.y&&p.target.z===goal.z
+    &&p.origin.floored().equals(f.bot.entity.position.floored()));
+  assert.ok(fresh,'Each physical leg needs its own successful native probe after the UNKNOWN hint');
+  assert.equal(fresh.status,'success');
+  assert.ok(fresh.sequence>Math.max(consumedProbe,observed.firstUnknown().sequence));consumedProbe=fresh.sequence;
+  walks.push({target:{x:goal.x,y:goal.y,z:goal.z},distance:f.bot.entity.position.distanceTo(new Vec3(goal.x,goal.y,goal.z)),probe:fresh});
+  return nativeGoto(goal);
+ };
+ // Match the actual survival_food graph policy; all original time budgets stay.
+ const graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,nativeReachableHints:true,legTimeoutMs:10000});
  const result=await graph.returnToAnchor({rejoinInterruptedSuffix:true,via:[anchor]});
+ assert.equal(observed.firstUnknown().status,'timeout');assert.ok(observed.firstUnknown().path.length>0);
+ assert.ok(walks.length>=2);assert.ok(walks[0].distance>=4&&walks[0].distance<=16);
+ assert.notDeepEqual(walks[0].target,anchor);
  assert.equal(result.confirmed,true);assert.deepEqual(f.bot.entity.position.floored(),new Vec3(0,1,0));
  assert.equal(f.waterTicks.length,0);assert.equal(graph.getState().visits,1);assert.equal(graph.getState().order.length,1);
+});
+test('a food detour with only UNKNOWN native hints grants no movement or graph visit',{timeout:12000},async t=>{
+ const {f,anchor}=pondFoodDetourFixture(t),before=f.bot.entity.position.clone(),observed=observePondNativeProbes(f,{allUnknown:true});
+ const graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,nativeReachableHints:true,legTimeoutMs:10000});
+ await assert.rejects(graph.returnToAnchor({rejoinInterruptedSuffix:true,via:[anchor]}),{code:'dry_graph_rejoin_unconfirmed'});
+ assert.ok(observed.probes.length>1);assert.ok(observed.probes.every(p=>p.status==='timeout'));
+ assert.equal(f.attempts.length,0);assert.deepEqual(f.bot.entity.position,before);assert.equal(f.controls.some(c=>c.value===true),false);
+ assert.equal(graph.getState().current,'0,1,0');assert.equal(graph.getState().visits,1);assert.equal(graph.getState().order.length,1);
+ assert.equal(f.waterTicks.length,0);
 });
 
 test('an incompatible old suffix exposes a fresh recovery target after failed connectors without granting arrival credit',async t=>{
