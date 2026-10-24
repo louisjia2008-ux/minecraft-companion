@@ -18,9 +18,10 @@ const { sleep } = require('../confirm');
 const PATH_FAILURES = new Set(['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck', 'leg_blocked']);
 // Never wanted by any goal; thrown away first when the bag is full.
 const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff', 'calcite', 'dripstone_block',
-  'pointed_dripstone', 'rotten_flesh', 'poisonous_potato', 'spider_eye', 'cobweb', 'dead_bush', 'netherrack']);
+  'pointed_dripstone', 'rotten_flesh', 'poisonous_potato', 'spider_eye', 'cobweb', 'dead_bush']);
 // Useful in moderation: one stack is kept, the rest goes.
-const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64 };
+// A stack of netherrack is the nether's building block: bridges, steps out of lava.
+const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64 };
 const SAPLINGS_KEPT = 8;
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');

@@ -56,17 +56,19 @@ test('cells by lava cost more, standing in or over lava is effectively banned', 
 });
 
 test('nether movements are applied once and fully restored', () => {
-  const movements = { maxDropDown: 4, blocksCantBreak: new Set([1]), exclusionAreasStep: [() => 0] };
+  const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set([1]), exclusionAreasStep: [() => 0] };
   const bot = { ...makeWorld(), pathfinder: { movements },
     registry: { blocksByName: { nether_gold_ore: { id: 7 }, obsidian: { id: 8 } } } };
   const restore = nether.applyNetherMovements(bot);
   assert.equal(movements.maxDropDown, 3);
+  assert.ok(movements.digCost > 1, 'digging costs more than walking around');
   assert.ok(movements.blocksCantBreak.has(7) && movements.blocksCantBreak.has(8));
   assert.equal(movements.exclusionAreasStep.length, 2);
   nether.applyNetherMovements(bot)();
   assert.equal(movements.exclusionAreasStep.length, 2, 'a second apply is a no-op');
   restore();
   assert.equal(movements.maxDropDown, 4);
+  assert.equal(movements.digCost, 1);
   assert.deepEqual([...movements.blocksCantBreak], [1]);
   assert.equal(movements.exclusionAreasStep.length, 1);
 });
@@ -121,4 +123,20 @@ test('returning to the overworld restores the overworld movement settings', asyn
   assert.equal(bot.game.dimension, 'overworld');
   assert.equal(movements.maxDropDown, 4);
   assert.equal(movements.exclusionAreasStep.length, 0);
+});
+
+test('a swing next to a hit is not blamed while a wither skeleton could have dealt it', () => {
+  const bot = piglinBot();
+  bot.entities[9] = { id: 9, name: 'wither_skeleton', position: new Vec3(-2, 64, 0) };
+  const defend = createSurvivalBehaviors({ bot }).find((b) => b.name === 'defend');
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  assert.equal(defend.want(nearPiglin(bot)), 0);
+  // Once the skeleton is gone, a swing before a hit is the pack's own.
+  delete bot.entities[9];
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  assert.equal(defend.want(nearPiglin(bot)), 1);
 });

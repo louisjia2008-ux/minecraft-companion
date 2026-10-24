@@ -164,7 +164,8 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   };
   try {
     check();
-    const setup = scenario.setup({ username, run, rng, difficulty });
+    // Setup may ask the server first (e.g. where a structure is), so it can be async.
+    const setup = await scenario.setup({ username, run, rng, difficulty, server: scopedServer });
     write('setup', { seed, run, difficulty, details: setup.details, botLifecycle: lifecycle });
     const trace = (stage) => write('inventory_state', { stage, ...inventorySnapshot(bot) });
     for (const name of ['set_slot', 'set_player_inventory', 'window_items']) {

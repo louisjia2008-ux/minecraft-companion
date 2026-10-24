@@ -5,12 +5,12 @@ const { homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat } = requi
 const { farmFlat } = require('./farm.cjs');
 const { ranchFlat } = require('./ranch.cjs');
 const { materialsCobblegenFlat, branchMineIronFlat, branchMineRedstoneFlat, branchMineDiamondFlat } = require('./materials.cjs');
-const { netherQuartzGiven } = require('./nether.cjs');
+const { netherQuartzGiven, netherStructuresGiven, netherFortressGiven, netherBastionGiven } = require('./nether.cjs');
 const { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat, ironFarmFlat } = require('./devices.cjs');
 const { e2eFlat, machinesFlat } = require('./e2e.cjs');
 
 const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat,
-  farmFlat, ranchFlat, netherQuartzGiven, cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat,
+  farmFlat, ranchFlat, netherQuartzGiven, netherStructuresGiven, netherFortressGiven, netherBastionGiven, cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat,
   materialsCobblegenFlat, branchMineIronFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat, ironFarmFlat, e2eFlat, machinesFlat,
   branchMineRedstoneFlat, branchMineDiamondFlat]
   .map((s) => [s.name, s]));
