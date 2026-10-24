@@ -6,6 +6,13 @@ Scope: **source developer preview v0.1.0-alpha.1**. Tested freeze: `a22a73a4a729
 
 Preserved offline failures and interrupted campaigns are detailed in [VALIDATION.md](VALIDATION.md). In particular, full6 naturally failed 3324/3325; full7 passes only after a test-only clock correction with production and original budgets retained. Full02 has30 passed rounds and2 interrupted rounds, and does not supply passes to full03.
 
+### Native spawn settlement before emergency water tests
+
+- Preserve e632 CI400834:3339/3340,one emergency-food water initialization failure(`dry_graph_not_on_surface`),14.764295ms,naturalexit1. Failure-time pose was absent; exact CI cause remains UNKNOWN. Retain the original one-fetch log and separately documented local chunk-copy recovery.
+- A transparent original case and a controlled first native tick each reproduce the startup mechanism locally:vy0/onGroundtrue becomes onGroundfalse on the first unchanged Physics tick while the actor stays above stone. The earlier ordinary call may already have observed the anchor(visits1); refusal itself grants no movement credit.
+- Wait for actual consecutive grounded/support observations in the fixture,then retain original4HP/food8,ordinary refusal,real two-way water traversal and camp-return assertions. Add a fresh-graph unsettled-first-tick refusal with zero motor/visit credit before actual settlement permits continuation. Keep original12s test/4s legs/5ms Physics,production guards and all real motion; never assign position or velocity to manufacture a pass.
+- Retain e8d1/full16 historical complete3341/3341 and its clean09/archive10 successful identities separately. Final full17/source consumers/privacy and exact-final PR/mainCI remain independent release gates.
+
 ### Canopy and existing finite-recheck test contracts
 
 - Preserve82eb CI400820:3337/3338,one canopy assertion failure(actualy5 versus1),zero other terminal statuses,naturalexit1. Exact original cause remains UNKNOWN without failure-time telemetry. Its passing resource case and three-leg native pond return do not override prior failures.

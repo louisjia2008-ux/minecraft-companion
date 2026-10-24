@@ -2,6 +2,16 @@
 
 **Frozen a22 offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
 
+## 初生落稳与紧急跨水测试的初始化合同
+
+[e632原PR20 CI40083496067](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40083496067)完整runtime3339/3340、1fail、0cancel/skip/todo，自然exit1，1163389.334204ms。唯一失败是`explicit emergency food exploration crosses loaded typed water below the ordinary work health threshold`，14.764295ms后由`initialize`拒绝`dry_graph_not_on_surface`。完整原日志和首次失败保留；原CI未附失败时身体/探测信息，精确首因继续UNKNOWN。原日志下载只取一次；本地分块保存的工具错误与720000字符前缀被单独记录，逐块核原payload后补完，不重取或改写原CI。
+
+同一测试源码的透明原用例和精确首tick控制在本地均一次自然复现初始化拒绝：初始vy0/onGroundtrue，第1次原Physics tick令vy=-0.0784000015258789、onGroundfalse，位置仍(.5,2,.5)、脚下stone，零dry/water移动。原ordinary调用在首tick前已初始化并合法保留anchor visits1，不能把整段描述为visits0；拒绝未新增路径信用。本地观测支持这一机制，不冒充缺遥测的CI精确重放。
+
+本轮只修离线测试前提：原正例先等待原Physics实际连续支持/grounded观测，再保留health4/food8、普通探索拒绝、紧急真实跨水、回程真实跨水和实际回营全部原断言。新增负例在全新graph中先经历原第1tick后请求紧急探索，必须在未落稳时拒绝、零motor/零visit；真正连续落稳后才继续原授权流程。没有位置、速度、Physics、生产守卫或可达性结果赋值，没有增加原12s test、4s leg与5ms Physics期限/节拍。
+
+原e8d1冻结`e8d1ad76818fa3cb7939a6c71b7af5fcd9891592`、sourceHash`817dd6a73bd3ce969361f80e927c34708fb6134af5f08aa42a9a8670d2069dce`的完整full16已自然3341/3341通过，0fail/cancel/skip/todo、480235.79725ms；七原命令全部通过且874文件源码前后不变。clean09独立全套通过；archive10官方fresh安装后真实采木11/目标10、44125ms、零死亡、唯一LAST result=summary与console保存停服通过。这些原身份成功不能覆盖e632云端失败，也不代替后续最终full17、干净源码、归档、隐私和精确PR/mainCI门槛，最终发行单分别绑定。
+
 ## 树冠方向假设与有限复核观察修复
 
 [82eb原PR20 CI400820](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40082045342)完整runtime3337/3338、1fail、0cancel/skip/todo，自然exit1，1153849.012046ms；唯一失败是`explicit terrain recovery walks off a four block canopy using original physics`，2183.291301ms后actual.y=5、断言要求1。其余原检查通过，完整原日志、首次收据和原窗口均保留；没有失败时探测/姿态信息，精确原首因仍UNKNOWN。本次资源记忆用例通过不能覆盖它先前两次固定轴向失败；池塘本次真实归家为三腿，仍按实际记录而不改称两腿。
