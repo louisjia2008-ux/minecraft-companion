@@ -264,15 +264,18 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
         const along = FACINGS[f.facing];
         return skills.pourLiquid(bot, ctx, s.dry, 'lava', { against: { x: s.dry.x + along.x, y: s.dry.y, z: s.dry.z + along.z } });
       }
-      if (!sealed() && !zombieIn()) {
+      const zombie = async (stand) => {
         const wall = c.zombieWall;
         const normal = new Vec3(c.zombie.x - wall.x, 0, c.zombie.z - wall.z);
-        const result = await useEgg(ctx, 'zombie_spawn_egg', wall, normal, c.eggStand);
+        const result = await useEgg(ctx, 'zombie_spawn_egg', wall, normal, stand);
         if (!result.ok) return result;
         const there = await waitUntil(zombieIn, { timeoutMs: 3000, signal: ctx.signal });
         ctx.record('iron_farm_zombie', { ok: there });
         return there ? { ok: true } : { ok: false, reason: 'no_zombie' };
-      }
+      };
+      // A spawn-egg zombie despawns while the bot is far off in the village, so
+      // the minecart farm gets its zombie once the villagers are in.
+      if (!byCart && !sealed() && !zombieIn()) return zombie(c.eggStand);
       if (byCart && !powered()) {
         if (!isAir(blockAt(c.power))) return dig(ctx, c.power);
         const result = await skills.placeAt(bot, ctx, c.power, (n) => n === 'redstone_block', { faces: [new Vec3(0, -1, 0)] });
@@ -295,6 +298,7 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
         memory.awaiting = true;
         return { ok: false, reason: 'awaiting_villagers' };
       }
+      if (byCart && !memory.ready && !zombieIn()) return zombie(c.villagerStand);
       if (!memory.ready && have < VILLAGERS) {
         const floor = c.corridor.map((p) => ({ ...p, y: p.y - 1 }))[memory.eggs % c.corridor.length];
         const result = await useEgg(ctx, 'villager_spawn_egg', floor, new Vec3(0, 1, 0), c.villagerStand);

@@ -35,6 +35,7 @@ const VILLAGERS = 3;
 const NEAR = 24; // the farm's corridor at least this far from the village's middle
 const FAR = 40;
 const CLEAR = 16; // the stairs' top and the duplicator kept off the village's middle
+const REFILL_RAILS = 24; // each later batch
 const SPARE_RAILS = 16; // beyond the straight distance: the line bends after villagers
 const MAX_PATH = 64;
 const PUSH_MS = 1200;
@@ -183,7 +184,10 @@ function chooseVillageFarmSite(blockAt, village, { radius = 4 } = {}) {
 function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
   const memory = { village: null, farmGoal: null, duperGoal: null, line: null, explore: {},
-    loaded: 0, delivered: 0, pushes: 0, skip: new Map(), stocked: false };
+    loaded: 0, delivered: 0, pushes: 0, skip: new Map(), stocked: false, refill: null, made: 0 };
+  // Rails laid leave the inventory, so what the duplicator made is frozen once
+  // stocked and topped up by each refill's presses: laying never looks like a loss.
+  const duperProgress = () => (memory.stocked ? memory.made : memory.duperGoal?.progress() || 0) + (memory.refill?.memory.presses || 0);
   const blockAt = (p) => bot.blockAt(v(p));
   const blockXYZ = (x, y, z) => bot.blockAt(new Vec3(x, y, z));
   const rails = () => actions.countItems(bot, (n) => n === 'rail');
@@ -545,7 +549,7 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
     memory,
     noProgressLimit: 60,
     isDone: () => Boolean(memory.farmGoal?.isDone()),
-    progress: () => (memory.village ? 1 : 0) + (memory.farmGoal?.progress() || 0) + (memory.duperGoal?.progress() || 0)
+    progress: () => (memory.village ? 1 : 0) + (memory.farmGoal?.progress() || 0) + duperProgress()
       + (memory.line?.length || 0) + memory.loaded * 4 + memory.pushes,
     async run(ctx) {
       trackDismounts(bot);
@@ -569,9 +573,20 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
       bot.companionSpare = (entity) => entity.name === 'zombie' && entity.position.distanceTo(v(f.cells.zombie).offset(0.5, 0, 0.5)) <= 1.5;
       // Rails first: the farm's own and enough for the line.
       const transporting = fg.memory.awaiting && !fg.memory.ready && farmVillagers() < VILLAGERS;
-      if (!memory.stocked || (transporting && rails() === 0)) {
+      if (!memory.stocked) {
         if (!memory.duperGoal.isDone()) return memory.duperGoal.run(ctx);
+        memory.made = memory.duperGoal.progress();
         memory.stocked = true;
+      }
+      // Out of rails on the way: a top-up, not the whole first batch again.
+      if (transporting && rails() === 0 && !memory.refill) {
+        const d = memory.duperGoal.memory.device;
+        memory.refill = createRailDuperGoal({ bot, anchor: d.anchor, facing: d.facing, count: REFILL_RAILS, skills, actions });
+      }
+      if (memory.refill) {
+        if (!memory.refill.isDone()) return memory.refill.run(ctx);
+        memory.made += memory.refill.memory.presses;
+        memory.refill = null;
       }
       if (fg.memory.ready || !fg.memory.awaiting || farmVillagers() >= VILLAGERS) return fg.run(ctx);
       return transport(ctx);
