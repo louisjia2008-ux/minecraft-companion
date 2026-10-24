@@ -2,6 +2,14 @@
 
 **正式游戏验收通过，离线检查按冻结快照记录。** 测试冻结 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，867 文件 sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`。原样完整 runtime full7 自然通过 3326/3326；正式 full03 于 2026-10-24 02:15:09.845—03:27:27.151 UTC 自然完成，24 场景、32/32 轮全部通过，原始结果、退出码与源码/driver 一致。 源码归档、干净安装与发布验证的最终收据随 release 单独提供，和本页的游戏验收快照分别绑定。[正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
 
+## 最新离线修复冻结
+
+代码冻结 **`14b9ac5ee0dc413076414324476c6ef9756781fc`**，874文件，sourceHash `6a1c7b63189fb900d2c69e02990afa492ace25b941356ffc40508f65973a16d8`。原样完整 full11 **3335/3335 PASS，自然exit0，0fail/cancel/skip/todo**，耗时475088.889666ms；host74/74、security6/6、legacy25/25、setup18/18及lint/typecheck同冻结全部自然通过，sourceChanges[]且工作区干净。
+
+[PR20首次CI](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40071530091)在39e6记录3325/3329、4fail，完整原日志与四窗口保留。新修复仅改三个离线测试文件：补齐长绕行的既有生产settlement适配、分别验证食物分支fresh成功与UNKNOWN零移动保护及真实调用方恢复、用实际不同生存租约和统一逻辑时钟验证最多两次恢复及原600ms期限。原CI没有记录实际中断序列或失败时elapsed，精确首因仍UNKNOWN；受控反例用于机制验证，不冒充原CI重放。原断言、动作预算与真实Physics保留，详情见[验证报告](VALIDATION.md)。
+
+相对a22，core执行文件51份（显式排除已有发行文档core/README.md）、vendor168份、scenarios16份、tools6份和四份package/lock文件的路径、模式与Git blob一致；整个core目录因README文档不同而不称为逐字节相同。a22/full03的24场景32轮仍保留原运行身份。最终五文档提交、新消费者/归档、隐私与PR/main CI的门禁单独绑定发行附件，旧PASS不替代新门禁。
+
 首次 [云端 CI](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40060016518) 在候选 07bd 上记录 runtime3325/3326、1fail，原失败保留。后续仅修正池塘食物路线离线夹具，使配置与正式 `survival_food` 一致，并增加 UNKNOWN 不得授予移动的负例；没有修改生产代码、正式 harness、锁文件或预算。最终发行提交的全量离线、PR/main CI 与归档消费结果由 release 中的独立验收单分别绑定，不能把 a22 full03 说成后续 SHA 的重新游戏长跑。
 
 ## 首次 main CI 失败与后续代码冻结
@@ -24,7 +32,8 @@
 
 | 层次 | 已观察结果 | 边界 |
 |---|---|---|
-| 原样完整 runtime full7 | **3326/3326 PASS，自然exit0；0fail/cancel/skip/todo；sourceChanges[]** | 离线完整脚本 |
+| 最新原样完整 runtime full11 | **3335/3335 PASS，自然exit0；0fail/cancel/skip/todo；sourceChanges[]** | 14b9/6a1c离线冻结；最终发行收据另行绑定 |
+| 历史原样完整 runtime full7 | **3326/3326 PASS，自然exit0；0fail/cancel/skip/todo；sourceChanges[]** | 离线完整脚本 |
 | 当前a22宿主检查 | host74/74、security6/6、legacy acceptance25/25、lint/typecheck通过 | 保留一次70/74、4个本机listen EPERM环境失败；有监听权限后原样74/74；非GUI/provider证明 |
 | 正式 full03 | **24场景32/32轮PASS，自然exit0** | 原合同/时限/重复次数；24隔离world、场景内reuse+reset，非任意种子保证 |
 | E2E完整流程 | **71分9.204秒；最终home95/95、铁剑/铁镐/盾各1、generator收集8、smelter熔炼5/收集4；四fault恢复、HP20存活、2计划死亡/0额外死亡** | 受控资源平地；钩子恢复标记不等于掉落物回收全耗时 |

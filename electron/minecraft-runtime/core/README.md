@@ -2,13 +2,11 @@
 
 与 `vendor/server/minecraftTaskAgent.js` 并行开发的新核心，还没有接入桌面应用。目前先通过场景测试平台在真实 vanilla 1.21.8 服务器上单独验证，稳定后再逐项替换旧代理的能力。
 
-> **a22 冻结状态：24场景32/32轮正式PASS，runtime3326/3326PASS。** 本文保留原实现说明与先前PR历史；其中10/10、20/20、旧E2E等统计仍是当时的历史自报，不继承为本轮证据。当前逐轮结果、冻结源码与已知恢复成本见根 [VALIDATION.md](../../../VALIDATION.md) 和 [STATUS.md](../../../STATUS.md)。新core尚未接入Electron；v0.1.0-alpha.1仅源码开发预览。
+> **正式游戏验收：a22冻结24场景32/32轮PASS。最新离线验收：14b9冻结3335/3335PASS。** 新core尚未接入Electron，v0.1.0-alpha.1仅源码开发预览。本文保留实现与先前PR说明；较早的10/10、20/20、旧E2E等数字仍为历史自报，不继承为当前证据。当前命令、完整逐轮结果、失败历史与恢复成本统一见根[VALIDATION.md](../../../VALIDATION.md)和[STATUS.md](../../../STATUS.md)。
 
-测试冻结 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，867 文件 sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`。原样完整 runtime full7 自然通过 3326/3326；正式 full03 于 2026-10-24 02:15:09.845—03:27:27.151 UTC 自然完成，24 场景、32/32 轮全部通过，原始结果、退出码与源码/driver 一致。 最终E2E完整合同通过，已知旧前沿返程重试后自主煤恢复的效率局限与失败/中断历史统一见根验证报告。源码归档/安装/发布收据单独绑定发行commit。 后续云端首次 CI 的池塘夹具失败与离线配置修正见根验证报告；runtime core/vendor 与正式游戏 harness 未改，最终全量离线/CI不继承旧快照的通过数。
+正式full03绑定 `a22a73a4a7294ab5409b6e74ee882b2603ab528b` /sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`，于2026-10-24 02:15:09.845—03:27:27.151 UTC完成24场景32/32轮。后续测试修复冻结 **`14b9ac5ee0dc413076414324476c6ef9756781fc`** /874files/sourceHash `6a1c7b63189fb900d2c69e02990afa492ace25b941356ffc40508f65973a16d8`，原样完整full11 **3335/3335自然exit0，0fail/cancel/skip/todo**；同冻结host74、security6、legacy25、setup18、lint/typecheck全部自然通过，源码前后无变化。
 
-> **后续安装器代码冻结验收通过：** 安装器代码冻结（`INSTALLER_CODE_FREEZE`）`8f324745527b7b13e6553b57c11af3309ebd9871` / full9完整runtime **3327/3327 PASS** /安装器专项 `18/18 PASS（14个顶层用例、4个子用例；安装器代码冻结8f32474）`。00783/full8已自然3327/3327，0898的全新源码检查也已通过，但其两次官方JDK下载在原300s期限分别自然失败，均未启动游戏。安装器修复仅调整header300/idle300/total900秒并把原setup测试纳入CI，不自动重试；core/vendor与正式场景/harness及游戏期限另行核对保持。a22的24场景32轮结果不冒充后续SHA的新游戏长跑。0898 PR CI已于05:07:09 UTC通过3327/3327；最终发行文档提交身份及后续门禁需外部验收单中的新源码实际收据。
-
-> **后续 main CI 与离线验收记录：** f588 的 PR CI 通过3327/3327后，首次 main CI40067331000自然3326/3327、formal14单例失败，原始日志缺少失败时的native/body遥测，精确首因未知。新代码冻结 `264683ad461329a1f6b33849c97fb4b9bb400a84`，范围 仅修正 formal14 离线夹具，接入既有生产 native-goto settlement，增加明确标记的初始 empty-partial 正例与取消负例；定向3/3通过但不替代全量；完整full10 **3329/3329 PASS，自然exit0，0fail/cancel/skip/todo**，runtime数 3329。同冻结七项原命令均自然exit0、sourceChanges[]：host74/74、security6/6、legacy25/25、setup18/18及lint/typecheck通过。最终发行的新消费者/隐私/PR/main门禁仍须独立实际收据；a22的24场景32轮不冒充新SHA游戏重跑，新core仍未接入Electron。详情统一见根验证报告。
+此前池塘夹具、安装器下载、首次main CI及PR20四失败均保留原始结果与UNKNOWN边界。最新修复仅调整三个离线测试的生产适配、fresh探测与有限时序合同，未改变生产core/vendor或正式游戏预算。相对a22，core执行文件显式排除本README后保持字节等价；文档更新不称为整个core目录未改。a22游戏结果不冒充后续SHA的新游戏长跑，最终五文档提交、新消费者/隐私/PR/main CI与公开资产由发行附件单独绑定。
 
 ## 当前优先级、维护与修复边界
 

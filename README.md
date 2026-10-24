@@ -2,7 +2,7 @@
 
 面向 Minecraft Java Edition 的陪玩代理源码，包含一个独立开发中的决策 core、真实 vanilla 服务端场景工具，以及保留的 Electron 桌面宿主与旧任务引擎。
 
-**v0.1.0-alpha.1 源码开发预览。** 测试冻结 `a22a73a` 已完成原样 runtime3326/3326 和正式24场景32/32轮全部通过。新 core 尚未接入 Electron 的命令与生命周期；现有 CLI 用于开发和场景验证，没有独立的普通玩家自由游玩启动入口。当前状态与已知局限见 [STATUS.md](STATUS.md)、[VALIDATION.md](VALIDATION.md) 和 [正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。归档校验、干净安装和公开发布状态由最终发行收据单独记录。
+**v0.1.0-alpha.1 源码开发预览。** 正式游戏验收冻结 `a22a73a` 已完成 **24场景32/32轮**；最新离线修复冻结 `14b9ac5` 的原样完整 runtime 已自然通过 **3335/3335**，其余六项原命令全部通过。新 core 尚未接入 Electron 的命令与生命周期；现有 CLI 用于开发和场景验证，没有独立的普通玩家自由游玩启动入口。当前状态与已知局限见 [STATUS.md](STATUS.md)、[VALIDATION.md](VALIDATION.md) 和 [正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。最终发行源码、消费者、PR/main CI 与公开资产分别由发行附件绑定。
 
 项目自有源码采用 **AGPL-3.0-only**。许可证、继承来源和第三方声明分别见 [LICENSE](LICENSE)、[LICENSING.md](LICENSING.md)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
@@ -16,7 +16,7 @@
 
 ## 安装源码与离线检查
 
-本轮已验证 Node.js **22.22.0** 与 npm **10.9.4**；其他较新版的兼容性尚未验证。发行中的池塘食物路线夹具已对齐实际 `survival_food` 分段策略，并新增全部 UNKNOWN 时禁止移动的负例；该离线夹具修正保留 runtime core/vendor 与正式场景字节；后续官方下载超时修复单独修改安装工具及其测试/CI。首次云端 CI 的 3325/3326 失败及修复边界见 [VALIDATION.md](VALIDATION.md)。候选 f588 的 PR CI 通过后，首次 main CI 又记录完整 runtime3326/3327、1fail；后续264683仅修正 formal14 离线夹具以使用既有生产 settlement，并增加模型正例与取消负例；该冻结的原样完整full10已自然通过3329/3329，见同一验证报告。最终发行提交的完整离线与 PR/main CI 结果由独立 `RELEASE_ATTESTATION.json` 绑定，和 a22 游戏验收快照分别记录。下载对应预发布的源码归档或检出对应标签后，在仓库根目录运行：
+已验证 Node.js **22.22.0** 与 npm **10.9.4**。最新离线冻结 `14b9ac5ee0dc413076414324476c6ef9756781fc` 的七项原命令全部自然通过：runtime **3335/3335**、host **74/74**、security **6/6**、legacy acceptance **25/25**、安装器 **18/18**、lint 与 typecheck；运行前后源码无变化。此前云端 CI 暴露的夹具问题、安装器下载失败及修复边界完整保留在 [VALIDATION.md](VALIDATION.md)。后续仅更新五份发行文档；最终提交的干净源码/归档消费者、隐私与 PR/main CI 结果由独立 `RELEASE_ATTESTATION.json` 绑定，和 a22 的正式游戏验收分别记录。其他 Node/npm 版本尚未验证。下载对应预发布的源码归档或检出对应标签后，在仓库根目录运行：
 
 ```sh
 npm ci --ignore-scripts --prefix electron
