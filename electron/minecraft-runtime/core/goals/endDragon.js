@@ -22,6 +22,7 @@ const CENTER = new Vec3(0, 64, 0);
 // The dragon's synced phase while it circles a player to shoot a fireball at it.
 const STRAFE = 1;
 const CHARGE = 8;
+const TAKEOFF = 4;
 
 function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
   const crystalBlacklist = createBlacklist({ ttlMs: 240000 });
@@ -223,7 +224,12 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       }
     }
     ctx.record('cage_climb', { crystal: at(c), from: at(bot.entity.position) });
-    const placed = await end.pillarUp(bot, ctx, c.y, { maxSteps: c.y - side.stand.y + 2 });
+    // Coming back mid-climb: get down again before its wings or a fireball arrive.
+    const danger = () => {
+      const d = end.dragonOf(bot);
+      return Boolean(d) && (d.position.distanceTo(bot.entity.position) < 40 || [STRAFE, CHARGE].includes(end.dragonPhase(bot, d)));
+    };
+    const placed = await end.pillarUp(bot, ctx, c.y, { maxSteps: c.y - side.stand.y + 2, stop: danger });
     const feet = bot.entity.position.floored();
     if (feet.y < c.y) {
       ctx.record('cage_climb_short', { placed, y: feet.y, need: c.y });
@@ -376,6 +382,20 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
         // Still landing: be at the portal when it sits.
         await end.walkTo(bot, ctx, end.surfaceAt(bot, 0, 9) || CENTER, 2, 6000);
         return { ok: true, waited: true };
+      }
+      // Taking off it flies out straight ahead and up, through anything there:
+      // step off its line, to the side.
+      if (dragon && phase === TAKEOFF && dragon.position.distanceTo(here) < 18) {
+        const forward = new Vec3(Math.sin(dragon.yaw), 0, Math.cos(dragon.yaw));
+        const side = new Vec3(forward.z, 0, -forward.x);
+        const rel = here.minus(dragon.position);
+        const sign = rel.dot(side) >= 0 ? 1 : -1;
+        if (rel.dot(forward) > -4 && Math.abs(rel.dot(side)) < 9) {
+          const away = here.plus(side.scaled(9 * sign)).minus(forward.scaled(3));
+          ctx.record('dodge_takeoff', { to: at(away) });
+          await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(away.x, away.z, 1.5), { timeoutMs: 4000, arrived: () => true });
+          return { ok: true, waited: true };
+        }
       }
       const crystals = end.crystalsOf(bot);
       memory.crystalsLeft = crystals.length;

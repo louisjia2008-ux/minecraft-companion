@@ -147,7 +147,7 @@ module.exports.PORTAL_KIT = PORTAL_KIT;
 
 const CITY_KIT = [
   ['iron_chestplate', 1], ['iron_leggings', 1], ['iron_boots', 1], ['carved_pumpkin', 1],
-  ['iron_sword', 1], ['diamond_pickaxe', 1], ['bow', 1], ['arrow', 64], ['ender_pearl', 16],
+  ['iron_sword', 1], ['diamond_pickaxe', 1], ['bow', 1], ['arrow', 64], ['ender_pearl', 32],
   ['cooked_beef', 48], ['cobblestone', 512], ['water_bucket', 1],
 ];
 // What the bot brings or digs on the way; anything else on it came from a chest or the ship.

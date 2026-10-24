@@ -78,7 +78,24 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     const columns = [[3, 0], [-3, 0], [0, 3], [0, -3]].map(([x, z]) => end.surfaceAt(bot, g.x + x, g.z + z, { yMax: g.y - 2 }))
       .filter((s) => s && bot.blockAt(s.offset(0, -1, 0))?.name === 'end_stone' && g.y - s.y <= 30)
       .sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
-    if (columns.length === 0) { blacklist.add(tag, 'no_column'); return fail('no_tower_column'); }
+    if (columns.length === 0) {
+      // The gateway hangs off the island's edge: bridge out to a column on
+      // its island side, three blocks short of it, and tower from there.
+      const n = Math.hypot(g.x, g.z) || 1;
+      const p = new Vec3(Math.round(g.x - (g.x / n) * 3), 0, Math.round(g.z - (g.z / n) * 3));
+      const feet = bot.entity.position.floored();
+      if (Math.hypot(feet.x - p.x, feet.z - p.z) > 1 && !memory.bridgedToGateway) {
+        memory.bridgedToGateway = true;
+        const land = end.surfaceAt(bot, Math.round(p.x - (g.x / n) * 12), Math.round(p.z - (g.z / n) * 12), { yMax: g.y - 2 });
+        if (land) await end.walkTo(bot, ctx, land, 1, 60000);
+        const y = bot.entity.position.floored().y;
+        const bridged = await end.bridgeToward(bot, ctx, new Vec3(p.x + 0.5, y, p.z + 0.5), { maxSteps: 24, stopOnLand: false });
+        ctx.record('gateway_bridge', { to: at(p), steps: bridged.steps || 0, reason: bridged.reason || null });
+      }
+      const f = bot.entity.position.floored();
+      if (Math.hypot(f.x - p.x, f.z - p.z) > 1.5) { blacklist.add(tag, 'no_column'); return fail('no_tower_column'); }
+      columns.push(f);
+    }
     const stand = columns[0];
     const onColumn = () => { const f = bot.entity.position.floored(); return f.x === stand.x && f.z === stand.z; };
     if (!onColumn()) {
@@ -194,6 +211,37 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     return best.h;
   }
 
+  /**
+   * Over a gap too wide to bridge cheaply: throw a pearl onto island ground
+   * 12 to 36 blocks ahead (a flight that lands on it, nothing in the way).
+   */
+  async function pearlHop(ctx, dir) {
+    if (bot.health < 14 || actions.countItems(bot, (n) => n === 'ender_pearl') < 2) return null;
+    const here = bot.entity.position.clone();
+    const origin = here.offset(0, 1.52, 0);
+    for (const turn of [0, 0.3, -0.3, 0.6, -0.6]) {
+      const h = new Vec3(dir.x * Math.cos(turn) - dir.z * Math.sin(turn), 0, dir.x * Math.sin(turn) + dir.z * Math.cos(turn));
+      for (let d = 36; d >= 12; d -= 2) {
+        const x = Math.floor(here.x + h.x * d);
+        const z = Math.floor(here.z + h.z * d);
+        const stand = end.surfaceAt(bot, x, z, { yMax: Math.floor(here.y) + 6, yMin: Math.floor(here.y) - 12 });
+        if (!stand || bot.blockAt(stand.offset(0, -1, 0))?.name !== 'end_stone') continue;
+        if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => end.deepDrop(bot, x + a, stand.y, z + b, 4))) continue;
+        const target = stand.offset(0.5, 0.1, 0.5);
+        const shot = end.aim(origin, target, end.PEARL);
+        if (!shot || !end.flightInfo(bot, origin, shot, target, end.PEARL, { radius: 0.8, size: 0.15 }).hit) continue;
+        const thrown = await end.throwPearl(bot, ctx, target);
+        if (!thrown.ok) return thrown;
+        memory.pearls += 1;
+        const landed = await waitUntil(() => bot.entity.position.distanceTo(here) > 8, { timeoutMs: 5000, signal: ctx.signal });
+        ctx.record('pearl_hop', { to: at(stand), from: at(here), landed });
+        if (landed) await waitUntil(() => bot.entity.onGround, { timeoutMs: 3000, signal: ctx.signal });
+        return landed ? { ok: true } : fail('pearl_hop_missed');
+      }
+    }
+    return null;
+  }
+
   async function explore(ctx) {
     const here = bot.entity.position.clone();
     // Back where the last search started (pulled back, or walking in circles): next waypoint.
@@ -209,6 +257,11 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     memory.explored += 1;
     // On a bridge or an island's lip the pathfinder walks off the edge: keep bridging.
     const feet = here.floored();
+    // A wide gap ahead (or no blocks left to bridge it): pearl across.
+    if (gapAlong(here, memory.heading) >= 10 || bridgeBlocks() < 16) {
+      const hop = await pearlHop(ctx, memory.heading);
+      if (hop) return hop;
+    }
     if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([x, z]) => end.deepDrop(bot, feet.x + x, feet.y, feet.z + z))) {
       const bridged = await end.bridgeToward(bot, ctx, new Vec3(target.x, feet.y, target.z), { maxSteps: 40 });
       memory.bridged += bridged.steps || 0;
