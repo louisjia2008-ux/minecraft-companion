@@ -182,7 +182,8 @@ const KNOWLEDGE = {
   },
   quartz: {
     match: exact('quartz'),
-    sources: [{ kind: 'gather', blocks: exact('nether_quartz_ore'), tool: 'pickaxe', dimension: 'the_nether' }],
+    // A wooden pickaxe wears out on the netherrack of the way before the quartz is in.
+    sources: [{ kind: 'gather', blocks: exact('nether_quartz_ore'), tool: 'stone_tier_pickaxe', dimension: 'the_nether' }],
   },
   // Smooth stone for repeaters: cobblestone smelted once.
   stone: { match: exact('stone'), sources: [{ kind: 'smelt', input: 'cobblestone', inputItem: 'cobblestone' }] },

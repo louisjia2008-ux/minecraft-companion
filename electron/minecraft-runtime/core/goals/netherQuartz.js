@@ -71,6 +71,8 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
   async function overworldStep(ctx, state) {
     leaveNetherMode();
     if (quartz(state) >= count) return { ok: true };
+    // Nothing to mine quartz with: going through would only mean coming back.
+    if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
     // Health comes back on a full stomach; the Nether is no place to wait for it.
     if (bot.health < READY_HEALTH && bot.food >= 18) {
       ctx.record('rest', { health: Math.round(bot.health) });
@@ -118,9 +120,11 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     if (!memory.netherPortal || bot.blockAt(memory.netherPortal)?.name !== 'nether_portal') {
       memory.netherPortal = nether.findPortal(bot, 128) || memory.netherPortal;
     }
-    const retreat = bot.health <= RETREAT_HEALTH && !actions.pickFood?.(bot);
+    // Badly hurt with nothing to eat, or the pickaxe worn out: home, and back when fit.
+    const hasPick = bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'));
+    const retreat = !hasPick || (bot.health <= RETREAT_HEALTH && !actions.pickFood?.(bot));
     if (quartz(state) >= count || retreat) {
-      if (retreat) ctx.record('retreat', { health: Math.round(bot.health) });
+      if (retreat) ctx.record('retreat', { health: Math.round(bot.health), pickaxe: hasPick });
       if (!memory.netherPortal) return fail('nether_portal_lost');
       // A ghast's blast puts a portal out; the frame stays. Light it again
       // (the corners do not matter to a portal, only the ten obsidian).
@@ -133,7 +137,6 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
       }
       return goThrough(ctx, memory.netherPortal);
     }
-    if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
     const home = memory.netherPortal;
     const result = await skills.gatherOne(bot, ctx, {
       blocks: isQuartzOre,

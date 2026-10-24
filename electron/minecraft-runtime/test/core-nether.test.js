@@ -139,3 +139,15 @@ test('a Nether portal blown out is lit again from its frame before going home', 
   // No flint and steel in this bag: the relight is tried and says why it failed.
   assert.equal(result.reason, 'no_igniter');
 });
+
+test('a worn-out pickaxe in the Nether sends the bot home, not round in circles', async () => {
+  const bot = { ...makeWorld({}), pathfinder: { movements: { maxDropDown: 4, blocksCantBreak: new Set(), exclusionAreasStep: [] } },
+    registry: { blocksByName: { nether_portal: { id: 1 } } },
+    inventory: { slots: [], items: () => [{ name: 'iron_sword' }] }, findBlocks: () => [] };
+  const goal = createNetherQuartzGoal({ bot, count: 8 });
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }), perceive: () => ({ inventory: {} }) };
+  const result = await goal.run(ctx);
+  assert.ok(records.some((r) => r.type === 'retreat' && r.pickaxe === false));
+  assert.equal(result.reason, 'nether_portal_lost');
+});
