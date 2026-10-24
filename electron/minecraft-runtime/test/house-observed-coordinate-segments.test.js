@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events');
 const {Vec3}=require('vec3'),{Physics,PlayerState}=require('prismarine-physics'),{pathfinder}=require('mineflayer-pathfinder');
 const registry=require('prismarine-registry')('1.21.8'),Block=require('prismarine-block')(registry);
-const {selectSurfaceExplorationFrontier,createLoadedDryGraph,hasGroundedBodySupport,runSurfaceGraphNativeProbe}=require('../vendor/server/minecraft/houseSurfaceGraph');
+const {createLoadedDryGraph,hasGroundedBodySupport}=require('../vendor/server/minecraft/houseSurfaceGraph');
 const copy=x=>JSON.parse(JSON.stringify(x)),key=p=>`${p.x},${p.y},${p.z}`,anchor={x:0,y:2,z:0};
 function observed(positions){const nodes={},order=[];for(const p of positions){const id=key(p);nodes[id]={position:p,parent:order.at(-1)||null,expanded:true};order.push(id);}return{schema:2,kind:'loaded_dry_waypoint_graph',anchor,step:16,radius:64,nodes,order,current:order.at(-1),resumeNode:order.at(-1),frontier:[],blockedEdges:[],visits:order.length,probes:0};}
 function fixture(t,{obstacle=false,resolveWithoutMovement=false,positions=null,coldProbe=null}={}){

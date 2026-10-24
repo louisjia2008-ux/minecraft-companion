@@ -86,7 +86,7 @@ function createDryBankAlignmentAPI(nativeSafety) {
       }
       const vitalsSafe = createWaterVitalsGuard(bot, deps.recoveryReturn === true);
       currentBank = point(bank); const initial = dryFacts(bank), started = Date.now(), deadline = started + 2000;
-      if (!vitalsSafe()) throw fail('dry_bank_alignment_survival_limit', 'Actual health16/food14 required before bank motion');
+      if (!vitalsSafe()) throw fail('dry_bank_alignment_survival_limit', 'Actual health6/food6 required before ordinary bank motion');
       active = true; let ticks = 0, stableTicks = 0, distance = 0, previous = point(bot.entity.position), done = false, looking = false, lastYaw = null, axis = null, pendingLook = null, timer;
       const center = { x: bank.x + .5, z: bank.z + .5 };
       let resolve, reject;

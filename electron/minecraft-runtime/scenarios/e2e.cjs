@@ -21,6 +21,9 @@ const { createCobbleGenerator } = require('../core/blueprints/cobbleGenerator');
 const { createAutoSmelter } = require('../core/blueprints/autoSmelter');
 const { perceive } = require('../core/perception');
 const { GENERATOR_HARVEST, SMELT_COUNT } = require('../core/goals/registry');
+const { installProductionEvidence } = require('./productionEvidence.cjs');
+const { playerState } = require('./acceptance.cjs');
+const { installFurnitureEvidence } = require('./furnitureEvidence.cjs');
 
 const MINUTE = 60 * 1000;
 const MACHINE_CARDS = new Set(['cobble_generator', 'auto_smelter']);
@@ -110,8 +113,32 @@ function finished(companion, bot) {
   return memory.homestead.isDone(state) && memory.cobbleGenerator.isDone(state) && memory.autoSmelter.isDone(state);
 }
 
+function productionSpecs(companion) {
+  const specs = [];
+  const generator = machine(companion, 'cobbleGenerator')?.memory.device.device;
+  if (generator) {
+    const d = createCobbleGenerator(generator.anchor, generator.facing, { collector: true });
+    specs.push({ kind: 'generator', item: 'cobblestone', output: d.cells.collectorChest,
+      buffers: [d.cells.collectorChest, d.cells.collectorHopper] });
+  }
+  const smelter = machine(companion, 'autoSmelter')?.memory.device.device;
+  if (smelter) {
+    const d = createAutoSmelter(smelter.anchor, smelter.facing);
+    specs.push({ kind: 'smelter', item: 'iron_ingot', output: d.cells.outChest, furnace: d.cells.furnace,
+      buffers: [d.cells.outChest, d.cells.outHopper, d.cells.furnace] });
+  }
+  return specs;
+}
+
+async function initializeProduction({ bot, server, username, state, write }) {
+  state.furnitureEvidence = await installFurnitureEvidence({ bot, server, username, state, write });
+  state.production = installProductionEvidence({ bot, server, username, write,
+    resolve: (position) => state.companion && productionSpecs(state.companion).find((spec) =>
+      [spec.output, spec.furnace].filter(Boolean).some((p) => p.x === position.x && p.y === position.y && p.z === position.z)) });
+}
+
 /** Both machines in the world as built, judged by the server, and what they produced. */
-async function verifyMachines({ server, companion }) {
+async function verifyMachines({ server, companion, state }) {
   const forceload = (a) => server.query(`forceload add ${a.x - 4} ${a.z - 4} ${a.x + 4} ${a.z + 4}`,
     /(Marked|already|forceloaded|loaded)/i, 10000).catch(() => null);
   const partsOk = async (parts) => {
@@ -135,8 +162,12 @@ async function verifyMachines({ server, companion }) {
       ...await partsOk(d.parts),
     };
     const { harvested, regenerated } = machine(companion, 'cobbleGenerator').memory.device;
-    details.generatorOk = Object.values(blocks).every(Boolean) && harvested >= GENERATOR_HARVEST;
-    details.generator = { anchor: d.anchor, facing: d.facing, blocks, harvested, regenerated };
+    const spec = productionSpecs(companion).find((entry) => entry.kind === 'generator');
+    const production = state?.production ? await state.production.verify(spec, harvested, GENERATOR_HARVEST)
+      : { pass: false, reason: 'missing_independent_production_evidence' };
+    details.generatorOk = Object.values(blocks).every(Boolean) && harvested >= GENERATOR_HARVEST
+      && regenerated >= GENERATOR_HARVEST && production.pass;
+    details.generator = { anchor: d.anchor, facing: d.facing, blocks, harvested, regenerated, production };
   }
   const sd = machine(companion, 'autoSmelter')?.memory.device.device;
   if (sd) {
@@ -144,8 +175,11 @@ async function verifyMachines({ server, companion }) {
     await forceload(d.anchor);
     const parts = await partsOk(d.parts);
     const { taken } = machine(companion, 'autoSmelter').memory.device;
-    details.smelterOk = Object.values(parts).every(Boolean) && taken >= SMELT_COUNT;
-    details.smelter = { anchor: d.anchor, facing: d.facing, parts, taken };
+    const spec = productionSpecs(companion).find((entry) => entry.kind === 'smelter');
+    const production = state?.production ? await state.production.verify(spec, taken, SMELT_COUNT)
+      : { pass: false, reason: 'missing_independent_production_evidence' };
+    details.smelterOk = Object.values(parts).every(Boolean) && taken >= SMELT_COUNT && production.pass;
+    details.smelter = { anchor: d.anchor, facing: d.facing, parts, taken, production };
   }
   return { pass: details.generatorOk && details.smelterOk, details };
 }
@@ -216,7 +250,10 @@ const e2eFlat = {
     commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`);
     return { commands, details: { trees: trees.trees.length, grove: grove.length, water: { x: wx, z: wz }, lava: { x: lx, z: lz } } };
   },
+  initialize: initializeProduction,
+  async dispose({ state }) { await state.production?.dispose(); await state.furnitureEvidence?.dispose(); },
   async start(companion, state) {
+    state.companion = companion;
     state.injections = INJECTIONS.map((i) => ({ name: i.name, firedAt: null, recoveredAt: null }));
     // The player's one instruction: build the house. Then the bot is on its own.
     const goal = await companion.homestead();
@@ -224,6 +261,7 @@ const e2eFlat = {
     return goal;
   },
   async onTick(context) {
+    if (context.signal?.aborted) return;
     const { companion, state, write } = context;
     const house = companion.director.memory.homestead?.memory?.house;
     if (house) state.house = house.anchor;
@@ -255,11 +293,12 @@ const e2eFlat = {
     const homestead = await verifyHomestead({ ...context, goal: companion.director.memory.homestead });
     const machines = await verifyMachines(context);
     const injected = state.injections.every((i) => i.recoveredAt);
-    const alive = bot.health > 0;
+    const serverPlayer = await playerState(context.server, context.username);
+    const alive = bot.health > 0 && serverPlayer.health > 0;
     const pass = homestead.pass && machines.pass && injected && alive;
     const h = homestead.details;
     // placed..bedUsed are shown on the run line.
-    return { pass, details: { homestead: h, ...machines.details, injections: state.injections, injected, alive,
+    return { pass, details: { homestead: h, ...machines.details, injections: state.injections, injected, alive, serverPlayer,
       placed: h.placed, total: h.total, furniture: h.furniture, gear: h.gear, chestUsed: h.chestUsed, bedUsed: h.bedUsed } };
   },
 };
@@ -290,7 +329,10 @@ const machinesFlat = {
       `give ${username} cooked_beef 32`, tp);
     return base;
   },
+  initialize: initializeProduction,
+  async dispose({ state }) { await state.production?.dispose(); await state.furnitureEvidence?.dispose(); },
   async start(companion, state, bot) {
+    state.companion = companion;
     const a = HOUSE;
     const at = (dx, dz) => ({ x: a.x + dx, y: a.y, z: a.z + dz });
     const house = { anchor: { ...a }, interiorCenter: at(3, 3),
@@ -306,8 +348,10 @@ const machinesFlat = {
   finishWhen: ({ companion, bot }) => finished(companion, bot),
   async verify(context) {
     const machines = await verifyMachines(context);
-    return { pass: machines.pass && context.bot.health > 0, details: machines.details };
+    const serverPlayer = await playerState(context.server, context.username);
+    return { pass: machines.pass && context.bot.health > 0 && serverPlayer.health > 0,
+      details: { ...machines.details, serverPlayer } };
   },
 };
 
-module.exports = { e2eFlat, machinesFlat, INJECTIONS };
+module.exports = { e2eFlat, machinesFlat, INJECTIONS, verifyMachines, productionSpecs };

@@ -15,7 +15,9 @@
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const defaultActions = require('./actions');
+const defaultSkills = require('./skills');
 const { posKey } = require('./blacklist');
+const { abortError } = require('./confirm');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -144,7 +146,7 @@ async function tossRubble(bot, ctx) {
   const items = bot.inventory.items().filter((i) => RUBBLE.has(i.name)).sort((a, b) => b.count - a.count);
   for (const item of items) {
     if (!kept && (item.name === 'cobblestone' || item.name === 'cobbled_deepslate')) { kept = 1; continue; }
-    try { await bot.tossStack(item); } catch (_) { /* best effort */ }
+    try { await bot.tossStack(item); } catch { /* best effort */ }
     if (ctx.signal?.aborted) break;
   }
 }
@@ -153,8 +155,9 @@ async function tossRubble(bot, ctx) {
  * Does one thing towards ore of `blocks` at height `y`: mine a visible ore,
  * walk back to the tunnel front, or dig one more block of tunnel.
  */
-async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, start = null, actions = defaultActions }) {
+async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, start = null, actions = defaultActions, skills = defaultSkills }) {
   const feet = bot.entity.position.floored();
+  if (memory.mine?.floorRepair) return repairFloor(bot, ctx, memory.mine, skills);
   // Ore already open to the tunnel first: the ore asked for, and any other
   // ore worth taking that the carried pickaxes can harvest.
   if (memory.mine) {
@@ -162,15 +165,28 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
     const ore = visibleOre(bot, wanted, bot.entity.position)
       .filter((b) => !blacklist.has(posKey(b.position)) && harvestable(bot, b))[0];
     if (ore) {
+      // An ore under a recorded walking cell is part of the route home. Take
+      // it only when the hole can be filled again, and confirm that repair
+      // before allowing the tunnel to advance.
+      const routeFloor = posKey(ore.position.offset(0, 1, 0)) in memory.mine.cells;
+      const filler = routeFloor && bot.inventory.items().find((i) => ['cobblestone', 'cobbled_deepslate', 'dirt'].includes(i.name));
+      if (routeFloor && !filler) { blacklist.add(posKey(ore.position), 'route_floor'); return { ok: true, progress: false }; }
       ctx.record(blocks(ore.name) ? 'mine_ore' : 'mine_loot', { block: ore.name, position: posKey(ore.position) });
       const reach = await actions.goToDig(bot, ctx, ore, { timeoutMs: 15000 });
       if (!reach.ok) { blacklist.add(posKey(ore.position), reach.reason); return reach; }
       const block = bot.blockAt(ore.position) || ore;
       const dug = await actions.digBlock(bot, ctx, block, { tool: pickFor(bot, block) });
       if (!dug.ok) { blacklist.add(posKey(ore.position), dug.reason); return dug; }
+      if (routeFloor) memory.mine.floorRepair = { x: ore.position.x, y: ore.position.y, z: ore.position.z };
       // The hole is ours, not a cave: later tunnel steps may open into it.
-      memory.mine.open = { ...memory.mine.open, [posKey(ore.position)]: true };
-      return actions.collectDrops(bot, ctx, ore.position.offset(0.5, 0.5, 0.5), (n) => dropMatch(n) || isLoot(n));
+      memory.mine.open ||= {};
+      memory.mine.open[posKey(ore.position)] = true;
+      const collected = await actions.collectDrops(bot, ctx, ore.position.offset(0.5, 0.5, 0.5), (n) => dropMatch(n) || isLoot(n));
+      if (routeFloor) {
+        const repaired = await repairFloor(bot, ctx, memory.mine, skills);
+        if (!repaired.ok) return repaired;
+      }
+      return collected;
     }
   }
   if (typeof bot.inventory.emptySlotCount === 'function' && bot.inventory.emptySlotCount() <= 3) {
@@ -184,6 +200,13 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
     ctx.record('mine_start', { at: posKey(from), y });
   }
   const mine = memory.mine;
+  if (mine.exhausted) {
+    const out = await leaveMine(bot, ctx, memory, actions);
+    if (out) return out;
+    memory.mineDir = (mine.dir + 1) % 4;
+    memory.mine = null;
+    return fail('mine_exhausted');
+  }
   if (retarget(mine, y)) ctx.record('mine_deeper', { from: posKey(mine.front), y });
   // Back to the front first (after a trip home, a death, a fight).
   if (!feet.equals(new Vec3(mine.front.x, mine.front.y, mine.front.z))) {
@@ -200,7 +223,7 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
       memory.mineDir = (mine.dir + 1) % 4;
       memory.mine = null;
     }
-    return back;
+    return { ...back, progress: back.ok && !bot.entity.position.floored().equals(feet) };
   }
 
   mine.returns = 0;
@@ -213,9 +236,40 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
     mine.junction = { ...mine.front, dir: mine.dir };
   }
   if (mine.phase === 'branch') dir = mine.branch.dir;
+  const attempt = `${posKey(mine.front)}:${descend ? 'down' : 'level'}:${dir}`;
+  mine.tried ||= {};
+  const blocked = (reason) => {
+    mine.tried[attempt] = true;
+    const result = turn(ctx, mine, reason, memory);
+    if (!memory.mine) {
+      // Re-use the known route, but only to reach an exit that has not been
+      // attempted. Walking old cells is transit, never new excavation.
+      const frontier = findFrontier(bot, mine);
+      memory.mine = mine;
+      mine.turns = 0;
+      mine.restarts = 0;
+      mine.branch = null;
+      if (frontier) {
+        mine.front = frontier.from;
+        mine.dir = frontier.dir;
+        mine.phase = frontier.descend ? 'descend' : 'main';
+        ctx.record('mine_frontier', { at: posKey(mine.front), dir: mine.dir });
+        return { ok: true, progress: false };
+      }
+      mine.exhausted = true;
+      ctx.record('mine_exhausted', { cells: Object.keys(mine.cells).length });
+    }
+    return { ...result, progress: false };
+  };
+  const [dx, dz] = DIRS[dir];
+  const next = add(mine.front, dx, descend ? -1 : 0, dz);
+  if (posKey(next) in mine.cells || mine.tried[attempt]) return blocked('visited');
   const step = inspectStep((x, yy, z) => bot.blockAt(new Vec3(x, yy, z)), mine.front, dir,
     { descend, surfaceY: mine.surfaceY - 1, known: (c) => knownOpen(mine, c) });
-  if (!step.ok) return turn(ctx, mine, step.reason, memory);
+  // A packet that has not arrived is not a geological dead end. Keep the
+  // attempt available, with the normal bounded stall/recovery budget.
+  if (step.reason === 'unloaded') return fail('mine_chunk_unloaded');
+  if (!step.ok) return blocked(step.reason);
 
   for (const cell of step.dig) {
     const block = bot.blockAt(new Vec3(cell.x, cell.y, cell.z));
@@ -225,12 +279,15 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
     if (!tool && block.harvestTools) return fail('no_spare_pickaxe');
     const dug = await actions.digBlock(bot, ctx, block, { tool });
     if (!dug.ok) return dug;
+    mine.open ||= {};
+    mine.open[posKey(cell)] = true;
     if (blocks(block.name)) await actions.collectDrops(bot, ctx, block.position.offset(0.5, 0.5, 0.5), dropMatch, { timeoutMs: 3000 });
   }
   const t = step.target;
   const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(t.x, t.y, t.z),
     { timeoutMs: 8000, arrived: (at) => at.floored().equals(new Vec3(t.x, t.y, t.z)) });
   if (!moved.ok) return moved;
+  mine.tried[attempt] = true;
   const previous = mine.front;
   mine.front = t;
   if (!(posKey(t) in mine.cells)) mine.cells[posKey(t)] = posKey(previous);
@@ -238,13 +295,166 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   mine.turns = 0;
   await maybeTorch(bot, ctx, mine, previous);
   advance(mine);
-  return { ok: true, mined: posKey(t) };
+  return { ok: true, progress: true, mined: posKey(t) };
+}
+
+async function repairFloor(bot, ctx, mine, skills) {
+  const p = mine.floorRepair;
+  const position = new Vec3(p.x, p.y, p.z);
+  const sealed = () => {
+    const block = bot.blockAt(position);
+    return block?.boundingBox === 'block' && !LIQUID.test(block.name) && !GRAVITY.has(block.name);
+  };
+  let result = { ok: true };
+  if (!sealed()) {
+    const filler = bot.inventory.items().find((i) => ['cobblestone', 'cobbled_deepslate', 'dirt'].includes(i.name));
+    if (!filler) return fail('route_floor_missing_material');
+    result = await skills.placeAt(bot, ctx, position, (name) => name === filler.name, { verify: sealed });
+  }
+  if (result.ok && !sealed()) result = fail('route_floor_unconfirmed');
+  ctx.record('mine_floor_repair', { position: posKey(position), ok: result.ok, reason: result.reason });
+  if (result.ok) {
+    delete mine.open?.[posKey(position)];
+    mine.floorRepair = null;
+  }
+  return result;
+}
+
+/** A safe, untried exit from the existing tree, deepest and nearest first. */
+function findFrontier(bot, mine) {
+  const from = bot.entity.position;
+  const cells = Object.keys(mine.cells).map(unkey).sort((a, b) => a.y - b.y
+    || Math.hypot(a.x - from.x, a.z - from.z) - Math.hypot(b.x - from.x, b.z - from.z));
+  for (const cell of cells) {
+    const descend = cell.y > mine.y;
+    for (let dir = 0; dir < DIRS.length; dir += 1) {
+      if (mine.tried?.[`${posKey(cell)}:${descend ? 'down' : 'level'}:${dir}`]) continue;
+      const [dx, dz] = DIRS[dir];
+      if (posKey(add(cell, dx, descend ? -1 : 0, dz)) in mine.cells) continue;
+      const step = inspectStep((x, yy, z) => bot.blockAt(new Vec3(x, yy, z)), cell, dir,
+        { descend, surfaceY: mine.surfaceY - 1, known: (c) => knownOpen(mine, c) });
+      // Old parts of a long mine can be out of view. Walk the recorded route
+      // there first, then inspect with loaded blocks before any digging.
+      if (step.ok || step.reason === 'unloaded') return { from: cell, dir, descend };
+    }
+  }
+  return null;
 }
 
 const LEG = 6;
 const NEAR_TUNNEL = 6;
+const REJOIN_MS = 20000;
+const REJOIN_LEGS = 4;
+const REJOIN_HAZARDS = new Set(['magma_block', 'cactus', 'campfire', 'soul_campfire', 'fire', 'soul_fire',
+  'wither_rose', 'sweet_berry_bush', 'powder_snow', 'nether_portal', 'end_portal', 'end_gateway']);
 const near = (a, b, d = 1.5) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) <= d;
 const unkey = (k) => { const [x, y, z] = k.split(',').map(Number); return { x, y, z }; };
+
+function rejoinGeometry(bot) {
+  const read = p => bot.blockAt(new Vec3(p.x, p.y, p.z));
+  const safe = b => b && !LIQUID.test(b.name) && !REJOIN_HAZARDS.has(b.name);
+  const falling = b => GRAVITY.has(b.name) || b.name.endsWith('_concrete_powder');
+  const clear = p => {
+    const b = read(p);
+    return safe(b) && b.boundingBox === 'empty' && Array.isArray(b.shapes) && b.shapes.length === 0;
+  };
+  // A solid ceiling at this height can safely cap the jump's apex. It must
+  // still be loaded and safe, and its shape cannot project into head room.
+  const ceiling = p => {
+    const b = read(p);
+    return safe(b) && !falling(b) && Array.isArray(b.shapes) && b.shapes.every(s => s.length === 6
+      && s.every(Number.isFinite) && s[1] >= 0);
+  };
+  const standing = p => {
+    const floor = read(add(p, 0, -1, 0));
+    return safe(floor) && floor.boundingBox === 'block' && !falling(floor) && !/_leaves$/.test(floor.name)
+      && floor.shapes?.some(s => s.length === 6 && s.every((v, i) => v === (i < 3 ? 0 : 1)))
+      && clear(p) && clear(add(p, 0, 1, 0));
+  };
+  const step = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.z - b.z) === 1
+    && b.y >= a.y && b.y <= a.y + 1 && standing(a) && standing(b)
+    && (b.y === a.y || (clear(add(a, 0, 2, 0)) && ceiling(add(a, 0, 3, 0)) && ceiling(add(b, 0, 2, 0))));
+  return { standing, step };
+}
+
+/** A short cardinal route out of a one-block ore cavity; UNKNOWN stays unsafe. */
+function cardinalRejoin(bot, from, target) {
+  if (target.y !== from.y + 1) return null;
+  const geometry = rejoinGeometry(bot);
+  if (!geometry.standing(from) || !geometry.standing(target)) return null;
+  const queue = [{ at: from, path: [] }], seen = new Set([posKey(from)]);
+  for (let i = 0; i < queue.length && i < 64; i += 1) {
+    const { at, path } = queue[i];
+    if (same(at, target)) return path;
+    if (path.length >= REJOIN_LEGS) continue;
+    const next = DIRS.flatMap(([dx, dz]) => [0, 1].map(dy => add(at, dx, dy, dz)))
+      .sort((a, b) => Math.abs(a.x - target.x) + Math.abs(a.z - target.z) + Math.abs(a.y - target.y)
+        - Math.abs(b.x - target.x) - Math.abs(b.z - target.z) - Math.abs(b.y - target.y));
+    for (const p of next) {
+      if (p.y > target.y || Math.abs(p.x - from.x) > 3 || Math.abs(p.z - from.z) > 3
+        || seen.has(posKey(p)) || !geometry.step(at, p)) continue;
+      seen.add(posKey(p));
+      queue.push({ at: p, path: [...path, p] });
+    }
+  }
+  return null;
+}
+
+async function rejoinTunnel(bot, ctx, mine, target, actions) {
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const deadline = Date.now() + REJOIN_MS, expiry = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, expiry.signal]) : expiry.signal;
+  const scoped = { ...ctx, signal };
+  const timer = setTimeout(() => { expiry.abort('path_timeout'); (actions.haltBody || defaultActions.haltBody)(bot); }, REJOIN_MS);
+  const remaining = () => Math.max(0, deadline - Date.now());
+  const check = () => {
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    return !expiry.signal.aborted && remaining() > 0;
+  };
+  const go = async p => {
+    if (!check()) return fail('path_timeout');
+    const result = await actions.goTo(bot, scoped, new goals.GoalBlock(p.x, p.y, p.z),
+      { timeoutMs: remaining(), retryNoProgress: false, arrived: at => near(at.floored(), p, 0.5) });
+    return check() ? result : fail('path_timeout');
+  };
+  try {
+    const first = await go(target);
+    if (first.ok) { mine.walkFailures = 0; return first; }
+    if (first.reason !== 'no_progress') return first;
+    const from = bot.entity.position.floored(), path = cardinalRejoin(bot, from, target);
+    if (!check()) return fail('path_timeout');
+    const profile = bot.pathfinder?.movements;
+    if (!path || !profile) return first;
+    const restricted = { canDig: false, allow1by1towers: false, scafoldingBlocks: [], canOpenDoors: false };
+    const saved = Object.fromEntries(Object.keys(restricted).map(k => [k, profile[k]]));
+    Object.assign(profile, restricted);
+    const owned = () => bot.pathfinder.movements === profile && Object.keys(restricted).every(k => profile[k] === restricted[k]);
+    try {
+      ctx.record('mine_rejoin', { target: posKey(target), via: path.map(posKey), remainingMs: remaining() });
+      for (const p of path) {
+        // State can change while a previous leg is executing. Recheck the
+        // loaded geometry before handing another short goal to the follower.
+        const safe = rejoinGeometry(bot).step(bot.entity.position.floored(), p);
+        if (!check()) return fail('path_timeout');
+        if (!safe || !owned()) return fail('no_progress');
+        const result = await go(p);
+        if (!result.ok) return result;
+        if (!owned()) return fail('no_progress');
+      }
+      if (!near(bot.entity.position.floored(), target, 0.5)) return fail('not_arrived');
+      mine.walkFailures = 0;
+      return { ok: true };
+    } finally {
+      for (const k of Object.keys(restricted)) if (profile[k] === restricted[k]) profile[k] = saved[k];
+    }
+  } catch (error) {
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    if (expiry.signal.aborted || remaining() <= 0) return fail('path_timeout');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** The tunnel cell the bot stands in (or right next to), as a key into mine.cells. */
 function cellAt(mine, feet) {
@@ -281,7 +491,7 @@ async function walkTunnel(bot, ctx, mine, towards, actions = defaultActions, { s
     // Just off the tunnel (in the hole an ore left): step back to the closest cell.
     const closest = Object.keys(mine.cells).map(unkey)
       .map((p) => ({ p, d: Math.hypot(p.x - feet.x, p.y - feet.y, p.z - feet.z) })).sort((a, b) => a.d - b.d)[0];
-    if (closest && closest.d <= NEAR_TUNNEL) return go(closest.p);
+    if (closest && closest.d <= NEAR_TUNNEL) return rejoinTunnel(bot, ctx, mine, closest.p, actions);
     return towards === 'out' ? null : go(mine.entrance, 90000); // outside: to the entrance first
   }
   const up = chain(mine, here);
@@ -322,6 +532,10 @@ async function walkToCell(bot, ctx, mine, cell, actions = defaultActions) {
 function leaveMine(bot, ctx, memory, actions = defaultActions) {
   const mine = memory.mine;
   if (!mine || bot.entity.position.y >= mine.surfaceY - 1) return null;
+  // A device pit is not this mine. Retaining the route for the next ore trip
+  // must not pull the builder out of an unrelated work site every tick.
+  const feet = bot.entity.position.floored();
+  if (!Object.keys(mine.cells).some((k) => near(unkey(k), feet, NEAR_TUNNEL))) return null;
   ctx.record('mine_leave', { at: posKey(bot.entity.position.floored()) });
   return walkTunnel(bot, ctx, mine, 'out', actions);
 }
@@ -367,7 +581,7 @@ function endBranch(mine) {
 
 function turn(ctx, mine, reason, memory) {
   ctx.record('mine_turn', { phase: mine.phase, reason, at: posKey(mine.front) });
-  if (mine.phase === 'branch') { endBranch(mine); return { ok: true, turned: reason }; }
+  if (mine.phase === 'branch') { endBranch(mine); return { ok: true, progress: false, turned: reason }; }
   mine.turns += 1;
   if (mine.turns >= MAX_TURNS && mine.phase === 'main' && mine.junction && (mine.restarts || 0) < RESTART_SIDES.length) {
     // The main tunnel is boxed in: start it again from the foot of the stairs,
@@ -399,8 +613,8 @@ async function maybeTorch(bot, ctx, mine, cell) {
     await bot.equip(torch, 'hand');
     await bot.placeBlock(below, new Vec3(0, 1, 0));
     ctx.record('mine_torch', { at: posKey(cell) });
-  } catch (_) { /* a torch is a nicety, not progress */ }
+  } catch { /* a torch is a nicety, not progress */ }
 }
 
 module.exports = { inspectStep, turn, knownOpen, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
-  LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH };
+  LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH, cardinalRejoin };

@@ -7,6 +7,8 @@
 
 const { FLAT_GENERATOR, GROUND, plantTrees, resetArea } = require('./collectLogs.cjs');
 const { createStarterHouse } = require('../core/blueprints/starterHouse');
+const { interactionSetup, score, worldTime, playerState } = require('./acceptance.cjs');
+const { installFurnitureEvidence } = require('./furnitureEvidence.cjs');
 
 const GEAR = ['iron_sword', 'iron_pickaxe', 'shield'];
 
@@ -24,7 +26,7 @@ async function countOnPlayer(server, username, item) {
   return match[1] ? Number(match[1]) : 0;
 }
 
-async function verifyHomestead({ server, username, goal }) {
+async function verifyHomestead({ server, username, goal, state }) {
   const anchor = goal?.memory?.house?.anchor;
   if (!anchor) return { pass: false, details: { reason: 'no_site' } };
   const house = createStarterHouse(anchor);
@@ -60,25 +62,35 @@ async function verifyHomestead({ server, username, goal }) {
   const bedUsed = atBed(f.bed.position) || atBed(f.bed.head);
   const gear = {};
   for (const item of GEAR) gear[item] = await countOnPlayer(server, username, item);
-  const tableUsed = goal.memory.verified.crafting_table;
-  const furnaceUsed = goal.memory.verified.furnace;
+  const tableInteractions = await score(server, username, 'table');
+  const furnaceInteractions = await score(server, username, 'furnace');
+  const usage = await state?.furnitureEvidence?.verify(f);
+  const tableUsed = tableInteractions > 0 && usage?.tableUsed === true;
+  const furnaceUsed = furnaceInteractions > 0 && usage?.furnaceUsed === true;
   const pass = placed === house.blocks.length && furniture.crafting_table && furniture.furnace && furniture.chest
     && furniture.bed && furniture.door && chestUsed && bedUsed && tableUsed && furnaceUsed
     && GEAR.every((item) => gear[item] > 0);
   return {
     pass,
     details: {
-      anchor, placed, total: house.blocks.length, furniture, chestUsed, bedUsed, respawn: pos, tableUsed, furnaceUsed, gear,
+      anchor, placed, total: house.blocks.length, furniture, chestUsed, bedUsed, respawn: pos, tableUsed, furnaceUsed, tableInteractions, furnaceInteractions,
+      furnitureEvidence: usage || null, gear,
     },
   };
 }
 
 const living = (username, difficulty) => [
+  ...interactionSetup(username),
   `difficulty ${difficulty}`, 'gamerule doDaylightCycle true', 'gamerule doWeatherCycle false',
   'gamerule doMobSpawning true', 'gamerule doImmediateRespawn true', 'gamerule keepInventory false',
   'time set 0', 'weather clear', 'kill @e[type=item]',
   `clear ${username}`, `effect clear ${username}`, `gamemode survival ${username}`,
 ];
+
+async function initializeFurniture(context) {
+  context.state.furnitureEvidence = await installFurnitureEvidence(context);
+}
+const disposeFurniture = ({ state }) => state.furnitureEvidence?.dispose();
 
 const homesteadFlat = {
   name: 'homestead-flat',
@@ -90,6 +102,8 @@ const homesteadFlat = {
   },
   defaultDifficulty: 'easy',
   timeoutMs: 120 * 60 * 1000,
+  initialize: initializeFurniture,
+  dispose: disposeFurniture,
   setup({ username, rng, difficulty = 'easy' }) {
     const trees = plantTrees(rng, 14);
     const commands = [
@@ -121,6 +135,8 @@ const homesteadNatural = {
   serverProperties: { 'level-type': 'minecraft:normal', 'level-seed': 20261019, difficulty: 'easy' },
   defaultDifficulty: 'easy',
   timeoutMs: 150 * 60 * 1000,
+  initialize: initializeFurniture,
+  dispose: disposeFurniture,
   setup({ username, run, rng, difficulty = 'easy' }) {
     const angle = rng() * Math.PI * 2;
     const x = Math.round(Math.cos(angle) * 400 * (run + 1));
@@ -144,6 +160,7 @@ function nightScenario({ name, withBed }) {
     serverProperties: homesteadFlat.serverProperties,
     defaultDifficulty: 'easy',
     timeoutMs: 15 * 60 * 1000,
+    finishOnGoalDone: false,
     setup({ username, rng, difficulty = 'easy' }) {
       const trees = plantTrees(rng, 6);
       const commands = [...living(username, difficulty), ...resetArea(), ...trees.commands,
@@ -153,14 +170,45 @@ function nightScenario({ name, withBed }) {
       commands.push(`tp ${username} 0.5 ${GROUND} 0.5 0 0`, 'time set 11400');
       return { commands, details: { withBed } };
     },
+    async initialize({ server, state }) {
+      state.night = { initial: await worldTime(server), sawNight: false, bunkerConfirmed: false };
+    },
     start: (companion) => companion.homestead(),
-    finishWhen: ({ bot }) => Number.isFinite(bot.time?.timeOfDay) && bot.time.timeOfDay > 1500 && bot.time.timeOfDay < 11000,
-    // After dawn the bot goes straight back to work (often mining), so the
-    // check is: no death, and not still sealed in its bunker.
-    async verify({ bot, deaths, goal }) {
+    async onTick({ server, username, goal, state, write }) {
+      const night = state.night;
+      if (!night) throw new Error('Night evidence was not initialized');
+      night.latest = await worldTime(server);
+      night.sawNight ||= night.latest.daytime >= 12542 && night.latest.daytime < 23400;
+      // A goal flag alone cannot prove shelter: independently check the seal
+      // and the player's server position while that bunker is occupied.
+      const top = goal?.memory?.bunker?.top;
+      if (!withBed && top && night.sawNight && !night.bunkerConfirmed) {
+        const player = await playerState(server, username);
+        const seal = await testBlock(server, { x: top.x, y: top.y - 1, z: top.z }, '#minecraft:dirt')
+          || await testBlock(server, { x: top.x, y: top.y - 1, z: top.z }, 'minecraft:cobblestone')
+          || await testBlock(server, { x: top.x, y: top.y - 1, z: top.z }, 'minecraft:cobbled_deepslate');
+        night.bunkerConfirmed = seal && player.health > 0 && player.position.y <= top.y - 2
+          && Math.hypot(player.position.x - top.x - 0.5, player.position.z - top.z - 0.5) < 1;
+        if (night.bunkerConfirmed) write('night_server_bunker', { top, player, time: night.latest });
+      }
+    },
+    finishWhen: ({ bot, goal, state }) => Boolean(state.night?.latest
+      && state.night.latest.day > state.night.initial.day
+      && state.night.latest.daytime > 1500 && state.night.latest.daytime < 11000
+      && !goal?.memory?.bunker && bot.entity.position.y >= GROUND - 0.5),
+    async verify({ server, username, bot, deaths, goal, state }) {
+      if (!server || !state?.night) return { pass: false, details: { reason: 'missing_night_server_evidence' } };
+      const time = await worldTime(server);
+      const player = await playerState(server, username);
+      const slept = await score(server, username, 'sleep');
       const stillInBunker = Boolean(goal?.memory?.bunker);
-      return { pass: deaths === 0 && !stillInBunker, details: { deaths, stillInBunker,
-        slept: Boolean(goal?.memory?.verified?.bed), y: Math.floor(bot.entity.position.y), timeOfDay: bot.time?.timeOfDay } };
+      const dawn = time.day > state.night.initial.day && time.daytime > 1500 && time.daytime < 11000;
+      const nightCompleted = withBed ? slept > 0 : state.night.sawNight && state.night.bunkerConfirmed;
+      const alive = player.health > 0 && bot.health > 0;
+      const surface = player.position.y >= GROUND - 0.5;
+      return { pass: deaths === 0 && alive && dawn && surface && nightCompleted && !stillInBunker,
+        details: { deaths, alive, dawn, surface, stillInBunker, slept, nightCompleted,
+          nightEvidence: state.night, serverPlayer: player, serverTime: time } };
     },
   };
 }

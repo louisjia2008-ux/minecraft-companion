@@ -28,17 +28,19 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
   if (!device || typeof device.needs !== 'function') throw new TypeError('device must be a goal with needs()');
   if (!home?.chest || !home.centre) throw new TypeError('home needs chest and centre');
   // The mine outlives each gather: the way back up is its own staircase.
-  const memory = { gather: null, mine: null, mineDir: undefined, steps: 0, siteTry: 0, done: false, device: device.memory };
+  const memory = { gather: null, mine: null, mineDir: undefined, steps: 0, siteTry: 0, done: false, building: false,
+    recovery: false, device: device.memory };
 
   // Killed down in the mine: monsters have the tunnel now. The next gather
   // starts a fresh one in another direction instead of walking back in.
-  bot.on?.('death', () => {
+  const onDeath = () => {
     const mine = memory.mine;
     if (!mine || bot.entity.position.y >= mine.surfaceY - 3) return;
     memory.mine = null;
     memory.mineDir = (mine.dir + 1) % 4;
     if (memory.gather?.memory) Object.assign(memory.gather.memory, { mine: null, mineDir: memory.mineDir });
-  });
+  };
+  bot.on?.('death', onDeath);
 
   const lacking = (state) => device.needs()
     .map((r) => ({ key: r.key, count: r.count - countKey(r.key, state.inventory, kb) }))
@@ -81,10 +83,13 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
   return {
     name,
     memory,
+    dispose() { bot.removeListener?.('death', onDeath); },
     noProgressLimit: 40,
     maxRecoveries: 6,
     recover() {
-      memory.gather?.recover?.();
+      if (memory.gather) memory.gather.recover?.();
+      else if (device.recover) device.recover();
+      else memory.recovery = true;
     },
     // Once seen working it stays done: from far away its blocks are not loaded.
     isDone(state) {
@@ -95,8 +100,14 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
     // gathering phase does not run out of budget while nothing is built yet.
     progress: (state) => memory.steps + (memory.gather ? memory.gather.progress(state) : 0) + device.progress(state),
     async run(ctx) {
+      if (memory.recovery) {
+        memory.recovery = false;
+        ctx.record('device_recovery', { device: device.name });
+        return actions.unstick(bot, ctx);
+      }
       const lack = lacking(ctx.perceive());
       if (lack.length) {
+        memory.building = false;
         const gatherBefore = memory.gather;
         const before = gatherBefore ? gatherBefore.progress() : 0;
         const result = await bring(ctx, lack);
@@ -104,9 +115,17 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
         if (gatherBefore && memory.gather !== gatherBefore) memory.steps += before + (result.ok ? 1 : 0);
         return result;
       }
+      // The last crafting step can put every needed part straight in the
+      // bag. Keep that completed gathering work when handing the body to
+      // construction; dropping its counter would put the device below the
+      // brain's historical best for the whole following build.
+      if (memory.gather) memory.steps += memory.gather.progress(ctx.perceive());
       memory.gather = null;
-      const up = await climbOut(ctx);
-      if (up) return up;
+      if (!memory.building) {
+        const up = await climbOut(ctx);
+        if (up) return up;
+        memory.building = true;
+      }
       if (!device.memory.device) {
         const spot = siteSpot();
         if (bot.entity.position.distanceTo(spot) > 4) {

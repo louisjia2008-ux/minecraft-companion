@@ -27,7 +27,7 @@ function createBrain({
   let disposed = false;
 
   const emit = (type, data = {}) => {
-    try { onEvent({ type, at: now(), ...data }); } catch (_) { /* observers never break the loop */ }
+    try { onEvent({ type, at: now(), ...data }); } catch { /* observers never break the loop */ }
   };
 
   function goalBehavior() {
@@ -159,7 +159,7 @@ function createBrain({
   }
 
   function safePerceive() {
-    try { return perceive(); } catch (_) { return null; }
+    try { return perceive(); } catch { return null; }
   }
 
   async function tick() {
@@ -260,7 +260,7 @@ function safeProgress(def, state) {
   try {
     const value = Number(def.progress(state));
     return Number.isFinite(value) ? value : -Infinity;
-  } catch (_) {
+  } catch {
     return -Infinity;
   }
 }

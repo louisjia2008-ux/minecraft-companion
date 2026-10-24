@@ -23,7 +23,7 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
   let bedRefusedUntil = 0;
 
   const where = () => {
-    try { return home(); } catch (_) { return null; }
+    try { return home(); } catch { return null; }
   };
 
   const behavior = {

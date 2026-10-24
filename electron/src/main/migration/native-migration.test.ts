@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CharacterService } from '../character-service';
 import { DomainRepository } from '../domain';
@@ -10,10 +10,18 @@ import { SafeStorageVault } from '../security';
 import type { MigrationHelperRunner } from './native-migration';
 import { NativeMigrationService } from './native-migration';
 
+const electronDialog = vi.hoisted(() => ({
+  showOpenDialog: vi.fn(() => {
+    throw new Error('Native migration unit fixtures must not open an Electron dialog.');
+  }),
+}));
+vi.mock('electron', () => ({ dialog: electronDialog }));
+
 const roots: string[] = [];
 afterEach(async () => {
   const { rm } = await import('node:fs/promises');
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  expect(electronDialog.showOpenDialog).not.toHaveBeenCalled();
 });
 
 const adapter = {

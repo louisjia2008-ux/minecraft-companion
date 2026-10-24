@@ -1,5 +1,5 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),{Vec3}=require('vec3');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module');
 const registry=require('prismarine-registry')('1.21.8'),Block=require('prismarine-block')(registry);
 const saved=require('../test-support/fixtures/world58-ice-shore.json'),raw=require('node:zlib').gunzipSync(Buffer.from(saved.statesGzipBase64,'base64')),cells=new Uint16Array(raw.buffer,raw.byteOffset,raw.byteLength/2),b=saved.bounds;
 const filename=path.join(__dirname,'house-emergency-shore-native.test.js'),source=fs.readFileSync(filename,'utf8'),native=new Module(filename,module);native.filename=filename;native.paths=Module._nodeModulePaths(__dirname);

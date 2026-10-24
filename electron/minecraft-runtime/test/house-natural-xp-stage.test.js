@@ -15,7 +15,7 @@ const engineSource=fs.readFileSync(path.join(__dirname,'../vendor/server/minecra
 function compileActual(name,deps){
  const declaration=new RegExp('^  (?:async )?function '+name+'\\(', 'm').exec(engineSource);
  assert.ok(declaration,'Actual engine declaration '+name);
- const next=/\n  (?:async )?function /g;next.lastIndex=declaration.index+declaration[0].length;
+ const next=/\n {2}(?:async )?function /g;next.lastIndex=declaration.index+declaration[0].length;
  const end=next.exec(engineSource);assert.ok(end,'Actual engine next declaration '+name);
  const body=engineSource.slice(declaration.index,end.index).trim();
  return vm.compileFunction(body+'\nreturn '+name+';',Object.keys(deps))(...Object.values(deps));
@@ -28,6 +28,7 @@ function createProbe({task,registry}){
 }
 function createPhaseProbe(deps){
  return compileActual('executeBuildFurnishedHousePhase',{...deps,currentTask:deps.task,
+ returnFieldHouseWood:async()=>{},
  DEFAULT_CONTAINER_TIMEOUT_MS:1000,isSelfGatheredLibraryFinish:policy.isSelfGatheredLibraryFinish});
 }
 

@@ -1,0 +1,672 @@
+{
+  "anchor": {
+    "allScenarioDriversMatch": true,
+    "commit": "a22a73a4a7294ab5409b6e74ee882b2603ab528b",
+    "driverHash": "1c9adf12dd9fc386f660e37596f8211000c9715ea7246b53738e913baff50c1c",
+    "driverSourceMatches": true,
+    "sourceFileCount": 867,
+    "sourceHash": "2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f"
+  },
+  "batch": "repair-20261024-full-03",
+  "campaign": {
+    "autonomyCards": [
+      "homestead",
+      "food",
+      "cobble_generator",
+      "auto_smelter"
+    ],
+    "autonomyDefaultEnabled": false,
+    "botLifecycle": "reuse within each scenario; setup reset per repeated round",
+    "failedRounds": 0,
+    "fixtures": "scenario-provisioned worlds/resources and independent server readback; not independent unassisted natural-world survival",
+    "otherSkills": "explicit API scenarios",
+    "passedRounds": 32,
+    "roundCount": 32,
+    "scenarioCount": 24,
+    "setupSeedRule": "base + zeroBasedRound*7919",
+    "worlds": 24
+  },
+  "endedAtUtc": "2026-10-24T03:27:27.151Z",
+  "history": [
+    {
+      "commit": "43929e7c5272932757229c63418d5839885aa90d",
+      "contract": "historical_verifiers_before_repairs",
+      "evidenceSha256": "4b0d3b7e6d52a7f9492bf13271a4455c682e4b6071214ae7045ae21ac4b3257a",
+      "failures": [
+        {
+          "reason": "timeout",
+          "scenario": "e2e-flat"
+        },
+        {
+          "reason": "timeout",
+          "scenario": "branch-mine-diamond-flat"
+        },
+        {
+          "reason": "timeout",
+          "scenario": "branch-mine-iron-flat"
+        }
+      ],
+      "iteration": "initial-validation",
+      "roundsFailed": 3,
+      "roundsPassed": 21,
+      "scenariosFailed": 3,
+      "scenariosPassed": 21
+    },
+    {
+      "commit": "b25c0eed5fca1f96aa42db16cde68e6a90eb9307",
+      "evidenceSha256": "13d4085bb9fd5751db09b181066875b1023bcbeca629ad7e4d56a8460559ddd1",
+      "failures": [
+        {
+          "reason": "cell_occupied_by_entity",
+          "scenario": "mobfarm-flat"
+        }
+      ],
+      "interruptedWorldFinalSave": "UNCONFIRMED_FOR_SIX_INTERRUPTED_SCENARIOS",
+      "iteration": "repair-full01",
+      "rounds": {
+        "FINAL_FAIL": 1,
+        "FINAL_PASS": 20,
+        "INTERRUPTED": 6,
+        "QUEUED": 5
+      },
+      "scenarios": {
+        "FINAL_FAIL": 1,
+        "FINAL_PASS": 15,
+        "INTERRUPTED": 6,
+        "QUEUED": 2
+      },
+      "sourceHash": "05cab6287b0e65480d80eeb33f75fad8026d12058230220ecb3c64b02cacb71a",
+      "status": "INTERRUPTED_FOR_REPAIR_NOT_A_COMPLETED_SUITE"
+    },
+    {
+      "additionalFarmRoundPassed": 1,
+      "commit": "e1e22fd30cbd73c72043aadac4d97cc8fcc203fa",
+      "evidenceSha256": "31b0ad3f75b89f195463619c26d988ee1c9031f2b03fd79609c8d696d0a6d7a0",
+      "fullyPassedScenarios": 22,
+      "interruptedRounds": [
+        {
+          "round": 1,
+          "scenario": "e2e-flat"
+        },
+        {
+          "round": 2,
+          "scenario": "farm-flat"
+        }
+      ],
+      "interruptedWorldFinalSave": "CONFIRMED_FOR_BOTH_INTERRUPTED_SCENARIOS",
+      "iteration": "repair-full02",
+      "retainedRunningRoundCopies": "PRE_SIGNAL_BYTE_PREFIXES; COMPLETE_FINAL_RESULTS_REMAIN_IN_ORIGINAL_JSONL",
+      "rounds": {
+        "INTERRUPTED": 2,
+        "PASS": 30
+      },
+      "roundsWithinFullyPassedScenarios": 29,
+      "scenarios": {
+        "INTERRUPTED": 1,
+        "PARTIAL_PASS_INTERRUPTED": 1,
+        "PASS": 22
+      },
+      "sourceHash": "f2f24f073b968f3e32012f564dbdd9685c7b854804f2a065f821214bdf61da91",
+      "status": "INTERRUPTED_FOR_REPAIR_NOT_A_COMPLETED_SUITE",
+      "stopReceiptSha256": "7da09df3d02c1536efed97f48b226386d57b6f64a86fd6adeee06775c48a9636"
+    }
+  ],
+  "scenarios": [
+    {
+      "deaths": 0,
+      "durationMs": 130428,
+      "medianSeconds": 44,
+      "passed": 3,
+      "rounds": 3,
+      "scenario": "collect-logs-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 416,
+          "kind": "console_log",
+          "sha256": "5f6c7dbdad385df1d32ad6065b9b52b49da9abb7a532c6de729458e4fdc3cf23",
+          "stopLine": 407
+        },
+        {
+          "finalSaveLine": 371,
+          "kind": "java_latest_log",
+          "sha256": "47cb387df6ffdd10f47a704a912875b97c264de31610e8c9afbe95b62c031ac6",
+          "stopLine": 362
+        }
+      ],
+      "summarySha256": "b58eaa1e4f42e72957ec23d3c4905e9ccdb71cd621a78e1e9cda0f355540e76e"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 163184,
+      "medianSeconds": 48,
+      "passed": 3,
+      "rounds": 3,
+      "scenario": "collect-logs-natural",
+      "serverLogs": [
+        {
+          "finalSaveLine": 162,
+          "kind": "console_log",
+          "sha256": "484028c5887a50601a4dfc35c197856040821c228954a56139ee46fd246c988f",
+          "stopLine": 153
+        },
+        {
+          "finalSaveLine": 117,
+          "kind": "java_latest_log",
+          "sha256": "37531d2ad353f1fa709070e9481a17ae0f4340fe1271344b9495ef5b9664b8a6",
+          "stopLine": 108
+        }
+      ],
+      "summarySha256": "ddab58f2212179889abef76bde75d9ba2037190034bdc83da92126cb2b47e753"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1284787,
+      "medianSeconds": 1285,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "homestead-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 449,
+          "kind": "console_log",
+          "sha256": "b512efebc4ba70a3c7322f75ec01364bb6c4d65555a019c9207c99ef54e2af24",
+          "stopLine": 440
+        },
+        {
+          "finalSaveLine": 404,
+          "kind": "java_latest_log",
+          "sha256": "5fea1700dcab26522918f65141271fec4e9ed84955a3d679b864ba5369704600",
+          "stopLine": 395
+        }
+      ],
+      "summarySha256": "66f0ae67f5576c4f19952037125ead89762459a45095072929130ea3c0d48fc3"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1576897,
+      "medianSeconds": 1577,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "homestead-natural",
+      "serverLogs": [
+        {
+          "finalSaveLine": 275,
+          "kind": "console_log",
+          "sha256": "93394d0d8233ae8dee39aae4bc7094886927b36839edc1602b8300cfb4aa61c4",
+          "stopLine": 266
+        },
+        {
+          "finalSaveLine": 230,
+          "kind": "java_latest_log",
+          "sha256": "de501c4a3eba6c5c122b2a48572db18f79018fa6a62312e9a09e3650f126e657",
+          "stopLine": 221
+        }
+      ],
+      "summarySha256": "adb0b0a0738f94692aca5cac9d3326143780b8bf85c7d78b00c489cb605f50a5"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1408063,
+      "medianSeconds": 705,
+      "passed": 2,
+      "rounds": 2,
+      "scenario": "night-bunker-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 1692,
+          "kind": "console_log",
+          "sha256": "49cab92029646057756bd9343b3505bf793555d91e627189702ad4985cb86e40",
+          "stopLine": 1683
+        },
+        {
+          "finalSaveLine": 1647,
+          "kind": "java_latest_log",
+          "sha256": "adc0c03443c62d9478735dce8299e9afbbb877ad68c3eccd68c4980743962695",
+          "stopLine": 1638
+        }
+      ],
+      "summarySha256": "ffdc32b08db4165fd3511791b108ca193c4b72f9d316e6b33b9bccbdb4a35bbf"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 293132,
+      "medianSeconds": 154,
+      "passed": 2,
+      "rounds": 2,
+      "scenario": "night-bed-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 618,
+          "kind": "console_log",
+          "sha256": "a5a8d6ca76eafbb003a8efad792b92440039fc3ea7efc5760d551400cd50e60f",
+          "stopLine": 609
+        },
+        {
+          "finalSaveLine": 573,
+          "kind": "java_latest_log",
+          "sha256": "b6658f982b9dd5f661d727398e0034b04143e68197ba80221d745832c417b212",
+          "stopLine": 564
+        }
+      ],
+      "summarySha256": "2878fbf85a40f8aaa4b723aaaf70e9b5c185e003fb3e3787133091ae50c9b128"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1472445,
+      "medianSeconds": 774,
+      "passed": 2,
+      "rounds": 2,
+      "scenario": "farm-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 663,
+          "kind": "console_log",
+          "sha256": "303f6d50bc2d33b0af2fae2316d85f6db870ff2640d33fce89968f69ad10ba8f",
+          "stopLine": 654
+        },
+        {
+          "finalSaveLine": 618,
+          "kind": "java_latest_log",
+          "sha256": "4188bd4cc234cbd06432ee74c8f6b25ee433289b525bbcd59d9197cabb3e0b92",
+          "stopLine": 609
+        }
+      ],
+      "summarySha256": "2db125c466a5f75a80ff3d95b69af2fc57e5f6595503051470bf564e9561aaa7"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 259853,
+      "medianSeconds": 131,
+      "passed": 2,
+      "rounds": 2,
+      "scenario": "ranch-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 358,
+          "kind": "console_log",
+          "sha256": "b10e2d4069a7bb0cf666d9b419801a7e676570df47cccd8bc2ca5b73fbac9060",
+          "stopLine": 349
+        },
+        {
+          "finalSaveLine": 313,
+          "kind": "java_latest_log",
+          "sha256": "2a9fd464a3ad4827928376284beed2dfd6e76751cf04a16fceed00cc1e65b23a",
+          "stopLine": 304
+        }
+      ],
+      "summarySha256": "6d9e09855297686e2f299c4f560395f1d1f6efd200d19b4a69c2e770828dac07"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 64231,
+      "medianSeconds": 64,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "nether-quartz-given",
+      "serverLogs": [
+        {
+          "finalSaveLine": 131,
+          "kind": "console_log",
+          "sha256": "0e79f3c5b53e98e89f88cc095aae5e1cc5bf64018496d85c547a67be0be75dd7",
+          "stopLine": 122
+        },
+        {
+          "finalSaveLine": 86,
+          "kind": "java_latest_log",
+          "sha256": "8312b2a87777144af5139a27f4839afa83cb55a3ee673d0aa15c2d93e0b81e6e",
+          "stopLine": 77
+        }
+      ],
+      "summarySha256": "b150cf28ccd6e58d8d0ec16bef4fcef28e8361c24c14389ad6f5f70b92ad50c2"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 27106,
+      "medianSeconds": 27,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "cobblegen-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 159,
+          "kind": "console_log",
+          "sha256": "3f91d4a4f9b8f273fa32abc45ab575351b14cf3ed90c9b129aecbbaba61c384d",
+          "stopLine": 150
+        },
+        {
+          "finalSaveLine": 114,
+          "kind": "java_latest_log",
+          "sha256": "ad105880b137a7eff28219dbe2c6916f7ea1d7a132004a13dd51fd52611ea430",
+          "stopLine": 105
+        }
+      ],
+      "summarySha256": "7ba764306a9e3bfd98d36a7559110560074c566e1151920c1c0acd0495a30ffa"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 23541,
+      "medianSeconds": 24,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "cobblegen-hopper-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 165,
+          "kind": "console_log",
+          "sha256": "10b7f3ec90d446658aaaa954f4eb2eea1bca929e5e0b1e8666de73e36bd6acdb",
+          "stopLine": 156
+        },
+        {
+          "finalSaveLine": 120,
+          "kind": "java_latest_log",
+          "sha256": "4fc3f414443a31200f6d08d1a02f328ffef93019936bdaf76b5d69417f2bfa92",
+          "stopLine": 111
+        }
+      ],
+      "summarySha256": "c74eba3a806284216ce51797a6e7f5daba5c294f539b574b0f01ef2cc142a1e0"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 95987,
+      "medianSeconds": 96,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "smelter-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 165,
+          "kind": "console_log",
+          "sha256": "b757960264180be1bb2a0941567acb43107c25d99b46de308bfc524f80c3facb",
+          "stopLine": 156
+        },
+        {
+          "finalSaveLine": 120,
+          "kind": "java_latest_log",
+          "sha256": "8a79df37e8c13e71951b165fd3adb1e53b2680a13a258c15995181b229cb1abd",
+          "stopLine": 111
+        }
+      ],
+      "summarySha256": "fa75614a662f8bd3c32da40c128c89e8865aa7d7126321525a5016deda0ec241"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 395295,
+      "medianSeconds": 395,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "materials-cobblegen-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 214,
+          "kind": "console_log",
+          "sha256": "d1fd958613469b84b835d67d01596bd79d04a7eb9e488485bf1b3dc4b27e61a1",
+          "stopLine": 205
+        },
+        {
+          "finalSaveLine": 169,
+          "kind": "java_latest_log",
+          "sha256": "f62fb897e1caa5f3de929aa8a272e3c774f62779f4b20a1343bba45187cce2ff",
+          "stopLine": 160
+        }
+      ],
+      "summarySha256": "4f61d21601a4319d957267f01ee0b257a139a3e0d9209faa8f8ce22b970fcffe"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 400018,
+      "medianSeconds": 400,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "branch-mine-iron-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 327,
+          "kind": "console_log",
+          "sha256": "a24d5457f65ed44dc65f698d2df266458fc600b63ef4abab1575e03168a0db49",
+          "stopLine": 318
+        },
+        {
+          "finalSaveLine": 282,
+          "kind": "java_latest_log",
+          "sha256": "2be474dac62ce8d01c2e8d9fbe5a861e3ced57e431e03aa2a80cb87702981722",
+          "stopLine": 273
+        }
+      ],
+      "summarySha256": "7348d1caa2b4c4ce3db1d3b2dd49a9cd64977c0ca8bdf6d9ae184a62bfab1619"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 183376,
+      "medianSeconds": 183,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "canefarm-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 171,
+          "kind": "console_log",
+          "sha256": "c9a7c250fe1c283e24818c5c88dcf0299e6d3f8a082dff27716871e902ce1b84",
+          "stopLine": 162
+        },
+        {
+          "finalSaveLine": 126,
+          "kind": "java_latest_log",
+          "sha256": "bfbdd980bc2eaffef1662c51c74e163abc318db40105410ed8bf10a21521cf1a",
+          "stopLine": 117
+        }
+      ],
+      "summarySha256": "72ba1b9bf408d94b3d7bcf584f3e455e4bef0de2565a6e0e0bc31e7773c0d7a1"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 372188,
+      "medianSeconds": 372,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "mobfarm-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 250,
+          "kind": "console_log",
+          "sha256": "79b390cb51754b69d8492735311c9748aa3d39201ec7d1275b0b70fd3780489a",
+          "stopLine": 241
+        },
+        {
+          "finalSaveLine": 205,
+          "kind": "java_latest_log",
+          "sha256": "6be4a18c830fc613aa9f1a2d642eea19b8f0065532f4bdd661476767cd84f835",
+          "stopLine": 196
+        }
+      ],
+      "summarySha256": "161632af30794a4e08d92535aa9c4cded73df9f5bc1cf34bdd06ee41edbdfe08"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 22241,
+      "medianSeconds": 22,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "carpetdupe-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 161,
+          "kind": "console_log",
+          "sha256": "ed487c76a7d1e38fa55ace1414560d5aefd61137c8bd61ca6159d20ed93260d5",
+          "stopLine": 152
+        },
+        {
+          "finalSaveLine": 116,
+          "kind": "java_latest_log",
+          "sha256": "1512023c706deba90a8b87cd36b5674c823cf4cd7bbf121f8f0a684d47db55d2",
+          "stopLine": 107
+        }
+      ],
+      "summarySha256": "11a936cd440e7166083a3eaa0f1b134316648fe8f7e65e9a6c3f05a23fe583d0"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 109648,
+      "medianSeconds": 110,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "fishing-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 315,
+          "kind": "console_log",
+          "sha256": "bb1895bf387d5692bcb55b36c405a7b52d37303a90bf5de551600f8498bb829c",
+          "stopLine": 306
+        },
+        {
+          "finalSaveLine": 270,
+          "kind": "java_latest_log",
+          "sha256": "6cd8ec1dfabf11ae04660500b7434042eed43f40c713cc7f4b8311e77d34389e",
+          "stopLine": 261
+        }
+      ],
+      "summarySha256": "d67103420e985fd3eb471de01f9e1c4d60baad1f8bbc89966a41e8a278874b98"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 59505,
+      "medianSeconds": 60,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "raildupe-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 179,
+          "kind": "console_log",
+          "sha256": "6bd6528de5857d504768716f5eeaec18e1b65155fbb2db07bc16ab48007d4cec",
+          "stopLine": 170
+        },
+        {
+          "finalSaveLine": 134,
+          "kind": "java_latest_log",
+          "sha256": "94894860cc61795c57d41cf307dc6be77362f23cecfe973cfca5ad9ad3b55acc",
+          "stopLine": 125
+        }
+      ],
+      "summarySha256": "348473f21f8b34464b3594e3295569bac9a6b28948d1c34dd5304b9da428d4e7"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 110250,
+      "medianSeconds": 110,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "ironfarm-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 250,
+          "kind": "console_log",
+          "sha256": "653ad7e4c4770fb635d3a7a922c1024a45ef408b4fbc8685df3277d677918313",
+          "stopLine": 241
+        },
+        {
+          "finalSaveLine": 205,
+          "kind": "java_latest_log",
+          "sha256": "d17cbcf0da4084fbc4b9b0a569dc9d15cff7da257a7c55f899d14f6432594010",
+          "stopLine": 196
+        }
+      ],
+      "summarySha256": "5b54350da18c4f4ab8bcde0cb649986c869a5ed34e159c9bfb1aa086e23c7948"
+    },
+    {
+      "deaths": 2,
+      "durationMs": 4269204,
+      "medianSeconds": 4269,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "e2e-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 1773,
+          "kind": "console_log",
+          "sha256": "254b6efa812bd8b86d45a617370a729e616c0ad8591a133bf5730c193845e9f5",
+          "stopLine": 1764
+        },
+        {
+          "finalSaveLine": 1728,
+          "kind": "java_latest_log",
+          "sha256": "dc10dfd4f5e94bc4525a2c60dc083312cd2ad71b5f2e42079c7ad73190f02778",
+          "stopLine": 1719
+        }
+      ],
+      "summarySha256": "db731e89fb6063c0322ad7eca7912b099a36c1393875f8a54cb867bbc8c3a511"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1830000,
+      "medianSeconds": 1830,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "machines-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 1641,
+          "kind": "console_log",
+          "sha256": "4636f12f80665845301d249f9766716aeeb41b5f2ec44868f9b7cf649fe194a8",
+          "stopLine": 1632
+        },
+        {
+          "finalSaveLine": 1596,
+          "kind": "java_latest_log",
+          "sha256": "797f9a1be33876b2db7a34dfc07e7a257b97cc03374d33088d55cb9033ae2772",
+          "stopLine": 1587
+        }
+      ],
+      "summarySha256": "586330ee8778282efd08e9d69bd70c70217409e00776393f835c381dbd865d62"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 807204,
+      "medianSeconds": 807,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "branch-mine-redstone-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 4369,
+          "kind": "console_log",
+          "sha256": "aca089be6d08cedfb3cc2bfa49c8828868209ac62c8f220378e900875fb81a98",
+          "stopLine": 4360
+        },
+        {
+          "finalSaveLine": 4324,
+          "kind": "java_latest_log",
+          "sha256": "423f409dce16c285aeaaf1c780dd05c8a864f2024f5e8fc969b47c7e07c91b19",
+          "stopLine": 4315
+        }
+      ],
+      "summarySha256": "06e99f7a700f7f8e4d1d9244dec2094bbd923416f9bc881127bbe2843a641b86"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1068046,
+      "medianSeconds": 1068,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "branch-mine-diamond-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 4769,
+          "kind": "console_log",
+          "sha256": "30b1822e484e23674b16c463acfc93875b98c8e5ce414b72309023e5783498d9",
+          "stopLine": 4760
+        },
+        {
+          "finalSaveLine": 4724,
+          "kind": "java_latest_log",
+          "sha256": "a2be31c580372366978224332b39e450a8591b899db471e1b4eaaef8940a376a",
+          "stopLine": 4715
+        }
+      ],
+      "summarySha256": "6f07444a8f8e4afad1f3955d2d8e316f071e3fc9303d4623211fa98a9b22b55f"
+    }
+  ],
+  "schema": 1,
+  "scope": "source-only core developer preview validation; new core is not connected to the desktop host",
+  "startedAtUtc": "2026-10-24T02:15:09.845Z",
+  "status": "ALL_PASS"
+}
