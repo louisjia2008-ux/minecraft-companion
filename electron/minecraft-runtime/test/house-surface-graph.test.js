@@ -383,13 +383,40 @@ function savedGraph05World() {
  const saved=JSON.parse(raw),b=saved.bounds,dy=b.maxY-b.minY+1,dz=b.maxZ-b.minZ+1;
  return p=>p.x<b.minX||p.x>b.maxX||p.y<b.minY||p.y>b.maxY||p.z<b.minZ||p.z>b.maxZ?null:saved.palette[saved.data[(p.x-b.minX)*dz*dy+(p.z-b.minZ)*dy+(p.y-b.minY)]];
 }
-test('saved05 native one-step slopes keep real AABB edge support that the old center-column guard rejected',{timeout:8000},async t=>{
+async function exerciseSaved05NativeSlope(t,{realNonemptyPartial=false}={}) {
  const anchor={x:96,y:72,z:-180},target={x:76,y:63,z:-192},id='96,72,-180';
  const cp={schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,nodes:{[id]:{position:anchor,parent:null,expanded:true}},order:[id],frontier:[{parent:id,target,plannedSteps:32}],blockedEdges:[],current:id,resumeNode:id,visits:1,probes:0};
  const f=fixture(t,{worldAt:savedGraph05World(),checkpoint:cp,initialPosition:new Vec3(96.241145316375,72,-179.5426355775651),initialVelocity:new Vec3(-0.0985113764841292,-0.0784000015258789,0.005680130229342241)});
  const graph=createLoadedDryGraph(f.deps,{anchor}),goal=new goals.GoalBlock(target.x,target.y,target.z);
- const search=f.bot.pathfinder.getPathFromTo(graph.movements,f.bot.entity.position,goal,{timeout:1000,tickTimeout:10});
- let planned;for(let n=0;n<100;n++){const next=search.next();planned=next.value?.result;if(next.done||planned?.status!=='partial')break;}
+ // Match production's read-only native probe: partial search nodes must not be postprocessed in place.
+ const movements=graph.movements,neighborDescriptor=Object.getOwnPropertyDescriptor(movements,'getNeighbors'),nativeNeighbors=movements.getNeighbors;
+ let pauseCount=0,sawNonemptyPartial=false,planned,search;
+ if(realNonemptyPartial){
+  const {performance}=require('node:perf_hooks');
+  movements.getNeighbors=function(...args){
+   const neighbors=nativeNeighbors.apply(this,args);
+   if(!pauseCount&&neighbors.length){pauseCount++;const start=performance.now();while(performance.now()-start<12){/* One real CPU slice; clocks and native results remain original. */}}
+   return neighbors;
+  };
+ }
+ try {
+  search=f.bot.pathfinder.getPathFromTo(movements,f.bot.entity.position,goal,{optimizePath:false,timeout:1000,tickTimeout:10});
+  for(let n=0;n<100;n++){
+   const next=search.next();planned=next.value?.result;
+   if(realNonemptyPartial&&planned){
+    const integer=p=>['x','y','z'].every(k=>Number.isInteger(p[k]));
+    assert.ok(planned.path.every(integer),'Native planning path stays on integer AStar cells after every yield');
+    assert.ok([...next.value.astarContext.openDataMap.values()].every(node=>integer(node.data)),'Yielding cannot mutate pending native search cells');
+    assert.ok(integer(next.value.astarContext.bestNode.data),'Yielding cannot mutate the native best search cell');
+    if(planned.status==='partial'&&planned.path.length>0)sawNonemptyPartial=true;
+   }
+   if(next.done||planned?.status!=='partial')break;
+  }
+ } finally {
+  search?.return();
+  if(realNonemptyPartial){if(neighborDescriptor)Object.defineProperty(movements,'getNeighbors',neighborDescriptor);else delete movements.getNeighbors;}
+ }
+ if(realNonemptyPartial){assert.equal(pauseCount,1);assert.equal(sawNonemptyPartial,true,'The original 10ms planner really yielded a nonempty partial path');}
  assert.equal(planned.status,'success');assert.ok(planned.path.every((p,n)=>!n||planned.path[n-1].y-p.y<=1),'original planner allows only one-step descent');
  const rejectedByOld=[];
  f.bot.on('physicsTick',()=>{
@@ -398,7 +425,9 @@ test('saved05 native one-step slopes keep real AABB edge support that the old ce
  });
  const result=await graph.next();assert.equal(result.moved,true);assert.deepEqual(result.actual,target);assert.equal(f.bot.entity.onGround,true);assert.ok(rejectedByOld.length>=1,'identical actual trajectory would fail the previous center-only guard');
  assert.ok(rejectedByOld.every(p=>p.grounded&&p.bodySupported));assert.ok(f.points.length>150);assert.equal(f.waterTicks.length,0);assert.equal(graph.getState().visits,2);
-});
+}
+test('saved05 native one-step slopes keep real AABB edge support that the old center-column guard rejected',{timeout:8000},async t=>exerciseSaved05NativeSlope(t));
+test('saved05 original native nonempty partial slices retain integer search cells before real slope movement',{timeout:8000},async t=>exerciseSaved05NativeSlope(t,{realNonemptyPartial:true}));
 test('grounded metadata alone, nonoverlapping shapes, fluid, unknown or airborne contact never authorize edge support',()=>{
  const p=new Vec3(92.11960856157096,69,-189.1577418637875),air=where=>shape('air',where),solid=where=>shape('sand',where);
  const bot={entity:{position:p,width:.6,height:1.8,onGround:true,isInWater:false,isInLava:false},blockAt:where=>where.y===68&&where.z===-189?solid(where):air(where)};
@@ -809,25 +838,120 @@ function observePondNativeProbes(f,{allUnknown=false}={}){
  };
  return {probes,firstUnknown:()=>firstUnknown};
 }
-test('a grounded food detour beyond waypoint spacing freshly walks a dry route around a pond',{timeout:12000},async t=>{
- const {f,anchor}=pondFoodDetourFixture(t),observed=observePondNativeProbes(f),nativeGoto=f.bot.pathfinder.goto.bind(f.bot.pathfinder),walks=[];let consumedProbe=0;
+function modeledPondNativeProbes(f,{secondUnknown=false}={}){
+ const probes=[];let sequence=0,firstUnknown=null;const counts=new Map();
+ // Explicit reachability-protocol model, never a claim that native AStar
+ // finished within100ms. Native goto/AStar and all physical motion stay real.
+ f.deps.pathprobe=(profile,goal,timeout)=>{
+  assert.equal(timeout,100);assert.equal(f.bot.pathfinder.movements,profile);
+  const origin=f.bot.entity.position.clone(),target={x:goal.x,y:goal.y,z:goal.z},id=`${origin.floored()}->${goal.x},${goal.y},${goal.z}`;
+  const count=(counts.get(id)||0)+1;counts.set(id,count);
+  const isAnchor=goal.x===0&&goal.y===1&&goal.z===0,initial=!firstUnknown&&origin.distanceTo(new Vec3(goal.x,goal.y,goal.z))>32;
+  const refused=secondUnknown&&isAnchor&&f.attempts.length===1&&count===2;
+  const path=initial?[{x:14,y:1,z:52},{x:13,y:1,z:48},{x:12,y:1,z:44}]:[{...target}],status=initial||refused?'timeout':'success';
+  const record={sequence:++sequence,origin,target,status,path,modeled:true,timeout,profile};probes.push(record);if(initial)firstUnknown=record;
+  return {status,path};
+ };
+ return {probes,firstUnknown:()=>firstUnknown};
+}
+function pondPhysicalContract(f,observed){
+ const {settleNativeGoto}=require('../vendor/server/minecraft/houseNativeGotoSettlement');
+ const nativeGoto=f.bot.pathfinder.goto.bind(f.bot.pathfinder),walks=[];walks.priorProfile=f.bot.pathfinder.movements;walks.ownedMotionProfiles=[];let consumedProbe=0;
  f.bot.pathfinder.goto=goal=>{
   const fresh=observed.probes.findLast(p=>p.target.x===goal.x&&p.target.y===goal.y&&p.target.z===goal.z
     &&p.origin.floored().equals(f.bot.entity.position.floored()));
-  assert.ok(fresh,'Each physical leg needs its own successful native probe after the UNKNOWN hint');
+  assert.ok(fresh,'Each physical leg needs its own successful fresh probe after the UNKNOWN hint');
   assert.equal(fresh.status,'success');
   assert.ok(fresh.sequence>Math.max(consumedProbe,observed.firstUnknown().sequence));consumedProbe=fresh.sequence;
-  walks.push({target:{x:goal.x,y:goal.y,z:goal.z},distance:f.bot.entity.position.distanceTo(new Vec3(goal.x,goal.y,goal.z)),probe:fresh});
+  walks.push({target:{x:goal.x,y:goal.y,z:goal.z},origin:f.bot.entity.position.clone(),
+   distance:f.bot.entity.position.distanceTo(new Vec3(goal.x,goal.y,goal.z)),probe:fresh});
   return nativeGoto(goal);
  };
- // Match the actual survival_food graph policy; all original time budgets stay.
- const graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,nativeReachableHints:true,legTimeoutMs:10000});
- const result=await graph.returnToAnchor({rejoinInterruptedSuffix:true,via:[anchor]});
+ // This case-only adapter is the existing production settlement. It observes
+ // early native partial resolution under the ORIGINAL graph leg deadline.
+ f.deps.actualnativegoto=(goal,profile,budget)=>{
+  assert.ok(f.bot.pathfinder.movements===profile,'The native motor retains its captured graph profile');assert.ok(Number.isFinite(budget.deadline));walks.ownedMotionProfiles.push(profile);
+  return settleNativeGoto({getBot:()=>f.bot,assertActive:f.deps.assertActive,
+   isExpectedStop:budget.isExpectedNativeStop,allowPendingTimeout:budget.isExpectedNativeTimeout},{goal,deadline:budget.deadline});
+ };
+ return walks;
+}
+function assertPondPhysicalReturn(f,graph,observed,walks,result){
  assert.equal(observed.firstUnknown().status,'timeout');assert.ok(observed.firstUnknown().path.length>0);
  assert.ok(walks.length>=2);assert.ok(walks[0].distance>=4&&walks[0].distance<=16);
- assert.notDeepEqual(walks[0].target,anchor);
+ assert.notDeepEqual(walks[0].target,{x:0,y:1,z:0});
  assert.equal(result.confirmed,true);assert.deepEqual(f.bot.entity.position.floored(),new Vec3(0,1,0));
+ assert.ok(f.bot.pathfinder.movements===walks.priorProfile);assert.ok(walks.ownedMotionProfiles.every(profile=>profile===graph.movements));
+ assert.equal(f.bot.entity.onGround,true);assert.equal(hasGroundedBodySupport(f.bot),true);
  assert.equal(f.waterTicks.length,0);assert.equal(graph.getState().visits,1);assert.equal(graph.getState().order.length,1);
+}
+function assertPondUncreditedStop(f,graph,walks){
+ assert.ok(f.bot.pathfinder.movements===walks.priorProfile,'The completed operation restores its captured prior profile');
+ assert.ok(walks.ownedMotionProfiles.every(profile=>profile===graph.movements));f.deps.assertActive();
+ assert.equal(f.bot.health,20);assert.equal(f.bot.food,20);
+ assert.equal(f.bot.entity.onGround,true);assert.equal(hasGroundedBodySupport(f.bot),true);assert.equal(inspectSurfaceBody(f.bot).dry,true);
+ assert.equal(f.waterTicks.length,0);assert.equal(graph.getState().current,'0,1,0');assert.equal(graph.getState().visits,1);
+ assert.deepEqual(graph.getState().order,['0,1,0']);assert.equal(f.bot.pathfinder.goal,null);
+ assert.equal(Object.values(f.bot.controlState).some(Boolean),false);
+ if(walks.length)assert.deepEqual(f.bot.entity.position.floored(),new Vec3(walks.at(-1).target.x,walks.at(-1).target.y,walks.at(-1).target.z));
+ else assert.deepEqual(f.bot.entity.position,new Vec3(15.5,1,53.5));
+ assert.notDeepEqual(f.bot.entity.position.floored(),new Vec3(0,1,0),'UNKNOWN grants no camp-arrival credit');
+}
+test('modeled conclusive pond probes retain independent fresh proofs while native goto and Physics physically return around the pond',{timeout:12000},async t=>{
+ const {f,anchor}=pondFoodDetourFixture(t),observed=modeledPondNativeProbes(f),walks=pondPhysicalContract(f,observed);
+ const graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,nativeReachableHints:true,legTimeoutMs:10000});
+ const result=await graph.returnToAnchor({rejoinInterruptedSuffix:true,via:[anchor]});
+ assertPondPhysicalReturn(f,graph,observed,walks,result);
+ assert.deepEqual(observed.probes.map(p=>p.status),['timeout','success','success','success','success']);
+ assert.ok(observed.probes.every(p=>p.profile===graph.movements));
+ assert.deepEqual(f.attempts,[{x:12,y:1,z:44},anchor]);
+});
+test('a second fresh UNKNOWN pond probe refuses the camp leg after actual hint arrival without inventing credit',{timeout:12000},async t=>{
+ const {f,anchor}=pondFoodDetourFixture(t),observed=modeledPondNativeProbes(f,{secondUnknown:true}),walks=pondPhysicalContract(f,observed);let failure;
+ const graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,nativeReachableHints:true,legTimeoutMs:10000});
+ await assert.rejects(graph.returnToAnchor({rejoinInterruptedSuffix:true,via:[anchor]}),error=>{
+  failure=error;return error.code==='dry_graph_probe_inconclusive'&&error.observedProbe?.conclusive===false&&error.observedProbe.status==='timeout';
+ });
+ assert.deepEqual(observed.probes.map(p=>p.status),['timeout','success','success','success','timeout']);
+ assert.ok(observed.probes.every(p=>p.profile===graph.movements));
+ assert.deepEqual(failure.observedProbe.target,anchor);assert.deepEqual(f.attempts,[{x:12,y:1,z:44}]);
+ assert.equal(walks.length,1);assert.equal(f.attempts.length,walks.length);
+ assert.deepEqual(f.bot.entity.position,observed.probes.at(-1).origin);assertPondUncreditedStop(f,graph,walks);
+ const attempts=f.attempts.length;await sleep(100);
+ assert.equal(f.attempts.length,attempts);assert.equal(f.bot.pathfinder.goal,null);assert.equal(Object.values(f.bot.controlState).some(Boolean),false);
+ assert.ok(f.bot.pathfinder.movements===walks.priorProfile);
+});
+test('a modeled initial long UNKNOWN hint with subsequent genuine native pond probes either confirms return or safely refuses UNKNOWN',{timeout:12000},async t=>{
+ const {f,anchor}=pondFoodDetourFixture(t),observed=observePondNativeProbes(f),walks=pondPhysicalContract(f,observed),facts=[];
+ f.deps.onProbe=fact=>facts.push({...fact,ownedProfileAtObservation:f.bot.pathfinder.movements===graph.movements});
+ const graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,nativeReachableHints:true,legTimeoutMs:10000});let outcome;
+ try{
+  const result=await graph.returnToAnchor({rejoinInterruptedSuffix:true,via:[anchor]});
+  assertPondPhysicalReturn(f,graph,observed,walks,result);outcome='NATIVE_RETURN_CONFIRMED';
+ }catch(error){
+  const proof=error.observedProbe;
+  // A safe UNKNOWN is not successful gameplay. Reject every unrelated error,
+  // including movement, owner, guard, leg timeout, conclusive noPath or assertion failures.
+  if(error.code!=='dry_graph_probe_inconclusive'||!proof||proof.conclusive!==false)throw error;
+  assert.equal(proof.observedReturnRetry,undefined);assert.equal(proof.observedSuffixRetry,undefined);
+  assert.ok(Number.isFinite(proof.elapsedMs)&&proof.elapsedMs>=0);assert.ok(Number.isSafeInteger(proof.slices)&&proof.slices>=0&&proof.slices<=16);
+  const zeroSliceUnknown=proof.status==='unknown'&&proof.slices===0&&proof.stopReason==='wall_deadline'&&proof.elapsedMs>=100;
+  const nativeUnknown=proof.slices>=1&&(proof.status==='timeout'
+   ||proof.status==='partial'&&['wall_deadline','slice_limit'].includes(proof.stopReason)
+   ||['success','noPath'].includes(proof.status)&&proof.stopReason==='wall_deadline'&&proof.elapsedMs>100);
+  assert.ok(zeroSliceUnknown||nativeUnknown,'Only exact finite-probe UNKNOWN facts are accepted');
+  const latest=observed.probes.findLast(p=>p.target.x===proof.target.x&&p.target.y===proof.target.y&&p.target.z===proof.target.z
+   &&p.origin.floored().equals(new Vec3(proof.from.x,proof.from.y,proof.from.z)));
+  assert.ok(latest);assert.equal(facts.at(-1).ownedProfileAtObservation,true);assert.ok(walks.every(w=>w.probe.sequence<latest.sequence),'The refused fresh leg has no native motor');
+  assert.deepEqual(f.bot.entity.position,latest.origin,'UNKNOWN cannot move the actual body from the refused probe origin');
+  assert.equal(f.attempts.length,walks.length);assertPondUncreditedStop(f,graph,walks);
+  const attempts=f.attempts.length;await sleep(100);
+  assert.equal(f.attempts.length,attempts);assert.equal(f.bot.pathfinder.goal,null);assert.equal(Object.values(f.bot.controlState).some(Boolean),false);
+  assert.ok(f.bot.pathfinder.movements===walks.priorProfile);outcome='NATIVE_PROBE_UNKNOWN_SAFE_STOP';
+ }
+ t.diagnostic(JSON.stringify({scope:'modeled initial long UNKNOWN hint, subsequent genuine native probes and Physics; safe UNKNOWN is not pond playthrough PASS',outcome,
+  actual:f.bot.entity.position,visits:graph.getState().visits,waterTicks:f.waterTicks.length,
+  walks:walks.map(w=>({target:w.target,proofSequence:w.probe.sequence})),facts}));
 });
 test('a food detour with only UNKNOWN native hints grants no movement or graph visit',{timeout:12000},async t=>{
  const {f,anchor}=pondFoodDetourFixture(t),before=f.bot.entity.position.clone(),observed=observePondNativeProbes(f,{allUnknown:true});
