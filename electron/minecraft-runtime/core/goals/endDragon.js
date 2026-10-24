@@ -21,6 +21,7 @@ const at = (p) => `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`;
 const CENTER = new Vec3(0, 64, 0);
 // The dragon's synced phase while it circles a player to shoot a fireball at it.
 const STRAFE = 1;
+const CHARGE = 8;
 
 function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
   const crystalBlacklist = createBlacklist({ ttlMs: 240000 });
@@ -388,7 +389,9 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       }
       const cagedLeft = crystals.filter((c) => !memory.opened.has(key(c)) && !crystalBlacklist.has(`cage:${key(c)}`)).sort(nearest);
       // Up a tower the dragon's wings throw the bot off: only climb while it is away.
-      const away = (c) => !dragon || dragon.position.distanceTo(c.position) > 60;
+      // Nor while it circles the bot to shoot (strafe) or charges at it: a
+      // fireball's cloud on a one-block tower cannot be walked out of.
+      const away = (c) => !dragon || (dragon.position.distanceTo(c.position) > 60 && ![STRAFE, CHARGE].includes(phase));
       if (cagedLeft.length && away(cagedLeft[0])) {
         if (inShelter()) return leave(ctx);
         return uncage(ctx, cagedLeft[0]);

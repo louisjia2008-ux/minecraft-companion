@@ -163,23 +163,47 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
         }
       }
     }
+    if (memory.blocked) { memory.stuck = (memory.stuck || 0) + 1; memory.blocked = false; }
     while (memory.waypoints.length && (Math.hypot(memory.waypoints[0].x - here.x, memory.waypoints[0].z - here.z) < 24
-      || memory.blocked)) {
+      || memory.stuck >= 3)) {
       memory.waypoints.shift();
-      memory.blocked = false;
+      memory.stuck = 0;
     }
     return memory.waypoints[0] || null;
+  }
+
+  /** Void cells crossed going 40 blocks from `here` along `dir` (bridge blocks it would take). */
+  function gapAlong(here, dir) {
+    let gap = 0;
+    for (let d = 1; d <= 40; d += 1) {
+      const x = Math.floor(here.x + dir.x * d);
+      const z = Math.floor(here.z + dir.z * d);
+      if (end.deepDrop(bot, x, here.y, z, 6)) gap += 1;
+    }
+    return gap;
+  }
+
+  /** The heading toward the waypoint, turned up to 60 degrees where that crosses much less void. */
+  function gapAwareHeading(here, dir) {
+    let best = null;
+    for (const turn of [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]) {
+      const h = new Vec3(dir.x * Math.cos(turn) - dir.z * Math.sin(turn), 0, dir.x * Math.sin(turn) + dir.z * Math.cos(turn));
+      const cost = gapAlong(here, h) * 2 - Math.cos(turn) * 40;
+      if (!best || cost < best.cost) best = { h, cost };
+    }
+    return best.h;
   }
 
   async function explore(ctx) {
     const here = bot.entity.position.clone();
     // Back where the last search started (pulled back, or walking in circles): next waypoint.
     if (memory.searchFrom && here.distanceTo(memory.searchFrom) < 8) memory.blocked = true;
+    else memory.stuck = 0;
     memory.searchFrom = here;
     const goal = waypoint(here);
     if (!goal) return fail('search_exhausted');
     const toGoal = Math.hypot(goal.x - here.x, goal.z - here.z);
-    memory.heading = new Vec3((goal.x - here.x) / toGoal, 0, (goal.z - here.z) / toGoal);
+    memory.heading = gapAwareHeading(here, new Vec3((goal.x - here.x) / toGoal, 0, (goal.z - here.z) / toGoal));
     const target = here.plus(memory.heading.scaled(Math.min(40, toGoal)));
     ctx.record('city_search', { to: at(target), waypoint: at(goal), left: memory.waypoints.length, explored: memory.explored });
     memory.explored += 1;
