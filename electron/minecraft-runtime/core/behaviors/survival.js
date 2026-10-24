@@ -375,6 +375,33 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     if (!done) ctx.record('still_in_lava', {});
     return { ok: true, waited: !done };
   };
+  // A pocket of lava under a low roof has no shore with room to stand: dig
+  // out the two blocks above a wall beside the bot, so the wall becomes one.
+  async function digShore(ctx) {
+    const feet = bot.entity.position.floored();
+    const surface = lavaSurface(bot, feet);
+    if (surface - feet.y > 1) return false;
+    const sides = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
+    for (const side of sides) {
+      const wall = new Vec3(feet.x, surface, feet.z).plus(side);
+      const b = bot.blockAt(wall);
+      if (!b || b.boundingBox !== 'block' || /magma/.test(b.name)) continue;
+      const above = [1, 2].map((up) => bot.blockAt(wall.offset(0, up, 0)));
+      // Digging into more lava only floods the pocket.
+      if (above.some((a) => a?.name === 'lava') || bot.blockAt(wall.offset(0, 3, 0))?.name === 'lava') continue;
+      const solid = above.filter((a) => a && a.boundingBox === 'block' && a.diggable !== false);
+      if (!solid.length) continue;
+      ctx.record('leave_lava', { dig: `${wall.x},${wall.y},${wall.z}`, blocks: solid.length });
+      const pick = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
+      try {
+        if (pick) await bot.equip(pick, 'hand');
+        for (const a of solid) await bot.dig(a, true);
+      } catch { return false; }
+      await swimTo(ctx, wall.offset(0.5, 1.2, 0.5), () => !bot.entity.isInLava && bot.entity.onGround !== false, 50);
+      return true;
+    }
+    return false;
+  }
   const leaveLava = {
     name: 'leave_lava',
     band: BAND.ESCAPE,
@@ -411,6 +438,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       }
       const step = lavaStep(bot);
       ctx.record('leave_lava', { shore: null, step: step ? `${step.cell.x},${step.cell.y},${step.cell.z}` : null, block: block?.name || null });
+      if (!step && await digShore(ctx)) return lavaResult(ctx, out());
       if (!step || !block) {
         await swimTo(ctx, bot.entity.position.offset(0, 3, 0), out, 20);
         return { ok: false, reason: step ? 'no_step_block' : 'no_shore' };

@@ -174,3 +174,23 @@ test('a lava step is never the cell the bot is swimming in', async () => {
   await leaveLava.run({ record() {} });
   assert.ok(placed.length && !placed.some((p) => p.x === 0 && p.z === 0), `placed at ${placed.join(' ')}`);
 });
+
+test('in a lava pocket under a low roof the bot digs out room to climb onto a wall', async () => {
+  const cells = {};
+  for (let x = -1; x <= 1; x += 1) for (let z = -1; z <= 1; z += 1) for (let y = 28; y <= 33; y += 1) cells[`${x},${y},${z}`] = 'netherrack';
+  cells['0,30,0'] = 'lava';
+  cells['0,29,0'] = 'lava';
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 30, 0.5);
+  bot.entity.isInLava = true;
+  const dug = [];
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'diamond_pickaxe' }] },
+    setControlState: () => {}, lookAt: async () => {}, equip: async () => {},
+    dig: async (b) => { dug.push(b.position.toString()); cells[`${b.position.x},${b.position.y},${b.position.z}`] = 'air'; bot.blockAt = world(cells).blockAt; } });
+  bot.registry.foodsByName = {};
+  bot.blockAt = world(cells).blockAt;
+  const leaveLava = createSurvivalBehaviors({ bot }).find((b) => b.name === 'leave_lava');
+  await leaveLava.run({ record() {} });
+  assert.deepEqual(dug, ['(1, 31, 0)', '(1, 32, 0)']);
+});
