@@ -97,16 +97,94 @@ for(const pause of [false,true])test(`saved actual return stall opens a bounded 
  assert.ok(digs.every(p=>p.x===1&&p.z===0&&[1,2].includes(p.y)));
  assert.equal(graph.getState().visits,1);assert.equal(graph.getState().order.length,1);
 });
-test('food detour freshly rejoins an existing branch when camp cursor is beyond local range',{timeout:12000},async t=>{
+function foodBranchFixture(t){
  const anchor={x:0,y:1,z:0},branch={x:16,y:1,z:0};
  const checkpoint={schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,
   nodes:{'0,1,0':{position:anchor,parent:null,expanded:true},'16,1,0':{position:branch,parent:'0,1,0',expanded:true}},
   order:['0,1,0','16,1,0'],frontier:[],blockedEdges:[],current:'0,1,0',resumeNode:'0,1,0',visits:2,probes:0};
- const f=fixture(t,{checkpoint,initialPosition:new Vec3(40.5,1,16.5)}),graph=createLoadedDryGraph(f.deps,{anchor,legTimeoutMs:6000});
- await graph.returnToAnchor({anchor,rejoinInterruptedSuffix:true,via:[anchor,branch,{x:40,y:1,z:16}]});
- assert.deepEqual(f.attempts[0],branch);assert.deepEqual(f.bot.entity.position.floored(),new Vec3(0,1,0));
- assert.equal(graph.getState().current,'0,1,0');assert.equal(graph.getState().visits,2);assert.equal(graph.getState().order.length,2);
+ return {...fixture(t,{checkpoint,initialPosition:new Vec3(40.5,1,16.5)}),anchor,branch};
+}
+function foodBranchProbeModel(f,{secondUnknown=false}={}){
+ const probes=[];
+ // Explicit protocol model, not a claim that real AStar finished in100ms.
+ // Physical movement still uses the installed original goto and Physics.
+ f.deps.pathprobe=(profile,goal,budget)=>{
+  assert.equal(budget,100);assert.equal(profile.canDig,false);
+  const status=secondUnknown&&probes.length===1?'timeout':'success';
+  probes.push({target:{x:goal.x,y:goal.y,z:goal.z},from:f.bot.entity.position.floored(),status,budget});
+  return {status,path:status==='success'?[{x:goal.x,y:goal.y,z:goal.z}]:[]};
+ };
+ return probes;
+}
+function foodBranchNativeMotor(f,deadline){
+ const {settleNativeGoto}=require('../vendor/server/minecraft/houseNativeGotoSettlement');
+ const active=()=>{f.deps.assertActive();if(Date.now()>=deadline)throw Object.assign(Error('original food fixture deadline'),{code:'house_food_search_timeout'});};
+ const goto=(goal,budget={deadline})=>settleNativeGoto({getBot:()=>f.bot,assertActive:active,
+  isExpectedStop:budget.isExpectedNativeStop,allowPendingTimeout:budget.isExpectedNativeTimeout},{goal,deadline:Math.min(deadline,budget.deadline)});
+ f.deps.actualnativegoto=(goal,profile,budget)=>{assert.equal(f.bot.pathfinder.movements,profile);return goto(goal,budget);};
+ return {active,goto};
+}
+function assertFoodBranchPhysicalCamp(f){
+ assert.deepEqual(f.bot.entity.position.floored(),new Vec3(0,1,0));
  assert.equal(f.waterTicks.length,0);assert.equal(f.bot.entity.onGround,true);
+}
+function assertFoodBranchCamp(f,graph){
+ assertFoodBranchPhysicalCamp(f);
+ assert.equal(graph.getState().current,'0,1,0');assert.equal(graph.getState().visits,2);assert.equal(graph.getState().order.length,2);
+}
+test('modeled conclusive native probes freshly select the existing food branch before original goto and Physics return to camp',{timeout:12000},async t=>{
+ const f=foodBranchFixture(t),{anchor,branch}=f,probes=foodBranchProbeModel(f);
+ foodBranchNativeMotor(f,Date.now()+6000);
+ const graph=createLoadedDryGraph(f.deps,{anchor,legTimeoutMs:6000});
+ await graph.returnToAnchor({anchor,rejoinInterruptedSuffix:true,via:[anchor,branch,{x:40,y:1,z:16}]});
+ assert.deepEqual(probes.map(p=>p.target),[branch,branch,anchor,anchor]);
+ assert.ok(probes.every(p=>p.status==='success'&&p.budget===100));
+ assert.deepEqual(f.attempts,[branch,anchor]);assert.ok(f.points.length>100);assertFoodBranchCamp(f,graph);
+});
+for(const nativeReachableHints of [false,true])test(`modeled second food-branch probe UNKNOWN cannot consume earlier success: hints=${nativeReachableHints}`,{timeout:12000},async t=>{
+ const f=foodBranchFixture(t),{anchor,branch}=f,before=f.bot.entity.position.clone(),probes=foodBranchProbeModel(f,{secondUnknown:true});
+ const graph=createLoadedDryGraph(f.deps,{anchor,nativeReachableHints,legTimeoutMs:6000});
+ await assert.rejects(graph.returnToAnchor({anchor,rejoinInterruptedSuffix:true,via:[anchor,branch,{x:40,y:1,z:16}]}),error=>{
+  assert.equal(error.code,'dry_graph_probe_inconclusive');assert.equal(error.observedProbe.status,'timeout');
+  assert.equal(error.observedProbe.conclusive,false);return true;
+ });
+ assert.deepEqual(probes.map(p=>p.target),[branch,branch]);assert.deepEqual(probes.map(p=>p.status),['success','timeout']);
+ assert.equal(f.attempts.length,0);assert.deepEqual(f.bot.entity.position,before);assert.equal(f.controls.some(c=>c.value===true),false);
+ assert.equal(graph.getState().current,'0,1,0');assert.equal(graph.getState().visits,2);assert.equal(graph.getState().order.length,2);
+ assert.equal(f.waterTicks.length,0);
+});
+for(const modeledSecondUnknown of [false,true])test(`production food-frontier recovery physically reaches camp before resuming after a branch detour: modeledSecondUnknown=${modeledSecondUnknown}`,{timeout:12000},async t=>{
+ const {advanceFoodFrontier}=require('../vendor/server/minecraft/houseFoodSearch');
+ const f=foodBranchFixture(t),{anchor,branch}=f,deadline=Date.now()+6000,{active,goto}=foodBranchNativeMotor(f,deadline),events=[],unknown=[];
+ const probes=modeledSecondUnknown?foodBranchProbeModel(f,{secondUnknown:true}):null;
+ f.deps.onProbe=facts=>{if(!facts.conclusive)unknown.push(facts);};
+ const graph=createLoadedDryGraph(f.deps,{anchor,nativeReachableHints:true,terrainRecovery:true,legTimeoutMs:6000});
+ const result=await advanceFoodFrontier({anchor,getPosition:()=>f.bot.entity.position,getCheckpoint:f.checkpoint,assertActive:active,
+  rejoin:async()=>{events.push('rejoin');try{
+   await graph.returnToAnchor({anchor,rejoinInterruptedSuffix:true,via:[anchor,branch,{x:40,y:1,z:16}]});events.push('rejoined');
+  }catch(error){events.push(error.code);throw error;}},
+  returnToRoot:async()=>{
+   events.push('returnToRoot');active();const previous=f.bot.pathfinder.movements;
+   f.bot.pathfinder.setMovements(graph.movements);
+   try{await goto(new goals.GoalBlock(anchor.x,anchor.y,anchor.z));active();assertFoodBranchPhysicalCamp(f);}
+   finally{if(f.bot.pathfinder.movements===graph.movements)f.bot.pathfinder.setMovements(previous);}
+  },
+  // Observe the actual production caller's resume boundary, not invented food
+  // discovery or another graph visit. No movement or arrival is stubbed here.
+  explore:async()=>{events.push('resumeFoodExploration');assertFoodBranchCamp(f,graph);return {moved:false};},
+  savePath:()=>assert.fail('The resume observation supplies no invented path')});
+ assert.equal(result,false);assertFoodBranchCamp(f,graph);assert.ok(f.points.length>100);assert.ok(Date.now()<deadline);
+ if(events.includes('returnToRoot')){
+  assert.deepEqual(events,['rejoin','dry_graph_probe_inconclusive','returnToRoot','rejoin','rejoined','resumeFoodExploration']);
+  assert.ok(unknown.length>0);assert.deepEqual(f.attempts.at(-1),anchor);
+ }else{
+  assert.deepEqual(events,['rejoin','rejoined','resumeFoodExploration']);
+  if(!unknown.length)assert.deepEqual(f.attempts[0],branch);
+ }
+ if(modeledSecondUnknown){
+  assert.deepEqual(probes.map(p=>p.status),['success','timeout']);
+  assert.deepEqual(f.attempts,[anchor]);assert.equal(events.filter(e=>e==='returnToRoot').length,1);
+ }
 });
 for(const offset of [0,-3])test(`a failed old dry prefix rejoins a recorded node through actual observation or fresh native motion (${offset})`,{timeout:6000},async t=>{
  const anchor={x:0,y:1,z:0},other={x:16,y:1,z:0};
