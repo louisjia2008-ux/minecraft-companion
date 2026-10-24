@@ -2,6 +2,17 @@
 
 **Frozen a22 offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
 
+## 资源记忆的固定轴向断言失败
+
+[4c10的原PR20 CI400809](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40080926710)完整runtime3337/3338、1fail、0cancel/skip/todo，自然exit1，1049193.857859ms。唯一失败是`house-observed-resource-memory.test.js`的实际路点正例：2987.199371ms后`actual.z=-8`而断言要求0。随后82eb本地原样完整full14也自然记录3337/3338、同一断言失败，实际z=-12、1511.181334ms；整轮480577.20775ms，其余六项原命令全部自然通过，874文件源码前后不变。两次真实失败均保留完整日志/首次收据；没有缺失遥测的精确原生探测、姿态或调度首因推断。
+
+同一82eb的独立clean07自然通过原完整3338项、host74及其他原命令；该PASS只属于自己的运行，不能覆盖CI400809或full14的失败。图的生产合同是在已通过原生探测的安全边中优先选择缩短资源距离的路点；资源记忆只记录真实到达后的靠近位置，不将资源坐标当路点、采集或库存。固定z=0不属于这项合同。后续修复需保留真实原生路径、Physics、到达/支撑、距离改善、访问数及零虚构资源信用，并保留原5ms Physics、5s leg、15s graph和10s test上限；受控UNKNOWN对照只验证机制，不称为原CI重放。其最终完整重验与发行源码由`RELEASE_ATTESTATION.json`绑定。
+
+独立受控对照保留原z=0断言，只把anchor到(16,2,0)的真实100ms探测结果降为UNKNOWN；其余探测与原生移动/Physics保留。生产正确拒绝该轴向信用，并实际到达(16,2,4)，16项到站/支撑/距离/记忆合同成立，原断言仍自然exit1。它证明机制，不冒充两次原失败的精确重放。
+
+本轮仅修改该离线测试文件：用严格资源距离改善及实际floor、ground、支撑、当前节点和lastApproach一致替代固定轴向；其余原断言保留。夹具同时接入既有生产`settleNativeGoto`，沿用原leg绝对deadline与owner/profile检查；这是对既有提前返回机制的适配，不认定本次原失败由空partial引起。新增UNKNOWN零未验证移动/访问信用和明确empty-partial两项回归。三项定向测试一次自然3/3通过，2692.297209ms；empty-partial回归仅一次原goto，earlyActual=(0.5,2,0.5)尚未到站，原goal/profile继续运行，既有settler在同期限内等待真实到站后才记访问。该局部结果不替代最终原样完整full15、消费者或CI结果。
+
+
 ## 干净克隆 Electron 导入失败与测试隔离修复
 
 候选 `4c10d1c4df2fa2dd020fd74bd4e581a859bc0d7a` 的 clean06 使用全新检出、隔离 HOME 与两项原样锁文件安装。完整 runtime3338/3338、setup18/18、lint/typecheck、security6/6、legacy25/25及源码完整性均自然通过；宿主测试14个文件/69项通过，而迁移测试文件在注册原五项测试前失败，因此 clean06整体自然exit1。原始首个失败收据和30份步骤日志保留，未用后续结果覆盖。

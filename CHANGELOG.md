@@ -6,6 +6,11 @@ Scope: **source developer preview v0.1.0-alpha.1**. Tested freeze: `a22a73a4a729
 
 Preserved offline failures and interrupted campaigns are detailed in [VALIDATION.md](VALIDATION.md). In particular, full6 naturally failed 3324/3325; full7 passes only after a test-only clock correction with production and original budgets retained. Full02 has30 passed rounds and2 interrupted rounds, and does not supply passes to full03.
 
+### Observed-resource waypoint contract
+
+- Preserve CI400809 on4c10 and local full14 on82eb: each naturally failed3337/3338 on the same strict z=0 assertion, observing z=-8 and z=-12 respectively. Missing failure-time probe/body telemetry leaves exact original first causes UNKNOWN. The independently passing82eb clean07 does not override either failure.
+- The production graph prioritizes already native-probed improving frontier edges; its contract does not require a fixed movement axis. Replace that fixture-only axis assertion with strict resource-distance improvement, actual grounded supported arrival, observed-node and approach consistency. Use the existing production settlement adapter with the same captured leg deadline; add explicit UNKNOWN zero-credit and single-goto empty-partial regressions. One targeted three-case run naturally passed3/3; it does not replace the final complete full15 or CI gates. Bind the narrow fixture correction, controlled UNKNOWN mechanism evidence and final complete recheck separately in RELEASE_ATTESTATION.json. Retain original native motion,arrival/support,distance,visit and zero resource-credit assertions and original finite limits; no production/gameplay change.
+
 ### Host migration test isolation
 
 - Retain the4c10 clean06 failure: complete runtime3338/3338 and all other checks passed, but host69 tests passed while the migration file failed before registering its five cases. Importing CharacterService eagerly loaded Electron and its lazy binary download failed; the underlying transport cause remains unobserved.
