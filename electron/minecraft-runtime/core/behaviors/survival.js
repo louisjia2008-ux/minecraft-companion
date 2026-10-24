@@ -52,7 +52,7 @@ function lavaShore(bot, radius = 16) {
  * With no shore to climb: the top lava cell nearest the bot that has a solid
  * block beside it, where a placed block makes a step out.
  */
-function lavaStep(bot, radius = 16) {
+function lavaStep(bot, radius = 40) {
   const feet = bot.entity.position.floored();
   let surface = feet.y;
   while (surface < feet.y + 4 && bot.blockAt(feet.offset(0, surface - feet.y + 1, 0))?.name === 'lava') surface += 1;
@@ -347,7 +347,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         return { ok: false, reason: step ? 'no_step_block' : 'no_shore' };
       }
       const centre = step.cell.offset(0.5, 0.5, 0.5);
-      await swimTo(ctx, centre, () => out() || Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z) <= 2.2);
+      // Out in a lava sea the nearest wall can be far: a long swim with fire resistance.
+      await swimTo(ctx, centre, () => out() || Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z) <= 2.2, 400);
       if (!out()) {
         try {
           await bot.equip(block, 'hand');
