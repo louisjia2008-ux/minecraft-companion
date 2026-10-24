@@ -146,6 +146,13 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
       const p = spot();
       return Math.hypot(bot.entity.position.x - p.x, bot.entity.position.z - p.z) <= 1.2;
     };
+    // Its breath already lies where the bot would stand: wait it out, out of it.
+    const standAt = spot();
+    if (end.cloudOver(bot, new Vec3(standAt.x - 0.5, bot.entity.position.y, standAt.z - 0.5), 1.5)) {
+      ctx.record('melee_spot_clouded');
+      await sleep(600, ctx.signal);
+      return { ok: true, waited: true };
+    }
     // Behind its head: go round wide, out of reach of the wings, not past them.
     {
       const d = bot.entities[dragon.id] || dragon;
@@ -399,6 +406,7 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
         if (rel.dot(forward) > -4 && Math.abs(rel.dot(side)) < 9) {
           const away = here.plus(side.scaled(9 * sign)).minus(forward.scaled(3));
           ctx.record('dodge_takeoff', { to: at(away) });
+          bot.companionNoEatUntil = Date.now() + 5000;
           await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(away.x, away.z, 1.5), { timeoutMs: 4000, arrived: () => true });
           return { ok: true, waited: true };
         }

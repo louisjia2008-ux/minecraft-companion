@@ -193,6 +193,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.MAINTENANCE,
     want(state) {
       if (threats(state).some((h) => h.distance <= t.eatQuietRange)) return 0;
+      // A goal mid-dodge (out of a taking-off dragon's path) must not stop to eat.
+      if ((bot.companionNoEatUntil || 0) > Date.now() && state.health > 6) return 0;
       const hungry = state.food <= t.eatFood || (state.health < 16 && state.food < 20);
       // Risky food (rotten flesh, raw chicken) only when starving or nearly dead.
       return hungry && hasSafeFood(state, state.food <= 6 || state.health <= 8) ? 1 : 0;

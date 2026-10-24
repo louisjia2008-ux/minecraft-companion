@@ -470,7 +470,7 @@ async function leaveShelter(bot, ctx, top) {
 }
 
 /** Jumps and places a block underfoot until the feet are at `y`. Returns the blocks placed. */
-async function pillarUp(bot, ctx, y, { maxSteps = 32, stop = () => false } = {}) {
+async function pillarUp(bot, ctx, y, { maxSteps = 32, stop = () => false, dig = false } = {}) {
   let placed = 0;
   let misses = 0;
   for (let i = 0; i < maxSteps && bot.entity.position.y < y - 0.5 && misses < 3 && !stop(); i += 1) {
@@ -479,6 +479,13 @@ async function pillarUp(bot, ctx, y, { maxSteps = 32, stop = () => false } = {})
     const feet = bot.entity.position.floored();
     const below = bot.blockAt(feet.offset(0, -1, 0));
     if (!below || below.boundingBox !== 'block') break;
+    // With `dig`, floors and ceilings overhead are cut through on the way.
+    const head = bot.blockAt(feet.offset(0, 2, 0));
+    if (head && head.boundingBox === 'block') {
+      if (!dig || UNBREAKABLE.test(head.name) || /chest|shulker_box/.test(head.name)) break;
+      const cut = await actions.digBlock(bot, ctx, head, { timeoutMs: 8000 });
+      if (!cut.ok) break;
+    }
     try {
       await bot.equip(item, 'hand');
       await bot.look(bot.entity.yaw, -Math.PI / 2, true);

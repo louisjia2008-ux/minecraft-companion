@@ -145,11 +145,30 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
 
   async function lootChest(ctx, p) {
     const before = bot.inventory.items().reduce((n, i) => n + i.count, 0);
-    if (bot.entity.position.distanceTo(p) > 24) {
-      const moved = await actions.goNear(bot, ctx, p, 3, { timeoutMs: 120000 });
-      if (!moved.ok && bot.entity.position.distanceTo(p) > 8) { blacklist.add(posKey(p), moved.reason); return moved; }
+    // Tower-top chests: no stairs the pathfinder will take without towers.
+    // Get under it and pillar up, cutting through the floors.
+    let climbed = 0;
+    if (!actions.withinReach(bot, p, 4.5)) {
+      const moved = await actions.goNear(bot, ctx, p, 2, { timeoutMs: 90000 });
+      const flat = () => Math.hypot(p.x + 0.5 - bot.entity.position.x, p.z + 0.5 - bot.entity.position.z);
+      if (!actions.withinReach(bot, p, 4.5) && p.y - bot.entity.position.y >= 2) {
+        if (flat() > 2.5) {
+          await actions.goTo(bot, ctx, new end.goals.GoalNearXZ(p.x + 0.5, p.z + 0.5, 2), { timeoutMs: 30000, arrived: () => true });
+        }
+        if (flat() <= 3) {
+          const from = Math.floor(bot.entity.position.y);
+          climbed = await end.pillarUp(bot, ctx, p.y, { maxSteps: p.y - from + 4, dig: true });
+          ctx.record('chest_climb', { chest: at(p), from, placed: climbed, y: Math.floor(bot.entity.position.y) });
+        }
+      }
+      if (!actions.withinReach(bot, p, 4.5)) {
+        if (climbed) await end.digPillarDown(bot, ctx);
+        blacklist.add(posKey(p), moved.reason || 'chest_out_of_reach');
+        return moved.ok ? fail('chest_out_of_reach') : moved;
+      }
     }
     const result = await skills.takeItems(bot, ctx, { position: p, itemMatch: () => true });
+    if (climbed) await end.digPillarDown(bot, ctx);
     if (result.ok || result.reason === 'chest_empty') {
       memory.looted.add(posKey(p));
       memory.taken += Math.max(0, bot.inventory.items().reduce((n, i) => n + i.count, 0) - before);
@@ -354,6 +373,11 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       const pos = bot.entity.position;
       if (!memory.scan || now - memory.scan.at > 20000 || pos.distanceTo(memory.scan.from) > 32) {
         memory.scan = { at: now, from: pos.clone(), purpur: city.findCity(bot, 256) };
+        if (memory.scan.purpur) {
+          const all = bot.findBlocks({ matching: bot.registry.blocksByName.chest.id, maxDistance: 96, count: 32 });
+          ctx.record('city_scan', { purpur: at(memory.scan.purpur), chests: all.length, loot: city.cityChests(bot, 96).length,
+            looted: memory.looted.size, skipped: all.filter((p) => blacklist.has(posKey(p))).length });
+        }
       }
       const nearCity = memory.scan.purpur && pos.distanceTo(memory.scan.purpur) < 128;
       const chestsLeft = !nearCity ? [] : city.cityChests(bot, 96).filter((p) => !memory.looted.has(posKey(p)) && !blacklist.has(posKey(p)));
