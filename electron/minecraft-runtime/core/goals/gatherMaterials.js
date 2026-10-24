@@ -340,15 +340,17 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   // Before a first Nether trip: the frame's obsidian (less any already
   // placed), its corners, and flint and steel to light it.
-  function portalKit() {
+  function portalKit(inventory) {
     if (portalKnown()) return [];
     const site = memory.trip?.memory.site;
     const cells = site ? nether.portalFrame(site.base, site.axis).cells : [];
     const placed = (corner) => cells.filter((c) => Boolean(c.corner) === corner
       && (corner ? blockAt(c.pos)?.boundingBox === 'block' : nameAt(c.pos) === 'obsidian')).length;
+    const corners = FRAME_CORNERS - placed(true);
     return [
       { key: 'obsidian', count: FRAME_OBSIDIAN - placed(false) },
-      { key: 'cobblestone', count: FRAME_CORNERS - placed(true) },
+      // Any solid block makes a corner: cobblestone if there is enough, else dirt (no tool needed).
+      { key: countKey('cobblestone', inventory, kb) >= corners ? 'cobblestone' : 'dirt', count: corners },
       { key: 'flint_and_steel', count: 1 },
     ].filter((r) => r.count > 0);
   }
@@ -399,7 +401,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       }
     }
     if (step?.kind === 'gather' && step.dimension === 'the_nether') {
-      const kit = portalKit();
+      const kit = portalKit(inventory);
       if (kit.length) step = planNext({ requirements: [...kit, ...reqs], inventory, stations: placedStations(), kb }) || step;
     }
     const freeSlots = typeof bot.inventory.emptySlotCount === 'function' ? bot.inventory.emptySlotCount() : Infinity;

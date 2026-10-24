@@ -221,4 +221,68 @@ const branchMineDiamondFlat = {
   },
 };
 
-module.exports = { materialsCobblegenFlat, branchMineIronFlat, branchMineRedstoneFlat, branchMineDiamondFlat, chestContents };
+// Nether quartz with what the earlier steps bring home (three diamonds, seven
+// iron ingots) plus food, a sword and a gold helmet: sticks from the trees, a
+// diamond pickaxe, two buckets, ten obsidian cast from lava and water, flint
+// from gravel, flint and steel, a portal, quartz in the Nether, home again.
+// Each run is a fresh home 3000 blocks on, so no portal of an earlier run is near.
+const QUARTZ = [{ key: 'quartz', count: 8 }];
+const QUARTZ_KIT = [['diamond', 3], ['iron_ingot', 7], ['cooked_beef', 24], ['iron_sword', 1], ['golden_helmet', 1]];
+let quartzHome = { x: 0, z: 0 };
+const quartzSpots = (h) => ({ chest: { x: h.x, y: GROUND, z: h.z - 3 },
+  stations: { crafting_table: { x: h.x + 1, y: GROUND, z: h.z - 3 }, furnace: { x: h.x + 2, y: GROUND, z: h.z - 3 } } });
+const shift = (command, h) => command.replace(/^fill (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) /,
+  (_, x1, y1, z1, x2, y2, z2) => `fill ${+x1 + h.x} ${y1} ${+z1 + h.z} ${+x2 + h.x} ${y2} ${+z2 + h.z} `);
+const materialsQuartzFlat = {
+  name: 'materials-quartz-flat',
+  description: 'Three diamonds, seven iron ingots, food, sword and gold helmet; easy, flat plains with trees, a lava pool,'
+    + ' a water pool and gravel; cast 10 obsidian, make flint and steel, build a portal and store 8 nether quartz in the home chest.',
+  serverProperties: {
+    'level-type': 'minecraft:flat', 'generator-settings': JSON.stringify(FLAT_GENERATOR),
+    'level-seed': 20261023, difficulty: 'easy', 'allow-nether': true,
+  },
+  defaultDifficulty: 'easy',
+  timeoutMs: 60 * 60 * 1000,
+  setup({ username, run, rng, difficulty = 'easy' }) {
+    const h = { x: 3000 * (run + 1), z: 0 };
+    quartzHome = h;
+    const { chest } = quartzSpots(h);
+    const trees = plantTrees(rng);
+    const at = (dx, dy, dz) => `${h.x + dx} ${GROUND + dy} ${h.z + dz}`;
+    const commands = [
+      `difficulty ${difficulty}`,
+      'gamerule doDaylightCycle false', 'gamerule doWeatherCycle false', 'gamerule doMobSpawning true',
+      'gamerule doImmediateRespawn true', 'gamerule keepInventory false', 'gamerule doFireTick false',
+      'time set noon', 'weather clear',
+      `execute in minecraft:overworld run tp ${username} ${h.x + 0.5} ${GROUND} ${h.z + 0.5}`,
+      `execute in minecraft:overworld run setworldspawn ${h.x} ${GROUND} ${h.z + 10}`, 'gamerule spawnRadius 0',
+      `clear ${username}`, `effect clear ${username}`, `gamemode survival ${username}`,
+      `effect give ${username} minecraft:instant_health 1 5`, `effect give ${username} minecraft:saturation 1 20`,
+      ...trees.commands.map((c) => shift(c, h)),
+      `setblock ${chest.x} ${chest.y} ${chest.z} chest`,
+      // A 3x3 lava pool and a 2x2 water pool, sunk in stone, west; an 8x8 gravel patch, two deep, east.
+      `fill ${at(-24, -2, 4)} ${at(-18, -1, 10)} stone`, `fill ${at(-23, -1, 5)} ${at(-19, -1, 9)} lava`,
+      `fill ${at(-23, -2, -9)} ${at(-20, -1, -6)} stone`, `fill ${at(-22, -1, -8)} ${at(-21, -1, -7)} water`,
+      `fill ${at(20, -2, 4)} ${at(27, -1, 11)} gravel`,
+      ...QUARTZ_KIT.map(([item, count]) => `give ${username} ${item} ${count}`),
+    ];
+    // A fresh home far out: its chunks are loaded first so the fills land.
+    return { prepare: [`forceload add ${h.x - 32} ${h.z - 32} ${h.x + 32} ${h.z + 32}`], prepareMs: 8000,
+      commands, details: { home: h, trees: trees.trees.length } };
+  },
+  start: (companion) => companion.gatherMaterials({ ...quartzSpots(quartzHome), requirements: QUARTZ }),
+  async verify({ server, username, goal }) {
+    const contents = await chestContents(server, quartzSpots(quartzHome).chest);
+    const dimension = await server.query(`data get entity ${username} Dimension`,
+      /(?:has the following entity data: "minecraft:(\w+)"|(No entity was found))/, 5000);
+    const trip = goal?.memory?.trip?.memory || {};
+    const at = (p) => (p ? `${p.x},${p.y},${p.z}` : null);
+    return {
+      pass: (contents.quartz || 0) >= 8,
+      details: { chest: contents, dimension: dimension[1] || null, overworldPortal: at(trip.overworldPortal),
+        netherPortal: at(trip.netherPortal), mold: goal?.memory?.cast ? at(goal.memory.cast.pit) : null },
+    };
+  },
+};
+
+module.exports = { materialsCobblegenFlat, branchMineIronFlat, branchMineRedstoneFlat, branchMineDiamondFlat, materialsQuartzFlat, chestContents };

@@ -17,6 +17,7 @@ const { Vec3 } = require('vec3');
 const defaultSkills = require('./skills');
 const defaultActions = require('./actions');
 const { posKey } = require('./blacklist');
+const { waitUntil } = require('./confirm');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const AIR = new Set(['air', 'cave_air', 'void_air']);
@@ -113,7 +114,13 @@ async function castStep(bot, ctx, memory, { skills = defaultSkills, actions = de
     if (!skills.isFluidSource(block, 'lava')) return fail('lava_flowing');
     if (waterOut) {
       // Water is out but the lava is still there: it may take a tick or two.
-      return { ok: true, waiting: true };
+      const set = await waitUntil(() => bot.blockAt(pit)?.name === 'obsidian', { timeoutMs: 3000, signal: ctx.signal });
+      if (set) return { ok: true };
+      ctx.record('cast_stuck', { pit: bot.blockAt(pit)?.name, mouth: bot.blockAt(pit.offset(0, 1, 0))?.name,
+        water: bot.blockAt(water)?.name });
+      // Take it back and pour again.
+      if (has(bot, 'bucket')) return skills.scoopLiquid(bot, ctx, water, 'water');
+      return fail('lava_not_set');
     }
     return skills.pourLiquid(bot, ctx, water, 'water');
   }
