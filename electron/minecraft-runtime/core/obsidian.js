@@ -49,17 +49,32 @@ function moldOk(bot, mold) {
   return Boolean(atWater) && (isAir(atWater) || atWater.name === 'water') && solid(bot.blockAt(water.offset(0, -1, 0)));
 }
 
-/** The nearest mold site 3-10 blocks from the bot, on the ground it stands on (or a step off). */
+// The water runs up to 7 blocks: kept off the lava and water pools it would
+// otherwise turn to stone (the lava the next casts come from).
+const DRY_RADIUS = 9;
+const SEARCH = 16;
+
+function liquidsNear(bot) {
+  if (typeof bot.findBlocks !== 'function') return [];
+  const ids = ['lava', 'water'].map((n) => bot.registry?.blocksByName[n]?.id).filter(Number.isInteger);
+  if (!ids.length) return [];
+  return bot.findBlocks({ matching: ids, maxDistance: SEARCH + DRY_RADIUS, count: 512 });
+}
+
+/** The nearest mold site 3-16 blocks from the bot, on its ground (or a step off), away from liquids. */
 function findMold(bot, { avoid = () => false } = {}) {
   const here = bot.entity.position.floored();
+  const wet = liquidsNear(bot);
+  const dry = (p) => !wet.some((w) => Math.abs(w.x - p.x) <= DRY_RADIUS && Math.abs(w.z - p.z) <= DRY_RADIUS
+    && Math.abs(w.y - p.y) <= 2);
   let best = null;
-  for (let dx = -10; dx <= 10; dx += 1) {
-    for (let dz = -10; dz <= 10; dz += 1) {
+  for (let dx = -SEARCH; dx <= SEARCH; dx += 1) {
+    for (let dz = -SEARCH; dz <= SEARCH; dz += 1) {
       const d = Math.abs(dx) + Math.abs(dz);
       if (d < 3 || (best && d >= best.d)) continue;
       for (const dy of [-1, -2, 0]) {
         const pit = here.offset(dx, dy, dz);
-        if (avoid(pit) || !solid(bot.blockAt(pit)) || bot.blockAt(pit).name === 'obsidian') continue;
+        if (avoid(pit) || !solid(bot.blockAt(pit)) || bot.blockAt(pit).name === 'obsidian' || !dry(pit)) continue;
         if (!isAir(bot.blockAt(pit.offset(0, 1, 0))) || !isAir(bot.blockAt(pit.offset(0, 2, 0)))) continue;
         for (const [sx, sz] of SIDES) {
           const mold = { pit, water: pit.offset(sx, 1, sz) };

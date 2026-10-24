@@ -112,3 +112,13 @@ test('obsidian with no diamond pickaxe is left in the pit', async () => {
   assert.equal(result.reason, 'no_diamond_pickaxe');
   assert.equal(r.calls.length, 0);
 });
+
+test('the mold keeps away from pools its water would run into', () => {
+  const { bot } = rig();
+  const pool = new Vec3(4, 0, 0);
+  bot.registry = { blocksByName: { lava: { id: 1 }, water: { id: 2 } } };
+  bot.findBlocks = () => [pool];
+  const mold = obsidian.findMold(bot);
+  assert.ok(mold);
+  assert.ok(Math.abs(mold.pit.x - pool.x) > 9 || Math.abs(mold.pit.z - pool.z) > 9);
+});
