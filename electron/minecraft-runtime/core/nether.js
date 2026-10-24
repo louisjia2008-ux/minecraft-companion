@@ -235,12 +235,16 @@ const NEVER_BREAK = ['nether_gold_ore', 'gilded_blackstone', 'gold_block', 'ches
 function applyNetherMovements(bot) {
   const m = bot.pathfinder?.movements;
   if (!m || m.companionNether) return () => {};
-  const saved = { maxDropDown: m.maxDropDown, digCost: m.digCost, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length };
+  const saved = { maxDropDown: m.maxDropDown, digCost: m.digCost, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length,
+    scaffold: m.scafoldingBlocks };
   m.companionNether = true;
   m.maxDropDown = 3;
   // Netherrack breaks in an instant, so plain paths tunnel straight through
   // hills: one long walk wore out an iron pickaxe. Walk around when there is a way.
   m.digCost = 6;
+  // Bridge and tower with netherrack, which every walk here digs up; the
+  // cobblestone brought along is kept for steps out of a lava sea.
+  m.scafoldingBlocks = ['netherrack'].map((n) => bot.registry.itemsByName?.[n]?.id).filter(Number.isInteger);
   for (const name of NEVER_BREAK) {
     const id = bot.registry.blocksByName[name]?.id;
     if (Number.isInteger(id)) m.blocksCantBreak.add(id);
@@ -249,6 +253,7 @@ function applyNetherMovements(bot) {
   return () => {
     m.maxDropDown = saved.maxDropDown;
     m.digCost = saved.digCost;
+    m.scafoldingBlocks = saved.scaffold;
     m.blocksCantBreak = saved.cantBreak;
     m.exclusionAreasStep.length = saved.steps;
     m.companionNether = false;
