@@ -2,6 +2,14 @@
 
 **Frozen a22 offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
 
+## 干净克隆 Electron 导入失败与测试隔离修复
+
+候选 `4c10d1c4df2fa2dd020fd74bd4e581a859bc0d7a` 的 clean06 使用全新检出、隔离 HOME 与两项原样锁文件安装。完整 runtime3338/3338、setup18/18、lint/typecheck、security6/6、legacy25/25及源码完整性均自然通过；宿主测试14个文件/69项通过，而迁移测试文件在注册原五项测试前失败，因此 clean06整体自然exit1。原始首个失败收据和30份步骤日志保留，未用后续结果覆盖。
+
+直接导入链为 `native-migration.test.ts → CharacterService → import { dialog } from electron`。安装采用 `--ignore-scripts`，该依赖的入口仍尝试延迟下载 Electron 二进制，实际报 `TypeError: fetch failed`；更底层传输失败原因未观察。原五项测试从不使用文件选择对话框，Node下加载Electron也不构成桌面操作验收。窄修复仅在迁移单测内使用局部、提升的 Electron 对话框替身：意外调用立即抛错，逐项清理时确认零调用。真实迁移服务、仓库、安全存储及文件系统测试和全部原断言保留，不提供假二进制、不过滤用例、不提高超时、不修改生产代码或游戏场景。
+
+修复后的发行冻结、原七项完整命令、新干净消费者及归档下载/真实采木、隐私和PR/main CI的实际结果由发行附件 `RELEASE_ATTESTATION.json` 独立绑定。这里保留full13的原身份，不将旧PASS改称新冻结结果。
+
 ## Snapshot and environment
 
 | Field | Value |

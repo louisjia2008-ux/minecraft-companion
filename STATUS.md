@@ -2,6 +2,10 @@
 
 **正式游戏验收通过，离线检查按冻结快照记录。** 测试冻结 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，867 文件 sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`。原样完整 runtime full7 自然通过 3326/3326；正式 full03 于 2026-10-24 02:15:09.845—03:27:27.151 UTC 自然完成，24 场景、32/32 轮全部通过，原始结果、退出码与源码/driver 一致。 源码归档、干净安装与发布验证的最终收据随 release 单独提供，和本页的游戏验收快照分别绑定。[正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
 
+## 宿主迁移单测的 Electron 隔离
+
+4c10 候选的干净克隆完整 runtime 已自然通过3338/3338，但宿主测试仅69项通过：`native-migration.test.ts` 在注册五项测试前导入 `CharacterService` 的 Electron 对话框，触发依赖延迟下载并发生 `fetch failed`，该消费者整体失败，不能称为通过。最终修复只在该测试文件内提供禁止调用的对话框替身，保留真实迁移、文件系统与安全存储的全部五项断言；生产代码与游戏冻结不变。最终发行源码的完整重验、干净克隆、归档与CI结果分别由 `RELEASE_ATTESTATION.json` 绑定，下面full13仍是其原冻结的历史结果。
+
 ## 最新地表探测夹具冻结
 
 代码冻结 **`1f3d03ff3e9b2711ca75c8c4bc0c87d91a34bfe7`**，874文件，sourceHash `722e3143c519a0feaf14fc518814d103f8ebea8c32addf7d58e6653ca6876aad`。原样完整 runtime full13：**3338/3338 PASS，自然 exit0，0 fail/cancel/skip/todo**。同冻结七项原命令：**全部自然 exit0：runtime3338/3338、host74/74、security6/6、legacy25/25、setup18/18，lint/typecheck通过；874文件源码前后不变**。完整结果以该轮自然终态为准，旧full11或定向测试不能代替本轮完整结果。
