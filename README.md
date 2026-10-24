@@ -16,7 +16,7 @@
 
 ## 安装源码与离线检查
 
-本轮已验证 Node.js **22.22.0** 与 npm **10.9.4**；其他较新版的兼容性尚未验证。发行中的池塘食物路线夹具已对齐实际 `survival_food` 分段策略，并新增全部 UNKNOWN 时禁止移动的负例；该离线夹具修正保留 runtime core/vendor 与正式场景字节；后续官方下载超时修复单独修改安装工具及其测试/CI。首次云端 CI 的 3325/3326 失败及修复边界见 [VALIDATION.md](VALIDATION.md)。最终发行提交的完整离线与 PR/main CI 结果由独立 `RELEASE_ATTESTATION.json` 绑定，和 a22 游戏验收快照分别记录。下载对应预发布的源码归档或检出对应标签后，在仓库根目录运行：
+本轮已验证 Node.js **22.22.0** 与 npm **10.9.4**；其他较新版的兼容性尚未验证。发行中的池塘食物路线夹具已对齐实际 `survival_food` 分段策略，并新增全部 UNKNOWN 时禁止移动的负例；该离线夹具修正保留 runtime core/vendor 与正式场景字节；后续官方下载超时修复单独修改安装工具及其测试/CI。首次云端 CI 的 3325/3326 失败及修复边界见 [VALIDATION.md](VALIDATION.md)。候选 f588 的 PR CI 通过后，首次 main CI 又记录完整 runtime3326/3327、1fail；后续264683仅修正 formal14 离线夹具以使用既有生产 settlement，并增加模型正例与取消负例；该冻结的原样完整full10已自然通过3329/3329，见同一验证报告。最终发行提交的完整离线与 PR/main CI 结果由独立 `RELEASE_ATTESTATION.json` 绑定，和 a22 游戏验收快照分别记录。下载对应预发布的源码归档或检出对应标签后，在仓库根目录运行：
 
 ```sh
 npm ci --ignore-scripts --prefix electron

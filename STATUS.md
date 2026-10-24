@@ -4,6 +4,12 @@
 
 首次 [云端 CI](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40060016518) 在候选 07bd 上记录 runtime3325/3326、1fail，原失败保留。后续仅修正池塘食物路线离线夹具，使配置与正式 `survival_food` 一致，并增加 UNKNOWN 不得授予移动的负例；没有修改生产代码、正式 harness、锁文件或预算。最终发行提交的全量离线、PR/main CI 与归档消费结果由 release 中的独立验收单分别绑定，不能把 a22 full03 说成后续 SHA 的重新游戏长跑。
 
+## 首次 main CI 失败与后续代码冻结
+
+候选 `f588b8bdbc82c41e22d35f9a69802efa4c3487e5` 的 [PR CI](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40065977579) 通过后，[首次 main CI](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40067331000) 自然失败：完整 runtime3326/3327、1fail，0cancel/skip/todo。唯一失败为 formal14 原生上升 dirt-path 离线夹具，code `dry_graph_route_lost`。原日志没有失败时的 native error、path update 或身体姿态遥测，精确首因仍未知。独立受控45ms调度停顿证明，原生空partial可使goto在实际未到达时提前resolve；接入既有生产settlement后，同一受控停顿下等待1732ms、真实抵达原目标格并落稳、visits2。这是机制证据，不是原CI精确重放；PR通过不替代main门禁，原main失败不重跑或覆盖。
+
+后续代码冻结：`264683ad461329a1f6b33849c97fb4b9bb400a84`；最窄修复范围：仅修正 formal14 离线夹具，接入既有生产 native-goto settlement，增加明确标记的初始 empty-partial 正例与取消负例。原样完整 full10：**3329/3329 PASS，自然exit0，0fail/cancel/skip/todo**，runtime总数 3329。同一264683/19fb冻结的七项原命令全部自然exit0：host74/74、security6/6、legacy25/25、setup18/18、lint/typecheck通过，源码前后无变化。最终文档提交、全新源码/归档消费者、隐私审计和新PR/main CI仍由各自真实收据与外置发行验收单绑定；a22 full03保留原24场景32轮身份。
+
 ## 安装器代码与发行验证
 
 安装器代码冻结提交（`INSTALLER_CODE_FREEZE`）：`8f324745527b7b13e6553b57c11af3309ebd9871`；最终发行文档提交由外部验收单记录。原样完整 runtime full9：**3327/3327 PASS**，自然退出0，fail/cancel/skip/todo均为0。最终发行文档提交、CI与消费者结果由发行附件绑定。此前00783/full8自然3327/3327和0898全新源码消费者3327/3327（host74/security6/legacy25及lint/typecheck通过）是各自快照结果。0898的 [PR CI](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40063704497) 状态记为 `历史0898 CI PASS3327/3327（05:07:09 UTC完成）`；它不充当下一冻结的发布门禁。

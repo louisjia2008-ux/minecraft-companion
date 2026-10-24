@@ -41,6 +41,14 @@ Preserved offline failures and interrupted campaigns are detailed in [VALIDATION
 - Align that offline fixture with the actual survival_food nativeReachableHints policy. Force the first real long-path result only downward to UNKNOWN; require each physical leg to consume its own latest successful native probe, and keep all-UNKNOWN motionless with no invented visits.
 - Keep the same native planner/Physics, pond and origin,12s test/10s leg/100ms probe limits, default false option and500ms policy. Production, formal scenarios, locks and the full03 driver remain unchanged. New complete offline/CI/archive receipts are bound independently to the final release source.
 
+### First main CI failure and subsequent fixture correction
+
+- Preserve the distinct first main push onf588: runtime3326/3327, one formal14 ascending dirt-path fixture failure,0cancel/skip/todo, naturalexit1. Its preceding PR CI passed3327/3327; the two checks remain separate. Failure-time native movement/body telemetry was absent, so the exact first cause stays unknown.
+- A separate real-AStar/Physics45ms-pause counterexample observes native emptypartial0, early goto resolve before arrival and the original route_lost outcome. The existing production settlement waits1732ms and physically reaches the original target cell, grounded, visits2, under the same pause. This is mechanism evidence, not an exact replay of the cloud failure.
+- The fixture now calls that existing adapter under the unchanged absolute deadline; explicit modeled-empty-partial and cancellation cases retain native motion, support/arrival guards,20s/12s limits and no invented visits. Targeted3/3 passed; production/formal/lock bytes remain unchanged.
+- Reviewed narrow repair scope: only the formal14 offline fixture: use the existing production native-goto settlement adapter, with explicit initial-empty-partial and cancellation regressions; code freeze: `264683ad461329a1f6b33849c97fb4b9bb400a84`. Original full10 result: **3329/3329 PASS, natural exit0,0fail/cancel/skip/todo**, runtime count 3329. All seven original checks naturally exited0 at that same code freeze, with unchanged source: host74/74, security6/6, legacy25/25, setup18/18, lint and typecheck; runtime took475454.575709ms.
+- Keep a22/full03 gameplay identities and all earlier failed/interrupted records. Bind a new final source manifest, fresh consumers/privacy and exact-final-tree PR/main checks independently; the earlier failed main run is not overwritten or reused as publication approval.
+
 ### Installer download policy and verification
 
 - Preserve both original0898 archive download failures: independent fresh roots, original300s total deadline, natural setup exit1 after301.5748s/301.3471s, no completed Minecraft installation or game. Partial-byte samples are not proof of continuously healthy networking or a confirmed underlying transport cause.
