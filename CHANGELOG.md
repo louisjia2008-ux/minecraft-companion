@@ -35,6 +35,12 @@ Preserved offline failures and interrupted campaigns are detailed in [VALIDATION
 - Preserve the observed full6 native-food timeout. Correct only its test clock to pump the original ideal20ms scheduling/50ms Physics ratio, retaining logical 5000ms/250ticks and an independent real 8s watchdog; production is unchanged.
 - New 38/38 mine rejoin, 92/92 related and 17/17 home checks plus an unshimmed native first-watchdog→arrival offline probe are focused regressions, not formal gameplay results.
 
+### Cloud CI fixture correction
+
+- Preserve the first PR CI attempt on07bd: original runtime3325/3326, one pond food-detour failure, no cancelled/skipped/todo. Other original commands passed. The cloud probe details were not logged, so the controlled host-pause counterexample is not called an exact replay.
+- Align that offline fixture with the actual survival_food nativeReachableHints policy. Force the first real long-path result only downward to UNKNOWN; require each physical leg to consume its own latest successful native probe, and keep all-UNKNOWN motionless with no invented visits.
+- Keep the same native planner/Physics, pond and origin,12s test/10s leg/100ms probe limits, default false option and500ms policy. Production, formal scenarios, locks and the full03 driver remain unchanged. New complete offline/CI/archive receipts are bound independently to the final release source.
+
 ### Acceptance changes
 
 - Reject dusk/underground night false positives using independent server day, dawn, surface, health, sleep/bunker evidence and deaths.
@@ -52,4 +58,4 @@ Preserved offline failures and interrupted campaigns are detailed in [VALIDATION
 
 This source preview includes only source: project code, lockfiles, tests/limited fixtures, build configuration, licenses/provenance and a sanitized validation summary. Dependencies, Java/server artifacts, worlds, logs, personal configuration and desktop binaries are excluded. No npm package publication is implied by the existing private package versions. The third-party desktop bundle is not distributed while license-variant/notice coverage remains unresolved.
 
-Final gameplay acceptance is24scenarios/32roundsPASS and offline runtime3326/3326PASS. E2E finishes after71m9.204s with finalhome95/95, requiredgear1each, generator8collected, smelter5produced/4collected, four recovery faults and only2planned deaths. It retains an observed11m37s floating-front retry cost before autonomous new-mine/coal recovery; standability and recovery coordination remain known improvement opportunities. Archive/install/checksum publication receipts remain separate. Historical README/core numbers retain their historical status.
+Final gameplay acceptance is24scenarios/32roundsPASS and the historical a22/full7 offline runtime3326/3326PASS. Final release offline and CI results are separately bound in RELEASE_ATTESTATION.json. E2E finishes after71m9.204s with finalhome95/95, requiredgear1each, generator8collected, smelter5produced/4collected, four recovery faults and only2planned deaths. It retains an observed11m37s floating-front retry cost before autonomous new-mine/coal recovery; standability and recovery coordination remain known improvement opportunities. Archive/install/checksum publication receipts remain separate. Historical README/core numbers retain their historical status.

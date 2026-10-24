@@ -1,6 +1,6 @@
 # Core validation report — v0.1.0-alpha.1 / 2026-10-24
 
-**Overall offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
+**Frozen a22 offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
 
 ## Snapshot and environment
 
@@ -22,9 +22,9 @@
 | Current full7 / formal full03 | PASS3326/3326 / PASS24scenarios32/32rounds, both naturalexit0 |
 | Formal result / final source match | ALL_PASS / unchanged a22/2b47, sourceChanges[] |
 | Release scope | User-confirmed source developer preview |
-| Release version / separate asset identity | v0.1.0-alpha.1; documentation/CI releasecommit and archive SHA-256 recorded separately |
+| Release version / separate asset identity | v0.1.0-alpha.1; documentation/CI/offline-fixture release commit and archive SHA-256 recorded separately |
 
-The aggregate hash binds its repository-file manifest, not a source-archive checksum. Full03 runs against `a22a73a4a7294ab5409b6e74ee882b2603ab528b` and its 867-file frozen manifest. The sole 4160→a22 delta is `test/house-local-food-frontier-host-physics.test.js`; production bytes and original task/native/host deadlines remain unchanged. The earlier e1→4160 production repair adds bounded off-route rejoin and home-maintenance ownership. Historical batches retain their own source identities. A later documentation-only release commit/archive needs its own manifest/SHA256 with unchanged gameplay/acceptance bytes; no dependency or Java/server bytes enter the intended source asset.
+The aggregate hash binds its repository-file manifest, not a source-archive checksum. Full03 runs against `a22a73a4a7294ab5409b6e74ee882b2603ab528b` and its 867-file frozen manifest. The sole 4160→a22 delta is `test/house-local-food-frontier-host-physics.test.js`; production bytes and original task/native/host deadlines remain unchanged. The earlier e1→4160 production repair adds bounded off-route rejoin and home-maintenance ownership. Historical batches retain their own source identities. A later release commit/archive with documentation, CI and offline-fixture corrections needs its own manifest/SHA256 with unchanged production/gameplay-harness bytes; no dependency or Java/server bytes enter the intended source asset.
 
 ## Campaign conditions
 
@@ -170,6 +170,18 @@ Separate fresh native-protocol fixtures established:
 | Iteration2 CLI interruption fixture, e6 | Requested 3 rounds; first SIGINT after real goal_set, then SIGTERM; one interrupted false result, no later round, natural exit 130; console/save/close passed | Expected cancellation-contract PASS, gameplay round remains INTERRUPTED/false |
 
 These fixtures change their own controlled world and keep unsuccessful attempts. They are not additional passes in the 32-round formal total. Observers used by formal runs update only their own counters/advancement or read state; they do not feed the bot or generate output resources.
+
+## First cloud CI failure and food-detour fixture correction
+
+The first [PR CI run](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40060016518), attempt1, failed its original complete runtime command: **3325/3326 passed, 1 failed, 0 cancelled/skipped/todo**. Its checkout was synthetic merge `649806c9e49e6303adbb9d26ff600f20df9bb2cc`, with the exact same tree as candidate `07bd0f0feee80f85f7cb1691c7469d0bd914ca59`. Installation, lint, typecheck, host, security, legacy acceptance and tracked-source checks passed. This failed run remains part of the record and was not rerun or relabeled.
+
+The only failed case was the grounded food detour around a pond in `test/house-surface-graph.test.js`. After107.08062ms it raised `dry_graph_rejoin_unconfirmed` before a confirmed reconnect. The initial body was about55.7m from the sole recorded anchor. The test omitted `nativeReachableHints`, although the actual `survival_food` caller explicitly enables it. Default mode deliberately keeps an inconclusive native100ms probe UNKNOWN; it does not guarantee every55m route can be planned within100ms, and it cannot authorize a >32m suffix reconnect merely because the terrain is traversable.
+
+An independent controlled counterexample retained the actual native planner, original terrain and real Physics. A single real host pause after the first native slice caused default mode to reject an UNKNOWN probe without any goto, body displacement or visit credit. The same pause with the actual food configuration independently confirmed a short endpoint, physically walked it, then freshly planned the remaining return and reached the exact anchor with zero water contact. This reproduces the mechanism, **not the exact cloud failure**: the original CI did not print probe status, elapsed/stopReason, pose or reconnect extras, so those exact failure-time details remain unobserved.
+
+The correction is confined to the offline fixture. It uses the actual food configuration, forces its first real long-path result only downward to UNKNOWN while retaining a bounded prefix as a hint, and requires a subsequent independent native success before each physical leg. It retains the same pond/start position, original12s test and10s leg limits, original100ms probes, real native planner/Physics, exact final anchor, zero water contact and unchanged visit/order counts. A separate all-UNKNOWN case requires zero movement/control activation and zero invented visits. No production code, clock, default option,500ms retry policy, dependency, formal scenario or gameplay deadline changes.
+
+Final complete offline, clean-checkout, PR/main CI and source-archive consumer results are bound to their own actual commits in release-side `RELEASE_ATTESTATION.json`. The complete24-scenario/32-round full03 remains the unchanged `a22a73a` gameplay result; it is not described as a new gameplay rerun at a later documentation/offline-fixture commit. Production, scenario/harness, lockfile and driver byte equivalence must be checked separately before carrying this game evidence into the source release.
 
 ## Known efficiency limit retained after passing full03 E2E
 
