@@ -8,6 +8,7 @@
 // through again.
 
 const defaultActions = require('./actions');
+const { goals } = require('mineflayer-pathfinder');
 const nether = require('./nether');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
@@ -109,7 +110,15 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
     if (bot.entity.position.distanceTo(portal) > 24) {
       return actions.goNear(bot, ctx, portal, 3, { timeoutMs: 120000 });
     }
-    return goThrough(ctx, portal);
+    // Close but stuck above or below it (a fortress floor over the portal):
+    // first get over its column, then step in.
+    if ((memory.homeMisses || 0) >= 2 && Math.hypot(bot.entity.position.x - portal.x, bot.entity.position.z - portal.z) > 2) {
+      ctx.record('portal_column', { misses: memory.homeMisses });
+      await actions.goTo(bot, ctx, new goals.GoalNearXZ(portal.x, portal.z, 1), { timeoutMs: 30000, arrived: () => true });
+    }
+    const result = await goThrough(ctx, portal);
+    memory.homeMisses = result.ok ? 0 : (memory.homeMisses || 0) + 1;
+    return result;
   }
 
   return { memory, enterNetherMode, leaveNetherMode, framePlaced, portalProgress, wearGold, goThrough, toNether, toOverworld, netherPortal };

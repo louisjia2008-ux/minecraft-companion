@@ -454,7 +454,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function netherStep(ctx, state) {
     trip.enterNetherMode();
     trip.netherPortal();
-    if (allDone(state)) return trip.toOverworld(ctx);
+    if (allDone(state)) return withScaffolding(() => trip.toOverworld(ctx));
     // Lost the kit (died, drops gone): a bare-handed fortress run only dies again.
     if (fortressWork(state) && !Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'))) return fail('no_weapon');
     scan(ctx);
