@@ -435,9 +435,12 @@ async function unstick(bot, ctx) {
     if (stairs >= 2) return { ok: true, moved: 'stairs' };
   }
   const saved = movements.maxDropDown;
+  // In the Nether a drop or a hole dug down may end in a lava sea: no deeper drops than the
+  // Nether movements allow, and no digging down.
+  const nether = String(bot.game?.dimension || '').endsWith('the_nether');
   try {
     // Fall damage is (height - 3); keep at least 5 health after any drop.
-    movements.maxDropDown = Math.max(saved, Math.min(12, Math.floor(bot.health) - 2));
+    if (!nether) movements.maxDropDown = Math.max(saved, Math.min(12, Math.floor(bot.health) - 2));
     for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
       const goal = new goals.GoalNearXZ(start.x + Math.cos(angle) * 8, start.z + Math.sin(angle) * 8, 2);
       await goTo(bot, ctx, goal, { timeoutMs: 15000, arrived: () => true });
@@ -446,7 +449,7 @@ async function unstick(bot, ctx) {
   } finally {
     movements.maxDropDown = saved;
   }
-  for (let i = 0; i < 8; i += 1) {
+  for (let i = 0; i < (nether ? 0 : 8); i += 1) {
     const below = bot.blockAt(bot.entity.position.offset(0, -1, 0));
     if (!below || below.boundingBox !== 'block' || !bot.canDigBlock(below)) break;
     const dug = await digBlock(bot, ctx, below);
