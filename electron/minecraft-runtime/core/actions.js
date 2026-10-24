@@ -7,7 +7,7 @@
 // Recovery is not done here: the caller picks another target or gives up.
 
 const { goals } = require('mineflayer-pathfinder');
-const { waitUntil, runCancellable, sleep } = require('./confirm');
+const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { ownedItems } = require('./perception');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
@@ -136,30 +136,58 @@ async function goToOnce(bot, ctx, goal, { timeoutMs = 30000, arrived } = {}) {
 }
 
 async function goNear(bot, ctx, position, range = 2, options = {}) {
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  // One original action budget, including direct, waypoint and final approach.
+  // A native path_timeout must not create a fresh budget for each fallback.
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const deadline = Date.now() + timeoutMs;
+  const expiry = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, expiry.signal]) : expiry.signal;
+  const scoped = { ...ctx, signal };
+  const timer = setTimeout(() => { expiry.abort('path_timeout'); haltBody(bot); }, timeoutMs);
+  const remaining = () => Math.max(0, deadline - Date.now());
+  const attempt = async (goal, options) => {
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    const result = await goTo(bot, scoped, goal, options);
+    // A native timeout can resolve as {ok:false} after cancellation as well
+    // as reject. Respect the root owner in both completion paths.
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    return result;
+  };
   const goal = new goals.GoalNear(position.x, position.y, position.z, range);
-  const direct = () => goTo(bot, ctx, goal, {
-    targetY: position.y,
-    ...options,
-    arrived: (at) => at.distanceTo(position) <= range + 1.5,
-  });
-  const result = await direct();
-  if (result.ok || !['Timeout', 'no_progress', 'NoPath'].includes(result.reason)) return result;
-  // Long trips over rough ground (hills, cliffs, foliage) can exhaust the
-  // planner before a full path is found. Walk in legs of ~16 blocks instead.
-  const deadline = Date.now() + (options.timeoutMs ?? 30000);
-  for (let leg = 0; leg < 6 && Date.now() < deadline; leg += 1) {
-    const here = bot.entity.position;
-    const dx = position.x - here.x;
-    const dz = position.z - here.z;
-    const flat = Math.hypot(dx, dz);
-    if (flat <= 20) return direct();
-    const step = 16 / flat;
-    const waypoint = new goals.GoalNearXZ(here.x + dx * step, here.z + dz * step, 3);
-    const before = here.clone();
-    const moved = await goTo(bot, ctx, waypoint, { timeoutMs: Math.min(20000, deadline - Date.now()), arrived: () => true });
-    if (bot.entity.position.distanceTo(before) < 4) return moved.ok ? fail('leg_blocked') : moved;
+  const direct = (limit = remaining()) => remaining() <= 0 ? Promise.resolve(fail('path_timeout'))
+    : attempt(goal, {
+      targetY: position.y, ...options, timeoutMs: Math.min(limit, remaining()),
+      arrived: (at) => at.distanceTo(position) <= range + 1.5,
+    });
+  try {
+    // Reserve room for existing 16-block legs on a long trip; close trips keep
+    // their full direct budget. 20s is the existing waypoint attempt cap.
+    const far = Math.hypot(position.x - bot.entity.position.x, position.z - bot.entity.position.z) > 20;
+    const result = await direct(far ? Math.min(20000, remaining()) : remaining());
+    if (result.ok || !['Timeout', 'path_timeout', 'no_progress', 'NoPath'].includes(result.reason)) return result;
+    for (let leg = 0; leg < 6 && remaining() > 0; leg += 1) {
+      const here = bot.entity.position;
+      const dx = position.x - here.x;
+      const dz = position.z - here.z;
+      const flat = Math.hypot(dx, dz);
+      if (flat <= 20) return await direct();
+      const step = 16 / flat;
+      const waypoint = new goals.GoalNearXZ(here.x + dx * step, here.z + dz * step, 3);
+      const before = here.clone();
+      const moved = await attempt(waypoint, { timeoutMs: Math.min(20000, remaining()), arrived: () => true });
+      if (bot.entity.position.distanceTo(before) < 4) return moved.ok ? fail('leg_blocked') : moved;
+    }
+    return await direct();
+  } catch (error) {
+    // Native cancellation can acknowledge after our own deadline. The root
+    // owner still decides cancellation; never relabel it as our timeout.
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    if (expiry.signal.aborted) return fail('path_timeout');
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return direct();
 }
 
 /** Moves to any spot from which `block` can be seen and dug. */

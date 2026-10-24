@@ -452,7 +452,7 @@ function overlaps(entity, target) {
 }
 
 function entityInside(bot, target) {
-  return Object.values(bot.entities).some((entity) => entity.name !== 'item' && entity.type !== 'orb'
+  return Object.values(bot.entities).some((entity) => entity.name !== 'item' && entity.name !== 'experience_orb' && entity.type !== 'orb'
     && overlaps(entity, target));
 }
 

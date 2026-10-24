@@ -29,6 +29,7 @@ const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 const { installEdgeNudge } = require('./edgeNudge');
+const { installOpenDoorPassage, uninstallOpenDoorPassage } = require('./openDoorPassage');
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
@@ -60,6 +61,7 @@ function configureMovements(bot) {
     const below = bot.blockAt(block.position.offset(0, -1, 0));
     return below && leaves.has(below.type) ? 25 : 0;
   });
+  installOpenDoorPassage(bot, movements);
   bot.pathfinder.setMovements(movements);
   // Mining paths through stone need more search time than surface walks.
   bot.pathfinder.thinkTimeout = 10000;
@@ -72,7 +74,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   installInventoryCompatibility(bot);
   const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
-  configureMovements(bot);
+  const configuredMovements = configureMovements(bot);
 
   // Stuck bodies, full bags and death loops are recovered for every goal alike.
   const recovery = createRecovery({ bot });
@@ -248,6 +250,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
         else bot.companionProtectBlock = priorHomeProtection;
       }
       haltBody(bot);
+      uninstallOpenDoorPassage(bot, configuredMovements);
     },
   };
 }
