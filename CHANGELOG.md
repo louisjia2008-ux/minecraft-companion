@@ -6,6 +6,12 @@ Scope: **source developer preview v0.1.0-alpha.1**. Tested freeze: `a22a73a4a729
 
 Preserved offline failures and interrupted campaigns are detailed in [VALIDATION.md](VALIDATION.md). In particular, full6 naturally failed 3324/3325; full7 passes only after a test-only clock correction with production and original budgets retained. Full02 has30 passed rounds and2 interrupted rounds, and does not supply passes to full03.
 
+### Bounded dry-prefix fixture and preserved main failure
+
+- Retain main CI40087560335 on58d451:3341/3342,one old dry-prefix case(0),`dry_graph_leg_timeout`,4197.32517ms,naturalexit1. The failure-time leg target/body/probe were absent; precise cause and stage remain UNKNOWN. The case includes prefix reconciliation and later frontier movement.
+- One transparent original case and one real native-slice control each pass once locally; neither is an exact replay or a claimed cause. Bound this prefix-specific fixture to a loaded dry strip with one new frontier,while preserving both original offsets,old nodes,all prefix/credit assertions,real native movement and4s leg/6s test/10ms Physics/120s graph. Reuse the production settlement adapter within the captured original deadline; add a clearly modeled finite-UNKNOWN refusal without new motor/node/visit credit.
+- Retain58d451 full17/clean10/archive11/privacy07 and PR400860 successful identities independently; none overrides the main failure or supplies a future final gate. No release was published from the failed main run. Final validation is bound separately in the release attestation.
+
 ### Native spawn settlement before emergency water tests
 
 - Preserve e632 CI400834:3339/3340,one emergency-food water initialization failure(`dry_graph_not_on_surface`),14.764295ms,naturalexit1. Failure-time pose was absent; exact CI cause remains UNKNOWN. Retain the original one-fetch log and separately documented local chunk-copy recovery.
