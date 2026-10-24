@@ -16,7 +16,7 @@
 
 ## 安装源码与离线检查
 
-本轮已验证 Node.js **22.22.0** 与 npm **10.9.4**；其他较新版的兼容性尚未验证。发行中的池塘食物路线夹具已对齐实际 `survival_food` 分段策略，并新增全部 UNKNOWN 时禁止移动的负例；生产与正式场景字节保持不变。首次云端 CI 的 3325/3326 失败及修复边界见 [VALIDATION.md](VALIDATION.md)。最终发行提交的完整离线与 PR/main CI 结果由独立 `RELEASE_ATTESTATION.json` 绑定，和 a22 游戏验收快照分别记录。下载对应预发布的源码归档或检出对应标签后，在仓库根目录运行：
+本轮已验证 Node.js **22.22.0** 与 npm **10.9.4**；其他较新版的兼容性尚未验证。发行中的池塘食物路线夹具已对齐实际 `survival_food` 分段策略，并新增全部 UNKNOWN 时禁止移动的负例；该离线夹具修正保留 runtime core/vendor 与正式场景字节；后续官方下载超时修复单独修改安装工具及其测试/CI。首次云端 CI 的 3325/3326 失败及修复边界见 [VALIDATION.md](VALIDATION.md)。最终发行提交的完整离线与 PR/main CI 结果由独立 `RELEASE_ATTESTATION.json` 绑定，和 a22 游戏验收快照分别记录。下载对应预发布的源码归档或检出对应标签后，在仓库根目录运行：
 
 ```sh
 npm ci --ignore-scripts --prefix electron
@@ -26,14 +26,17 @@ npm run typecheck --prefix electron
 npm test --prefix electron
 npm run test:security --prefix electron
 npm run test:minecraft:acceptance --prefix electron
+npm run test:minecraft:setup --prefix electron
 npm test --prefix electron/minecraft-runtime
 ```
 
-这里分别检查宿主、security、legacy acceptance 和原样完整 runtime。`npm run test:core --prefix electron/minecraft-runtime` 可单独检查新 core 子集；它不能代替完整 runtime `npm test`。这些命令包含离线夹具与建模的服务端回包，不能代替真实 Java 服务端验收。`--ignore-scripts` 不下载 Electron 二进制；开发桌面 UI 时另在 `electron/` 正常 `npm ci`，其 postinstall 会安装 runtime。依赖由接收者按锁文件安装，源码归档不携带 `node_modules`。
+这里分别检查宿主、security、legacy acceptance、安装器专项测试和原样完整 runtime。`npm run test:core --prefix electron/minecraft-runtime` 可单独检查新 core 子集；它不能代替完整 runtime `npm test`。这些命令包含离线夹具与建模的服务端回包，不能代替真实 Java 服务端验收。`--ignore-scripts` 只跳过安装阶段的生命周期脚本，不能保证后续测试不联网。0898 的全新消费者在宿主测试首次导入 Electron 时仍触发依赖的延迟下载；详情与实际耗时见验证报告。这不代表启动了桌面应用或完成 GUI/provider 验收。开发桌面 UI 时另在 `electron/` 正常 `npm ci`，其 postinstall 会安装 runtime。依赖由接收者按锁文件安装，源码归档不携带 `node_modules`。
 
 ## 第一个真实服务器场景
 
 本地服务端工具固定使用 Java 21 和 vanilla 1.21.8。macOS/Linux 的 arm64、x64 可使用现有安装工具；其他宿主需要自行准备兼容运行环境。安装工具从 Adoptium/Mojang 官方元数据下载并验证文件，默认写入仓库根的 `.minecraft-local-test/`，不替换系统 Java。
+
+每次下载的响应头等待和无有效数据进展各限 5 分钟，总下载限 15 分钟；安装器不自动重试，仍需通过官方大小与校验和验证。旧候选 0898 两次达到原 300 秒总期限的失败和修复边界见 [VALIDATION.md](VALIDATION.md)。安装器代码冻结 `8f324745527b7b13e6553b57c11af3309ebd9871` 已通过完整 runtime **3327/3327** 和安装器专项 **18/18**；最终发行文档提交、干净检出、归档安装及 CI 的实际结果由发行附件 `RELEASE_ATTESTATION.json` 绑定。游戏动作和正式场景预算保持不变。
 
 从仓库根目录运行安装工具：
 
@@ -97,6 +100,6 @@ E2E 从空背包开始，在受控平地完成家园后由默认自主目标收�
 
 不包含依赖安装目录、JDK、Minecraft 服务端 JAR、游戏世界/存档、完整原生日志、账号或授权缓存、学习记忆、个人配置、环境文件、API 凭据、Live2D/Cubism 资产或桌面构建产物。`acceptance/`、`tools/local-validation/` 等保留的旧入口有各自的引擎、条件和本地数据依赖，不能拿其局部结果补足新 core 的正式 full。
 
-正式24场景32/32轮已通过；保留的失败、中断历史、源码身份和已观察局限见 [VALIDATION.md](VALIDATION.md)。E2E 中旧矿道前沿悬空导致约11分37秒重试，随后自主弃矿、重新采到煤并完成任务；仍有站位验证与恢复效率的改进空间。本次结果不等于所有自然种子或长时自由游玩可靠性保证。
+正式24场景32/32轮已通过；保留的失败、中断历史、源码身份和已观察局限见 [VALIDATION.md](VALIDATION.md)。E2E 中旧矿道前沿返程约11分37秒重试，随后自主弃矿、重新采到煤并完成任务；仍有站位验证与恢复效率的改进空间。本次结果不等于所有自然种子或长时自由游玩可靠性保证。
 
-版本为 **v0.1.0-alpha.1**，仅源码开发预览。游戏测试 commit 与后续包含文档、CI和离线夹具修正的发行 commit 应分别记录；最终资产清单与 SHA256SUMS 在发行时绑定实际归档。
+版本为 **v0.1.0-alpha.1**，仅源码开发预览。游戏测试 commit 与后续包含文档、CI、离线夹具和安装器修正的发行 commit 应分别记录；最终资产清单与 SHA256SUMS 在发行时绑定实际归档。

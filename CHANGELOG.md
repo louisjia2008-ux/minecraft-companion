@@ -41,6 +41,14 @@ Preserved offline failures and interrupted campaigns are detailed in [VALIDATION
 - Align that offline fixture with the actual survival_food nativeReachableHints policy. Force the first real long-path result only downward to UNKNOWN; require each physical leg to consume its own latest successful native probe, and keep all-UNKNOWN motionless with no invented visits.
 - Keep the same native planner/Physics, pond and origin,12s test/10s leg/100ms probe limits, default false option and500ms policy. Production, formal scenarios, locks and the full03 driver remain unchanged. New complete offline/CI/archive receipts are bound independently to the final release source.
 
+### Installer download policy and verification
+
+- Preserve both original0898 archive download failures: independent fresh roots, original300s total deadline, natural setup exit1 after301.5748s/301.3471s, no completed Minecraft installation or game. Partial-byte samples are not proof of continuously healthy networking or a confirmed underlying transport cause.
+- Replace the one absolute download deadline with header300s, stream-idle300s and fixed total900s; do not automatically retry. This installer/tooling change is separate from unchanged runtime core/vendor, formal harness, dependency locks and game/action budgets.
+- Add the original installer-specific test command to CI. Installer code freeze `8f324745527b7b13e6553b57c11af3309ebd9871` naturally passed the complete runtime3327/3327 and setup18/18 (14top-level plus4child), with0fail/cancel/skip/todo. Final documentation/release identity is recorded in the external attestation.
+- Retain00783/full8 runtime3327/3327 and0898 clean-source checks as their own historical results; the0898 PR CI naturally completed successfully at05:07:09 UTC with runtime3327/3327. None substitutes for the next commit's required consumer/CI/publication receipts.
+- Clarify that ignore-scripts skips install lifecycle hooks. The fresh0898 host test still triggered Electron's lazy binary bootstrap and naturally passed74 tests after258.7419s; this is dependency work, not GUI/provider or fully network-free acceptance.
+
 ### Acceptance changes
 
 - Reject dusk/underground night false positives using independent server day, dawn, surface, health, sleep/bunker evidence and deaths.
