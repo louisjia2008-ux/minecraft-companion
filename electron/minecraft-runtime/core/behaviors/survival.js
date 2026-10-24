@@ -33,7 +33,7 @@ function lavaSurface(bot, feet) {
  * The nearest solid cell, out of the lava, that a swimmer can climb onto: its
  * top no higher than one block above the lava's surface.
  */
-function lavaShore(bot, radius = 16) {
+function lavaShore(bot, radius = 16, usable = () => true) {
   const feet = bot.entity.position.floored();
   const surface = lavaSurface(bot, feet);
   const open = (b) => b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
@@ -47,6 +47,7 @@ function lavaShore(bot, radius = 16) {
         const floor = bot.blockAt(p);
         if (!floor || floor.boundingBox !== 'block' || /magma/.test(floor.name)) continue;
         if (!open(bot.blockAt(p.offset(0, 1, 0))) || !open(bot.blockAt(p.offset(0, 2, 0)))) continue;
+        if (!usable(p)) continue;
         best = { p, d };
       }
     }
@@ -369,6 +370,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   }
   // Still in lava is not a failure to back off from: the next try comes at
   // once, before the bot sinks out of reach of the walls.
+  const shoreMisses = new Map(); // "(x, y, z)" -> { count, until }
   const lavaResult = (ctx, done) => {
     if (!done) ctx.record('still_in_lava', {});
     return { ok: true, waited: !done };
@@ -379,12 +381,24 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     want: () => (bot.entity?.isInLava === true ? 2 : 0),
     async run(ctx) {
       bot.pathfinder?.setGoal(null);
-      const out = () => !bot.entity.isInLava;
-      const shore = lavaShore(bot);
+      // Out means standing out of it: bobbing up at the surface for a tick is
+      // not, and stopping the swim there lets the bot slide straight back.
+      const out = () => !bot.entity.isInLava && bot.entity.onGround !== false;
+      const shore = lavaShore(bot, 16, (p) => {
+        const miss = shoreMisses.get(p.toString());
+        return !miss || miss.until <= Date.now() || miss.count < 4;
+      });
       if (shore) {
         ctx.record('leave_lava', { shore: `${shore.x},${shore.y},${shore.z}` });
         await swimTo(ctx, shore.offset(0.5, 1.2, 0.5), out);
         if (out()) await sleep(400, ctx.signal);
+        if (!out()) {
+          // A shore it keeps failing to climb (a flowing edge, a lip) is
+          // given up for a while in favour of another shore or a step.
+          const key = shore.toString();
+          const miss = shoreMisses.get(key);
+          shoreMisses.set(key, { count: (miss && miss.until > Date.now() ? miss.count : 0) + 1, until: Date.now() + 120000 });
+        }
         return lavaResult(ctx, out());
       }
       const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
