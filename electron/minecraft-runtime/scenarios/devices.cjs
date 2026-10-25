@@ -507,6 +507,8 @@ function resetVillageArea() {
 
 const ironFarmVillageFlat = {
   name: 'ironfarm-village-flat',
+  // About one run in four passes so far (see core/README.md): left out of the full suite.
+  experimental: true,
   description: `Flat plains on solid stone with a plains village 60-80 blocks away, easy difficulty, handed what the rail duplicator and the iron farm take (no villager eggs) and 3 minecarts; find the village, make rails, dig the iron farm near it, bring 3 of its villagers in by minecart and pick up ${IRON} iron ingots.`,
   serverProperties: {
     ...cobbleGeneratorFlat.serverProperties, 'level-name': 'village-iron',

@@ -341,7 +341,7 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
     if (tool && bot.heldItem?.name !== tool.name) await bot.equip(tool, 'hand').catch(() => {});
     for (let hit = 0; hit < 6 && bot.entities[cart.id]; hit += 1) {
       await sleep(900, ctx.signal);
-      try { await bot.attack(bot.entities[cart.id]); } catch (_) { break; }
+      try { await bot.attack(bot.entities[cart.id]); } catch { break; }
     }
     await sleep(300, ctx.signal);
     const gone = !bot.entities[cart.id];

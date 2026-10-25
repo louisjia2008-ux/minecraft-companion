@@ -160,7 +160,7 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
     if (tool && bot.heldItem?.name !== tool.name) await bot.equip(tool, 'hand').catch(() => {});
     for (let hit = 0; hit < 4 && bot.entities[cart.id]; hit += 1) {
       await sleep(900, ctx.signal);
-      try { await bot.attack(bot.entities[cart.id]); } catch (_) { break; }
+      try { await bot.attack(bot.entities[cart.id]); } catch { break; }
     }
     await sleep(300, ctx.signal);
     return !bot.entities[cart.id];

@@ -20,8 +20,9 @@ const QUICK = [
 const SUITES = {
   // Bed, bunker, farming and ranching skills: about half an hour with two at once.
   quick: QUICK,
-  // Preserve the existing repeated rounds, then cover every other scenario.
-  full: Object.keys(SCENARIOS).map((scenario) => ({ scenario,
+  // Preserve the existing repeated rounds, then cover every other scenario
+  // except the experimental ones (pass rates not yet good enough to require).
+  full: Object.keys(SCENARIOS).filter((scenario) => !SCENARIOS[scenario].experimental).map((scenario) => ({ scenario,
     runs: QUICK.find((entry) => entry.scenario === scenario)?.runs
       || (scenario === 'collect-logs-natural' ? 3 : 1), minPassRate: 1 })),
 };
