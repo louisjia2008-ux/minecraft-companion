@@ -194,3 +194,24 @@ test('in a lava pocket under a low roof the bot digs out room to climb onto a wa
   await leaveLava.run({ record() {} });
   assert.deepEqual(dug, ['(1, 31, 0)', '(1, 32, 0)']);
 });
+
+test('a hoglin fled from five times in a row is fought instead of fled from forever', async () => {
+  const bot = new EventEmitter();
+  bot.entity = { position: new Vec3(0, 64, 0) };
+  bot.game = { dimension: 'the_nether' };
+  bot.inventory = { slots: { 5: { name: 'golden_helmet' } }, items: () => [] };
+  bot.registry = { foodsByName: {} };
+  bot.entities = {};
+  const state = (distance) => ({ alive: true, health: 20, food: 20, position: bot.entity.position, inventory: { diamond_sword: 1 },
+    hostiles: [{ id: 3, name: 'hoglin', distance, position: new Vec3(distance, 64, 0) }] });
+  const actions = { fleeFrom: async () => ({ ok: true }) };
+  const behaviors = createSurvivalBehaviors({ bot, actions });
+  const avoid = behaviors.find((b) => b.name === 'avoid');
+  const defend = behaviors.find((b) => b.name === 'defend');
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal(avoid.want(state(10)), 1);
+    await avoid.run({ record() {}, perceive: () => state(10) });
+  }
+  assert.equal(avoid.want(state(10)), 0, 'no more running');
+  assert.equal(defend.want(state(5)), 1, 'fought once it comes close');
+});

@@ -140,7 +140,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const target = lookout(m.index, home);
     ctx.record('explore', { lookout: m.index, x: target.x, z: target.z,
       want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
-    const result = await actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8), { timeoutMs: 60000, arrived: () => true });
+    const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8), { timeoutMs: 60000, arrived: () => true });
+    const result = await (boxedIn() ? withScaffolding(walk) : walk());
     const moved = bot.entity.position.distanceTo(here);
     const left = Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
     scan(ctx, true);
@@ -159,12 +160,26 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
    * for a structure the bot may pillar up and bridge with cobblestone or
    * netherrack. Placing is made costly so it still walks where it can.
    */
+  // Where the bot stood at its last nether steps: all within a few blocks
+  // of each other means nothing it tries gets it anywhere.
+  const trail = [];
+  function noteStep() {
+    trail.push(bot.entity.position.clone());
+    if (trail.length > 8) trail.shift();
+  }
+  const boxedIn = () => trail.length >= 8 && trail.every((p) => p.distanceTo(trail[0]) <= 4);
+
   async function withScaffolding(run) {
     const m = bot.pathfinder?.movements;
     if (!m) return run();
     const saved = { towers: m.allow1by1towers, blocks: m.scafoldingBlocks, placeCost: m.placeCost };
     m.allow1by1towers = true;
     m.scafoldingBlocks = nether.netherScaffolding(bot);
+    // Boxed in (a pillar in a lava pit) with no netherrack left: build with
+    // cobblestone too, all but the last stack-quarter kept for lava steps.
+    const cobble = bot.registry.itemsByName?.cobblestone?.id;
+    const spare = bot.inventory.items().filter((i) => i.name === 'cobblestone').reduce((n, i) => n + i.count, 0) > 16;
+    if (boxedIn() && spare && Number.isInteger(cobble)) m.scafoldingBlocks = [...m.scafoldingBlocks, cobble];
     m.placeCost = 4;
     try {
       return await run();
@@ -460,6 +475,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await sleep(1000, ctx.signal);
       return { ok: true, waited: true };
     }
+    noteStep();
     if (allDone(state)) return withScaffolding(() => trip.toOverworld(ctx));
     // Lost the kit (died, drops gone): a bare-handed fortress run only dies again.
     if (fortressWork(state) && !Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'))) return fail('no_weapon');

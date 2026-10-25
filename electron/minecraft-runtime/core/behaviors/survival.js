@@ -233,10 +233,16 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Chasing an archer bare-handed, or down into the cave it shoots from, loses.
   const armed = (state) => Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'));
   // Melee anything close; go after archers only while healthy enough to close in.
+  // A hoglin by the way home keeps coming back however often the bot runs.
+  // Fled from five times in three minutes, it is fought instead, while
+  // the bot is armed and healthy.
+  const flights = new Map(); // entity id -> times fled from
+  const standing = (state, h) => CHARGERS.has(h.name) && armed(state) && state.health > 12
+    && (flights.get(h.id) || []).filter((at) => Date.now() - at < 180000).length >= 5;
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;
-    return threats(state).find((h) => h.name !== 'creeper' && !((AVOIDED.has(h.name) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT))
+    return threats(state).find((h) => h.name !== 'creeper' && !((AVOIDED.has(h.name) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || (RANGED.has(h.name) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
           && state.health > t.rangedHealth && armed(state)
@@ -590,7 +596,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     name: 'avoid',
     band: BAND.DEFENSE,
     want(state) {
-      const brute = threats(state).find((h) => CHARGERS.has(h.name) && h.distance <= BRUTE_RANGE);
+      const brute = threats(state).find((h) => CHARGERS.has(h.name) && h.distance <= BRUTE_RANGE && !standing(state, h));
       if (brute) return !state.sheltered && brute.distance > BRUTE_FIGHT ? 1 : 0;
       const raider = threats(state).find((h) => AVOIDED.has(h.name) && h.distance <= 24);
       if (raider && !danger.some((d) => Math.hypot(d.x - raider.position.x, d.z - raider.position.z) < 32)) {
@@ -599,10 +605,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       return raider && !state.sheltered && raider.distance > 2.5 ? 1 : 0;
     },
     async run(ctx) {
-      const raider = ctx.perceive().hostiles.find((h) => AVOIDED.has(h.name) || CHARGERS.has(h.name));
+      const state = ctx.perceive();
+      const raider = state.hostiles.find((h) => AVOIDED.has(h.name) || (CHARGERS.has(h.name) && !standing(state, h)));
       if (!raider) return { ok: true };
       ctx.record('avoid', { mob: raider.name, distance: Math.round(raider.distance) });
       const brute = CHARGERS.has(raider.name);
+      if (brute) flights.set(raider.id, [...(flights.get(raider.id) || []).slice(-9), Date.now()]);
       return actions.fleeFrom(bot, ctx, raider.position, { distance: brute ? BRUTE_RANGE + 6 : 32, timeoutMs: 15000 });
     },
   };
