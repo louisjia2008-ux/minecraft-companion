@@ -152,6 +152,20 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
     return moved.ok ? { ok: false, reason: 'not_in_stand' } : moved;
   }
 
+  // A cart breaks once its damage passes 40; each hit adds ten times its
+  // damage and it heals one a tick. Changing items resets the attack charge, so
+  // equip once, let it charge, then hit at full strength under a second apart.
+  async function breakCart(ctx, cart) {
+    const tool = bot.inventory.items().find((i) => /_(sword|axe|pickaxe)$/.test(i.name) && !/^(wooden|golden)_/.test(i.name));
+    if (tool && bot.heldItem?.name !== tool.name) await bot.equip(tool, 'hand').catch(() => {});
+    for (let hit = 0; hit < 4 && bot.entities[cart.id]; hit += 1) {
+      await sleep(900, ctx.signal);
+      try { await bot.attack(bot.entities[cart.id]); } catch (_) { break; }
+    }
+    await sleep(300, ctx.signal);
+    return !bot.entities[cart.id];
+  }
+
   async function dig(ctx, p) {
     const block = blockAt(p);
     if (!actions.withinReach(bot, v(p))) {
@@ -264,7 +278,6 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
           faces: [toward], stand: part.stand, verify: () => partOk(part), alsoClear: part.head ? [part.head] : [],
         });
         ctx.record('device_part', { part: part.key, ok: result.ok, reason: result.reason, facing: props(blockAt(part.position)).facing });
-        if (!result.ok && !memory.diag) { memory.diag = true; const around = []; const pp = part.position; for (let dx = -1; dx <= 2; dx += 1) for (let dy = -2; dy <= 1; dy += 1) for (let dz = -1; dz <= 1; dz += 1) around.push(`${pp.x + dx},${pp.y + dy},${pp.z + dz}=${blockAt({ x: pp.x + dx, y: pp.y + dy, z: pp.z + dz })?.name}`); ctx.record('DIAG', { at: bot.entity.position, around, ents: Object.values(bot.entities).filter((e) => e !== bot.entity && e.position.distanceTo(bot.entity.position) < 4).map((e) => `${e.name}@${e.position}`) }); }
         return result;
       }
       if (s.dry) {
@@ -315,6 +328,20 @@ function createIronFarmGoal({ bot, anchor = null, facing = 'east', count = 3, vi
         if (there) {
           await sleep(1000, ctx.signal);
           return { ok: false, reason: 'villager_in_entrance', waited: true };
+        }
+        // An empty cart stopped there (the corridor full of the others): break it from the tunnel.
+        const cart = Object.values(bot.entities).find((e) => e.name === 'minecart' && e.position && !e.passengers?.length
+          && Math.floor(e.position.x) === c.entrance.x && Math.floor(e.position.z) === c.entrance.z);
+        if (cart) {
+          if (bot.entity.position.distanceTo(cart.position) > 3) {
+            const moved = await goStand(ctx, c.villagerStand);
+            if (!moved.ok) return moved;
+          }
+          await breakCart(ctx, cart);
+          ctx.record('iron_farm_entrance_cart', { broken: !bot.entities[cart.id] });
+          // A hit that doesn't break it knocks it on into the corridor, which frees the entrance too.
+          memory.entranceHits = (memory.entranceHits || 0) + 1;
+          return bot.entities[cart.id] ? { ok: false, reason: 'cart_in_entrance', waited: memory.entranceHits < 30 } : { ok: true };
         }
         if (!isAir(blockAt(c.entrance))) return dig(ctx, c.entrance);
         const result = await skills.placeAt(bot, ctx, c.entrance, (n) => n === 'cobblestone', {

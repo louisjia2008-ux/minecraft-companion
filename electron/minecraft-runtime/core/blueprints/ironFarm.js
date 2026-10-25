@@ -41,7 +41,10 @@
 
 const { FACINGS, DIRECTION_NAMES } = require('./cobbleGenerator');
 
-const DEPTH = 8; // the ground's top layer to the villagers' feet
+// The ground's top layer to the villagers' feet. Villagers notice an iron
+// golem within 16 blocks every way, and one seen lately stops them calling
+// another: deep enough that a village's own golem walking overhead is never seen.
+const DEPTH = 18;
 const TUNNEL = 10; // tunnel cells from the corridor; the stairs start beyond
 const SHAFTS = [-3, -5]; // lane offsets of the golem shafts beside the tunnel
 

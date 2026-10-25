@@ -184,7 +184,8 @@ function chooseVillageFarmSite(blockAt, village, { radius = 4 } = {}) {
 function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
   const memory = { village: null, farmGoal: null, duperGoal: null, line: null, explore: {},
-    loaded: 0, delivered: 0, pushes: 0, skip: new Map(), stocked: false, refill: null, made: 0 };
+    loaded: 0, delivered: 0, pushes: 0, skip: new Map(), stocked: false, refill: null, made: 0,
+    occupied: new Map(), avoid: new Set() };
   // Rails laid leave the inventory, so what the duplicator made is frozen once
   // stocked and topped up by each refill's presses: laying never looks like a loss.
   const duperProgress = () => (memory.stocked ? memory.made : memory.duperGoal?.progress() || 0) + (memory.refill?.memory.presses || 0);
@@ -232,7 +233,7 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
   // Cells the line keeps away from: the duplicator and a block around it.
   function blockedCells() {
     const d = memory.duperGoal?.memory.device;
-    const out = new Set();
+    const out = new Set(memory.avoid);
     if (!d) return out;
     const cells = [...d.parts.map((p) => p.position), ...(d.floor || []), ...(d.clear || []), ...(d.hollow || [])];
     for (const c of cells) for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
@@ -264,6 +265,18 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
       const filled = await skills.placeAt(bot, ctx, { ...cell, y: cell.y - 1 }, (n) => n === 'dirt' || n === 'cobblestone',
         { faces: [new Vec3(0, -1, 0)] });
       ctx.record('village_rail_ground', { at: cell, ok: filled.ok, reason: filled.reason });
+      if (!filled.ok && filled.reason === 'cell_occupied_by_entity') {
+        // Something stands in the hole (a villager that wandered in): give it a
+        // moment, then route the line round that cell.
+        const k = key(cell);
+        const tries = (memory.occupied.get(k) || 0) + 1;
+        memory.occupied.set(k, tries);
+        if (tries >= 10) memory.avoid.add(k);
+        ctx.record('village_rail_ground_occupied', { at: cell, tries, by: Object.values(bot.entities)
+          .filter((e) => e.position && e.position.distanceTo(v(cell)) < 2).map((e) => (e === bot.entity ? 'bot' : e.name)) });
+        await sleep(1000, ctx.signal);
+        return { ...filled, waited: tries < 10 };
+      }
       if (!filled.ok) return filled;
     }
     const result = await skills.placeAt(bot, ctx, cell, (n) => n === 'rail', { faces: [new Vec3(0, -1, 0)], passable: true });
@@ -300,7 +313,10 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
       return { ok: false, reason: 'cart_failed' };
     }
     const aboard = await waitUntil(() => bot.entities[villager.id]?.vehicle?.name === 'minecart', { timeoutMs: 5000, signal: ctx.signal });
-    if (aboard) memory.loaded += 1;
+    if (aboard) {
+      memory.loaded += 1;
+      memory.lastLoaded = villager.id;
+    }
     if (aboard && memory.loaded === 1) {
       // Once: how the farm's rails shaped themselves, and whether the corridor's are powered.
       ctx.record('village_route_state', { rails: farm().rails.map((r) => {
@@ -318,14 +334,16 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
     const moved = await actions.goNear(bot, ctx, cart.position.clone(), 2, { timeoutMs: 15000 });
     if (!moved.ok) return moved;
     // A cart breaks once its damage passes 40. Each hit adds ten times its
-    // damage and it heals one a tick, so a fist (1) never gets there: one
-    // full-strength hit with a pickaxe, axe or sword (5 or more) does.
+    // damage and it heals one a tick, so a fist (1) never gets there; two
+    // full-strength pickaxe hits (4) under a second apart do. Changing items
+    // resets the attack charge: equip once and let it charge before each hit.
     const tool = bot.inventory.items().find((i) => /_(sword|axe|pickaxe)$/.test(i.name) && !/^(wooden|golden)_/.test(i.name));
-    if (tool) await bot.equip(tool, 'hand').catch(() => {});
+    if (tool && bot.heldItem?.name !== tool.name) await bot.equip(tool, 'hand').catch(() => {});
     for (let hit = 0; hit < 6 && bot.entities[cart.id]; hit += 1) {
+      await sleep(900, ctx.signal);
       try { await bot.attack(bot.entities[cart.id]); } catch (_) { break; }
-      await sleep(1000, ctx.signal);
     }
+    await sleep(300, ctx.signal);
     const gone = !bot.entities[cart.id];
     if (gone) {
       const drop = Object.values(bot.entities).find((e) => e.name === 'item' && e.position.distanceTo(cart.position) < 3);
@@ -361,7 +379,7 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
       ctx.record('village_no_route_to_cart', { end, target, onStub, explored: stats.explored || 0,
         ground: blockAt({ ...target, y: target.y - 1 })?.name, here: blockAt(target)?.name });
       // No way to it: break the cart (its villager gets out) and leave that one be for a while.
-      for (const e of cart.passengers || []) memory.skip.set(e.id, Date.now() + 120000);
+      for (const id of [...(cart.passengers || []).map((e) => e.id), memory.lastLoaded]) if (id) memory.skip.set(id, Date.now() + 120000);
       const back = await takeBackCart(ctx, cart);
       if (back.ok && memory.stub && isRail(blockAt(memory.stub))) return { ok: true };
       return back.ok ? { ok: true } : { ok: false, reason: 'no_route_to_cart' };
@@ -430,7 +448,12 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
     if (moving) return { ok: true };
     // Up against the carts already parked in the corridor: the villagers in
     // there knock them about, so it gets through; keep pushing without a stall.
-    if (k <= 3) return { ok: false, reason: 'corridor_full', waited: true };
+    if (k <= 3) {
+      // Several pushes in vain at the entrance: break the cart there instead.
+      memory.doorPushes = (memory.doorPushes || 0) + 1;
+      if (k === 3 && memory.doorPushes % 4 === 0) return takeBackCart(ctx, bot.entities[cart.id] || cart);
+      return { ok: false, reason: 'corridor_full', waited: true };
+    }
     return { ok: false, reason: 'cart_did_not_move' };
   }
 
@@ -460,7 +483,16 @@ function createVillageIronFarmGoal({ bot, count = 3, skills = defaultSkills, act
       }
       memory.stub = null;
     }
-    if (bot.inventory.items().every((i) => i.name !== 'minecart')) return { ok: false, reason: 'no_material', missing: [{ name: 'minecart', short: 1 }] };
+    if (bot.inventory.items().every((i) => i.name !== 'minecart')) {
+      // A cart stopped in the entrance (the corridor full of the others, its
+      // villager perhaps still aboard): break it. Its villager steps on in
+      // (the gap costs it a point of health) and the cart comes back.
+      const door = farm().rails[3].position;
+      const stuck = Object.values(bot.entities).find((e) => e.name === 'minecart' && e.position
+        && Math.floor(e.position.x) === door.x && Math.floor(e.position.z) === door.z && Math.abs(e.position.y - door.y) < 1);
+      if (stuck) return takeBackCart(ctx, stuck);
+      return { ok: false, reason: 'no_material', missing: [{ name: 'minecart', short: 1 }] };
+    }
     const end = memory.line[memory.line.length - 1];
     const near = (e) => Math.hypot(e.position.x - end.x, e.position.z - end.z);
     // Grown villagers out in the open at the line's level, nearest the line's end first.

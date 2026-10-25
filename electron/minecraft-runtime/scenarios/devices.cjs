@@ -490,7 +490,7 @@ function resetVillageArea() {
   const commands = [];
   for (let x = x0; x <= x1; x += 64) {
     const xe = Math.min(x + 63, x1);
-    for (let y = GROUND - 14; y < GROUND - 4; y += 2) commands.push(`fill ${x} ${y} ${z0} ${xe} ${Math.min(y + 1, GROUND - 5)} ${z1} stone`);
+    for (let y = GROUND - 26; y < GROUND - 4; y += 2) commands.push(`fill ${x} ${y} ${z0} ${xe} ${Math.min(y + 1, GROUND - 5)} ${z1} stone`);
     // At most 32768 blocks a fill: a 64-wide slab of the area is two layers.
     commands.push(`fill ${x} ${GROUND - 4} ${z0} ${xe} ${GROUND - 3} ${z1} dirt`, `fill ${x} ${GROUND - 2} ${z0} ${xe} ${GROUND - 2} ${z1} dirt`,
       `fill ${x} ${GROUND - 1} ${z0} ${xe} ${GROUND - 1} ${z1} grass_block`);
