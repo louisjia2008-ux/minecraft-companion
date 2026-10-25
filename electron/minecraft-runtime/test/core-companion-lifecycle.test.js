@@ -285,3 +285,82 @@ test('cancellation retires only its goal and never waits for an unrelated ongoin
   await safety;
   assert.equal(f.controls.jump, false);
 });
+
+for (const terminal of ['cancel', 'replace', 'failure', 'completion', 'dispose']) {
+  test(`nested Nether trip restores its own movement policy on ${terminal}`, async (t) => {
+    const f = fixture(t);
+    f.bot.health = 0;
+    f.bot.game.dimension = 'the_nether';
+    f.bot.findBlocks = () => [];
+    const movements = f.bot.pathfinder.movements;
+    // Restore caller policy, not hard-coded global defaults.
+    movements.maxDropDown = 7;
+    const extraHook = () => 17;
+    movements.exclusionAreasStep.push(extraHook);
+    const hooks = [...movements.exclusionAreasStep];
+    const cantBreak = new Set(movements.blocksCantBreak);
+    const goal = await f.companion.gatherMaterials({ chest: { x: 0, y: 64, z: 0 },
+      requirements: [{ key: 'quartz', count: 2 }] });
+    const ctx = { perceive: () => ({ inventory: {} }), record() {}, signal: new AbortController().signal };
+    await goal.run(ctx);
+    assert.equal(movements.companionNether, true);
+    assert.equal(movements.maxDropDown, 3);
+    assert.equal(movements.exclusionAreasStep.length, hooks.length + 1);
+    if (terminal === 'cancel') await f.companion.cancelTask();
+    if (terminal === 'replace') await f.companion.gatherLogs(1);
+    if (terminal === 'failure') { await f.companion.brain.failGoal('test_failure'); await turn(); }
+    if (terminal === 'completion') {
+      goal.memory.chest = { quartz: 2 };
+      f.bot.health = 20;
+      await f.companion.brain.tick();
+      await turn();
+    }
+    if (terminal === 'dispose') await f.companion.dispose();
+    assert.equal(movements.companionNether, false);
+    assert.equal(movements.maxDropDown, 7);
+    assert.deepEqual(movements.exclusionAreasStep, hooks);
+    assert.deepEqual(movements.blocksCantBreak, cantBreak);
+    // Idempotence must not erase policy installed after retirement.
+    movements.maxDropDown = 9;
+    await goal.dispose();
+    assert.equal(movements.maxDropDown, 9);
+  });
+}
+
+test('cached device project cascades through its real gather and Nether trip, then can resume', async (t) => {
+  const { createDeviceProjectGoal } = require('../core/goals/deviceProject');
+  const f = fixture(t);
+  f.bot.health = 0;
+  f.bot.game.dimension = 'the_nether';
+  f.bot.findBlocks = () => [];
+  const movements = f.bot.pathfinder.movements;
+  const beforeHooks = [...movements.exclusionAreasStep];
+  const foreignDeath = () => {};
+  f.bot.on('death', foreignDeath);
+  const deaths = f.bot.listeners('death');
+  const project = createDeviceProjectGoal({ bot: f.bot, name: 'quartz_device',
+    device: { name: 'device', memory: {}, needs: () => [{ key: 'quartz', count: 2 }],
+      isDone: () => false, progress: () => 0 },
+    home: { chest: { x: 0, y: 64, z: 0 }, centre: { x: 0, y: 64, z: 0 } } });
+  const ctx = { perceive: () => ({ inventory: {} }), record() {}, signal: new AbortController().signal };
+  await f.companion.setGoal(project);
+  await project.run(ctx);
+  const gather = project.memory.gather;
+  const trip = gather.memory.trip;
+  trip.memory.overworldPortal = { x: 2, y: 64, z: 3 };
+  assert.equal(movements.companionNether, true);
+  await f.companion.cancelTask();
+  assert.equal(movements.companionNether, false);
+  assert.equal(movements.maxDropDown, 4);
+  assert.deepEqual(movements.exclusionAreasStep, beforeHooks);
+  assert.deepEqual(f.bot.listeners('death'), deaths);
+  assert.equal(project.memory.gather, gather);
+  assert.equal(gather.memory.trip, trip);
+  await f.companion.setGoal(project);
+  await project.run(ctx);
+  assert.equal(movements.companionNether, true);
+  assert.deepEqual(trip.memory.overworldPortal, { x: 2, y: 64, z: 3 });
+  await f.companion.cancelTask();
+  assert.equal(movements.companionNether, false);
+  assert.deepEqual(movements.exclusionAreasStep, beforeHooks);
+});
