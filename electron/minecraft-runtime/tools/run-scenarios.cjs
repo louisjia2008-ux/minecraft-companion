@@ -243,6 +243,11 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
         if (on && control === 'forward') moves.forward = { at: Date.now(), by: where() };
         return setControlState(control, on);
       };
+      // Physics ticks and server corrections since the last heartbeat: a frozen
+      // body shows no ticks (nothing simulated) or a stream of corrections.
+      moves.ticks = 0; moves.forced = 0;
+      bot.on('physicsTick', () => { moves.ticks += 1; });
+      bot.on('forcedMove', () => { moves.forced += 1; });
       bot.companionMoveTrace = moves;
     }
     heartbeat = setInterval(() => {
@@ -252,7 +257,9 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
       const line = { minute: Math.round((Date.now() - startedAt) / 60000), running: status.running,
         steps: status.goal?.progress, health: bot.health, food: bot.food, deaths,
         position: bot.entity?.position?.floored?.(), dimension: bot.game?.dimension, inventory: inv, body: bodyState(bot),
-        ...(bot.companionMoveTrace ? { moves: { ...bot.companionMoveTrace } } : {}) };
+        ...(bot.companionMoveTrace ? { moves: { ...bot.companionMoveTrace,
+          here: bot.entity?.position ? (bot.blockAt(bot.entity.position)?.name ?? 'unloaded') : null } } : {}) };
+      if (bot.companionMoveTrace) Object.assign(bot.companionMoveTrace, { ticks: 0, forced: 0 });
       write('heartbeat', line);
       line.autonomy = status.autonomy?.current || null;
       console.log(`    [${line.minute}m] ${line.running || 'idle'}${line.autonomy ? ` (auto:${line.autonomy})` : ''} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`

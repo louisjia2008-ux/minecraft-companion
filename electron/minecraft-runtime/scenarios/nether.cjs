@@ -171,9 +171,12 @@ function expeditionScenario({ name, near, targets, timeoutMs }) {
   };
 }
 
-const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION, timeoutMs: 75 * 60 * 1000 });
+// A wither skeleton drops its skull 5.5% of the time with Looting III: about 18
+// kills for one skull, and a fortress yields one every two or three minutes.
+// 45 minutes ended runs that played well but rolled no skull (13 kills, none).
+const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION, timeoutMs: 120 * 60 * 1000 });
 const netherFortressGiven = expeditionScenario({ name: 'nether-fortress-given', near: 'fortress',
-  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, trades: 0 }, timeoutMs: 45 * 60 * 1000 });
+  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, trades: 0 }, timeoutMs: 90 * 60 * 1000 });
 const netherBastionGiven = expeditionScenario({ name: 'nether-bastion-given', near: 'bastion',
   targets: { blazeRods: 0, witherSkulls: 0, trades: EXPEDITION.trades }, timeoutMs: 30 * 60 * 1000 });
 
