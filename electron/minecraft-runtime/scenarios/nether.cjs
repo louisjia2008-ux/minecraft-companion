@@ -77,7 +77,8 @@ const EXPEDITION_KIT = [
   ['diamond_sword[enchantments={looting:3,sharpness:3}]', 1], ['shield', 1],
   ['golden_helmet', 3], ['diamond_chestplate', 1], ['diamond_leggings', 1], ['diamond_boots', 1],
   ['cooked_beef', 32], ['golden_apple', 8], ['gold_ingot', GOLD],
-  ['potion[potion_contents={potion:"minecraft:long_fire_resistance"}]', 4],
+  // Eight minutes each: four ran out half way through a 90-minute fortress hunt.
+  ['potion[potion_contents={potion:"minecraft:long_fire_resistance"}]', 8],
 ];
 
 /** Where the nearest structure of a kind is, asked of the server from a nether point. */

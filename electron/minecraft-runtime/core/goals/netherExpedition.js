@@ -286,14 +286,22 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return { ok: true, waited: true };
     }
     memory.waitSince = 0;
-    return patrol(ctx, memory.fortress, 'fortress');
+    return patrol(ctx, memory.fortress, 'fortress', state);
   }
 
+  // With the rods in, the spawner's blazes only fill the mob cap: wither
+  // skeletons are found in the corridors away from it (3 of 58 kills by it).
+  const SPAWNER_CLEAR = 24;
+
   /** A walk to a random floor cell 12-40 blocks away inside the structure. */
-  async function patrol(ctx, centre, kind) {
+  async function patrol(ctx, centre, kind, state) {
     const here = bot.entity.position;
     const band = (lo, hi) => (p) => { const d = p.distanceTo(here); return d >= lo && d <= hi; };
-    let floor = structures.fortressFloor(bot, here, 48, 512).filter(band(12, 40));
+    const avoid = kind === 'fortress' && memory.spawner && state && rods(state) >= blazeRods
+      ? (p) => p.distanceTo(memory.spawner) >= SPAWNER_CLEAR : () => true;
+    let floor = structures.fortressFloor(bot, here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
+    if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter((p) => band(12, 96)(p) && avoid(p));
+    if (!floor.length) floor = structures.fortressFloor(bot, here, 48, 512).filter(band(12, 40));
     if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter(band(12, 96));
     // Nothing else to walk to here: go and stand by the spawner (or the first brick
     // seen); already there, look around from a lookout instead.
