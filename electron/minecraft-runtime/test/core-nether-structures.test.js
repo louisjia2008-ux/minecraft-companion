@@ -215,3 +215,10 @@ test('a hoglin fled from five times in a row is fought instead of fled from fore
   assert.equal(avoid.want(state(10)), 0, 'no more running');
   assert.equal(defend.want(state(5)), 1, 'fought once it comes close');
 });
+
+test('respawned at home without a weapon, the expedition stops instead of going back to die', async () => {
+  const bot = { ...world({}), game: { dimension: 'overworld' }, inventory: { slots: [], items: () => [] }, equip: async () => {} };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 2, witherSkulls: 0, trades: 0 });
+  const result = await goal.run({ record() {}, perceive: () => ({ inventory: {} }), signal: new AbortController().signal });
+  assert.equal(result.reason, 'no_weapon');
+});

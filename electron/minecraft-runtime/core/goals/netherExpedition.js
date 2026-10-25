@@ -466,6 +466,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
 
   // ---- the expedition -------------------------------------------------------
 
+  // Lost the kit (died, drops gone): a bare-handed fortress run only dies
+  // again, and there is no bartering without gold.
+  function lostKit(state) {
+    if (fortressWork(state) && !Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'))) return 'no_weapon';
+    if (tradeWork() && !gold(state)) return 'no_gold';
+    return null;
+  }
+
   async function netherStep(ctx, state) {
     trip.enterNetherMode();
     trip.netherPortal();
@@ -477,11 +485,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
     noteStep();
     if (allDone(state)) return withScaffolding(() => trip.toOverworld(ctx));
-    // Lost the kit (died, drops gone): a bare-handed fortress run only dies again.
-    if (fortressWork(state) && !Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'))) return fail('no_weapon');
+    const lost = lostKit(state);
+    if (lost) return fail(lost);
     scan(ctx);
     if (tradeWork()) {
-      if (!gold(state)) return fail('no_gold');
       const piglin = pickPiglin(memory.bastion && bot.entity.position.distanceTo(memory.bastion) <= 40 ? 24 : 12);
       if (piglin) return barter(ctx, piglin);
     }
@@ -530,6 +537,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       if (nether.inNether(bot)) return netherStep(ctx, state);
       trip.leaveNetherMode();
       if (allDone(state)) return { ok: true };
+      // Respawned without it: going back through to the fortress only dies again.
+      const lost = lostKit(state);
+      if (lost) return fail(lost);
       return trip.toNether(ctx, state);
     },
     dispose: trip.leaveNetherMode,

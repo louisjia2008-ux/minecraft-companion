@@ -151,6 +151,7 @@ const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 const BRUTE_RANGE = 12;
 const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled_deepslate', 'dirt', 'basalt', 'soul_soil']);
 const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
+const SHOOTERS = new Set(['blaze', 'ghast']);
 const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull']);
 // Hoglins too: their charge tosses the bot, into lava as often as not.
 const CHARGERS = new Set(['piglin_brute', 'hoglin']);
@@ -540,8 +541,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const recover = {
     name: 'recover',
     band: BAND.MAINTENANCE,
+    // Not in the sight of something that shoots: a blaze or ghast out of
+    // melee reach still hits a bot standing still to heal.
     want: (state) => (state.health < t.recoverHealth && state.food >= t.recoverFood
-      && !threats(state).some((h) => h.distance <= 8) ? 0.3 : 0),
+      && !threats(state).some((h) => h.distance <= 8 || (SHOOTERS.has(h.name) && h.distance <= 24)) ? 0.3 : 0),
     async run(ctx) {
       actions.haltBody(bot);
       await sleep(3000, ctx.signal);
