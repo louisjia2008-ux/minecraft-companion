@@ -14,6 +14,10 @@
 
 源码中的 `core/companion.js` 提供 `createCompanion({ bot, onEvent, autonomy })`，接收由调用方连接并准备好的 Mineflayer bot。它是开发者 API，涉及连接、取消、关停和世界生命周期；现成的复现入口是下面的场景 CLI。代码导航见 [ARCHITECTURE.md](ARCHITECTURE.md)，各目标说明见 [core/README.md](electron/minecraft-runtime/core/README.md)。其中较早版本的测试数字属于历史记录，当前冻结版本以 [VALIDATION.md](VALIDATION.md) 为准。
 
+## 嵌入其他项目
+
+嵌入 DeskPet、LLM 工具调用或其他宿主时，可显式使用 `index.js --engine core --data-dir <独立绝对目录>`，或调用 `createCoreHost` 使用相同的结构化工具协议。新适配层提供任务 ID、真实终态、有限防重、显式替换、保留生存保护的暂停/取消和显式重连；默认旧 JSONL / Electron 链路不变。合同、示例和回归命令见 [嵌入接口](docs/EMBEDDING.md)。
+
 ## 安装源码与离线检查
 
 已验证 Node.js **22.22.0** 与 npm **10.9.4**。历史离线冻结 `1f3d03f` 的原样完整 runtime full13：**3338/3338 PASS，自然 exit0，0 fail/cancel/skip/todo**；七项原命令：**全部自然 exit0：runtime3338/3338、host74/74、security6/6、legacy25/25、setup18/18，lint/typecheck通过；874文件源码前后不变**。正式游戏验收与离线冻结分别记录在 [VALIDATION.md](VALIDATION.md)，最终发行源码、干净安装、隐私审计及 PR/main CI 结果由发行附件 `RELEASE_ATTESTATION.json` 绑定。其他 Node/npm 版本尚未验证。下载对应预发布的源码归档或检出对应标签后，在仓库根目录运行：
@@ -30,7 +34,7 @@ npm run test:minecraft:setup --prefix electron
 npm test --prefix electron/minecraft-runtime
 ```
 
-这里分别检查宿主、security、legacy acceptance、安装器专项测试和原样完整 runtime。`npm run test:core --prefix electron/minecraft-runtime` 可单独检查新 core 子集；它不能代替完整 runtime `npm test`。这些命令包含离线夹具与建模的服务端回包，不能代替真实 Java 服务端验收。资源记忆的原生运动测试还验证实际到达、地面支撑、朝资源的距离改善和未访问路点零信用；有限探测可选择其他改善方向，不要求固定沿某一坐标轴行进。此前固定坐标断言的两次完整失败保留在验证报告。树冠脱困正例使用只有原点叶柱的树冠并要求真实四格下降；UNKNOWN对照则禁止虚构下树信用。紧急跨水夹具还等待初生身体经真实Physics连续落稳，未落稳时必须拒绝移动；原低血量与回营要求保持。`--ignore-scripts` 只跳过安装阶段的生命周期脚本。迁移单测对 Electron 文件选择对话框使用本文件内的替身，并禁止任何调用；其余迁移、文件系统、仓库与安全存储逻辑仍真实运行。因此这些单测不要求下载或启动 Electron 二进制。此前候选的延迟下载与最终一次下载失败均保留在验证报告；这项隔离修复和最终完整检查由发行验收单绑定。宿主单测不代表桌面 GUI/provider 验收。开发桌面 UI 时另在 `electron/` 正常 `npm ci`，其 postinstall 会安装 runtime。依赖由接收者按锁文件安装，源码归档不携带 `node_modules`。
+这里分别检查宿主、security、legacy acceptance、安装器专项测试和原样完整 runtime。`npm run test:core --prefix electron/minecraft-runtime` 可单独检查新 core 子集；它不能代替完整 runtime `npm test`。这些命令包含离线夹具与建模的服务端回包，不能代替真实 Java 服务端验收。资源记忆的原生运动测试还验证实际到达、地面支撑、朝资源的距离改善和未访问路点零信用；有限探测可选择其他改善方向，不要求固定沿某一坐标轴行进。此前固定坐标断言的两次完整失败保留在验证报告。树冠脱困正例使用只有原点叶柱的树冠并要求真实四格下降；UNKNOWN对照则禁止虚构下树信用。紧急跨水夹具还等待初生身体经真实Physics连续落稳，未落稳时必须拒绝移动；原低血量与回营要求保持。旧干路前缀的离线夹具则在明确加载的干燥条带中确认旧节点重接和真实新访问，UNKNOWN不能制造新节点信用；原时限与真实运动要求保持。`--ignore-scripts` 只跳过安装阶段的生命周期脚本。迁移单测对 Electron 文件选择对话框使用本文件内的替身，并禁止任何调用；其余迁移、文件系统、仓库与安全存储逻辑仍真实运行。因此这些单测不要求下载或启动 Electron 二进制。此前候选的延迟下载与最终一次下载失败均保留在验证报告；这项隔离修复和最终完整检查由发行验收单绑定。宿主单测不代表桌面 GUI/provider 验收。开发桌面 UI 时另在 `electron/` 正常 `npm ci`，其 postinstall 会安装 runtime。依赖由接收者按锁文件安装，源码归档不携带 `node_modules`。
 
 ## 第一个真实服务器场景
 

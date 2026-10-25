@@ -221,10 +221,12 @@ function shortBy(ingredients, have) {
  *   sneak  - hold sneak while clicking, so a chest, hopper or furnace can be
  *            the supporting block instead of opening it. Hoppers point at the
  *            block they are placed against, so device parts rely on this.
+ *   passable - the block has no collision (a rail): it goes in where the bot
+ *            or a mob stands, so neither has to move out first
  */
 const INTERACTIVE = /(_door|_trapdoor|_fence_gate|_bed|_button|chest|barrel|crafting_table|furnace|smoker|anvil|lever|hopper|dispenser|dropper|lectern|loom|_table|enchanting|shulker_box|stonecutter|grindstone|cartography|brewing|beacon|bell|_sign|note_block|jukebox|composter|cauldron)$/;
 
-async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sneak = false, alsoClear = [] } = {}) {
+async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sneak = false, alsoClear = [], passable = false } = {}) {
   const target = v(position);
   const current = bot.blockAt(target);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
@@ -239,7 +241,8 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sn
   const item = bot.inventory.items().find((i) => itemMatch(i.name));
   if (!item) return fail('no_material');
   // Standing in the very cell to fill (a foundation hole): climb out first.
-  if (bot.entity.position.floored().equals(target) || bot.entity.position.floored().offset(0, 1, 0).equals(target)) {
+  // A rail or other block without collision goes in under anyone standing there.
+  if (!passable && (bot.entity.position.floored().equals(target) || bot.entity.position.floored().offset(0, 1, 0).equals(target))) {
     const away = new goals.GoalInvert(new goals.GoalNear(target.x, target.y, target.z, 1));
     await actions.goTo(bot, ctx, away, { timeoutMs: 10000, arrived: () => !overlaps(bot.entity, target) });
   }
@@ -260,9 +263,9 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sn
     const goal = new goals.GoalPlaceBlock(target, bot.world, { range: 4.5, LOS: true, faces: usableFaces });
     // Same eye point the goal itself uses, so "arrived" agrees with the pathfinder.
     const head = () => bot.entity.position.floored().offset(0.5, 1.6, 0.5);
-    const usable = () => goal.getFaceAndRef(head()) !== null && !overlaps(bot.entity, target);
+    const usable = () => goal.getFaceAndRef(head()) !== null && (passable || !overlaps(bot.entity, target));
     // Straddling the target cell's edge: step to the middle of our own cell first.
-    if (overlaps(bot.entity, target) && !bot.entity.position.floored().equals(target)) await actions.recentre(bot, ctx);
+    if (!passable && overlaps(bot.entity, target) && !bot.entity.position.floored().equals(target)) await actions.recentre(bot, ctx);
     if (!usable()) {
       // Also taken when the bot itself stands in (or straddles) the target cell.
       const result = await goToGoal(bot, ctx, goal, usable);
@@ -275,7 +278,7 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sn
   }
   if (!ref || ref.boundingBox !== 'block') return fail('no_support');
   // Multi-block items (a bed's head) need their other cells free of creatures too.
-  if (entityInside(bot, target) || alsoClear.some((p) => entityInside(bot, v(p)))) return fail('cell_occupied_by_entity');
+  if ((!passable && entityInside(bot, target)) || alsoClear.some((p) => entityInside(bot, v(p)))) return fail('cell_occupied_by_entity');
   try {
     await bot.equip(item, 'hand');
     if (sneak) {

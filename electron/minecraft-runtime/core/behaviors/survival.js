@@ -259,6 +259,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
       // A brute or hoglin on the bot outruns it: running only takes the hits in the back.
       if (CHARGERS.has(threat.name) && threat.distance <= BRUTE_FIGHT) return 0;
+      // In the End an enderman teleports after anything that runs, and the
+      // run ends in the void: fight it out there instead.
+      if (threat.name === 'enderman' && dimensionOf(bot) === 'the_end') return 0;
       return state.health <= t.escapeHealth && threat.distance <= t.escapeRange ? 1 : 0;
     },
     run: (ctx) => actions.fleeFrom(bot, ctx, nearest(ctx.perceive())?.position || bot.entity.position),
@@ -295,6 +298,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.MAINTENANCE,
     want(state) {
       if (threats(state).some((h) => h.distance <= t.eatQuietRange)) return 0;
+      // A goal mid-dodge (out of a taking-off dragon's path) must not stop to eat.
+      if ((bot.companionNoEatUntil || 0) > Date.now() && state.health > 6) return 0;
       const hungry = state.food <= t.eatFood || (state.health < 16 && state.food < 20);
       // Risky food (rotten flesh, raw chicken) only when starving or nearly dead.
       return hungry && hasSafeFood(state, desperateForFood(state)) ? 1 : 0;
@@ -623,6 +628,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.ESCAPE,
     want(state) {
       if (hidden) return 1;
+      // The End is full of them and the fight cannot wait: there an angry one
+      // is fought (defend). A bunker dug mid-fight left the bot to the dragon.
+      if (dimensionOf(bot) === 'the_end') return 0;
       return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
     },
     async run(ctx) {

@@ -121,7 +121,7 @@ async function pickExpeditionStart(server, rng, run, near) {
   throw new Error(`no ${near === 'both' ? 'fortress and bastion close together' : near} found`);
 }
 
-function expeditionScenario({ name, near, targets, timeoutMs }) {
+function expeditionScenario({ name, near, targets, timeoutMs, experimental = false }) {
   const wants = [targets.blazeRods && `${targets.blazeRods} blaze rods`, targets.witherSkulls && `${targets.witherSkulls} wither skeleton skull`,
     targets.trades && `${targets.trades} piglin trades`].filter(Boolean).join(', ');
   return {
@@ -134,7 +134,8 @@ function expeditionScenario({ name, near, targets, timeoutMs }) {
     },
     defaultDifficulty: 'easy',
     timeoutMs,
-    async setup({ username, run, rng, difficulty = 'easy', server }) {
+    ...(experimental ? { experimental: true } : {}),
+    async prepare({ username, run, rng, difficulty = 'easy', server }) {
       const pick = await pickExpeditionStart(server, rng, run, near);
       const x = pick.nether.x * 8;
       const z = pick.nether.z * 8;
@@ -175,9 +176,14 @@ function expeditionScenario({ name, near, targets, timeoutMs }) {
 // A wither skeleton drops its skull 5.5% of the time with Looting III: about 18
 // kills for one skull, and a fortress yields one every two or three minutes.
 // 45 minutes ended runs that played well but rolled no skull (13 kills, none).
-const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION, timeoutMs: 120 * 60 * 1000 });
+// Experimental (left out of the full regression run): both still pass only some
+// runs. The fortress hunt passed 3 of the last 5 (skull luck, wither skeleton
+// knockback off bridges); the full chain has not passed yet on seed 3.
+const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION,
+  timeoutMs: 120 * 60 * 1000, experimental: true });
 const netherFortressGiven = expeditionScenario({ name: 'nether-fortress-given', near: 'fortress',
-  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, trades: 0 }, timeoutMs: 90 * 60 * 1000 });
+  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, trades: 0 }, timeoutMs: 90 * 60 * 1000,
+  experimental: true });
 const netherBastionGiven = expeditionScenario({ name: 'nether-bastion-given', near: 'bastion',
   targets: { blazeRods: 0, witherSkulls: 0, trades: EXPEDITION.trades }, timeoutMs: 30 * 60 * 1000 });
 

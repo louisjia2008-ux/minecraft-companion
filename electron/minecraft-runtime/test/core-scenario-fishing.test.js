@@ -31,11 +31,13 @@ function fixture() {
   return { world, bot, ledger, native, cast };
 }
 
-test('full regression manifest covers every registered scenario, retains repeats, and requires all 36 rounds', () => {
+test('full regression manifest covers every registered scenario, retains repeats, and requires all 40 rounds', () => {
   const full = SUITES.full;
-  assert.equal(Object.keys(SCENARIOS).length, 28);
-  assert.deepEqual(full.map((e) => e.scenario).sort(), Object.keys(SCENARIOS).sort());
-  assert.equal(full.reduce((n, e) => n + e.runs, 0), 36);
+  assert.equal(Object.keys(SCENARIOS).length, 35);
+  const experimental = Object.keys(SCENARIOS).filter((name) => SCENARIOS[name].experimental);
+  assert.deepEqual(experimental, ['nether-structures-given', 'nether-fortress-given', 'ironfarm-village-flat']);
+  assert.deepEqual(full.map((e) => e.scenario).sort(), Object.keys(SCENARIOS).filter((name) => !experimental.includes(name)).sort());
+  assert.equal(full.reduce((n, e) => n + e.runs, 0), 40);
   for (const e of full) assert.equal(e.minPassRate, 1);
   for (const e of SUITES.quick) assert.equal(full.find((f) => f.scenario === e.scenario).runs, e.runs);
   assert.equal(full.find((e) => e.scenario === 'collect-logs-natural').runs, 3);

@@ -204,7 +204,9 @@ function createRecovery({
     bot.companionSheltered = false;
     const near = deaths.filter((d) => d.dimension === dimension && at - d.at <= t.clusterMs
       && distance(d.position, position) <= t.clusterRadius);
-    if (near.length >= t.clusterDeaths) {
+    // The End's island is the fight itself: there is nowhere safer to go and
+    // the kit on the ground is what the next attempt needs.
+    if (near.length >= t.clusterDeaths && dimension !== 'the_end') {
       const center = near.reduce((c, d) => ({ x: c.x + d.position.x / near.length, y: c.y + d.position.y / near.length,
         z: c.z + d.position.z / near.length }), { x: 0, y: 0, z: 0 });
       danger = { center, dimension, until: at + t.clusterMs, left: false, deaths: near.length };

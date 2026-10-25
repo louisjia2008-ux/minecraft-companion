@@ -21,9 +21,12 @@ const KINDS = {
   stone_slab: { solid: true, stand: false, full: false, empty: true },
   ladder: { solid: true, stand: false, full: false, empty: true },
   wall_torch: { solid: false, stand: false, full: false, empty: true },
+  rail: { solid: false, stand: false, full: false, empty: true },
+  activator_rail: { solid: false, stand: false, full: false, empty: true },
+  redstone_block: { solid: true, stand: true, full: true, empty: false },
 };
 
-function world(f) {
+function world(f, rails = false) {
   const blocks = new Map();
   for (const c of f.digOrder) blocks.set(key(c), 'air');
   for (const c of f.lava) blocks.set(key(c), 'lava');
@@ -32,6 +35,11 @@ function world(f) {
     if (p.head) blocks.set(key(p.head), p.block);
   }
   blocks.set(key(f.cells.seal), 'cobblestone');
+  // The minecart variant: rails on the way in, the redstone block under the corridor.
+  if (rails) {
+    for (const r of f.rails) blocks.set(key(r.position), r.block);
+    blocks.set(key(f.cells.power), 'redstone_block');
+  }
   return (p) => KINDS[blocks.get(key(p)) || (p.y > f.levels.ground ? 'air' : 'stone')];
 }
 
@@ -61,11 +69,13 @@ function golemSpots(at, v) {
 test('golems fit only in the shafts, and every shaft is within reach of the villagers', () => {
   for (const facing of Object.keys(FACINGS)) {
     const f = createIronFarm({ x: 3, y: 63, z: -7 }, facing);
-    const at = world(f);
-    const beds = f.parts.filter((p) => p.head).flatMap((p) => [p.position, p.head]);
-    const found = new Set();
-    for (const v of [...f.cells.corridor, ...beds]) for (const s of golemSpots(at, v)) found.add(key(s));
-    assert.deepEqual([...found].sort(), f.cells.shafts.map(key).sort(), facing);
+    for (const rails of [false, true]) {
+      const at = world(f, rails);
+      const beds = f.parts.filter((p) => p.head).flatMap((p) => [p.position, p.head]);
+      const found = new Set();
+      for (const v of [...f.cells.corridor, ...beds]) for (const s of golemSpots(at, v)) found.add(key(s));
+      assert.deepEqual([...found].sort(), f.cells.shafts.map(key).sort(), `${facing}${rails ? ' with rails' : ''}`);
+    }
   }
 });
 
@@ -79,8 +89,10 @@ test('the room is closed: two high everywhere, sealed, the zombie behind a slab'
     for (const p of f.pits) assert.ok(!dug.has(key({ ...p, y: Y + 2 })));
     // Nothing above the corridor or the beds, and the seal shuts the corridor's only way out.
     for (const c of f.room) assert.ok(c.y <= Y + 1);
-    // The seal goes into the tunnel's first cell; the gap left above it is one high.
-    assert.ok(dug.has(key(f.cells.seal)) && dug.has(key({ ...f.cells.seal, y: Y + 1 })) && !dug.has(key({ ...f.cells.seal, y: Y + 2 })));
+    // The seal goes into the top of the tunnel's first cell; the gap left under it
+    // is one high: a minecart rolls through, a villager (1.95 high) can't walk out.
+    assert.equal(f.cells.seal.y, Y + 1);
+    assert.ok(dug.has(key(f.cells.seal)) && dug.has(key({ ...f.cells.seal, y: Y })) && !dug.has(key({ ...f.cells.seal, y: Y + 2 })));
     assert.ok(!dug.has(key({ ...f.cells.zombie, y: Y - 1 })));
     // The slab's gap is above the zombie's cell floor plus one: a zombie can't step up into it.
     const slit = f.parts.find((p) => p.key === 'slit');
@@ -102,6 +114,38 @@ test('the room is closed: two high everywhere, sealed, the zombie behind a slab'
       const far = f.cells.corridor.every((c) => Math.max(Math.abs(s.x - c.x), Math.abs(s.z - c.z)) > 8);
       assert.ok(far, `${facing}: stair ${key(s)}`);
     }
+  }
+});
+
+test('the rails run from the corridor up the stairs, one connected line', () => {
+  for (const facing of Object.keys(FACINGS)) {
+    const f = createIronFarm({ x: 0, y: 63, z: 0 }, facing);
+    const Y = f.levels.feet;
+    const dug = new Set(f.digOrder.map(key));
+    const r = f.rails.map((x) => x.position);
+    // The corridor's rails drop villagers off; the redstone block under the last one powers all three.
+    assert.deepEqual(f.rails.slice(0, 3).map((x) => x.block), ['activator_rail', 'activator_rail', 'activator_rail']);
+    assert.deepEqual(r.slice(0, 3).map(key), [...f.cells.corridor].reverse().map(key));
+    assert.equal(key(f.cells.power), key({ ...r[0], y: Y - 1 }));
+    assert.ok(f.rails.slice(3).every((x) => x.block === 'rail'));
+    // Every rail sits in a dug cell on solid ground, and the line ends at the stairs' top.
+    for (const p of r.slice(0, -1)) assert.ok(dug.has(key(p)) && !dug.has(key({ ...p, y: p.y - 1 })), `${facing}: ${key(p)}`);
+    assert.equal(key(r[r.length - 1]), key(f.cells.stairsTop));
+    // The corner (the tunnel's far end) and the rail after it are level: a
+    // curve can't slope, so the slope starts one block past it.
+    const corner = r.findIndex((p) => p.x === f.tunnel[2].x && p.z === f.tunnel[2].z && p.y === Y);
+    assert.ok(corner > 0);
+    assert.equal(r[corner + 1].y, Y);
+    assert.equal(r[corner + 2].y, Y + 1);
+    // Each rail joins the one before it: one step across, at most one up.
+    for (let i = 1; i < r.length; i += 1) {
+      const d = [r[i].x - r[i - 1].x, r[i].y - r[i - 1].y, r[i].z - r[i - 1].z];
+      assert.equal(Math.abs(d[0]) + Math.abs(d[2]), 1, `${facing}: ${key(r[i])}`);
+      assert.ok(d[1] === 0 || d[1] === 1);
+    }
+    // Room for a cart with a villager in it: a dug cell over every rail below ground
+    // (the seal's, one high, is the only one blocked once the farm is closed).
+    for (const p of r) assert.ok(p.y >= f.levels.ground || dug.has(key({ ...p, y: p.y + 1 })), `${facing}: over ${key(p)}`);
   }
 });
 

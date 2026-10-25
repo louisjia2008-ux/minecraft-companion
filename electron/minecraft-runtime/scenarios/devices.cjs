@@ -394,6 +394,62 @@ const NIGHT_MS = 120000;
 // Easy difficulty (the zombie needs it) at a fixed noon. The villagers and the
 // zombie come from spawn eggs; the night they must sleep through is skipped
 // with /time once the goal has moved them in, as a player sleeping would.
+// Turns night on once memory.ready, and back to day when `slept` counts three
+// villagers or `nightMs` has passed.
+async function skipNight({ server, write, memory, slept: selector, nightMs }) {
+  if (!memory?.ready || memory.night === 'done' || memory.nightBusy) return;
+  memory.nightBusy = true;
+  try {
+    if (!memory.night) {
+      memory.night = Date.now();
+      server.command('time set 13000');
+      write('night', { phase: 'dusk' });
+      return;
+    }
+    const match = await server.query(`execute if entity ${selector}`, /Test (passed|failed)(?:, count: (\d+))?/);
+    const slept = match[2] ? Number(match[2]) : 0;
+    if (slept >= 3 || Date.now() - memory.night > nightMs) {
+      memory.night = 'done';
+      server.command('time set 1000');
+      write('night', { phase: 'morning', slept });
+    }
+  } finally {
+    memory.nightBusy = false;
+  }
+}
+
+// The server's view of a finished iron farm: every part, the lava, the seal
+// (and for the minecart farm its rails and redstone block), three villagers
+// inside, and the iron on the player.
+async function verifyIronFarm(server, username, farm, { rails = false } = {}) {
+  const f = createIronFarm(farm.anchor, farm.facing);
+  const parts = {};
+  for (const part of f.parts) {
+    parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
+  }
+  for (const [i, p] of f.lava.entries()) parts[`lava${i}`] = await testBlock(server, p, 'minecraft:lava[level=0]');
+  parts.seal = await testBlock(server, f.cells.seal, 'minecraft:cobblestone');
+  if (rails) {
+    parts.power = await testBlock(server, f.cells.power, 'minecraft:redstone_block');
+    // The entrance's rail is under cobblestone once the villagers are in.
+    const entrance = `${f.cells.entrance.x},${f.cells.entrance.y},${f.cells.entrance.z}`;
+    for (const [i, r] of f.rails.entries()) {
+      const there = `${r.position.x},${r.position.y},${r.position.z}` === entrance ? 'minecraft:cobblestone' : `minecraft:${r.block}`;
+      parts[`rail${i}`] = await testBlock(server, r.position, there);
+    }
+  }
+  const count = async (selector) => {
+    const match = await server.query(`execute if entity ${selector}`, /Test (passed|failed)(?:, count: (\d+))?/);
+    return match[2] ? Number(match[2]) : 0;
+  };
+  const a = f.anchor;
+  const villagers = await count(`@e[type=villager,x=${a.x - 4},y=${f.levels.feet - 2},z=${a.z - 4},dx=8,dy=4,dz=8]`);
+  const zombies = await count(`@e[type=zombie,x=${a.x - 4},y=${f.levels.feet - 1},z=${a.z - 4},dx=8,dy=3,dz=8]`);
+  const iron = await countOnPlayer(server, username, 'minecraft:iron_ingot');
+  const pass = Object.values(parts).every(Boolean) && villagers >= 3 && zombies >= 1 && iron >= IRON;
+  return { pass, details: { device: { anchor: f.anchor, facing: f.facing }, parts, villagers, zombies, iron } };
+}
+
 const ironFarmFlat = {
   name: 'ironfarm-flat',
   description: `Flat plains on solid stone, easy difficulty, handed an iron pickaxe, 3 beds, a torch, a stone slab, 2 ladders, 2 lava buckets, a zombie spawn egg and 3 villager spawn eggs; dig an underground iron farm, move in the zombie and the villagers, and pick up ${IRON} iron ingots from it.`,
@@ -419,50 +475,95 @@ const ironFarmFlat = {
   start: (companion) => companion.ironFarm({ count: IRON }),
   // Night falls once the villagers are in, and lasts until all three have
   // slept (a freshly spawned villager first has to claim its bed).
-  async during({ server, goal, write }) {
-    const memory = goal?.memory;
-    if (!memory?.ready || memory.night === 'done' || memory.nightBusy) return;
-    memory.nightBusy = true;
-    try {
-      if (!memory.night) {
-        memory.night = Date.now();
-        server.command('time set 13000');
-        write('night', { phase: 'dusk' });
-        return;
-      }
-      const match = await server.query('execute if entity @e[type=villager,nbt={Brain:{memories:{"minecraft:last_slept":{}}}}]',
-        /Test (passed|failed)(?:, count: (\d+))?/);
-      const slept = match[2] ? Number(match[2]) : 0;
-      if (slept >= 3 || Date.now() - memory.night > NIGHT_MS) {
-        memory.night = 'done';
-        server.command('time set 1000');
-        write('night', { phase: 'morning', slept });
-      }
-    } finally {
-      memory.nightBusy = false;
-    }
-  },
+  during: ({ server, goal, write }) => skipNight({ server, write, memory: goal?.memory, nightMs: NIGHT_MS,
+    slept: '@e[type=villager,nbt={Brain:{memories:{"minecraft:last_slept":{}}}}]' }),
   async verify({ server, username, goal }) {
     const memory = goal?.memory;
     if (!memory?.farm) return { pass: false, details: { reason: 'no_site' } };
-    const f = createIronFarm(memory.farm.anchor, memory.farm.facing);
-    const parts = {};
-    for (const part of f.parts) {
-      parts[part.key] = await testBlock(server, part.position, `minecraft:${part.block}${part.facing ? `[facing=${part.facing}]` : ''}`);
-    }
-    for (const [i, p] of f.lava.entries()) parts[`lava${i}`] = await testBlock(server, p, 'minecraft:lava[level=0]');
-    parts.seal = await testBlock(server, f.cells.seal, 'minecraft:cobblestone');
-    const count = async (selector) => {
-      const match = await server.query(`execute if entity ${selector}`, /Test (passed|failed)(?:, count: (\d+))?/);
-      return match[2] ? Number(match[2]) : 0;
-    };
-    const a = f.anchor;
-    const villagers = await count(`@e[type=villager,x=${a.x - 4},y=${f.levels.feet - 2},z=${a.z - 4},dx=8,dy=4,dz=8]`);
-    const zombies = await count(`@e[type=zombie,x=${a.x - 4},y=${f.levels.feet - 1},z=${a.z - 4},dx=8,dy=3,dz=8]`);
-    const iron = await countOnPlayer(server, username, 'minecraft:iron_ingot');
-    const pass = Object.values(parts).every(Boolean) && villagers >= 3 && zombies >= 1 && iron >= IRON;
-    return { pass, details: { device: { anchor: f.anchor, facing: f.facing }, parts, villagers, zombies, iron, eggs: memory.eggs } };
+    const result = await verifyIronFarm(server, username, memory.farm);
+    return { pass: result.pass, details: { ...result.details, eggs: memory.eggs } };
   },
 };
 
-module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat, ironFarmFlat };
+// A plains village 60-80 blocks east of the bot. The whole area is rebuilt
+// every run (rock below, plain grass on top, nothing above), then a fresh
+// village is placed with /place: houses, paths, villagers and a golem.
+const VILLAGE_NIGHT_MS = 300000;
+const VILLAGE_AREA = { x0: -48, x1: 143, z0: -88, z1: 88 };
+
+function resetVillageArea() {
+  const { x0, x1, z0, z1 } = VILLAGE_AREA;
+  const commands = [];
+  for (let x = x0; x <= x1; x += 64) {
+    const xe = Math.min(x + 63, x1);
+    for (let y = GROUND - 26; y < GROUND - 4; y += 2) commands.push(`fill ${x} ${y} ${z0} ${xe} ${Math.min(y + 1, GROUND - 5)} ${z1} stone`);
+    // At most 32768 blocks a fill: a 64-wide slab of the area is two layers.
+    commands.push(`fill ${x} ${GROUND - 4} ${z0} ${xe} ${GROUND - 3} ${z1} dirt`, `fill ${x} ${GROUND - 2} ${z0} ${xe} ${GROUND - 2} ${z1} dirt`,
+      `fill ${x} ${GROUND - 1} ${z0} ${xe} ${GROUND - 1} ${z1} grass_block`);
+    for (let y = GROUND; y < GROUND + 24; y += 2) commands.push(`fill ${x} ${y} ${z0} ${xe} ${y + 1} ${z1} air`);
+  }
+  return commands;
+}
+
+const ironFarmVillageFlat = {
+  name: 'ironfarm-village-flat',
+  // About one run in four passes so far (see core/README.md): left out of the full suite.
+  experimental: true,
+  description: `Flat plains on solid stone with a plains village 60-80 blocks away, easy difficulty, handed what the rail duplicator and the iron farm take (no villager eggs) and 3 minecarts; find the village, make rails, dig the iron farm near it, bring 3 of its villagers in by minecart and pick up ${IRON} iron ingots.`,
+  serverProperties: {
+    ...cobbleGeneratorFlat.serverProperties, 'level-name': 'village-iron',
+    'generator-settings': JSON.stringify({ ...FLAT_GENERATOR, structure_overrides: [] }),
+  },
+  defaultDifficulty: 'easy',
+  timeoutMs: 60 * 60 * 1000,
+  setup({ username, rng, difficulty = 'easy' }) {
+    const vx = 60 + Math.round(rng() * 20);
+    const vz = Math.round((rng() - 0.5) * 20);
+    const yaw = Math.round(rng() * 360) - 180;
+    const { x0, x1, z0, z1 } = VILLAGE_AREA;
+    return {
+      commands: [
+        // Off out of sight while the area is rebuilt: a client watching a
+        // structure placed mostly misses its block changes (stale grass where
+        // the village's paths are, and the server pulls the bot back each step).
+        `tp ${username} 3000 ${GROUND} 3000`,
+        `forceload add ${x0} ${z0} ${x1} ${z1}`,
+        ...commonSetup(username, difficulty),
+        ...resetVillageArea(),
+        `place structure minecraft:village_plains ${vx} ${GROUND} ${vz}`,
+        'gamerule spawnRadius 0', `setworldspawn -10 ${GROUND} 0`,
+        `give ${username} iron_pickaxe`, `give ${username} white_bed 3`, `give ${username} torch 2`,
+        `give ${username} stone_slab`, `give ${username} ladder 2`, `give ${username} lava_bucket 2`,
+        `give ${username} zombie_spawn_egg`, `give ${username} bread 16`,
+        `give ${username} minecart 3`, `give ${username} activator_rail 3`, `give ${username} redstone_block`,
+        `give ${username} cobblestone 8`, `give ${username} sticky_piston`, `give ${username} slime_block 7`,
+        `give ${username} dead_tube_coral_fan`, `give ${username} white_carpet`, `give ${username} rail`,
+        `give ${username} stone_button`,
+      ],
+      thenCommands: [`tp ${username} -9.5 ${GROUND} 0.5 ${yaw} 0`],
+      details: { village: { x: vx, z: vz } },
+    };
+  },
+  start: (companion) => companion.villageIronFarm({ count: IRON }),
+  // Night once the villagers are in. Villagers brought from the village first
+  // give up on their old beds (a minute of failing to reach them), then claim
+  // the farm's; only those in the farm are counted.
+  during({ server, goal, write }) {
+    const farm = goal?.memory?.farmGoal?.memory;
+    const f = farm?.farm;
+    if (!f) return undefined;
+    const a = f.anchor;
+    return skipNight({ server, write, memory: farm, nightMs: VILLAGE_NIGHT_MS,
+      slept: `@e[type=villager,x=${a.x - 4},y=${f.levels.feet - 2},z=${a.z - 4},dx=8,dy=4,dz=8,nbt={Brain:{memories:{"minecraft:last_slept":{}}}}]` });
+  },
+  async verify({ server, username, goal }) {
+    const memory = goal?.memory;
+    const farm = memory?.farmGoal?.memory.farm;
+    if (!farm) return { pass: false, details: { reason: memory?.village ? 'no_site' : 'no_village', village: memory?.village || null } };
+    const result = await verifyIronFarm(server, username, farm, { rails: true });
+    return { pass: result.pass, details: { ...result.details, village: memory.village, line: memory.line?.length || 0,
+      loaded: memory.loaded, pushes: memory.pushes } };
+  },
+};
+
+module.exports = { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat, ironFarmFlat, ironFarmVillageFlat };

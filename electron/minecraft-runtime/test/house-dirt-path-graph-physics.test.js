@@ -5,7 +5,20 @@ const filename=path.join(__dirname,'house-surface-graph.test.js'),source=fs.read
 function fixture(t,{modeledEmptyPartial=false}={}){
  const anchor={x:303,y:67,z:-184},id='303,67,-184',target={x:320,y:75,z:-192},cp={schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,nodes:{[id]:{position:anchor,parent:null,expanded:true}},order:[id],current:id,resumeNode:id,visits:1,probes:0,blockedEdges:[],frontier:[{parent:id,target,plannedSteps:25}]};
  const f=native.exports.fixture(t,{initialPosition:new Vec3(303.5,67,-183.5),initialVelocity:new Vec3(0,-.0784000015258789,0),checkpoint:cp,worldAt:p=>{const b=data.bounds;if(p.x<b.minX||p.x>b.maxX||p.y<b.minY||p.y>b.maxY||p.z<b.minZ||p.z>b.maxZ)return null;return data.palette[data.states[`${p.x},${p.y},${p.z}`]||0];}});
- const settlements=[],nativeResolutions=[],budgets=[];let calls=0,injected=0;
+ const settlements=[],nativeResolutions=[],budgets=[],nativeTrace=[];let calls=0,injected=0;
+ // Preserve bounded evidence for real native failures. A wall-clock timeout,
+ // an inconclusive probe and a NoPath while airborne are not interchangeable.
+ const trace=(event,result)=>{
+  const point=p=>p&&({x:p.x,y:p.y,z:p.z});
+  nativeTrace.push({event,tick:f.points.length,at:Date.now(),status:result?.status,
+   reason:typeof result==='string'?result:undefined,pathLength:result?.path?.length,
+   first:point(result?.path?.[0]),last:point(result?.path?.at(-1)),
+   position:point(f.bot.entity.position),onGround:f.bot.entity.onGround});
+  if(nativeTrace.length>32)nativeTrace.shift();
+ };
+ const onPath=result=>trace('path_update',result),onReset=reason=>trace('path_reset',reason);
+ f.bot.on('path_update',onPath);f.bot.on('path_reset',onReset);
+ t.after(()=>{f.bot.removeListener('path_update',onPath);f.bot.removeListener('path_reset',onReset);});
  if(modeledEmptyPartial){
   const original=f.bot.pathfinder.goto;
   f.bot.pathfinder.goto=function(goal,...args){
@@ -25,7 +38,7 @@ function fixture(t,{modeledEmptyPartial=false}={}){
   return settleNativeGoto({...f.deps,isExpectedStop:budget.isExpectedNativeStop,allowPendingTimeout:budget.isExpectedNativeTimeout,
    record:facts=>settlements.push({...facts,deadline:budget.deadline})},{goal,deadline:budget.deadline});
  };
- return {...f,anchor,id,target,settlements,nativeResolutions,budgets,calls:()=>calls,injected:()=>injected};
+ return {...f,anchor,id,target,settlements,nativeResolutions,budgets,nativeTrace,calls:()=>calls,injected:()=>injected};
 }
 function graphFor(f){return createLoadedDryGraph(f.deps,{anchor:f.anchor,radius:384,nativeReachableHints:true,terrainRecovery:true,legTimeoutMs:12000});}
 function assertOriginalArrival(f,graph,result){
@@ -42,7 +55,7 @@ async function withFailureDiagnostics(t,f,graph,run){
    blockedEdges:graph.state().blockedEdges,current:graph.state().current,visits:graph.state().visits,
    body:{position:{...e.position},velocity:{...e.velocity},onGround:e.onGround,isInWater:e.isInWater,isInLava:e.isInLava,
     yaw:e.yaw,pitch:e.pitch,controls:{...f.bot.controlState},jumpTicks:f.bot.jumpTicks,jumpQueued:f.bot.jumpQueued,health:f.bot.health,food:f.bot.food},
-   nativeResolutions:f.nativeResolutions,settlements:f.settlements,budgets:f.budgets}));
+   nativeResolutions:f.nativeResolutions,settlements:f.settlements,budgets:f.budgets,nativeTrace:f.nativeTrace}));
   throw error;
  }
 }

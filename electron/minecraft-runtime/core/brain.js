@@ -21,24 +21,38 @@ function createBrain({
   if (typeof perceive !== 'function') throw new TypeError('perceive is required');
   const permanent = behaviors.map(validateBehavior);
   const failures = new Map(); // name -> { count, until }
-  let goal = null; // { def, best, stalls, reasons }
+  let goal = null; // unique generation: { def, generation, taskId, best, stalls, reasons }
+  let generation = 0;
+  let paused = false;
   let running = null; // { behavior, controller, promise }
+  let deferredTick = null; // a tick put off a turn after a behavior that settled at once
   let deciding = false;
   let disposed = false;
+  let disposal = null;
+
+  function assertActive() {
+    if (disposed) throw Object.assign(new Error('Brain is disposed'), { code: 'disposed' });
+  }
+
+  const correlation = (entry) => entry
+    ? { generation: entry.generation, ...(entry.taskId === undefined ? {} : { taskId: entry.taskId }) }
+    : {};
 
   const emit = (type, data = {}) => {
     try { onEvent({ type, at: now(), ...data }); } catch { /* observers never break the loop */ }
   };
 
   function goalBehavior() {
-    if (!goal) return null;
-    const def = goal.def;
+    if (!goal || paused || disposed) return null;
+    const entry = goal;
+    const def = entry.def;
     return {
       name: `goal:${def.name}`,
       band: BAND.GOAL,
-      want: (state) => (def.isDone(state) ? 0 : 1),
+      want: (state) => (isGoalDone(entry, state) ? 0 : 1),
       run: (ctx) => def.run(ctx),
       isGoal: true,
+      goalEntry: entry,
       def,
     };
   }
@@ -58,7 +72,7 @@ function createBrain({
       if (cooldown && cooldown.until > now()) continue;
       let want = 0;
       try { want = Number(behavior.want(state)) || 0; } catch (error) {
-        emit('want_error', { behavior: behavior.name, reason: describe(error) });
+        emit('want_error', { behavior: behavior.name, reason: describe(error), ...correlation(behavior.goalEntry) });
       }
       if (want <= 0) continue;
       if (!best || behavior.band > best.band || (behavior.band === best.band && want > bestWant)) {
@@ -69,40 +83,71 @@ function createBrain({
     return best;
   }
 
-  function settleGoal(state, result, preempted) {
-    if (!goal) return;
-    if (goal.def.isDone(state)) {
-      emit('goal_done', { goal: goal.def.name, progress: safeProgress(goal.def, state) });
+  function failGoalEvaluation(entry, state, error, phase) {
+    if (!entry || goal !== entry || disposed) return;
+    goal = null;
+    emit('goal_failed', { goal: entry.def.name, progress: state ? safeProgress(entry.def, state) : null,
+      reasons: [`goal_${phase}_error: ${describe(error)}`], ...correlation(entry) });
+  }
+
+  function isGoalDone(entry, state) {
+    try {
+      const result = entry.def.isDone(state);
+      if (result && typeof result.then === 'function') {
+        // Selection is synchronous. Reject an async predicate rather than
+        // treating its Promise as truthy, and consume a possible rejection.
+        Promise.resolve(result).catch(() => {});
+        throw new TypeError('Goal isDone must be synchronous');
+      }
+      return Boolean(result);
+    } catch (error) {
+      failGoalEvaluation(entry, state, error, 'evaluation');
+      return true; // a failed definition is no longer eligible to run
+    }
+  }
+
+  async function settleGoal(entry, state, result, preempted) {
+    // Definition identity is not enough: callers may submit the same definition
+    // again. Only the invocation which owns this generation may settle it.
+    if (!entry || goal !== entry || paused || disposed) return;
+    if (isGoalDone(entry, state)) {
+      if (goal !== entry || disposed) return;
       goal = null;
+      emit('goal_done', { goal: entry.def.name, progress: safeProgress(entry.def, state), ...correlation(entry) });
       return;
     }
     // Being interrupted by survival is not a lack of progress, and neither is
     // waiting out the night: a wait neither spends nor refills the budget.
     if (preempted || result?.waited) return;
-    const progress = safeProgress(goal.def, state);
-    if (progress > goal.best) {
-      goal.best = progress;
-      goal.stalls = 0;
+    const progress = safeProgress(entry.def, state);
+    if (progress > entry.best) {
+      entry.best = progress;
+      entry.stalls = 0;
       return;
     }
-    goal.stalls += 1;
-    if (!result.ok) goal.reasons.push(result.reason);
-    if (goal.stalls >= (goal.def.noProgressLimit ?? noProgressLimit)) {
-      // A long goal may know a reset (forget blacklists, go home) worth a few
-      // more rounds before giving up for good.
-      if (typeof goal.def.recover === 'function' && goal.recoveries < (goal.def.maxRecoveries ?? 0)) {
-        goal.recoveries += 1;
-        emit('goal_recovering', { goal: goal.def.name, progress, attempt: goal.recoveries, reasons: goal.reasons.slice(-goal.stalls) });
-        goal.def.recover();
-        goal.stalls = 0;
+    entry.stalls += 1;
+    if (!result.ok) entry.reasons.push(result.reason);
+    if (entry.stalls >= (entry.def.noProgressLimit ?? noProgressLimit)) {
+      const reasons = entry.reasons.slice(-entry.stalls);
+      // A long goal may know a reset worth more rounds before giving up.
+      if (typeof entry.def.recover === 'function' && entry.recoveries < (entry.def.maxRecoveries ?? 0)) {
+        entry.recoveries += 1;
+        entry.stalls = 0;
+        emit('goal_recovering', { goal: entry.def.name, progress, attempt: entry.recoveries, reasons, ...correlation(entry) });
+        if (goal === entry && !disposed) {
+          try { await entry.def.recover(); } catch (error) {
+            failGoalEvaluation(entry, state, error, 'recovery');
+          }
+        }
         return;
       }
-      emit('goal_failed', { goal: goal.def.name, progress, reasons: goal.reasons.slice(-goal.stalls) });
       goal = null;
+      emit('goal_failed', { goal: entry.def.name, progress, reasons, ...correlation(entry) });
     }
   }
 
   function recordOutcome(behavior, result) {
+    if (disposed || (behavior.isGoal && behavior.goalEntry !== goal)) return;
     if (result.ok) {
       failures.delete(behavior.name);
       return;
@@ -111,8 +156,6 @@ function createBrain({
     // failures, so a step that fails instantly cannot burn the budget in a
     // second; other behaviors back off so a failing reflex cannot monopolize the body.
     if (behavior.isGoal) {
-      // A replaced goal's failure says nothing about the goal that replaced it.
-      if (behavior.def !== goal?.def) return;
       const stalls = goal?.stalls || 0;
       if (goalRetryDelayMs > 0) {
         failures.set(behavior.name, { count: stalls, until: now() + Math.min(3000, goalRetryDelayMs * (stalls + 1)) });
@@ -127,31 +170,62 @@ function createBrain({
 
   function start(behavior) {
     const controller = new AbortController();
+    const entry = { behavior, controller, preempted: false, startedAt: now() };
+    const isCurrent = () => !disposed && (!behavior.isGoal || behavior.goalEntry === goal);
     const ctx = {
       signal: controller.signal,
       perceive,
-      record: (type, data) => emit(type, { behavior: behavior.name, ...data }),
+      record: (type, data) => {
+        if (running === entry && !controller.signal.aborted && isCurrent()) {
+          emit(type, { ...data, behavior: behavior.name, ...correlation(behavior.goalEntry) });
+        }
+      },
+      ...correlation(behavior.goalEntry),
       behavior: behavior.name,
     };
-    emit('behavior_started', { behavior: behavior.name, band: behavior.band });
-    const entry = { behavior, controller, preempted: false };
     entry.promise = Promise.resolve()
-      .then(() => behavior.run(ctx))
+      .then(() => controller.signal.aborted || !isCurrent()
+        ? { ok: false, reason: 'aborted' } : behavior.run(ctx))
       .then(normalizeResult, (error) => ({ ok: false, reason: describe(error) }))
-      .then((result) => {
-        if (controller.signal.aborted && result.ok !== true) result = { ok: false, reason: 'aborted' };
-        recordOutcome(behavior, result);
-        if (behavior.isGoal) settleGoal(safePerceive(), result, entry.preempted);
-        emit('behavior_finished', { behavior: behavior.name, ok: result.ok, reason: result.reason });
-        if (running === entry) running = null;
-        if (!disposed) queueMicrotask(() => { tick().catch(() => {}); });
-        return result;
+      .then(async (result) => {
+        try {
+          if (controller.signal.aborted && result.ok !== true) result = { ok: false, reason: 'aborted' };
+          if (isCurrent()) {
+            if (!entry.preempted) recordOutcome(behavior, result);
+            if (behavior.isGoal) await settleGoal(behavior.goalEntry, safePerceive(), result, entry.preempted);
+            // A terminal observer may synchronously submit another goal. Do not
+            // let this finished callback perturb that goal's recovery tracking.
+            if (!disposed && (!behavior.isGoal || !goal || goal === behavior.goalEntry)) {
+              emit('behavior_finished', { behavior: behavior.name, ok: result.ok, reason: result.reason,
+                ...correlation(behavior.goalEntry) });
+            }
+          }
+          return result;
+        } catch (error) {
+          if (behavior.isGoal) failGoalEvaluation(behavior.goalEntry, safePerceive(), error, 'settle');
+          else emit('behavior_error', { behavior: behavior.name, reason: describe(error) });
+          return { ok: false, reason: describe(error) };
+        } finally {
+          // Even an evaluator/recovery failure must release the body. Otherwise
+          // a rejected settlement leaves running pinned forever.
+          if (running === entry) running = null;
+          // An immediate settlement must yield to packets before re-planning.
+          if (!disposed) {
+            if (now() - entry.startedAt < 5) {
+              deferredTick = new Promise((resolve) => setImmediate(() => {
+                deferredTick = null;
+                tick().catch(() => {}).then(resolve);
+              }));
+            }
+            else queueMicrotask(() => { tick().catch(() => {}); });
+          }
+        }
       });
     running = entry;
+    emit('behavior_started', { behavior: behavior.name, band: behavior.band, ...correlation(behavior.goalEntry) });
   }
 
-  async function preempt(reason) {
-    const entry = running;
+  async function preempt(reason, entry = running) {
     if (!entry) return;
     entry.preempted = true;
     entry.controller.abort(reason);
@@ -171,23 +245,26 @@ function createBrain({
         if (running) await preempt('unavailable');
         return;
       }
-      if (goal && !running && goal.def.isDone(state)) settleGoal(state, { ok: true }, false);
+      const idleGoal = goal;
+      if (idleGoal && !paused && !running && isGoalDone(idleGoal, state)) {
+        await settleGoal(idleGoal, state, { ok: true }, false);
+      }
       const best = choose(state);
       if (running) {
         const current = running.behavior;
         // A goal replaced by another one of the same name is no longer wanted.
-        const stillWanted = candidates().some((b) => b.name === current.name && b.def === current.def);
+        const stillWanted = candidates().some((b) => b.name === current.name && b.goalEntry === current.goalEntry);
         if (!stillWanted) {
           await preempt('goal_cleared');
         } else if (best && best.band > current.band) {
-          emit('preempted', { behavior: current.name, by: best.name });
+          emit('preempted', { behavior: current.name, by: best.name, ...correlation(current.goalEntry) });
           await preempt(`preempted_by:${best.name}`);
         } else {
           return;
         }
       }
       // Re-choose after any preemption: the world may have changed while waiting.
-      const next = running ? null : choose(safePerceive() || state);
+      const next = running || disposed ? null : choose(safePerceive() || state);
       if (next) start(next);
     } finally {
       deciding = false;
@@ -196,54 +273,100 @@ function createBrain({
 
   return {
     tick,
-    setGoal(def) {
+    setGoal(def, metadata = {}) {
+      assertActive();
       validateGoal(def);
       const state = safePerceive();
-      goal = { def, best: state ? safeProgress(def, state) : -Infinity, stalls: 0, recoveries: 0, reasons: [] };
-      emit('goal_set', { goal: def.name });
+      const taskId = metadata?.taskId ?? def.metadata?.taskId ?? def.taskId;
+      goal = { def, generation: ++generation, taskId, best: state ? safeProgress(def, state) : -Infinity,
+        stalls: 0, recoveries: 0, reasons: [] };
+      paused = false;
+      failures.delete(`goal:${def.name}`);
+      emit('goal_set', { goal: def.name, ...correlation(goal) });
     },
     async clearGoal(reason = 'cleared') {
-      if (!goal) return;
-      const name = goal.def.name;
+      assertActive();
+      const entry = goal;
+      const active = running;
       goal = null;
-      if (running?.behavior.isGoal) await preempt(reason);
-      emit('goal_cleared', { goal: name, reason });
+      paused = false;
+      // Publish before awaiting abort so an observer never receives an old
+      // uncorrelated terminal event after a replacement was installed.
+      if (entry) emit('goal_cleared', { goal: entry.def.name, reason, ...correlation(entry) });
+      if (active?.behavior.isGoal) await preempt(reason, active);
     },
-    /** Ends the goal as failed from outside (a death loop, say) instead of letting it retry. */
+    /** Ends the goal as failed from outside (a death loop, say). */
     async failGoal(reason = 'failed') {
-      if (!goal) return;
-      const { def } = goal;
+      assertActive();
+      const entry = goal;
+      if (!entry) return;
       const state = safePerceive();
+      const active = running;
       goal = null;
-      if (running?.behavior.isGoal) await preempt(reason);
-      emit('goal_failed', { goal: def.name, progress: state ? safeProgress(def, state) : null, reasons: [reason] });
+      paused = false;
+      emit('goal_failed', { goal: entry.def.name, progress: state ? safeProgress(entry.def, state) : null,
+        reasons: [reason], ...correlation(entry) });
+      if (active?.behavior.isGoal) await preempt(reason, active);
+    },
+    /** Suspend goal work only. Permanent safety behaviors still own the body. */
+    async pauseGoal(reason = 'paused') {
+      assertActive();
+      const active = running;
+      if (!paused) {
+        paused = true;
+        emit('goal_paused', { goal: goal?.def.name || null, reason, ...correlation(goal) });
+      }
+      if (active?.behavior.isGoal) await preempt(reason, active);
+    },
+    async resumeGoal() {
+      assertActive();
+      if (!paused) return;
+      paused = false;
+      emit('goal_resumed', { goal: goal?.def.name || null, ...correlation(goal) });
+      await tick();
     },
     /** Aborts whatever runs now but keeps the goal; the next tick re-plans. */
     async interrupt(reason = 'interrupted') {
-      emit('interrupted', { reason, behavior: running?.behavior.name || null });
-      await preempt(reason);
+      assertActive();
+      const active = running;
+      emit('interrupted', { reason, behavior: active?.behavior.name || null, ...correlation(active?.behavior.goalEntry) });
+      await preempt(reason, active);
     },
+    /** Legacy task stop: clears goals, but subsequent ticks keep safety active. */
     async stop(reason = 'stopped') {
+      assertActive();
+      const entry = goal;
+      const active = running;
       goal = null;
-      await preempt(reason);
-      emit('stopped', { reason });
+      paused = false;
+      emit('stopped', { reason, ...correlation(entry) });
+      await preempt(reason, active);
     },
-    async dispose() {
+    /** Terminal all-stop. No future tick or goal can restart this brain. */
+    dispose() {
+      if (disposal) return disposal;
       disposed = true;
       goal = null;
-      await preempt('disposed');
+      paused = false;
+      disposal = preempt('disposed');
+      return disposal;
     },
     status() {
       const state = safePerceive();
       return {
         running: running?.behavior.name || null,
+        paused,
+        disposed,
         goal: goal ? { name: goal.def.name, progress: state ? safeProgress(goal.def, state) : null,
-          stalls: goal.stalls } : null,
+          stalls: goal.stalls, ...correlation(goal) } : null,
         cooldowns: [...failures].filter(([, f]) => f.until > now()).map(([name, f]) => ({ name, until: f.until })),
       };
     },
+    /** Join only one goal generation, never an unrelated safety behavior. */
+    idleGoal: (goalGeneration) => running?.behavior.goalEntry?.generation === goalGeneration
+      && goalGeneration !== undefined ? running.promise : Promise.resolve(),
     /** Resolves once the currently running behavior (if any) has settled. */
-    idle: () => running?.promise ?? Promise.resolve(),
+    idle: () => running?.promise ?? deferredTick ?? Promise.resolve(),
   };
 }
 

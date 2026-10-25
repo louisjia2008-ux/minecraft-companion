@@ -47,10 +47,11 @@ function mulberry32(seed) {
   };
 }
 
-async function connectBot({ port, username, version, signal }) {
+async function connectBot({ port, username, version, signal, viewDistance }) {
   if (signal?.aborted) throw interruptionError(signal);
   const bot = mineflayer.createBot(withMinecraftProtocolCompatibility({
     host: '127.0.0.1', port, username, auth: 'offline', version, hideErrors: false,
+    ...(viewDistance ? { viewDistance } : {}),
   }));
   const timeout = new AbortController();
   const onAbort = () => bot.quit();
@@ -176,8 +177,9 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
   };
   try {
     check();
-    // Setup may ask the server first (e.g. where a structure is), so it can be async.
-    const setup = await scenario.setup({ username, run, rng, difficulty, server: scopedServer });
+    // Some setups need the world first (where the nearest stronghold is).
+    const setup = scenario.prepare ? await scenario.prepare({ server: scopedServer, username, run, rng, difficulty })
+      : scenario.setup({ username, run, rng, difficulty });
     write('setup', { seed, run, difficulty, details: setup.details, botLifecycle: lifecycle });
     const trace = (stage) => write('inventory_state', { stage, ...inventorySnapshot(bot) });
     for (const name of ['set_slot', 'set_player_inventory', 'window_items']) {
@@ -413,14 +415,23 @@ async function main({ argv = process.argv.slice(2), processTarget = process, sig
         return result;
       };
       try {
-        server = await startServer({ java, jar, dir: path.join(batchDir, 'server'),
-          properties: { ...scenario.serverProperties, difficulty }, dataPacks: scenario.serverDataPacks,
-          signal: interruption.signal });
+        // A scenario that uses up its world (the one ender dragon) gets a fresh
+        // server and world per run, seeded from the run number.
+        const launch = (run) => startServer({ java, jar,
+          dir: path.join(batchDir, scenario.serverPerRun ? `server-run-${String(run + 1).padStart(2, '0')}` : 'server'),
+          properties: { ...scenario.serverProperties, ...(scenario.serverPerRun ? scenario.serverPerRun(run, seed) : {}), difficulty },
+          dataPacks: scenario.serverDataPacks, signal: interruption.signal });
+        if (!scenario.serverPerRun) server = await launch(startRun - 1);
         for (let run = startRun - 1; run < startRun - 1 + runs && !interruption.signal.aborted; run += 1) {
           let result;
           try {
+            if (scenario.serverPerRun) {
+              if (bot) { await disconnect(bot); bot = null; }
+              if (server) { const stopping = server; server = null; await stopping.stop(); }
+              server = await launch(run);
+            }
             if (!bot) {
-              bot = await connect({ port: server.port, username, version, signal: interruption.signal });
+              bot = await connect({ port: server.port, username, version, signal: interruption.signal, viewDistance: scenario.viewDistance });
               bot.on('error', (error) => console.error('bot error:', error.message));
             }
             if (interruption.signal.aborted) throw interruptionError(interruption.signal);
@@ -433,6 +444,7 @@ async function main({ argv = process.argv.slice(2), processTarget = process, sig
             + ` ${Math.round(result.durationMs / 1000)}s${result.reason ? ` (${result.reason})` : ''}`
             + `${result.logsOnServer !== undefined ? ` logs=${result.logsOnServer}` : ''}`
             + `${result.quartzOnServer !== undefined ? ` quartz=${result.quartzOnServer} dimension=${result.dimension}` : ''}`
+            + `${result.summary ? ` ${result.summary}` : ''}`
             + `${result.placed !== undefined ? ` house=${result.placed}/${result.total} furniture=${JSON.stringify(result.furniture)}`
               + ` gear=${JSON.stringify(result.gear)} chest=${result.chestUsed} bed=${result.bedUsed}` : ''}`);
         }

@@ -181,3 +181,77 @@ test('a death down in the mine gives the tunnel up', async () => {
   assert.equal(made[0].mine, null);
   assert.equal(made[0].mineDir, 1);
 });
+
+function cleanupProject({ takeOk = true, done = false } = {}) {
+  const { EventEmitter } = require('node:events');
+  const bot = Object.assign(new EventEmitter(), { entity: { position: new Vec3(17, 64, 3) } });
+  const calls = [];
+  const device = fakeDevice();
+  device.dispose = async () => { calls.push('device'); };
+  const gather = { memory: { trip: { portal: 'remembered' } }, progress: () => 5, isDone: () => done,
+    run: async () => ({ ok: true }), dispose: async () => { calls.push('gather'); } };
+  const goal = createDeviceProjectGoal({ bot, name: 'cleanup_project', device, home,
+    createGather: () => gather, skills: { takeItems: async () => ({ ok: takeOk }) } });
+  return { bot, goal, gather, device, calls };
+}
+
+for (const takeOk of [true, false]) {
+  test(`a project releases completed gathering after chest take ok=${takeOk}`, async () => {
+    const f = cleanupProject({ done: true, takeOk });
+    assert.equal((await f.goal.run(ctx())).ok, takeOk);
+    assert.deepEqual(f.calls, ['gather']);
+    assert.equal(f.goal.memory.gather, null);
+  });
+}
+
+test('inventory-ready handoff awaits gathering cleanup before running device and preserves progress', async () => {
+  const f = cleanupProject();
+  await f.goal.run(ctx());
+  let release;
+  f.gather.dispose = () => new Promise((resolve) => { release = resolve; });
+  const running = f.goal.run(ctx({ hopper: 2 }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.device.memory.built, false);
+  assert.equal(f.goal.memory.gather, f.gather);
+  release();
+  await running;
+  assert.equal(f.device.memory.built, true);
+  assert.equal(f.goal.memory.gather, null);
+  assert.equal(f.goal.memory.steps, 5);
+});
+
+test('failed child cleanup retains ownership and does not double-credit gathering progress', async () => {
+  const f = cleanupProject();
+  await f.goal.run(ctx());
+  f.gather.dispose = async () => { throw new Error('cleanup failed'); };
+  await assert.rejects(f.goal.run(ctx({ hopper: 2 })), /cleanup failed/);
+  assert.equal(f.goal.memory.gather, f.gather);
+  assert.equal(f.goal.memory.steps, 0);
+  assert.equal(f.device.memory.built, false);
+  f.gather.dispose = async () => {};
+  await f.goal.run(ctx({ hopper: 2 }));
+  assert.equal(f.goal.memory.steps, 5);
+});
+
+test('project disposal cascades without discarding cached child memory or progress', async () => {
+  const f = cleanupProject();
+  await f.goal.run(ctx());
+  const before = f.goal.progress(ctx().perceive());
+  assert.equal(f.bot.listenerCount('death'), 1);
+  await f.goal.dispose();
+  assert.equal(f.bot.listenerCount('death'), 0);
+  assert.deepEqual(f.calls, ['gather', 'device']);
+  assert.equal(f.goal.memory.gather, f.gather);
+  assert.equal(f.gather.memory.trip.portal, 'remembered');
+  assert.equal(f.goal.progress(ctx().perceive()), before);
+});
+
+test('project disposal still releases its device when gathering cleanup rejects', async () => {
+  const f = cleanupProject();
+  await f.goal.run(ctx());
+  f.gather.dispose = async () => { throw new Error('cleanup failed'); };
+  await assert.rejects(f.goal.dispose(), /cleanup failed/);
+  assert.deepEqual(f.calls, ['device']);
+  assert.equal(f.bot.listenerCount('death'), 0);
+  assert.equal(f.goal.memory.gather, f.gather);
+});

@@ -2,6 +2,16 @@
 
 **正式游戏验收通过，离线检查按冻结快照记录。** 测试冻结 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，867 文件 sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`。原样完整 runtime full7 自然通过 3326/3326；正式 full03 于 2026-10-24 02:15:09.845—03:27:27.151 UTC 自然完成，24 场景、32/32 轮全部通过，原始结果、退出码与源码/driver 一致。 源码归档、干净安装与发布验证的最终收据随 release 单独提供，和本页的游戏验收快照分别绑定。[正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
 
+## 主分支旧干路前缀用例的后续移动超时
+
+主分支58d451的CI40087560335自然记录3341/3342、唯一旧干路前缀用例(0)的`dry_graph_leg_timeout`，4197.32517ms。原日志没有失败腿目标或身体/probe遥测，精确首因仍UNKNOWN；用例先reconcile旧前缀再拓展新路点，不能仅凭名称把超时归为rejoin移动。原始失败继续保留，后续修复与重新验收分别绑定。
+
+同一58d451的full17本地3342/3342、干净检出全套、归档实际采木11/10与正常保存、源码隐私审计及PR400860的3342/3342均曾独立通过；它们属于各自真实运行，不能覆盖新的main失败，也不替代下一最终发行源码的全部门槛。
+
+本轮离线夹具修复把这个前缀合同限定到显式加载的干燥条带，保留anchor0、原记录节点16和offset0/-3，只允许一个未访问的新frontier(-16,1,0)。原前缀重接/failed-edge/访问数全部断言保留；纯观察reconcile不增加visit，随后必须真实原生运动到新节点、ground/support确认后才可增加一个访问。局部运动通过生产已有settleNativeGoto承接同一goal/profile与原绝对leg deadline，不增加goto、时限或移动信用。新的显式MODELED finite-UNKNOWN对照允许原前缀合法reconcile，但新frontier没有充分证据时不得产生motor、新节点或新visit。
+
+透明原用例一次自然通过，随后一次真实原生切片控制也通过；它们未复现原CI超时，不构成原CI精确原因。原native 10ms Physics、4s leg、6s test及120s graph预算不变，生产执行文件未改。新最终完整检查、消费者与PR/main CI的实际结果由发行验收单另行绑定。
+
 ## 初生身体落稳的离线前提
 
 原e632 CI400834自然记录3339/3340、唯一紧急跨水用例在初始化时报`dry_graph_not_on_surface`；失败时姿态未记录，CI精确首因仍UNKNOWN。透明原用例和独立首tick控制在本地均一次复现：初生vy0/onGroundtrue经第一次原Physics变为onGroundfalse，位置仍在支撑上；原ordinary调用先观察到的anchor保留visits1，失败本身没有移动信用。窄修复仅测试等待实际连续落稳后再做原低血量/双向跨水/回营验收，并新增全新graph在首tick未落稳时零移动/零访问拒绝；不设置速度或位置、不放宽生产守卫和原预算。

@@ -2,6 +2,18 @@
 
 **Frozen a22 offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
 
+## 主分支旧干路前缀用例的原生移动超时
+
+[主分支CI40087560335](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40087560335)在`58d451751592a410c1c76c73640d7edf6d283807`自然失败：3341/3342，1fail、0cancel/skip/todo，1013288.748457ms。唯一用例`a failed old dry prefix rejoins a recorded node through actual observation or fresh native motion (0)`在4197.32517ms报告`dry_graph_leg_timeout`，堆栈指向graph原leg deadline。邻offset -3用例同次通过不覆盖该失败。
+
+原测试(0)初始就在记录anchor；`graph.next()`既处理pending旧前缀，又继续拓展新frontier。原日志未附失败腿目标、body或probe遥测，所以云端精确首因和失败阶段仍UNKNOWN，不能仅凭名称说成rejoin motor超时，也不能直接套用此前empty-partial机制。完整原日志、首次失败和实际main分支/checkout/tree保留；新诊断只以同一冻结原用例的观测提供机制证据。
+
+58d451、tree`0731fda988837c12d3eb14ac0244b29c8a66f682`、874文件sourceHash`2a24e587d3aad963e37d810d32831ac624a2cc9f731208e15f5d9ee836411473`的原样full17曾自然3342/3342通过，483585.788625ms；全部七命令通过，源码前后不变。其独立clean10也全套通过；archive11 fresh官方安装后实际采木11/目标10、44145ms、零死亡且正常console保存；privacy07通过170提交/1422blobs的源码与可达历史检查。PR400860也曾以合成checkout f8d4f0b/tree0731自然3342/3342通过，923768.103879ms。这些旧成功保留真实身份，不覆盖后来同源码的main失败，不拼接为新最终发行源码的PASS。
+
+本轮离线夹具修复把这个前缀合同限定到显式加载的干燥条带，保留anchor0、原记录节点16和offset0/-3，只允许一个未访问的新frontier(-16,1,0)。原前缀重接/failed-edge/访问数全部断言保留；纯观察reconcile不增加visit，随后必须真实原生运动到新节点、ground/support确认后才可增加一个访问。局部运动通过生产已有settleNativeGoto承接同一goal/profile与原绝对leg deadline，不增加goto、时限或移动信用。新的显式MODELED finite-UNKNOWN对照允许原前缀合法reconcile，但新frontier没有充分证据时不得产生motor、新节点或新visit。
+
+透明原用例一次自然通过，随后一次真实原生切片控制也通过；它们未复现原CI超时，不构成原CI精确原因。原native 10ms Physics、4s leg、6s test及120s graph预算不变，生产执行文件未改。新最终完整检查、消费者与PR/main CI的实际结果由发行验收单另行绑定。
+
 ## 初生落稳与紧急跨水测试的初始化合同
 
 [e632原PR20 CI40083496067](https://github.com/louisjia2008-ux/minecraft-companion/actions/runs/40083496067)完整runtime3339/3340、1fail、0cancel/skip/todo，自然exit1，1163389.334204ms。唯一失败是`explicit emergency food exploration crosses loaded typed water below the ordinary work health threshold`，14.764295ms后由`initialize`拒绝`dry_graph_not_on_surface`。完整原日志和首次失败保留；原CI未附失败时身体/探测信息，精确首因继续UNKNOWN。原日志下载只取一次；本地分块保存的工具错误与720000字符前缀被单独记录，逐块核原payload后补完，不重取或改写原CI。
