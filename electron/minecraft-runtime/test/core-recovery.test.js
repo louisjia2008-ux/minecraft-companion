@@ -226,6 +226,17 @@ test('deaths in the nether do not mark the same coordinates in the overworld as 
   await brain.dispose();
 });
 
+test('deaths on the End island do not mark it as dangerous, so the drops are still picked up', async () => {
+  const bot = fakeBot();
+  bot.game = { dimension: 'minecraft:the_end' };
+  let clock = 0;
+  const { brain, recovery } = wire({ bot, perceive: perceiveFor(bot), now: () => clock });
+  for (let i = 0; i < 3; i += 1) { bot.emit('death'); clock += 1000; }
+  assert.equal(recovery.status().danger, null);
+  assert.equal(bot.companionDeathDanger, undefined);
+  await brain.dispose();
+});
+
 test('leaving a deadly place prefers dry land', async () => {
   // Water everywhere east of x=4.
   const bot = fakeBot();
