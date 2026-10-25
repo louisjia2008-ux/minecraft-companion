@@ -2022,7 +2022,10 @@ for(const mode of ['relocate','pause','foreign'])test(`formal33 site escape hand
  f.bot.on('physicsTick',steer);t.after(()=>f.bot.removeListener('physicsTick',steer));
  const run=f.agent.__testHouseSurfaceGraphNext({x:0,y:1,z:0},{resource:'house_site_cottage',graphCheckpoint:{get:()=>cp,save:value=>{cp=value;}},assertGraphActive:()=>f.task.cancellationToken.throwIfRequested()});
  if(mode!=='relocate'){
-  await assert.rejects(run,e=>/paused|cancelled|movement_preempted/.test(e.code||''));assert.equal(cp.visits,1);assert.equal(cp.order.length,1);
+  try{await assert.rejects(run,e=>/paused|cancelled|movement_preempted/.test(e.code||''));}
+  catch(error){t.diagnostic(JSON.stringify({mode,changed,checkpoint:cp&&{order:cp.order,visits:cp.visits,current:cp.current},...coordinationObservation(f,error,diagnostics)}));throw error;}
+  assert.equal(changed,true,'The requested interruption must actually occur during the survival lease');
+  assert.equal(cp.visits,1);assert.equal(cp.order.length,1);
   if(mode==='foreign'){assert.equal(f.agent.__testGetActiveMovementLease(),foreign);assert.equal(f.bot.pathfinder.movements,profile);}return;
  }
  const result=await run;assert.equal(result.moved,true);assert.equal(cp.visits,2);assert.equal(cp.order.length,2);

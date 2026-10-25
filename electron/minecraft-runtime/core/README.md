@@ -1,5 +1,7 @@
 # 新执行核心
 
+新 core 已提供显式的 [结构化嵌入接口](../../../docs/EMBEDDING.md)：`index.js --engine core` / `createCoreHost`。任务接收与完成分开，带任务 ID、有限防重、暂停/取消和显式重连。旧 Electron 链路仍默认使用 legacy 引擎。
+
 与 `vendor/server/minecraftTaskAgent.js` 并行开发的新核心，还没有接入桌面应用。目前先通过场景测试平台在真实 vanilla 1.21.8 服务器上单独验证，稳定后再逐项替换旧代理的能力。
 
 > **正式游戏验收：a22 冻结 24场景32/32轮 PASS。历史离线验收：1f3 冻结 full13，3338/3338 PASS，自然 exit0，0 fail/cancel/skip/todo。** v0.1.0-alpha.1 仅源码开发预览，新 core 尚未接入 Electron。本文保留的先前 10/10、20/20、旧 E2E 等数字属于历史自报；当前完整结果、命令、失败历史与恢复成本见根 [VALIDATION.md](../../../VALIDATION.md) 和 [STATUS.md](../../../STATUS.md)。
