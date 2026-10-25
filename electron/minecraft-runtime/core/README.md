@@ -148,6 +148,7 @@
 | `end-portal-natural` | **seed 42 通过** | 自然世界，给 20 个末影之眼和铁装。三角定位要塞、挖楼梯下去、拆刷怪笼、填眼、进末地，用时 468 秒，0 次死亡。seed 21 的要塞在海底，没通过 |
 | `end-dragon-given` | **seed 11、13 通过** | 直接在末地主岛开局，给铁装、弓、192 支箭、水桶。seed 11：737 秒、0 次死亡、10 个水晶全清；seed 13：570 秒、0 次死亡。seed 12 多次失败（被甩飞、龙息、被龙头撞死） |
 | `end-city-given` | **seed 33 通过** | 龙已死，给珍珠和 512 圆石。穿折跃门、找到城、搭柱到塔顶开箱（7～8 件物品），射死潜影贝。开箱后还有被潜影贝浮起摔死的情况。seed 31、32 最近的城在 400～900 格外，没找到 |
+| `end-dragon-death` | **seed 11、13 通过** | 同 `end-dragon-given`，进末地 90 秒后用 /kill 杀死一次。机器人在主世界复活后走回末地门、跳进去、捡回掉落物，再接着屠龙。seed 13：1231 秒、只死了注入那 1 次；seed 11：1182 秒、共死 2 次（另一次是龙），两次都捡回装备 |
 | `end-water-landing` | **通过** | 在末地从 20、35、60 格高处掉落，三次都倒水落地，0 次死亡 |
 | `end-full-natural` | 未完整通过 | seed 42 从主世界给眼开局。一次屠龙成功、进入末地城阶段，之后珍珠打到岛边折跃门的边上摔死（已改成先搭桥过去）；另几次在龙战中被龙息杀死，死后在主世界出生点（海边）被溺尸反复杀死 |
 | `night-bunker-flat` / `night-bed-flat` | 通过（历史自报）（较早版本，最新代码未重跑） | 黄昏开局：能睡就睡；睡不了就挖地堡过夜，第二天爬出来继续干活 |
@@ -457,6 +458,7 @@ npm run scenario -- --accept-eula --scenario fishing-flat --runs 10
 # 末地（要塞 → 屠龙 → 末地城）；城场景开 16 视距
 npm run scenario -- --accept-eula --scenario end-portal-natural --runs 1 --seed 42
 npm run scenario -- --accept-eula --scenario end-dragon-given --runs 1 --seed 11
+npm run scenario -- --accept-eula --scenario end-dragon-death --runs 1 --seed 13
 npm run scenario -- --accept-eula --scenario end-city-given --runs 1 --seed 33
 npm run scenario -- --accept-eula --scenario end-water-landing --runs 1
 npm run scenario -- --accept-eula --scenario end-full-natural --runs 1 --seed 42
