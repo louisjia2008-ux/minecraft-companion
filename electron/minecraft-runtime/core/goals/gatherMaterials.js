@@ -423,6 +423,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   return {
     name: 'gather_materials',
+    // The trip owns temporary movement overrides, even when its parent stops
+    // before the bot returns through the portal. Keep its remembered portals.
+    dispose() { return memory.trip?.dispose?.(); },
     noProgressLimit: 40,
     maxRecoveries: 6,
     recover() {

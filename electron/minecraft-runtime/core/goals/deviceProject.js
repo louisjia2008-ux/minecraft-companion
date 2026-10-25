@@ -58,6 +58,12 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
     return memory.mine ? mining.leaveMine(bot, ctx, memory, actions) : null;
   }
 
+  // Release the child before dropping ownership or handing the body to a device.
+  async function releaseGather() {
+    await memory.gather?.dispose?.();
+    memory.gather = null;
+  }
+
   async function bring(ctx, lack) {
     const state = ctx.perceive();
     if (!memory.gather) {
@@ -76,14 +82,17 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
     const result = await skills.takeItems(bot, ctx, { position: home.chest,
       itemMatch: (n) => lack.some((r) => kb[r.key].match(n)) });
     ctx.record('device_take', { device: device.name, ok: result.ok, reason: result.reason, taken: result.taken });
-    memory.gather = null;
+    await releaseGather();
     return result;
   }
 
   return {
     name,
     memory,
-    dispose() { bot.removeListener?.('death', onDeath); },
+    async dispose() {
+      bot.removeListener?.('death', onDeath);
+      try { await memory.gather?.dispose?.(); } finally { await device.dispose?.(); }
+    },
     noProgressLimit: 40,
     maxRecoveries: 6,
     recover() {
@@ -119,8 +128,9 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
       // bag. Keep that completed gathering work when handing the body to
       // construction; dropping its counter would put the device below the
       // brain's historical best for the whole following build.
-      if (memory.gather) memory.steps += memory.gather.progress(ctx.perceive());
-      memory.gather = null;
+      const gathered = memory.gather ? memory.gather.progress(ctx.perceive()) : 0;
+      await releaseGather();
+      memory.steps += gathered;
       if (!memory.building) {
         const up = await climbOut(ctx);
         if (up) return up;
