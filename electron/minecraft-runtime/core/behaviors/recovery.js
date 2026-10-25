@@ -39,6 +39,22 @@ function discardable(inventory, keep = () => false) {
   return [...junk, ...surplus];
 }
 
+/** What boxes the bot in, for the log: every non-air block within one cell of its body. */
+function surroundings(bot) {
+  const feet = bot.entity?.position?.floored?.();
+  if (!feet || typeof bot.blockAt !== 'function') return null;
+  const cells = [];
+  for (let dy = -1; dy <= 2; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        const name = bot.blockAt(feet.offset(dx, dy, dz))?.name;
+        if (name && !/^(cave_|void_)?air$/.test(name)) cells.push(`${dx},${dy},${dz}:${name}`);
+      }
+    }
+  }
+  return { feet: `${feet.x},${feet.y},${feet.z}`, cells };
+}
+
 function createRecovery({
   bot,
   actions = defaultActions,
@@ -129,7 +145,9 @@ function createRecovery({
       const state = ctx.perceive();
       ctx.record('unstick', { why: stuckReason(state), at: state.position?.floored?.() || state.position });
       try {
-        return await actions.unstick(bot, ctx);
+        const result = await actions.unstick(bot, ctx);
+        if (!result?.ok) ctx.record('unstick_failed', { reason: result?.reason, around: surroundings(bot) });
+        return result;
       } finally {
         // Whatever happened, the goal gets a fresh look before the next attempt.
         goalTrack.pathStreak = 0;

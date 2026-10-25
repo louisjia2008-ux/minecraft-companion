@@ -77,6 +77,17 @@ function inventorySnapshot(bot) {
       slots: bot.currentWindow.slots.map(item), cursor: item(bot.currentWindow.selectedItem) } };
 }
 
+// What the body is doing right now: tells a bot stuck in a loop (jumping,
+// digging, swimming) apart from one standing still.
+function bodyState(bot) {
+  const e = bot.entity;
+  if (!e) return null;
+  const controls = Object.entries(bot.controlState || {}).filter(([, on]) => on).map(([name]) => name);
+  return { onGround: e.onGround, inLava: e.isInLava || false, inWater: e.isInWater || false, controls,
+    pathing: bot.pathfinder?.isMoving?.() || false, mining: bot.pathfinder?.isMining?.() || false,
+    digging: bot.targetDigBlock?.name || null, velocity: e.velocity && [e.velocity.x, e.velocity.y, e.velocity.z].map((v) => Math.round(v * 100) / 100) };
+}
+
 function interruptionError(signal) {
   return Object.assign(new Error(String(signal?.reason || 'external_abort')), { code: 'interrupted' });
 }
@@ -187,6 +198,8 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     const onDeath = () => { deaths += 1; write('death', { position: bot.entity?.position }); };
     bot.on('death', onDeath);
     cleanup.push(() => bot.removeListener('death', onDeath));
+    // A reused bot must not carry the last run's movement into this one.
+    try { bot.pathfinder?.setGoal(null); bot.clearControlStates?.(); } catch { /* not loaded yet */ }
     const runState = {};
     cleanup.push(() => scenario.dispose?.({ server: scopedServer, bot, username, state: runState, write }));
     await scenario.initialize?.({ server: scopedServer, bot, username, state: runState, write, signal: deadline.signal });
@@ -221,7 +234,7 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
       const status = companion.status();
       const line = { minute: Math.round((Date.now() - startedAt) / 60000), running: status.running,
         steps: status.goal?.progress, health: bot.health, food: bot.food, deaths,
-        position: bot.entity?.position?.floored?.(), dimension: bot.game?.dimension, inventory: inv };
+        position: bot.entity?.position?.floored?.(), dimension: bot.game?.dimension, inventory: inv, body: bodyState(bot) };
       write('heartbeat', line);
       line.autonomy = status.autonomy?.current || null;
       console.log(`    [${line.minute}m] ${line.running || 'idle'}${line.autonomy ? ` (auto:${line.autonomy})` : ''} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
