@@ -11,6 +11,7 @@
 const { Vec3 } = require('vec3');
 const defaultActions = require('../actions');
 const end = require('../end');
+const { returnToEnd } = require('./endReturn');
 const { createBlacklist } = require('../blacklist');
 const { sleep, waitUntil } = require('../confirm');
 
@@ -369,10 +370,15 @@ function createEndDragonGoal({ bot, actions = defaultActions } = {}) {
     maxRecoveries: 2,
     memory,
     isDone: () => done(),
-    progress: () => memory.crystalsGone * 40 + Math.floor(memory.damage) + (done() ? 1000 : 0),
+    progress: () => memory.crystalsGone * 40 + Math.floor(memory.damage) + (done() ? 1000 : 0) + (memory.returnHops || 0),
     recover() { crystalBlacklist.clear(); memory.spots = {}; },
     async run(ctx) {
-      if (!end.inEnd(bot)) return fail('not_in_end');
+      // Died out there: back through the portal; the drops wait on the island.
+      if (!end.inEnd(bot)) {
+        const back = await returnToEnd(bot, ctx, { actions });
+        if (back.ok) memory.returnHops = (memory.returnHops || 0) + 1;
+        return back;
+      }
       enterMode();
       bot.companionSheltered = Boolean(inShelter());
       const worn = await end.wearArmor(bot);

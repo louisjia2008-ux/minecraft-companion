@@ -79,7 +79,24 @@ const endDragonGiven = {
   },
 };
 
-module.exports = { endDragonGiven, advancement, playerDimension, countOnPlayer, baseCommands, FIGHT_KIT };
+// The same fight with one death forced on the bot a minute and a half in:
+// it must wake up in the overworld, walk back into the portal, pick its kit
+// up off the island and still kill the dragon.
+const endDragonDeath = {
+  ...endDragonGiven,
+  name: 'end-dragon-death',
+  description: 'end-dragon-given, but the bot is killed once 90 s into the fight; it must go back, recover its drops and finish.',
+  async onTick({ server, username, state, elapsedMs, write }) {
+    if (state.killed || elapsedMs < 90000) return;
+    const dimension = await playerDimension(server, username).catch(() => null);
+    if (dimension !== 'the_end') return;
+    state.killed = true;
+    write('forced_death', { elapsedMs });
+    server.command(`kill ${username}`);
+  },
+};
+
+module.exports = { endDragonGiven, endDragonDeath, advancement, playerDimension, countOnPlayer, baseCommands, FIGHT_KIT };
 
 // ---- stronghold ------------------------------------------------------------
 

@@ -11,6 +11,7 @@ const { Vec3 } = require('vec3');
 const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const end = require('../end');
+const { returnToEnd } = require('./endReturn');
 const city = require('../endCity');
 const { createBlacklist, posKey } = require('../blacklist');
 const { sleep, waitUntil } = require('../confirm');
@@ -28,6 +29,9 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
   const hasElytra = () => actions.countItems(bot, (n) => n === 'elytra') > 0;
 
   async function useGateway(ctx) {
+    // Every way through a gateway takes a pearl (the hole is one block high).
+    // Lost on a death out there: say so instead of trying forever.
+    if (!bot.inventory.items().some((i) => i.name === 'ender_pearl')) return fail('no_pearls');
     const gateways = city.findGateway(bot, 160).filter((g) => !blacklist.has(posKey(g.position)));
     if (gateways.length === 0) {
       // The gateways ring the island 96 blocks out: walk out toward that ring.
@@ -350,11 +354,16 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     maxRecoveries: 3,
     memory,
     isDone: () => done(),
-    progress: () => (memory.gatewayUsed ? 100 : 0) + memory.looted.size * 100 + (hasElytra() ? 500 : 0)
+    progress: () => (memory.returnHops || 0) + (memory.gatewayUsed ? 100 : 0) + memory.looted.size * 100 + (hasElytra() ? 500 : 0)
       + Math.floor(memory.explored / 2) + Math.floor(memory.bridged / 8),
     recover() { blacklist.clear(); memory.heading = null; memory.blocked = true; },
     async run(ctx) {
-      if (!end.inEnd(bot)) return fail('not_in_end');
+      // Died out there: back through the portal; the drops wait on the island.
+      if (!end.inEnd(bot)) {
+        const back = await returnToEnd(bot, ctx, { actions });
+        if (back.ok) memory.returnHops = (memory.returnHops || 0) + 1;
+        return back;
+      }
       enterMode();
       await end.wearArmor(bot);
       if (done()) return { ok: true };

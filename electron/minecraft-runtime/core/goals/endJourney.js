@@ -19,7 +19,9 @@ function createEndJourneyGoal({ bot, chests = 2, withCity = true } = {}) {
   const dragonDone = () => stages.dragon.isDone();
 
   function current(state) {
-    if (!end.inEnd(bot)) return dragonDone() ? null : stages.portal;
+    // Back in the overworld (died in the End): through the portal again,
+    // unless everything out there is done.
+    if (!end.inEnd(bot)) return dragonDone() && (!stages.city || stages.city.isDone(state)) ? null : stages.portal;
     if (!dragonDone()) return stages.dragon;
     if (stages.city && !stages.city.isDone(state)) return stages.city;
     return null;
@@ -33,7 +35,10 @@ function createEndJourneyGoal({ bot, chests = 2, withCity = true } = {}) {
     isDone: (state) => dragonDone() && (!stages.city || stages.city.isDone(state)),
     // Each stage's progress is bounded; later stages count on top of earlier ones.
     progress(state) {
-      const portal = end.inEnd(bot) || dragonDone() ? 100000 : stages.portal.progress(state);
+      // Once through, the portal stage stays counted: a death sends the bot
+      // back to the overworld but undoes nothing out there.
+      if (end.inEnd(bot)) memory.reachedEnd = true;
+      const portal = memory.reachedEnd || dragonDone() ? 100000 : stages.portal.progress(state);
       const dragon = dragonDone() ? 2000 : stages.dragon.progress(state);
       const city = stages.city ? stages.city.progress(state) : 0;
       return portal + dragon * 10 + city * 100;

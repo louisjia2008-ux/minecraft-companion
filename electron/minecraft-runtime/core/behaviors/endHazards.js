@@ -100,8 +100,27 @@ function installVoidBrake(bot, onEvent = () => {}) {
   return () => { bot.removeListener('physicsTick', onTick); release(); };
 }
 
+/**
+ * An enderman turns hostile when looked in the eyes. A carved pumpkin on the
+ * head stops that; without one (lost on a death, on the way back for it) keep
+ * the eyes on the ground while any enderman is about. Walking only needs yaw.
+ */
+function installGazeGuard(bot) {
+  const onTick = () => {
+    const e = bot.entity;
+    if (!e?.position || dimension(bot) !== 'the_end') return;
+    if (bot.inventory.slots[5]?.name === 'carved_pumpkin') return;
+    if (e.pitch <= -0.6) return;
+    const here = e.position;
+    const near = Object.values(bot.entities).some((m) => m.name === 'enderman' && m.position && m.position.distanceTo(here) <= 64);
+    if (near) bot.look(e.yaw, -0.6, true).catch(() => {});
+  };
+  bot.on('physicsTick', onTick);
+  return () => bot.removeListener('physicsTick', onTick);
+}
+
 function createEndHazards({ bot, actions = defaultActions, skills = defaultSkills, onEvent } = {}) {
-  const removeGuards = [installFallGuard(bot, onEvent), installVoidBrake(bot, onEvent)];
+  const removeGuards = [installFallGuard(bot, onEvent), installVoidBrake(bot, onEvent), installGazeGuard(bot)];
   const removeFallGuard = () => removeGuards.forEach((f) => f());
   const radiusIndex = bot.registry?.entitiesByName?.area_effect_cloud?.metadataKeys?.indexOf('radius') ?? -1;
   const cloudAt = () => {

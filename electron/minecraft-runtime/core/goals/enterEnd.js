@@ -13,6 +13,7 @@ const defaultActions = require('../actions');
 const stronghold = require('../stronghold');
 const { dimension } = require('../nether');
 const end = require('../end');
+const { rememberPortal } = require('./endReturn');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const at = (p) => (p ? `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}` : null);
@@ -83,9 +84,21 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
   const here0 = () => bot.entity.position;
   async function reachRing(ctx) {
     const ring = memory.ring;
+    // Far from it (back from a death at the world spawn): its blocks are not
+    // even loaded yet. Walk that way in long hops first.
+    const flat = Math.hypot(ring.center.x - here0().x, ring.center.z - here0().z);
+    if (flat > 48) {
+      const from = here0().clone();
+      const step = Math.min(64, flat) / flat;
+      const to = from.offset((ring.center.x - from.x) * step, 0, (ring.center.z - from.z) * step);
+      ctx.record('portal_room_return', { center: at(ring.center), distance: Math.round(flat) });
+      const moved = await actions.goTo(bot, ctx, new goals.GoalNearXZ(to.x, to.z, 3), { timeoutMs: 90000, arrived: () => true });
+      return here0().distanceTo(from) >= 6 ? { ok: true } : fail(moved.reason || 'walk_blocked');
+    }
     // Lit already: hop in.
     if (stronghold.portalLit(bot, ring.center)) {
       ctx.record('portal_enter', { center: at(ring.center) });
+      rememberPortal(bot, ring.center);
       const result = await stronghold.enterPortal(bot, ctx, ring);
       if (result.ok) memory.entered = true;
       return result;
