@@ -66,7 +66,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     ctx.record('pearl_thrown', { gateway: at(gateway.position), from: at(from), high, through: jumped });
     if (!jumped) return fail('pearl_missed');
     memory.gatewayUsed = true;
-    try { await bot.waitForChunksToLoad(); } catch (_) { /* re-checked next run */ }
+    try { await bot.waitForChunksToLoad(); } catch { /* re-checked next run */ }
     await waitUntil(() => bot.entity.onGround, { timeoutMs: 5000, signal: ctx.signal });
     return { ok: true };
   }
@@ -130,7 +130,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       return fail('pearl_missed');
     }
     memory.gatewayUsed = true;
-    try { await bot.waitForChunksToLoad(); } catch (_) { /* re-checked next run */ }
+    try { await bot.waitForChunksToLoad(); } catch { /* re-checked next run */ }
     await waitUntil(() => bot.entity.onGround, { timeoutMs: 5000, signal: ctx.signal });
     return { ok: true };
   }

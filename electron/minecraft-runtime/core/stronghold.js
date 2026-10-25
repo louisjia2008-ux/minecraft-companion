@@ -185,7 +185,7 @@ async function enterPortal(bot, ctx, ring) {
   }
   const arrived = await waitUntil(() => dimension(bot) !== from, { timeoutMs: 15000, signal: ctx.signal });
   if (!arrived) return fail('portal_no_transfer');
-  try { await bot.waitForChunksToLoad(); } catch (_) { /* the goal re-checks the ground */ }
+  try { await bot.waitForChunksToLoad(); } catch { /* the goal re-checks the ground */ }
   await sleep(500, ctx.signal);
   return { ok: true, dimension: dimension(bot) };
 }

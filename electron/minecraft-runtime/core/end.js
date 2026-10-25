@@ -140,7 +140,7 @@ async function hold(bot, name) {
   if (bot.heldItem?.name === name) return true;
   const item = bot.inventory.items().find((i) => i.name === name);
   if (!item) return false;
-  try { await bot.equip(item, 'hand'); } catch (_) { return false; }
+  try { await bot.equip(item, 'hand'); } catch { return false; }
   return bot.heldItem?.name === name;
 }
 
@@ -543,7 +543,7 @@ async function wearArmor(bot, { pumpkin = inEnd(bot) } = {}) {
     const best = bot.inventory.items().filter((i) => score(i.name) >= 0 && (kind === 'helmet' || i.name !== 'carved_pumpkin'))
       .sort((a, b) => score(b.name) - score(a.name))[0];
     if (!best || score(best.name) <= score(current)) continue;
-    try { await bot.equip(best, slot); worn.push(best.name); } catch (_) { /* next run tries again */ }
+    try { await bot.equip(best, slot); worn.push(best.name); } catch { /* next run tries again */ }
   }
   return worn;
 }
