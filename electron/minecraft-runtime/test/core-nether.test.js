@@ -56,7 +56,8 @@ test('cells by lava cost more, standing in or over lava is effectively banned', 
 });
 
 test('nether movements are applied once and fully restored', () => {
-  const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set([1]), exclusionAreasStep: [() => 0], scafoldingBlocks: [20, 21] };
+  const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set([1]), exclusionAreasStep: [() => 0], scafoldingBlocks: [20, 21],
+    allowSprinting: true };
   const bot = { ...makeWorld(), pathfinder: { movements },
     registry: { blocksByName: { nether_gold_ore: { id: 7 }, obsidian: { id: 8 } }, itemsByName: { netherrack: { id: 21 }, cobblestone: { id: 20 } } } };
   const restore = nether.applyNetherMovements(bot);
@@ -65,14 +66,26 @@ test('nether movements are applied once and fully restored', () => {
   assert.ok(movements.blocksCantBreak.has(7) && movements.blocksCantBreak.has(8));
   assert.equal(movements.exclusionAreasStep.length, 2);
   assert.deepEqual(movements.scafoldingBlocks, [21], 'cobblestone is kept for lava steps');
+  assert.equal(movements.allowSprinting, false, 'no sprinting along fortress bridges');
   nether.applyNetherMovements(bot)();
   assert.equal(movements.exclusionAreasStep.length, 2, 'a second apply is a no-op');
   restore();
   assert.equal(movements.maxDropDown, 4);
   assert.equal(movements.digCost, 1);
+  assert.equal(movements.allowSprinting, true);
   assert.deepEqual(movements.scafoldingBlocks, [20, 21]);
   assert.deepEqual([...movements.blocksCantBreak], [1]);
   assert.equal(movements.exclusionAreasStep.length, 1);
+});
+
+test('a cell beside a long drop costs more, a step down does not', () => {
+  // A bridge at y 64: floor at 63 for x <= 0, a drop to below 59 at x = 1.
+  const drop = {};
+  for (let y = 58; y <= 63; y += 1) drop[`1,${y},0`] = 'air';
+  const bridge = makeWorld(drop);
+  assert.equal(nether.edgeRisk(bridge, new Vec3(0, 64, 0)), 15);
+  assert.equal(nether.edgeRisk(bridge, new Vec3(-1, 64, 0)), 0);
+  assert.equal(nether.edgeRisk(makeWorld({ '1,63,0': 'air' }), new Vec3(0, 64, 0)), 0, 'a one-block step is no edge');
 });
 
 test('lifting the lava margins keeps lava cells shut and restores the nether costs', async () => {

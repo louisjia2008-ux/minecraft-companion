@@ -245,7 +245,7 @@ function applyNetherMovements(bot) {
   const m = bot.pathfinder?.movements;
   if (!m || m.companionNether) return () => {};
   const saved = { maxDropDown: m.maxDropDown, digCost: m.digCost, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length,
-    scaffold: m.scafoldingBlocks };
+    scaffold: m.scafoldingBlocks, sprint: m.allowSprinting };
   m.companionNether = true;
   m.maxDropDown = 3;
   // Netherrack breaks in an instant, so plain paths tunnel straight through
@@ -256,11 +256,15 @@ function applyNetherMovements(bot) {
     const id = bot.registry.blocksByName[name]?.id;
     if (Number.isInteger(id)) m.blocksCantBreak.add(id);
   }
-  m.exclusionAreasStep.push((block) => (block?.position ? lavaRisk(bot, block.position) : 0));
+  // Fortress bridges hang 30 blocks over lava: no sprinting (a sprint overshoots
+  // a turn and walks off the side), and keep to the middle of a bridge.
+  m.allowSprinting = false;
+  m.exclusionAreasStep.push((block) => (block?.position ? lavaRisk(bot, block.position) + edgeRisk(bot, block.position) : 0));
   return () => {
     m.maxDropDown = saved.maxDropDown;
     m.digCost = saved.digCost;
     m.scafoldingBlocks = saved.scaffold;
+    m.allowSprinting = saved.sprint;
     m.blocksCantBreak = saved.cantBreak;
     m.exclusionAreasStep.length = saved.steps;
     m.companionNether = false;
@@ -303,6 +307,16 @@ function lavaRisk(bot, p) {
   return risk;
 }
 
+/** Extra path cost for standing in `p` beside a long drop (a bridge edge, a cliff). */
+function edgeRisk(bot, p) {
+  const open = (dx, dy, dz) => bot.blockAt(p.offset(dx, dy, dz))?.boundingBox === 'empty';
+  let risk = 0;
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    if (open(dx, 0, dz) && open(dx, -1, dz) && open(dx, -2, dz) && open(dx, -3, dz) && open(dx, -4, dz)) risk += 15;
+  }
+  return risk;
+}
+
 /** Any lava within `range` cells of the bot's feet (for logging and checks). */
 function lavaNear(bot, range = 2) {
   const feet = bot.entity.position.floored();
@@ -315,7 +329,7 @@ function lavaNear(bot, range = 2) {
 }
 
 module.exports = {
-  netherScaffolding, withLavaMarginsLifted,
+  netherScaffolding, withLavaMarginsLifted, edgeRisk,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
   applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };
