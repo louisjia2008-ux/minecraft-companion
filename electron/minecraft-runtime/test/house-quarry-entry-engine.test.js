@@ -146,7 +146,10 @@ test('production same stable camp remains compatible without creating a surface 
 test('sand camp without a prior graph discovers a native arrived stable entry before any mining',{timeout:30000},async t=>{
  const f=fixture(t,{noGraph:true});
  const originalCamp=clone(f.task.materialSupply.camp.anchor);
- await f.run(2);
+ try{await f.run(2);}catch(error){t.diagnostic(JSON.stringify({code:error.code,observedNodes:error.observedNodes,rejected:error.rejected,
+  graph:(g=>g&&({order:g.order,current:g.current,visits:g.visits,blockedEdges:g.blockedEdges?.slice(-16)}))(f.task.materialSupply.surfaceGraphs.any_log),
+  moves:f.moves.slice(-16),position:f.bot.entity.position,ticks:f.ticks(),
+  discovery:f.diagnostics().filter(e=>e.event==='house_quarry_entry_native_discovery')}));throw error;}
  const graph=f.task.materialSupply.surfaceGraphs.any_log,selected=f.task.materialSupply.quarryEntry;
  assert.deepEqual(f.task.materialSupply.camp.anchor,originalCamp);
  assert.equal(selected.routeKind,'observed_graph_node');

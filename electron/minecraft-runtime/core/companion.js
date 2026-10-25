@@ -90,6 +90,19 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   let spare = () => false;
   let director = null;
   let brain = null;
+  let paused = false;
+  let disposed = false;
+  let disposal = null;
+  let taskEpoch = 0;
+  let dispatch = Promise.resolve();
+  let dispatching = 0;
+  let retirement = Promise.resolve();
+  let retiring = 0;
+  let retirementFailed = false;
+  let goalOwner = null;
+  const assertActive = () => {
+    if (disposed) throw Object.assign(new Error('Companion is disposed'), { code: 'disposed' });
+  };
   // Nights after the house is done: home to bed, whatever goal runs. The
   // homestead goal keeps handling its own nights while it builds.
   const nightRest = createNightRest({ bot, home: () => {
@@ -105,13 +118,51 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors,
     nightRest, homeMaintenance, ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];
   const usedGoals = new Set();
-  const useGoal = (goal) => { usedGoals.add(goal); spare = goal.spares || (() => false); brain.setGoal(goal); };
+  function retireGoal(owner) {
+    if (!owner || owner.retiring) return retirement;
+    owner.retiring = true;
+    if (goalOwner === owner) goalOwner = null;
+    // Capture only the old invocation, never a later task's promise. Goal
+    // terminal events are emitted before the running body has fully settled.
+    const settled = brain.idleGoal(owner.generation);
+    retiring += 1;
+    retirement = retirement.then(() => settled).then(async () => {
+      await owner.goal.dispose?.();
+      usedGoals.delete(owner.goal);
+    }).catch((error) => {
+      retirementFailed = true;
+      void director?.disable('goal_cleanup_failed').catch(() => {});
+      const failure = Object.assign(new Error(String(error?.message || error), { cause: error }),
+        { code: 'cleanup_failed', retryable: false });
+      try { onEvent({ type: 'goal_cleanup_error', at: Date.now(), goal: owner.goal.name,
+        taskId: owner.taskId, generation: owner.generation, reason: failure.message,
+        code: failure.code, retryable: false }); } catch { /* observer */ }
+      throw failure;
+    }).finally(() => { retiring -= 1; });
+    // The failed cleanup is joined by cancellation/new dispatch/disposal, but
+    // natural completion can begin it without any waiting caller.
+    retirement.catch(() => {});
+    return retirement;
+  }
+  const useGoal = (goal, metadata) => {
+    assertActive();
+    const owner = { goal, taskId: metadata?.taskId ?? goal.metadata?.taskId ?? goal.taskId };
+    goalOwner = owner;
+    usedGoals.add(goal);
+    spare = goal.spares || (() => false);
+    try { brain.setGoal(goal, metadata); } catch (error) { retireGoal(owner); throw error; }
+  };
   brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
     onEvent: (event) => {
-      // A finished goal no longer keeps its herd from the cooking pot.
-      if (['goal_done', 'goal_failed', 'goal_cleared', 'stopped'].includes(event.type)) spare = () => false;
+      if (event.type === 'goal_set' && goalOwner) goalOwner.generation = event.generation;
+      // Release invocation-owned listeners/movement hooks, not a historical
+      // list of all goals ever submitted to this long-lived companion.
+      if (['goal_done', 'goal_failed', 'goal_cleared', 'stopped'].includes(event.type)) {
+        spare = () => false;
+        if (goalOwner && event.generation === goalOwner.generation) retireGoal(goalOwner);
+      }
       recovery.observe(event);
       director?.handleEvent(event);
       onEvent(event);
@@ -125,173 +176,187 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   director = createDirector({ brain: directorBrain, perceive: () => perceive(bot), cards, stageOf, onEvent });
   if (autonomy) director.enable();
   const timer = setInterval(() => {
-    try { director.tick(); } catch (error) { onEvent({ type: 'autonomy_error', at: Date.now(), reason: String(error?.message || error) }); }
+    if (disposed) return;
+    try { if (!paused && !dispatching && !retiring && !retirementFailed) director.tick(); } catch (error) { onEvent({ type: 'autonomy_error', at: Date.now(), reason: String(error?.message || error) }); }
     brain.tick().catch(() => {});
   }, tickMs);
   timer.unref?.();
   // Death interrupts the current action only: progress lives in the world, so
   // after respawning the goal simply re-plans from what is left.
-  const onDeath = () => { brain.interrupt('death').catch(() => {}); };
+  const onDeath = () => { if (!disposed) brain.interrupt('death').catch(() => {}); };
   bot.on('death', onDeath);
 
-  return {
-    brain,
-    director,
-    gatherLogs(count) {
+  function startPlayerGoal(create, metadata, returnGoal = true) {
+    assertActive();
+    const epoch = ++taskEpoch;
+    dispatching += 1;
+    const operation = dispatch.then(async () => {
+      assertActive();
+      if (epoch !== taskEpoch) throw Object.assign(new Error('Task dispatch was cancelled'), { code: 'aborted' });
+      if (goalOwner) await brain.clearGoal('replaced');
+      await retirement;
+      assertActive();
+      if (epoch !== taskEpoch) throw Object.assign(new Error('Task dispatch was cancelled'), { code: 'aborted' });
+      // Factories themselves can install listeners or movement overrides, so
+      // construct only after the previous invocation restored its resources.
+      const goal = create();
       director.notePlayerGoal();
-      useGoal(createGatherLogsGoal({ bot, count }));
-      return brain.tick();
+      paused = false;
+      useGoal(goal, metadata);
+      await brain.tick();
+      return returnGoal ? goal : undefined;
+    }).finally(() => { dispatching -= 1; });
+    dispatch = operation.catch(() => {});
+    return operation;
+  }
+  const goalMethod = (create) => (options = {}, metadata) => startPlayerGoal(
+    () => create({ bot, ...options }), metadata ?? { taskId: options?.taskId });
+  const tasks = {
+    gatherLogs: (count, metadata) => startPlayerGoal(() => createGatherLogsGoal({ bot, count }), metadata, false),
+    homestead(options = {}, metadata) {
+      return startPlayerGoal(() => {
+        // One house per run: keep building the house the player asked for.
+        const goal = Object.keys(options).length === 0 && director.memory.homestead
+          ? director.memory.homestead : createHomesteadGoal({ bot, ...options });
+        director.memory.homestead = goal;
+        return goal;
+      }, metadata ?? { taskId: options?.taskId });
     },
-    homestead(options = {}) {
-      // One house per run: the director keeps building the one the player asked for.
-      const goal = Object.keys(options).length === 0 && director.memory.homestead
-        ? director.memory.homestead
-        : createHomesteadGoal({ bot, ...options });
-      director.memory.homestead = goal;
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    farm(options = {}) {
-      const goal = createFarmGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    ranch(options = {}) {
-      const goal = createRanchGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    netherQuartz(options = {}) {
-      const goal = createNetherQuartzGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    enterEnd(options = {}) {
-      const goal = createEnterEndGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    /** Stronghold portal, dragon, gateway and an end city, in one goal. */
-    endJourney(options = {}) {
-      const goal = createEndJourneyGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    endCity(options = {}) {
-      const goal = createEndCityGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    endDragon(options = {}) {
-      const goal = createEndDragonGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
-    gatherMaterials(options) {
-      const goal = createGatherMaterialsGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    cobbleGenerator(options = {}) {
-      const goal = createCobbleGeneratorGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    autoSmelter(options = {}) {
-      const goal = createAutoSmelterGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    caneFarm(options = {}) {
-      const goal = createCaneFarmGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    mobFarm(options = {}) {
-      const goal = createMobFarmGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    ironFarm(options = {}) {
-      const goal = createIronFarmGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    villageIronFarm(options = {}) {
-      const goal = createVillageIronFarmGoal({ bot, ...options });
-      director.notePlayerGoal();
-      brain.setGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    carpetDuper(options = {}) {
-      const goal = createCarpetDuperGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    railDuper(options = {}) {
-      const goal = createRailDuperGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    fishing(options = {}) {
-      const goal = createFishingGoal({ bot, ...options });
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick().then(() => goal);
-    },
-    setGoal(goal) {
-      director.notePlayerGoal();
-      useGoal(goal);
-      return brain.tick();
-    },
-    /** Lets the bot choose its own goals while no player task is set. */
-    setAutonomy(on) {
-      if (on) director.enable();
-      else return director.disable();
-      return Promise.resolve();
-    },
-    async stop(reason = 'user_stop') {
-      // A player's stop also stops the bot from picking new goals on its own.
-      await director.disable(reason);
-      await brain.stop(reason);
-      haltBody(bot);
-    },
-    status: () => ({ ...brain.status(), recovery: recovery.status(), autonomy: director.status() }),
-    async dispose() {
-      clearInterval(timer);
-      await director.disable('disposed');
-      bot.removeListener('death', onDeath);
-      removeEdgeNudge();
-      await brain.dispose();
-      for (const goal of usedGoals) await goal.dispose?.();
+    farm: goalMethod(createFarmGoal),
+    ranch: goalMethod(createRanchGoal),
+    netherQuartz: goalMethod(createNetherQuartzGoal),
+    enterEnd: goalMethod(createEnterEndGoal),
+    endJourney: goalMethod(createEndJourneyGoal),
+    endCity: goalMethod(createEndCityGoal),
+    endDragon: goalMethod(createEndDragonGoal),
+    gatherMaterials: goalMethod(createGatherMaterialsGoal),
+    cobbleGenerator: goalMethod(createCobbleGeneratorGoal),
+    autoSmelter: goalMethod(createAutoSmelterGoal),
+    caneFarm: goalMethod(createCaneFarmGoal),
+    mobFarm: goalMethod(createMobFarmGoal),
+    ironFarm: goalMethod(createIronFarmGoal),
+    villageIronFarm: goalMethod(createVillageIronFarmGoal),
+    carpetDuper: goalMethod(createCarpetDuperGoal),
+    railDuper: goalMethod(createRailDuperGoal),
+    fishing: goalMethod(createFishingGoal),
+  };
+
+  function dispose() {
+    if (disposal) return disposal;
+    disposed = true;
+    taskEpoch += 1;
+    paused = false;
+    clearInterval(timer);
+    bot.removeListener('death', onDeath);
+    removeEdgeNudge();
+    // Both calls start synchronously: director cannot choose more work, and
+    // brain cannot restart a reflex while an abort or goal cleanup is pending.
+    const stoppingDirector = director.disable('disposed');
+    const stoppingBrain = brain.dispose();
+    disposal = (async () => {
+      const errors = [];
+      const attempt = async (cleanup) => { try { await cleanup(); } catch (error) { errors.push(error); } };
+      for (const behavior of behaviors) await attempt(() => behavior.dispose?.());
+      await attempt(() => recovery.dispose());
+      await attempt(() => stoppingDirector);
+      await attempt(() => stoppingBrain);
+      await attempt(() => retirement);
+      for (const goal of usedGoals) await attempt(() => goal.dispose?.());
       usedGoals.clear();
-      for (const behavior of behaviors) behavior.dispose?.();
-      recovery.dispose();
+      goalOwner = null;
       if (bot.companionProtectBlock === director.memory.homestead?.memory.protectBlock) {
         if (priorHomeProtection === undefined) delete bot.companionProtectBlock;
         else bot.companionProtectBlock = priorHomeProtection;
       }
       haltBody(bot);
       uninstallOpenDoorPassage(bot, configuredMovements);
+      if (errors.length) throw new AggregateError(errors, 'Companion cleanup failed');
+    })();
+    return disposal;
+  }
+
+  return {
+    brain,
+    director,
+    ...tasks,
+    /** Built-in, data-only dispatch. Resolves at dispatch, not task completion. */
+    async submitTask(name, args = {}, metadata = {}) {
+      assertActive();
+      if (typeof name !== 'string' || !Object.hasOwn(tasks, name)) throw Object.assign(new Error(`Unknown task: ${name}`), { code: 'unknown_task' });
+      validateTaskArgs(args);
+      return tasks[name](name === 'gatherLogs' ? args.count : args, metadata);
     },
+    setGoal(goal, metadata) {
+      return startPlayerGoal(() => goal, metadata, false);
+    },
+    /** Lets the bot choose its own goals while no player task is set. */
+    setAutonomy(on) {
+      assertActive();
+      if (on && retirementFailed) throw Object.assign(new Error('Goal cleanup failed; dispose this companion'),
+        { code: 'cleanup_failed', retryable: false });
+      if (on) director.enable();
+      else return director.disable();
+      return Promise.resolve();
+    },
+    /** Cancel task/autonomy only; survival and maintenance remain active. */
+    async cancelTask(reason = 'task_cancelled') {
+      assertActive();
+      taskEpoch += 1;
+      paused = false;
+      await Promise.all([director.disable(reason), brain.clearGoal(reason)]);
+      await retirement;
+    },
+    /** Suspend task selection and goal work, without suspending safety. */
+    async pauseTask(reason = 'task_paused') {
+      assertActive();
+      paused = true;
+      await brain.pauseGoal(reason);
+    },
+    async resumeTask() {
+      assertActive();
+      paused = false;
+      await brain.resumeGoal();
+    },
+    /** Legacy stop is not an all-stop: subsequent ticks still run safety. */
+    async stop(reason = 'user_stop') {
+      assertActive();
+      taskEpoch += 1;
+      paused = false;
+      await Promise.all([director.disable(reason), brain.stop(reason)]);
+      await retirement;
+      haltBody(bot);
+    },
+    status: () => ({ ...brain.status(), paused, disposed, cleanupFailed: retirementFailed, recovery: recovery.status(), autonomy: director.status() }),
+    /** Terminal all-stop; construct a new companion to restart. Does not disconnect the bot. */
+    stopAll: dispose,
+    dispose,
   };
+}
+
+// The embedding entry point accepts data, never executable goal definitions or
+// dependency overrides. Legacy in-process goal methods remain unrestricted.
+function validateTaskArgs(args) {
+  const seen = new Set();
+  function visit(value) {
+    if (value === null || ['string', 'boolean'].includes(typeof value)) return;
+    if (typeof value === 'number' && Number.isFinite(value)) return;
+    if (!value || typeof value !== 'object' || seen.has(value)) throw new TypeError('Task arguments must be plain JSON data');
+    if (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+      throw new TypeError('Task arguments must be plain JSON data');
+    }
+    seen.add(value);
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (typeof key !== 'string' || !('value' in descriptor)) throw new TypeError('Task arguments must be plain JSON data');
+      visit(descriptor.value);
+    }
+    seen.delete(value);
+  }
+  if (!args || Array.isArray(args) || typeof args !== 'object') throw new TypeError('Task arguments must be an object');
+  visit(args);
+  for (const key of ['bot', 'actions', 'skills', 'kb', '__proto__', 'constructor', 'prototype']) {
+    if (Object.hasOwn(args, key)) throw new TypeError(`Task argument is not allowed: ${key}`);
+  }
 }
 
 module.exports = { createCompanion, configureMovements };

@@ -1,11 +1,16 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),{Vec3}=require('vec3');
 const filename=path.join(__dirname,'house-surface-graph.test.js'),source=fs.readFileSync(filename,'utf8'),native=new Module(filename,module);native.filename=filename;native.paths=Module._nodeModulePaths(__dirname);native._compile(source.slice(0,source.indexOf('\nfor(const unfinished'))+'\nmodule.exports={fixture};\n',filename);
+const {runNativePhysicsClock}=require('../test-support/native-physics-clock.cjs');
 const {createLoadedDryGraph}=require('../vendor/server/minecraft/houseSurfaceGraph'),{recoverTimedOutSiteLeg}=require('../vendor/server/minecraft/houseSiteTimeoutRecovery');
 // Native pathfinder+physics, deliberately shortened original leg budget. No
 // pose/velocity/world mutation, and no server or full-workflow claim.
 test('an expired native site leg can yield a fresh actual dry observation after its old motor is idle',{timeout:5000},async t=>{
- const f=native.exports.fixture(t),anchor={x:0,y:1,z:0},graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,legTimeoutMs:80});let error;
+ // Keep the deliberately short 80ms deadline tied to native Physics ticks.
+ // A busy host must not consume it before the fixture receives any movement.
+ let f;
+ await runNativePhysicsClock(t,async()=>{
+ f=native.exports.fixture(t);const anchor={x:0,y:1,z:0},graph=createLoadedDryGraph(f.deps,{anchor,terrainRecovery:true,legTimeoutMs:80});let error;
  try{await graph.next();assert.fail('leg must expire');}catch(e){error=e;assert.equal(e.code,'dry_graph_leg_timeout');}
  const before=f.checkpoint(),oldAnchor=JSON.stringify(before.anchor),records=[],calls=f.attempts.length;
  const result=await recoverTimedOutSiteLeg({...f.deps,getCP:f.checkpoint,saveCP:f.deps.setCheckpoint,isMotorIdle:()=>true,record:v=>records.push(v)},error,{deadline:Date.now()+3000});
@@ -21,6 +26,7 @@ test('an expired native site leg can yield a fresh actual dry observation after 
  if(created){assert.deepEqual(after.nodes[after.current].timedOutLegLanding,records[0]);assert.equal(after.nodes[after.current].parent,error.observedDryLeg.fromNode);}
  else {assert.deepEqual(after.nodes[after.current],before.nodes[after.current]);assert.deepEqual(after.order,before.order);}
  assert.ok(!after.frontier.some(e=>e.parent===error.observedDryLeg.fromNode&&JSON.stringify(e.target)===JSON.stringify(error.observedDryLeg.target)));
+ },{maximumMs:5000,stepMs:10,stop:()=>{f?.cancel();f?.bot.pathfinder.setGoal(null);f?.bot.clearControlStates();}});
 });
 function stillFixture(t){const anchor={x:0,y:1,z:0},cp={schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,nodes:{'0,1,0':{position:anchor,parent:null,expanded:true}},order:['0,1,0'],current:'0,1,0',resumeNode:'0,1,0',visits:1,probes:1,frontier:[],blockedEdges:[]};const f=native.exports.fixture(t,{checkpoint:cp});const error=Object.assign(Error('expired'),{code:'dry_graph_leg_timeout',observedDryLeg:{fromNode:'0,1,0',from:'0,1,0',target:{x:16,y:1,z:0},deadline:Date.now()-10}});return {...f,error};}
 for(const mode of ['hazardError','paused','searchDeadline','pendingWater','pendingTrail','staleReceipt','lateCPWrite','movingMotor'])test(`expired site recovery refuses ${mode}`,{timeout:3000},async t=>{

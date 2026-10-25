@@ -14,9 +14,17 @@ for(const baseline of [true,false])test(`formal34 original native descent aligns
   old._compile(text.replace(needle,'if(false&&hasGroundedBodySupport(bot)&&!naturalWalkingFoot(bot,bot.entity.position.floored()))'),file);graphAPI=old.exports;}
  const aligned=[],brakes=[];f.deps.onGroundedDropAlignment=e=>{if(e.aligned===true)aligned.push(e);};f.deps.onControlledDropBrake=e=>brakes.push(e);
  const graph=graphAPI.createLoadedDryGraph(f.deps,{anchor:cp.anchor,radius:384,maxNodes:256,maxEdges:8192,timeoutMs:1200000,legTimeoutMs:20000,adaptiveLocalFrontier:true,nativeReachableHints:true,terrainRecovery:true});
+ const nativeTrace=[];
+ const trace=(event,value)=>{nativeTrace.push({event,status:value?.status,reason:typeof value==='string'?value:undefined,
+  pathLength:value?.path?.length,tick:f.points.length,position:{...f.bot.entity.position},onGround:f.bot.entity.onGround});if(nativeTrace.length>32)nativeTrace.shift();};
+ const onPath=value=>trace('path_update',value),onReset=value=>trace('path_reset',value);
+ f.bot.on('path_update',onPath);f.bot.on('path_reset',onReset);
+ t.after(()=>{f.bot.removeListener('path_update',onPath);f.bot.removeListener('path_reset',onReset);});
+ const observedNext=()=>graph.next().catch(error=>{t.diagnostic(JSON.stringify({baseline,code:error.code,message:error.message,
+  blockedEdges:graph.state().blockedEdges.slice(-16),nativeTrace,position:f.bot.entity.position,velocity:f.bot.entity.velocity,onGround:f.bot.entity.onGround}));throw error;});
  const before=graph.state();
  if(baseline){await assert.rejects(graph.next(),{code:'dry_graph_drop_brake_unconfirmed'});assert.equal(graph.state().visits,before.visits);return;}
- const result=await graph.next();assert.equal(result.moved,true);assert.deepEqual(result.actual,saved.target);assert.equal(f.bot.entity.onGround,true);
+ const result=await observedNext();assert.equal(result.moved,true);assert.deepEqual(result.actual,saved.target);assert.equal(f.bot.entity.onGround,true);
  assert.ok(aligned.length>=1);assert.ok(brakes.length>=1);assert.ok(aligned.every(e=>e.graphNodeCredit===false&&e.positionOrVelocityWritten===false&&e.before.distanceTo(e.actual)<=1));
  assert.ok(aligned.every(e=>brakes.some(b=>b.originalDeadline===e.originalDeadline)));
  assert.equal(graph.state().visits,before.visits+1);assert.equal(graph.state().order.length,before.order.length+1);assert.deepEqual(graph.state().anchor,before.anchor);
