@@ -195,12 +195,28 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
   }
 
+  // A climb to a fortress deck or a spawner can take twenty blocks of tower.
+  const SCAFFOLD_LOW = 8;
+  const SCAFFOLD_STOCK = 24;
+
+  /** Low on blocks to tower with: dig some netherrack nearby first. */
+  async function stockScaffolding(ctx) {
+    if (nether.scaffoldCount(bot) >= SCAFFOLD_LOW || bot.entity?.isInLava) return;
+    ctx.record('stock_scaffolding', { have: nether.scaffoldCount(bot) });
+    for (let misses = 0, i = 0; i < SCAFFOLD_STOCK && misses < 3 && nether.scaffoldCount(bot) < SCAFFOLD_STOCK; i += 1) {
+      const got = await skills.gatherOne(bot, ctx, { blocks: (n) => n === 'netherrack', dropMatch: (n) => n === 'netherrack',
+        blacklist, radius: 16 });
+      if (!got.ok) misses += 1;
+    }
+  }
+
   async function approach(ctx, kind, cells) {
     const here = bot.entity.position;
     const target = cells.find((p) => !blacklist.has(`${kind}:${posKey(p)}`));
     if (!target) return fail(`${kind}_unreachable`);
     ctx.record('approach', { kind, target: posKey(target), distance: Math.round(target.distanceTo(here)) });
     const stand = target.offset(0, 1, 0);
+    if (stand.y - here.y > 3) await stockScaffolding(ctx);
     const result = await withScaffolding(() => actions.goNear(bot, ctx, stand, 2, { timeoutMs: 120000 }));
     if (!result.ok && bot.entity.position.distanceTo(here) < 6) blacklist.add(`${kind}:${posKey(target)}`, result.reason);
     return result;
@@ -317,6 +333,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function approachStructure(ctx, kind, p = memory[kind]) {
     const here = bot.entity.position;
     ctx.record('approach', { kind, target: posKey(p), distance: Math.round(p.distanceTo(here)) });
+    await stockScaffolding(ctx);
     const result = await withScaffolding(() => actions.goNear(bot, ctx, p, 4, { timeoutMs: 120000 }));
     if (!result.ok && bot.entity.position.distanceTo(here) < 6) return explore(ctx);
     return result;

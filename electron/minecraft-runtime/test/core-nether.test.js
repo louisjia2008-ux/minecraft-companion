@@ -78,6 +78,13 @@ test('nether movements are applied once and fully restored', () => {
   assert.equal(movements.exclusionAreasStep.length, 1);
 });
 
+test('nether rubble counts as scaffolding, cobblestone is kept for lava steps', () => {
+  const bot = { registry: { itemsByName: { netherrack: { id: 1 }, nether_bricks: { id: 2 }, blackstone: { id: 3 }, cobblestone: { id: 4 } } },
+    inventory: { items: () => [{ name: 'nether_bricks', count: 5 }, { name: 'blackstone', count: 3 }, { name: 'cobblestone', count: 60 }] } };
+  assert.deepEqual(nether.netherScaffolding(bot), [1, 2, 3]);
+  assert.equal(nether.scaffoldCount(bot), 8);
+});
+
 test('lifting the lava margins keeps lava cells shut and restores the nether costs', async () => {
   const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set(), exclusionAreasStep: [], scafoldingBlocks: [] };
   const bot = { ...makeWorld({ '3,64,0': 'lava', '0,63,5': 'magma_block' }), pathfinder: { movements },

@@ -234,11 +234,20 @@ const NEVER_BREAK = ['nether_gold_ore', 'gilded_blackstone', 'gold_block', 'ches
  */
 /**
  * Blocks to bridge and tower with in the nether: netherrack, which every walk
- * here digs up. Cobblestone is kept for steps out of a lava sea; letting the
+ * here digs up, and the other rubble of the nether (a fortress walk digs nether
+ * bricks, a bastion blackstone; with netherrack alone a run below a fortress
+ * ran out and could not climb up to it for an hour). Cobblestone is kept for steps out of a lava sea; letting the
  * pathfinder build with it spent a whole stack on bridges in a minute.
  */
+const SCAFFOLD = ['netherrack', 'nether_bricks', 'blackstone', 'basalt', 'polished_basalt', 'smooth_basalt', 'soul_soil'];
+
 function netherScaffolding(bot) {
-  return ['netherrack'].map((n) => bot.registry.itemsByName?.[n]?.id).filter(Number.isInteger);
+  return SCAFFOLD.map((n) => bot.registry.itemsByName?.[n]?.id).filter(Number.isInteger);
+}
+
+/** How many blocks the bot carries that nether paths may build with. */
+function scaffoldCount(bot) {
+  return bot.inventory.items().filter((i) => SCAFFOLD.includes(i.name)).reduce((n, i) => n + i.count, 0);
 }
 
 function applyNetherMovements(bot) {
@@ -320,7 +329,7 @@ function lavaNear(bot, range = 2) {
 }
 
 module.exports = {
-  netherScaffolding, withLavaMarginsLifted,
+  netherScaffolding, scaffoldCount, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
   applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };
