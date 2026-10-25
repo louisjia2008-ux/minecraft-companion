@@ -61,6 +61,16 @@ test('the fortress floor is nether bricks with two open cells above', () => {
   assert.deepEqual(floor, ['0,64', '1,65', '3,64']);
 });
 
+test('a bridge deck is found above the thousands of pillar bricks under it', () => {
+  // A 3x3 pillar 40 high under a deck at y 104: all 360 pillar bricks are nearer than the deck.
+  const cells = {};
+  for (let y = 64; y < 104; y += 1) for (let x = 0; x < 3; x += 1) for (let z = 0; z < 3; z += 1) cells[`${x},${y},${z}`] = 'nether_bricks';
+  for (let z = 0; z < 3; z += 1) Object.assign(cells, row('nether_bricks', -4, 11, 104, z));
+  const floor = structures.fortressFloor(world(cells), new Vec3(1, 64, 1), 60, 4);
+  assert.equal(floor.length, 4);
+  assert.ok(floor.every((p) => p.y === 104));
+});
+
 test('baby piglins and busy piglins are told apart', () => {
   const bot = world({});
   assert.equal(structures.isAdultPiglin(bot, { name: 'piglin', metadata: {} }), true);
@@ -195,7 +205,7 @@ test('in a lava pocket under a low roof the bot digs out room to climb onto a wa
   assert.deepEqual(dug, ['(1, 31, 0)', '(1, 32, 0)']);
 });
 
-test('a hoglin fled from five times in a row is fought instead of fled from forever', async () => {
+test('a brute fled from five times in a row is fought instead of fled from forever', async () => {
   const bot = new EventEmitter();
   bot.entity = { position: new Vec3(0, 64, 0) };
   bot.game = { dimension: 'the_nether' };
@@ -203,7 +213,7 @@ test('a hoglin fled from five times in a row is fought instead of fled from fore
   bot.registry = { foodsByName: {} };
   bot.entities = {};
   const state = (distance) => ({ alive: true, health: 20, food: 20, position: bot.entity.position, inventory: { diamond_sword: 1 },
-    hostiles: [{ id: 3, name: 'hoglin', distance, position: new Vec3(distance, 64, 0) }] });
+    hostiles: [{ id: 3, name: 'piglin_brute', distance, position: new Vec3(distance, 64, 0) }] });
   const actions = { fleeFrom: async () => ({ ok: true }) };
   const behaviors = createSurvivalBehaviors({ bot, actions });
   const avoid = behaviors.find((b) => b.name === 'avoid');
@@ -214,6 +224,24 @@ test('a hoglin fled from five times in a row is fought instead of fled from fore
   }
   assert.equal(avoid.want(state(10)), 0, 'no more running');
   assert.equal(defend.want(state(5)), 1, 'fought once it comes close');
+});
+
+test('a hoglin is fought when it comes close, not run from, while the bot is armed and healthy', () => {
+  const bot = new EventEmitter();
+  bot.entity = { position: new Vec3(0, 64, 0) };
+  bot.game = { dimension: 'the_nether' };
+  bot.inventory = { slots: { 5: { name: 'golden_helmet' } }, items: () => [] };
+  bot.registry = { foodsByName: {} };
+  bot.entities = {};
+  const state = (distance, health = 20, inventory = { diamond_sword: 1 }) => ({ alive: true, health, food: 20, position: bot.entity.position,
+    inventory, hostiles: [{ id: 3, name: 'hoglin', distance, position: new Vec3(distance, 64, 0) }] });
+  const behaviors = createSurvivalBehaviors({ bot, actions: { fleeFrom: async () => ({ ok: true }) } });
+  const avoid = behaviors.find((b) => b.name === 'avoid');
+  const defend = behaviors.find((b) => b.name === 'defend');
+  assert.equal(avoid.want(state(10)), 0);
+  assert.equal(defend.want(state(5)), 1);
+  assert.equal(avoid.want(state(10, 10)), 1, 'hurt: kept away from');
+  assert.equal(avoid.want(state(10, 20, {})), 1, 'unarmed: kept away from');
 });
 
 test('respawned at home without a weapon, the expedition stops instead of going back to die', async () => {

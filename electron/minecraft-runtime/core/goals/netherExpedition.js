@@ -125,23 +125,40 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return { x: Math.round(home.x + Math.cos(angle) * r), z: Math.round(home.z + Math.sin(angle) * r) };
   }
 
-  async function explore(ctx) {
-    const m = memory.explore;
+  /**
+   * Points on a circle around a structure the bot cannot reach from where it
+   * stands: each next one about 135 degrees on, 32 or 48 blocks out, so that
+   * it tries the far sides early.
+   */
+  function around(index, centre) {
+    const angle = index * (Math.PI * 3 / 4);
+    const r = 32 + 16 * (Math.floor(index / 8) % 2);
+    return { x: Math.round(centre.x + Math.cos(angle) * r), z: Math.round(centre.z + Math.sin(angle) * r) };
+  }
+
+  /**
+   * Walks out to look for structures. `centre`: a structure already seen but
+   * not reached; the bot then circles it instead of going back to the lookouts
+   * around the portal, which can be 200 blocks the wrong way.
+   */
+  async function explore(ctx, centre = null) {
+    if (centre && memory.circle?.key !== posKey(centre)) memory.circle = { key: posKey(centre) };
+    const m = centre ? memory.circle : memory.explore;
     const home = memory.netherPortal || bot.entity.position;
     const here = bot.entity.position;
     m.index = m.index || 0;
     m.misses = m.misses || 0;
     // Done with the bastion: start with the lookouts away from its brutes.
-    if (memory.bastion && !tradeWork() && !m.leftBastion) {
+    if (!centre && memory.bastion && !tradeWork() && !m.leftBastion) {
       m.leftBastion = true;
       const away = Math.atan2(home.z - memory.bastion.z, home.x - memory.bastion.x);
       m.index = Math.round(((away % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 4)) % 8;
     }
-    const target = lookout(m.index, home);
-    ctx.record('explore', { lookout: m.index, x: target.x, z: target.z,
+    const target = centre ? around(m.index, centre) : lookout(m.index, home);
+    ctx.record('explore', { lookout: m.index, x: target.x, z: target.z, ...(centre ? { around: posKey(centre) } : {}),
       want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
     const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8), { timeoutMs: 60000, arrived: () => true });
-    const result = await (boxedIn() ? withScaffolding(walk) : walk());
+    const result = await (centre || boxedIn() ? withScaffolding(walk) : walk());
     const moved = bot.entity.position.distanceTo(here);
     const left = Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
     scan(ctx, true);
@@ -199,11 +216,16 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   const SCAFFOLD_LOW = 8;
   const SCAFFOLD_STOCK = 24;
 
-  /** Low on blocks to tower with: dig some netherrack nearby first. */
-  async function stockScaffolding(ctx) {
-    if (nether.scaffoldCount(bot) >= SCAFFOLD_LOW || bot.entity?.isInLava) return;
-    ctx.record('stock_scaffolding', { have: nether.scaffoldCount(bot) });
-    for (let misses = 0, i = 0; i < SCAFFOLD_STOCK && misses < 3 && nether.scaffoldCount(bot) < SCAFFOLD_STOCK; i += 1) {
+  /**
+   * Too few blocks to tower `climb` blocks up: dig some netherrack nearby
+   * first. A bridge deck can stand 35 blocks above the lava shore.
+   */
+  async function stockScaffolding(ctx, climb = 0) {
+    const need = Math.min(64, Math.max(SCAFFOLD_LOW, Math.ceil(climb) + 8));
+    if (nether.scaffoldCount(bot) >= need || bot.entity?.isInLava) return;
+    const stock = Math.max(need, SCAFFOLD_STOCK);
+    ctx.record('stock_scaffolding', { have: nether.scaffoldCount(bot), want: stock });
+    for (let misses = 0, i = 0; i < stock && misses < 3 && nether.scaffoldCount(bot) < stock; i += 1) {
       const got = await skills.gatherOne(bot, ctx, { blocks: (n) => n === 'netherrack', dropMatch: (n) => n === 'netherrack',
         blacklist, radius: 16 });
       if (!got.ok) misses += 1;
@@ -216,7 +238,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (!target) return fail(`${kind}_unreachable`);
     ctx.record('approach', { kind, target: posKey(target), distance: Math.round(target.distanceTo(here)) });
     const stand = target.offset(0, 1, 0);
-    if (stand.y - here.y > 3) await stockScaffolding(ctx);
+    if (stand.y - here.y > 3) await stockScaffolding(ctx, stand.y - here.y);
     const result = await withScaffolding(() => actions.goNear(bot, ctx, stand, 2, { timeoutMs: 120000 }));
     if (!result.ok && bot.entity.position.distanceTo(here) < 6) blacklist.add(`${kind}:${posKey(target)}`, result.reason);
     return result;
@@ -274,7 +296,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       floor.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
       if (floor.length) return approach(ctx, 'fortress', floor);
       // Standing at that brick with no walkable floor in sight: look from elsewhere.
-      if (here.distanceTo(memory.fortress) <= 8) return explore(ctx);
+      if (here.distanceTo(memory.fortress) <= 8) return explore(ctx, memory.fortress);
       return approachStructure(ctx, 'fortress');
     }
     if (!memory.visited.fortress) {
@@ -322,7 +344,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // Nothing else to walk to here: go and stand by the spawner (or the first brick
     // seen); already there, look around from a lookout instead.
     const fallback = kind === 'fortress' && memory.spawner ? memory.spawner : centre;
-    if (!floor.length) return here.distanceTo(fallback) <= 8 ? explore(ctx) : approachStructure(ctx, kind, fallback);
+    if (!floor.length) return here.distanceTo(fallback) <= 8 ? explore(ctx, fallback) : approachStructure(ctx, kind, fallback);
     const pick = floor[Math.floor(Math.random() * floor.length)];
     ctx.record('patrol', { kind, target: posKey(pick) });
     const result = await actions.goNear(bot, ctx, pick.offset(0, 1, 0), 2, { timeoutMs: 45000 });
@@ -333,9 +355,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function approachStructure(ctx, kind, p = memory[kind]) {
     const here = bot.entity.position;
     ctx.record('approach', { kind, target: posKey(p), distance: Math.round(p.distanceTo(here)) });
-    await stockScaffolding(ctx);
+    await stockScaffolding(ctx, p.y - here.y);
     const result = await withScaffolding(() => actions.goNear(bot, ctx, p, 4, { timeoutMs: 120000 }));
-    if (!result.ok && bot.entity.position.distanceTo(here) < 6) return explore(ctx);
+    if (!result.ok && bot.entity.position.distanceTo(here) < 6) return explore(ctx, p);
     return result;
   }
 

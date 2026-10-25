@@ -234,12 +234,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Chasing an archer bare-handed, or down into the cave it shoots from, loses.
   const armed = (state) => Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'));
   // Melee anything close; go after archers only while healthy enough to close in.
-  // A hoglin by the way home keeps coming back however often the bot runs.
+  // A brute by the way home keeps coming back however often the bot runs.
   // Fled from five times in three minutes, it is fought instead, while
-  // the bot is armed and healthy.
+  // the bot is armed and healthy. A hoglin is fought straight away: crimson
+  // forests are full of them, and running from each one turned a walk to a
+  // fortress into a hundred aborted legs.
   const flights = new Map(); // entity id -> times fled from
   const standing = (state, h) => CHARGERS.has(h.name) && armed(state) && state.health > 12
-    && (flights.get(h.id) || []).filter((at) => Date.now() - at < 180000).length >= 5;
+    && (h.name === 'hoglin' || (flights.get(h.id) || []).filter((at) => Date.now() - at < 180000).length >= 5);
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;

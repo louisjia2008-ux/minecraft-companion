@@ -72,10 +72,15 @@ const netherQuartzGiven = {
 const EXPEDITION = { blazeRods: 6, witherSkulls: 1, trades: 10 };
 const GOLD = 24;
 // Gold helmets wear out in a fortress fight (77 durability): two spares keep piglins calm afterwards.
+// Armour as a player takes it to a fortress: Protection IV, and Feather Falling
+// on the boots. Without it a wither skeleton's swing or a hoglin's toss off a
+// bridge, or a zombified piglin pack while swimming in lava, ended runs.
+const PROTECTED = '[enchantments={protection:4,unbreaking:3}]';
 const EXPEDITION_KIT = [
   ['obsidian', 10], ['cobblestone', 64], ['flint_and_steel', 1], ['diamond_pickaxe', 1],
   ['diamond_sword[enchantments={looting:3,sharpness:3}]', 1], ['shield', 1],
-  ['golden_helmet', 3], ['diamond_chestplate', 1], ['diamond_leggings', 1], ['diamond_boots', 1],
+  [`golden_helmet${PROTECTED}`, 3], [`diamond_chestplate${PROTECTED}`, 1], [`diamond_leggings${PROTECTED}`, 1],
+  ['diamond_boots[enchantments={protection:4,feather_falling:4,unbreaking:3}]', 1],
   ['cooked_beef', 32], ['golden_apple', 8], ['gold_ingot', GOLD],
   // Eight minutes each: four ran out half way through a 90-minute fortress hunt.
   ['potion[potion_contents={potion:"minecraft:long_fire_resistance"}]', 8],
@@ -126,7 +131,7 @@ function expeditionScenario({ name, near, targets, timeoutMs, experimental = fal
     targets.trades && `${targets.trades} piglin trades`].filter(Boolean).join(', ');
   return {
     name,
-    description: `Expedition kit given (portal materials, diamond armour + gold helmet, looting sword, fire resistance, golden apples,
+    description: `Expedition kit given (portal materials, Protection IV diamond armour + gold helmet, Feather Falling boots, looting sword, fire resistance, golden apples,
   ${GOLD} gold); start near ${near === 'both' ? 'a fortress and a bastion' : `a ${near}`} (not told to the bot); ${wants}; then come home.`,
     serverProperties: {
       'level-type': 'minecraft:flat', 'generator-settings': JSON.stringify(FLAT_GENERATOR),

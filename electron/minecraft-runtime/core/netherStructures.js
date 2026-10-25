@@ -39,7 +39,11 @@ function findSpawners(bot, near, radius = 64) {
     .sort((a, b) => a.distanceTo(bot.entity.position) - b.distanceTo(bot.entity.position));
 }
 
-/** Nether-brick cells with room to stand on top, within `radius` of `near`: the fortress floor. */
+/**
+ * Nether-brick cells with room to stand on top, within `radius` of `near`: the
+ * fortress floor, nearest first. Every brick in range is looked at: a bridge's
+ * pillars hold thousands of bricks under its deck, all nearer than the floor.
+ */
 function fortressFloor(bot, near, radius = 48, count = 64) {
   const id = bot.registry.blocksByName.nether_bricks?.id;
   if (!Number.isInteger(id)) return [];
@@ -47,7 +51,7 @@ function fortressFloor(bot, near, radius = 48, count = 64) {
     const b = bot.blockAt(p);
     return b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
   };
-  return bot.findBlocks({ point: near, matching: id, maxDistance: radius, count: Math.max(256, count * 4) })
+  return bot.findBlocks({ point: near, matching: id, maxDistance: radius, count: Number.MAX_SAFE_INTEGER })
     .filter((p) => p.distanceTo(near) <= radius && open(p.offset(0, 1, 0)) && open(p.offset(0, 2, 0)))
     .slice(0, count);
 }
