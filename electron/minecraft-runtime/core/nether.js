@@ -312,7 +312,9 @@ function edgeRisk(bot, p) {
   const open = (dx, dy, dz) => bot.blockAt(p.offset(dx, dy, dz))?.boundingBox === 'empty';
   let risk = 0;
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    if (open(dx, 0, dz) && open(dx, -1, dz) && open(dx, -2, dz) && open(dx, -3, dz) && open(dx, -4, dz)) risk += 15;
+    // Small next to digging (6 a block): at 15 a side, walks tunnelled through
+    // every hill rather than along a ledge (775 netherrack dug in an hour).
+    if (open(dx, 0, dz) && open(dx, -1, dz) && open(dx, -2, dz) && open(dx, -3, dz) && open(dx, -4, dz)) risk += 3;
   }
   return risk;
 }

@@ -83,7 +83,8 @@ test('a cell beside a long drop costs more, a step down does not', () => {
   const drop = {};
   for (let y = 58; y <= 63; y += 1) drop[`1,${y},0`] = 'air';
   const bridge = makeWorld(drop);
-  assert.equal(nether.edgeRisk(bridge, new Vec3(0, 64, 0)), 15);
+  assert.ok(nether.edgeRisk(bridge, new Vec3(0, 64, 0)) > 0);
+  assert.ok(nether.edgeRisk(bridge, new Vec3(0, 64, 0)) < 6, 'cheaper than digging a block');
   assert.equal(nether.edgeRisk(bridge, new Vec3(-1, 64, 0)), 0);
   assert.equal(nether.edgeRisk(makeWorld({ '1,63,0': 'air' }), new Vec3(0, 64, 0)), 0, 'a one-block step is no edge');
 });
