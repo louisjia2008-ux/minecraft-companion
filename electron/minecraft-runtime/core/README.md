@@ -485,3 +485,7 @@ npm run scenario -- --accept-eula --scenario homestead-natural --seed 500 --star
 
 
 当前验收另外要求：夜间必须跨过服务端日期并到达早晨地表，床/地堡分别有独立证据且无死亡；E2E 的最终房屋/装备重新读回，机器从正确空基线输出取得真实转移，熔炉还要求本轮配方增长；家具使用绑定最终坐标；捕鱼有五次实际钓获与对应拾取双证，包含垃圾/宝藏；铁农场须有活僵尸。setup 的区块、命令反馈与完整矿分布必须先成立。`serverPass` 不能抵消超时和终态冲突。组件或 fixture 的通过、原 PR 历史统计及 heartbeat/steps 均不能代替最终 summary 与末 result。
+
+后续主分支CI400875在58d451的旧干路前缀用例(0)自然出现原leg超时；缺失败阶段遥测，精确首因仍UNKNOWN。full17与PR400860等旧成功和此主分支失败分别保留，最终发行仍由新完整验收单绑定。
+
+这次前缀夹具仅把可加载地形约束到单个真实新frontier，并用原生产settlement adapter承接原绝对deadline；原prefix/visit守卫和UNKNOWN零新信用负例明确保留。没有改变本core执行文件或原正式full03的身份，最终full18等新检查由发行验收单记录。

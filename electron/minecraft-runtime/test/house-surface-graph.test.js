@@ -186,17 +186,77 @@ for(const modeledSecondUnknown of [false,true])test(`production food-frontier re
   assert.deepEqual(f.attempts,[anchor]);assert.equal(events.filter(e=>e==='returnToRoot').length,1);
  }
 });
+// This prefix contract uses one loaded west/east strip. Its only new native
+// frontier is west of the anchor; arbitrary diagonal exploration is separate.
+const failedPrefixStrip=p=>p.x>=-20&&p.x<=20&&Math.abs(p.z)<=1?(p.y<1?'stone':'air'):null;
+function observeFailedPrefixContract(f,graph,t){
+ const {settleNativeGoto}=require('../vendor/server/minecraft/houseNativeGotoSettlement');
+ const previous=f.bot.pathfinder.movements,save=f.deps.setCheckpoint,calls=[],observed={reconciled:null,failure:null};
+ f.deps.setCheckpoint=value=>{save(value);if(!value.pendingDryTrail&&!observed.reconciled)observed.reconciled=JSON.parse(JSON.stringify(value));};
+ f.deps.onFailure=error=>{observed.failure={code:error.code,message:error.message,observedMovement:error.observedMovement};};
+ f.deps.actualnativegoto=(goal,profile,budget)=>{
+  assert.equal(profile,graph.movements);assert.equal(f.bot.pathfinder.movements,profile);
+  assert.ok(Number.isFinite(budget.deadline)&&budget.deadline>Date.now()&&budget.deadline<=Date.now()+4000);
+  assert.ok(observed.reconciled||goal.x===0&&goal.y===1&&goal.z===0,'Only the off-anchor prefix rejoin may precede reconciliation');
+  calls.push({target:{x:goal.x,y:goal.y,z:goal.z},deadline:budget.deadline});
+  return settleNativeGoto({getBot:()=>f.bot,assertActive:()=>{f.deps.assertActive();assert.equal(f.bot.pathfinder.movements,profile);},
+   isExpectedStop:budget.isExpectedNativeStop,allowPendingTimeout:budget.isExpectedNativeTimeout},{goal,deadline:budget.deadline});
+ };
+ t.after(()=>t.diagnostic(JSON.stringify({kind:'PREFIX_STRIP_NATIVE_CONTRACT',calls,actual:f.bot.entity.position,onGround:f.bot.entity.onGround,
+  attempts:f.attempts,points:f.points.length,waterTicks:f.waterTicks.length,checkpoint:f.checkpoint(),observed,profileRestored:f.bot.pathfinder.movements===previous})));
+ return {calls,observed,previous};
+}
 for(const offset of [0,-3])test(`a failed old dry prefix rejoins a recorded node through actual observation or fresh native motion (${offset})`,{timeout:6000},async t=>{
  const anchor={x:0,y:1,z:0},other={x:16,y:1,z:0};
  const checkpoint={schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,nodes:{'0,1,0':{position:anchor,parent:null,expanded:false},'16,1,0':{position:other,parent:'0,1,0',expanded:true}},
   order:['0,1,0','16,1,0'],frontier:[],blockedEdges:[],current:'16,1,0',resumeNode:'16,1,0',visits:2,probes:0,
   pendingDryTrail:{schema:1,kind:'actual_dry_trail_prefix',originNode:'16,1,0',targetNode:'0,1,0',confirmedPrefix:[]}};
- const f=fixture(t,{checkpoint,initialPosition:new Vec3(offset+.5,1,.5)}),graph=createLoadedDryGraph(f.deps,{anchor,legTimeoutMs:4000});
+ const f=fixture(t,{checkpoint,initialPosition:new Vec3(offset+.5,1,.5),worldAt:failedPrefixStrip}),graph=createLoadedDryGraph(f.deps,{anchor,legTimeoutMs:4000});
+ const {calls,observed,previous}=observeFailedPrefixContract(f,graph,t);
  const result=await graph.next();assert.equal(result.moved,true);const state=graph.getState();
  assert.equal(state.pendingDryTrail,null);assert.equal(state.reconciledDryTrails[0].actualNode,'0,1,0');
  assert.equal(state.reconciledDryTrails[0].failedEdgeCompleted,false);assert.equal(state.reconciledDryTrails[0].newNodeOrVisitCredit,false);
  assert.equal(state.visits,3);assert.equal(state.order.length,3);
  if(offset)assert.deepEqual(f.attempts[0],anchor);
+ assert.equal(observed.reconciled.current,'0,1,0');assert.equal(observed.reconciled.visits,2);assert.equal(observed.reconciled.order.length,2);
+ assert.equal(observed.reconciled.nodes['-16,1,0'],undefined);
+ assert.deepEqual(result.actual,{x:-16,y:1,z:0});assert.deepEqual(f.bot.entity.position.floored(),new Vec3(-16,1,0));
+ assert.equal(f.bot.entity.onGround,true);assert.equal(hasGroundedBodySupport(f.bot),true);assert.equal(f.waterTicks.length,0);
+ assert.equal(f.bot.blockAt(f.bot.entity.position.floored().offset(0,-1,0)).name,'stone');
+ assert.equal(state.current,'-16,1,0');assert.equal(state.nodes['-16,1,0'].parent,'0,1,0');
+ assert.deepEqual(f.attempts.at(-1),{x:-16,y:1,z:0});assert.equal(calls.length,offset?2:1);assert.equal(f.attempts.length,calls.length);
+ assert.equal(f.bot.pathfinder.movements,previous);assert.equal(f.bot.pathfinder.goal,null);
+});
+test('MODELED finite UNKNOWN frontier after a valid old prefix reconciliation grants no native motor, new node or visit',{timeout:6000},async t=>{
+ const anchor={x:0,y:1,z:0},other={x:16,y:1,z:0};
+ const checkpoint={schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,nodes:{'0,1,0':{position:anchor,parent:null,expanded:false},'16,1,0':{position:other,parent:'0,1,0',expanded:true}},
+  order:['0,1,0','16,1,0'],frontier:[],blockedEdges:[],current:'16,1,0',resumeNode:'16,1,0',visits:2,probes:0,
+  pendingDryTrail:{schema:1,kind:'actual_dry_trail_prefix',originNode:'16,1,0',targetNode:'0,1,0',confirmedPrefix:[]}};
+ const f=fixture(t,{checkpoint,worldAt:failedPrefixStrip}),before=f.bot.entity.position.clone(),graph=createLoadedDryGraph(f.deps,{anchor,legTimeoutMs:4000});
+ const {calls,observed,previous}=observeFailedPrefixContract(f,graph,t),native=f.bot.pathfinder.getPathFromTo,probes=[];
+ f.bot.pathfinder.getPathFromTo=function*(profile,from,goal,options){
+  const selected=goal.x===-16&&goal.y===1&&goal.z===0,sequence=selected?probes.push({budget:options.timeout,raw:[],modeled:[]}):0;
+  if(selected){assert.ok([100,500].includes(options.timeout));assert.equal(options.tickTimeout,10);assert.equal(options.optimizePath,false);}
+  const iterator=native.call(this,profile,from,goal,options);
+  try{while(true){const step=iterator.next();if(!step.value){if(step.done)return;yield step.value;continue;}
+   const result=step.value.result;if(selected)probes[sequence-1].raw.push(result.status);
+   // Preserve the selector's genuine result. Only later fresh confirmations
+   // can be downgraded to UNKNOWN; no native result is ever upgraded.
+   const modeled=selected&&sequence>1&&result.status==='success'?{...step.value,result:{...result,status:'timeout',path:[]}}:step.value;
+   if(selected)probes[sequence-1].modeled.push(modeled.result.status);
+   if(step.done)return modeled;yield modeled;
+  }}finally{iterator.return?.();}
+ };
+ t.after(()=>{f.bot.pathfinder.getPathFromTo=native;});
+ const result=await graph.next(),state=graph.getState();
+ assert.equal(result.moved,false);assert.ok(probes.length>=2);assert.ok(probes.slice(1).some(p=>p.raw.includes('success')&&p.modeled.includes('timeout')));
+ assert.equal(state.pendingDryTrail,null);assert.equal(observed.reconciled.current,'0,1,0');assert.equal(observed.reconciled.visits,2);
+ assert.equal(state.reconciledDryTrails[0].actualNode,'0,1,0');assert.equal(state.reconciledDryTrails[0].failedEdgeCompleted,false);assert.equal(state.reconciledDryTrails[0].newNodeOrVisitCredit,false);
+ assert.equal(state.visits,2);assert.equal(state.order.length,2);assert.equal(state.nodes['-16,1,0'],undefined);assert.equal(state.current,'0,1,0');
+ assert.equal(calls.length,0);assert.equal(f.attempts.length,0);assert.deepEqual(f.bot.entity.position,before);assert.equal(f.waterTicks.length,0);
+ assert.equal(f.controls.some(c=>c.value===true),false);assert.equal(f.bot.pathfinder.goal,null);assert.equal(f.bot.pathfinder.movements,previous);
+ assert.ok(state.blockedEdges.some(edge=>edge.reason==='dry_graph_probe_inconclusive'));
+ const count=f.attempts.length;await sleep(100);assert.equal(f.attempts.length,count);assert.equal(graph.getState().visits,2);
 });
 test('a failed prefix away from its origin freshly rejoins another actual recorded ancestor without completing the failed edge',{timeout:8000},async t=>{
  const anchor={x:0,y:1,z:0},middle={x:16,y:1,z:0},origin={x:32,y:1,z:0};
