@@ -257,9 +257,10 @@ function applyNetherMovements(bot) {
     if (Number.isInteger(id)) m.blocksCantBreak.add(id);
   }
   // Fortress bridges hang 30 blocks over lava: no sprinting (a sprint overshoots
-  // a turn and walks off the side), and keep to the middle of a bridge.
+  // a turn and walks off the side). A cost on cells beside a drop was tried and
+  // dropped: it sent walks the long way round, or tunnelling through hills.
   m.allowSprinting = false;
-  m.exclusionAreasStep.push((block) => (block?.position ? lavaRisk(bot, block.position) + edgeRisk(bot, block.position) : 0));
+  m.exclusionAreasStep.push((block) => (block?.position ? lavaRisk(bot, block.position) : 0));
   return () => {
     m.maxDropDown = saved.maxDropDown;
     m.digCost = saved.digCost;
@@ -307,18 +308,6 @@ function lavaRisk(bot, p) {
   return risk;
 }
 
-/** Extra path cost for standing in `p` beside a long drop (a bridge edge, a cliff). */
-function edgeRisk(bot, p) {
-  const open = (dx, dy, dz) => bot.blockAt(p.offset(dx, dy, dz))?.boundingBox === 'empty';
-  let risk = 0;
-  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    // Small next to digging (6 a block): at 15 a side, walks tunnelled through
-    // every hill rather than along a ledge (775 netherrack dug in an hour).
-    if (open(dx, 0, dz) && open(dx, -1, dz) && open(dx, -2, dz) && open(dx, -3, dz) && open(dx, -4, dz)) risk += 3;
-  }
-  return risk;
-}
-
 /** Any lava within `range` cells of the bot's feet (for logging and checks). */
 function lavaNear(bot, range = 2) {
   const feet = bot.entity.position.floored();
@@ -331,7 +320,7 @@ function lavaNear(bot, range = 2) {
 }
 
 module.exports = {
-  netherScaffolding, withLavaMarginsLifted, edgeRisk,
+  netherScaffolding, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
   applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };

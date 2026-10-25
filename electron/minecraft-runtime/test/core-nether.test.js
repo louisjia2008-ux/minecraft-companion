@@ -78,17 +78,6 @@ test('nether movements are applied once and fully restored', () => {
   assert.equal(movements.exclusionAreasStep.length, 1);
 });
 
-test('a cell beside a long drop costs more, a step down does not', () => {
-  // A bridge at y 64: floor at 63 for x <= 0, a drop to below 59 at x = 1.
-  const drop = {};
-  for (let y = 58; y <= 63; y += 1) drop[`1,${y},0`] = 'air';
-  const bridge = makeWorld(drop);
-  assert.ok(nether.edgeRisk(bridge, new Vec3(0, 64, 0)) > 0);
-  assert.ok(nether.edgeRisk(bridge, new Vec3(0, 64, 0)) < 6, 'cheaper than digging a block');
-  assert.equal(nether.edgeRisk(bridge, new Vec3(-1, 64, 0)), 0);
-  assert.equal(nether.edgeRisk(makeWorld({ '1,63,0': 'air' }), new Vec3(0, 64, 0)), 0, 'a one-block step is no edge');
-});
-
 test('lifting the lava margins keeps lava cells shut and restores the nether costs', async () => {
   const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set(), exclusionAreasStep: [], scafoldingBlocks: [] };
   const bot = { ...makeWorld({ '3,64,0': 'lava', '0,63,5': 'magma_block' }), pathfinder: { movements },
