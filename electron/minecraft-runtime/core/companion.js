@@ -22,6 +22,7 @@ const { createAutoSmelterGoal } = require('./goals/autoSmelter');
 const { createCaneFarmGoal } = require('./goals/caneFarm');
 const { createMobFarmGoal } = require('./goals/mobFarm');
 const { createIronFarmGoal } = require('./goals/ironFarm');
+const { createVillageIronFarmGoal } = require('./goals/villageIronFarm');
 const { createCarpetDuperGoal } = require('./goals/carpetDuper');
 const { createFishingGoal } = require('./goals/fishing');
 const { createRailDuperGoal } = require('./goals/railDuper');
@@ -229,6 +230,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       const goal = createIronFarmGoal({ bot, ...options });
       director.notePlayerGoal();
       useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    villageIronFarm(options = {}) {
+      const goal = createVillageIronFarmGoal({ bot, ...options });
+      director.notePlayerGoal();
+      brain.setGoal(goal);
       return brain.tick().then(() => goal);
     },
     carpetDuper(options = {}) {

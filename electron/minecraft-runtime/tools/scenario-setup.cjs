@@ -33,7 +33,7 @@ function setupChunks(commands) {
 }
 
 const FAILURE = /not loaded|Unknown or incomplete command|Incorrect argument|Unknown (?:block|item|entity|scoreboard)|Too many blocks|Could not summon|No player was found|No entity was found for|not a valid|Cannot /i;
-const SUCCESS = /Successfully filled|No blocks were filled|Changed the block|Could not set the block|Gave \d+|Removed \d+|No items were found|No entit(?:y|ies) (?:was|were) found|Killed |Summoned new|Teleported |Spread \d+|Set (?:the |world |game |.*'s)|difficulty.*(?:set|already)|difficulty has not changed|Gamerule .* (?:set|is)|weather|already (?:in|set|marked)|Marked|force loaded|forceloaded|objective already exists|Created new objective|set .* to|nothing changed|has no effects|doesn't have any effects|Applied effect|Revoked |No advancements were found/i;
+const SUCCESS = /Successfully filled|Generated structure|No blocks were filled|Changed the block|Could not set the block|Gave \d+|Removed \d+|No items were found|No entit(?:y|ies) (?:was|were) found|Killed |Summoned new|Teleported |Spread \d+|Set (?:the |world |game |.*'s)|difficulty.*(?:set|already)|difficulty has not changed|Gamerule .* (?:set|is)|weather|already (?:in|set|marked)|Marked|force loaded|forceloaded|objective already exists|Created new objective|set .* to|nothing changed|has no effects|doesn't have any effects|Applied effect|Revoked |No advancements were found/i;
 
 function validateResponse(command, response) {
   const kind = command.replace(/^execute in \S+ run /, '').split(' ')[0];
@@ -118,6 +118,15 @@ async function runSetup({ server, setup, properties, write = () => {}, wait = de
       if (Number(result[1]) !== expected) throw new Error(`setup_gamemode_not_confirmed: ${command}`);
     }
     write('setup_command', { index, command, response });
+  }
+  // A second batch after a pause: e.g. bringing the bot back from far off once
+  // a structure is placed, so its client loads those chunks afresh.
+  if (setup.thenCommands?.length) {
+    await wait(2000);
+    for (const command of setup.thenCommands) {
+      const response = validateResponse(command, await server.execute(command));
+      write('setup_command', { phase: 'then', command, response });
+    }
   }
   const cells = expectedOreCells(setup.commands, properties);
   const distribution = {};
