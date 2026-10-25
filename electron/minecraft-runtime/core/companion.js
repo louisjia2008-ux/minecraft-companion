@@ -31,6 +31,7 @@ const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 const { installEdgeNudge } = require('./edgeNudge');
+const { trackReturnPositions } = require('./pathReturn');
 const { installOpenDoorPassage, uninstallOpenDoorPassage } = require('./openDoorPassage');
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
@@ -63,6 +64,7 @@ function configureMovements(bot) {
     const below = bot.blockAt(block.position.offset(0, -1, 0));
     return below && leaves.has(below.type) ? 25 : 0;
   });
+  trackReturnPositions(bot, movements);
   installOpenDoorPassage(bot, movements);
   bot.pathfinder.setMovements(movements);
   // Mining paths through stone need more search time than surface walks.

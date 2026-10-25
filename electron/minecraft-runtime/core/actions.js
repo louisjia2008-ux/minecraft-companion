@@ -9,12 +9,14 @@
 const { goals } = require('mineflayer-pathfinder');
 const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { ownedItems } = require('./perception');
+const { dropReturnPosition } = require('./pathReturn');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
 
 function haltBody(bot) {
   try { bot.pathfinder?.setGoal(null); } catch { /* ignore */ }
+  try { dropReturnPosition(bot); } catch { /* ignore */ }
   try { bot.clearControlStates?.(); } catch { /* ignore */ }
 }
 
