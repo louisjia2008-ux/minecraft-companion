@@ -1,4 +1,4 @@
-/* global require, setTimeout, setInterval, clearInterval */
+/* global require, setTimeout, clearTimeout, setInterval, clearInterval */
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -207,8 +207,27 @@ test('fresh actual dry camp arrival retires an obsolete interrupted transport wi
  assert.equal(f.graph.getState().pendingWater,null);assert.equal(f.graph.getState().lastAbandonedTransport.reason,'actual_fresh_dry_camp_return');
 });
 
+
+function waitForNativeDrySpawn(f) {
+  // Initial onGround is spawn data. Require consecutive observations produced
+  // by the installed unmodified Physics, within the existing12s test boundary.
+  return new Promise((resolve,reject)=>{
+    let ticks=0,stableTicks=0;const started=Date.now();
+    const finish=(error,result)=>{clearTimeout(timer);f.bot.removeListener('physicsTick',observe);if(error)reject(error);else resolve(result);};
+    const observe=()=>{
+      ticks++;
+      const dry=f.bot.entity.onGround===true&&hasGroundedBodySupport(f.bot)&&!f.bot.entity.isInWater&&!f.bot.entity.isInLava
+        &&f.bot.pathfinder.goal===null&&Object.values(f.bot.controlState).every(value=>value===false);
+      stableTicks=dry?stableTicks+1:0;
+      if(stableTicks>=2)finish(null,{ticks,stableTicks,elapsedMs:Date.now()-started,actual:f.bot.entity.position.clone(),velocity:f.bot.entity.velocity.clone()});
+    };
+    const timer=setTimeout(()=>finish(Object.assign(Error('Original native spawn did not settle on its dry support'),{code:'fixture_spawn_not_settled'})),1000);
+    f.bot.on('physicsTick',observe);
+  });
+}
+
 test('explicit emergency food exploration crosses loaded typed water below the ordinary work health threshold',{timeout:12000},async t=>{
- const f=fixture(t);f.bot.health=4;f.bot.food=8;
+ const f=fixture(t);const settled=await waitForNativeDrySpawn(f);assert.ok(settled.stableTicks>=2);f.bot.health=4;f.bot.food=8;
  await assert.rejects(f.graph.next(),{code:'dry_graph_survival_limit'});
  const result=await f.graph.next({survivalProvisioning:true});assert.equal(result.moved,true);
  assert.equal(f.waterMoves.length,1);assert.deepEqual(plain(f.bot.entity.position),{x:12,y:2,z:0});
@@ -216,6 +235,30 @@ test('explicit emergency food exploration crosses loaded typed water below the o
  await assert.rejects(f.graph.next(),{code:'dry_graph_survival_limit'});
  const back=await f.graph.returnToAnchor({provisioningReturn:true});assert.equal(back.confirmed,true);
  assert.equal(f.waterMoves.length,2);assert.deepEqual(plain(f.bot.entity.position),anchor);
+});
+
+
+test('the first ungrounded native spawn tick grants no emergency exploration credit before actual settled water traversal',{timeout:12000},async t=>{
+ const f=fixture(t);f.bot.health=4;f.bot.food=8;
+ await new Promise(resolve=>f.bot.once('physicsTick',resolve));
+ const first={actual:f.bot.entity.position.clone(),velocity:f.bot.entity.velocity.clone(),onGround:f.bot.entity.onGround,support:hasGroundedBodySupport(f.bot)};
+ assert.equal(f.samples.length,1);assert.equal(first.onGround,false);assert.equal(first.support,false);assert.ok(first.velocity.y<0);
+ assert.deepEqual(first.actual,new Vec3(.5,2,.5));assert.equal(f.bot.blockAt(first.actual.floored().offset(0,-1,0)).name,'stone');
+ assert.equal(f.graph.getState().visits,0);assert.deepEqual(f.graph.getState().order,[]);
+ await assert.rejects(f.graph.next({survivalProvisioning:true}),{code:'dry_graph_not_on_surface'});
+ assert.equal(f.dryMoves.length,0);assert.equal(f.waterMoves.length,0);assert.equal(f.graph.getState().visits,0);
+ assert.deepEqual(f.graph.getState().nodes,{});assert.deepEqual(f.graph.getState().order,[]);assert.equal(f.graph.getState().current,null);
+ assert.equal(f.bot.pathfinder.goal,null);assert.ok(Object.values(f.bot.controlState).every(value=>value===false));
+ const settled=await waitForNativeDrySpawn(f);assert.ok(settled.stableTicks>=2);assert.equal(f.bot.entity.onGround,true);assert.equal(hasGroundedBodySupport(f.bot),true);
+ assert.deepEqual(plain(f.bot.entity.position),anchor);assert.equal(f.dryMoves.length,0);assert.equal(f.waterMoves.length,0);
+ await assert.rejects(f.graph.next(),{code:'dry_graph_survival_limit'});
+ const result=await f.graph.next({survivalProvisioning:true});assert.equal(result.moved,true);
+ assert.equal(f.waterMoves.length,1);assert.deepEqual(plain(f.bot.entity.position),{x:12,y:2,z:0});
+ assert.equal(f.bot.health,4);assert.equal(f.bot.food,8);
+ await assert.rejects(f.graph.next(),{code:'dry_graph_survival_limit'});
+ const back=await f.graph.returnToAnchor({provisioningReturn:true});assert.equal(back.confirmed,true);
+ assert.equal(f.waterMoves.length,2);assert.deepEqual(plain(f.bot.entity.position),anchor);
+ t.diagnostic(JSON.stringify({scope:'actual first native Physics tick refusal, then two consecutive real grounded ticks before original low-health typed-water traversal; not exact CI replay',first,settled,waterTraversals:f.waterMoves.length,actual:f.bot.entity.position,health:f.bot.health,food:f.bot.food}));
 });
 
 test('a mismatched old resource suffix uses a fresh actual ancestor connector before its recorded water return',{timeout:12000},async t=>{

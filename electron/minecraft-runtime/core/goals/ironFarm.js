@@ -40,7 +40,7 @@ const isAir = (block) => !block || block.name === 'air' || block.name === 'cave_
 const isSolid = (block) => Boolean(block) && block.boundingBox === 'block' && !LIQUID.has(block.name) && !GRAVITY.test(block.name);
 const key = (p) => `${p.x},${p.y},${p.z}`;
 const v = (p) => new Vec3(p.x, p.y, p.z);
-const droppedName = (entity) => { try { return entity.getDroppedItem?.()?.name || null; } catch (_) { return null; } };
+const droppedName = (entity) => { try { return entity.getDroppedItem?.()?.name || null; } catch { return null; } };
 
 function evaluateIronFarmSite(blockAt, anchor, facing) {
   const farm = createIronFarm(anchor, facing);

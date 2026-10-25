@@ -14,6 +14,7 @@ const { createCarpetDuper } = require('../core/blueprints/carpetDuper');
 const { createFishPond } = require('../core/blueprints/fishPond');
 const { createRailDuper } = require('../core/blueprints/railDuper');
 const { createIronFarm } = require('../core/blueprints/ironFarm');
+const { fishingDataPacks, fishingSetup, installFishingEvidence } = require('./fishingEvidence.cjs');
 
 const HARVEST = 8;
 
@@ -312,6 +313,11 @@ const fishingFlat = {
   description: `Flat plains, handed a fishing rod, a shovel and 2 water buckets; dig a 2x2 pond, fill it and fish until ${CATCHES} catches are on the player.`,
   serverProperties: cobbleGeneratorFlat.serverProperties,
   timeoutMs: 8 * 60 * 1000,
+  serverDataPacks: fishingDataPacks,
+  initialize({ bot, server, username, state, write }) {
+    state.fishingEvidence = installFishingEvidence({ bot, server, username, write });
+  },
+  async dispose({ state }) { await state.fishingEvidence?.dispose(); },
   setup({ username, rng, difficulty = 'peaceful' }) {
     const x = Math.round((rng() - 0.5) * 16);
     const z = Math.round((rng() - 0.5) * 16);
@@ -319,6 +325,7 @@ const fishingFlat = {
     return {
       commands: [
         ...commonSetup(username, difficulty),
+        ...fishingSetup(username),
         ...resetArea(),
         `give ${username} fishing_rod`, `give ${username} stone_shovel`, `give ${username} water_bucket 2`,
         `tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5} ${yaw} 0`,
@@ -327,7 +334,7 @@ const fishingFlat = {
     };
   },
   start: (companion) => companion.fishing({ count: CATCHES }),
-  async verify({ server, username, goal }) {
+  async verify({ server, username, goal, state }) {
     const memory = goal?.memory;
     if (!memory?.pond) return { pass: false, details: { reason: 'no_site' } };
     const p = createFishPond(memory.pond.anchor, memory.pond.facing);
@@ -335,11 +342,10 @@ const fishingFlat = {
     for (const [i, c] of p.pond.entries()) water[`pond${i}`] = await testBlock(server, c, 'minecraft:water[level=0]');
     const fish = {};
     for (const item of FISH) fish[item] = await countOnPlayer(server, username, `minecraft:${item}`);
-    const totalFish = Object.values(fish).reduce((a, b) => a + b, 0);
-    // Junk and treasure are catches too (about 1 in 6), so only some fish is required.
-    const pass = Object.values(water).every(Boolean) && memory.catches >= CATCHES && totalFish >= 1;
+    const production = await state?.fishingEvidence?.verify(memory.catches, CATCHES);
+    const pass = Object.values(water).every(Boolean) && production?.pass === true;
     return { pass, details: { pond: { anchor: p.anchor, facing: p.facing }, water, fish, catches: memory.catches,
-      casts: memory.casts, caught: memory.caught } };
+      casts: memory.casts, caught: memory.caught, production: production || null } };
   },
 };
 
@@ -440,7 +446,7 @@ async function verifyIronFarm(server, username, farm, { rails = false } = {}) {
   const villagers = await count(`@e[type=villager,x=${a.x - 4},y=${f.levels.feet - 2},z=${a.z - 4},dx=8,dy=4,dz=8]`);
   const zombies = await count(`@e[type=zombie,x=${a.x - 4},y=${f.levels.feet - 1},z=${a.z - 4},dx=8,dy=3,dz=8]`);
   const iron = await countOnPlayer(server, username, 'minecraft:iron_ingot');
-  const pass = Object.values(parts).every(Boolean) && villagers >= 3 && iron >= IRON;
+  const pass = Object.values(parts).every(Boolean) && villagers >= 3 && zombies >= 1 && iron >= IRON;
   return { pass, details: { device: { anchor: f.anchor, facing: f.facing }, parts, villagers, zombies, iron } };
 }
 

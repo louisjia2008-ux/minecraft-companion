@@ -34,7 +34,7 @@ const isAir = (block) => !block || block.name === 'air' || block.name === 'cave_
 const isSoft = (block) => isAir(block) || (block.boundingBox === 'empty' && !LIQUID.has(block.name));
 const isFloor = (block) => Boolean(block) && block.boundingBox === 'block' && !LIQUID.has(block.name)
   && !/^(sand|red_sand|gravel|.*_concrete_powder)$/.test(block.name);
-const droppedName = (entity) => { try { return entity.getDroppedItem?.()?.name || null; } catch (_) { return null; } };
+const droppedName = (entity) => { try { return entity.getDroppedItem?.()?.name || null; } catch { return null; } };
 const key = (p) => `${p.x},${p.y},${p.z}`;
 const v = (p) => new Vec3(p.x, p.y, p.z);
 
@@ -182,7 +182,6 @@ function createDuperGoal({ bot, name, create, product, seedKey, pickup = (n) => 
         ctx.record('device_site', { kind: device.kind, anchor: device.anchor, facing: device.facing });
       }
       guardDevice();
-      const d = memory.device;
       const s = inspect();
       if (s.hollow) {
         const block = blockAt(s.hollow);

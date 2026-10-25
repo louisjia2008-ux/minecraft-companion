@@ -1,0 +1,4849 @@
+{
+  "anchor": {
+    "allScenarioDriversMatch": true,
+    "commit": "a22a73a4a7294ab5409b6e74ee882b2603ab528b",
+    "driverHash": "1c9adf12dd9fc386f660e37596f8211000c9715ea7246b53738e913baff50c1c",
+    "driverSourceMatches": true,
+    "sourceFileCount": 867,
+    "sourceHash": "2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f"
+  },
+  "batch": "repair-20261024-full-03",
+  "campaign": {
+    "autonomyCards": [
+      "homestead",
+      "food",
+      "cobble_generator",
+      "auto_smelter"
+    ],
+    "autonomyDefaultEnabled": false,
+    "botLifecycle": "reuse within each scenario; setup reset per repeated round",
+    "failedRounds": 0,
+    "fixtures": "scenario-provisioned worlds/resources and independent server readback; not independent unassisted natural-world survival",
+    "otherSkills": "explicit API scenarios",
+    "passedRounds": 32,
+    "roundCount": 32,
+    "scenarioCount": 24,
+    "setupSeedRule": "base + zeroBasedRound*7919",
+    "worlds": 24
+  },
+  "endedAtUtc": "2026-10-24T03:27:27.151Z",
+  "history": [
+    {
+      "commit": "43929e7c5272932757229c63418d5839885aa90d",
+      "contract": "historical_verifiers_before_repairs",
+      "evidenceSha256": "4b0d3b7e6d52a7f9492bf13271a4455c682e4b6071214ae7045ae21ac4b3257a",
+      "failures": [
+        {
+          "reason": "timeout",
+          "scenario": "e2e-flat"
+        },
+        {
+          "reason": "timeout",
+          "scenario": "branch-mine-diamond-flat"
+        },
+        {
+          "reason": "timeout",
+          "scenario": "branch-mine-iron-flat"
+        }
+      ],
+      "iteration": "initial-validation",
+      "roundsFailed": 3,
+      "roundsPassed": 21,
+      "scenariosFailed": 3,
+      "scenariosPassed": 21
+    },
+    {
+      "commit": "b25c0eed5fca1f96aa42db16cde68e6a90eb9307",
+      "evidenceSha256": "13d4085bb9fd5751db09b181066875b1023bcbeca629ad7e4d56a8460559ddd1",
+      "failures": [
+        {
+          "reason": "cell_occupied_by_entity",
+          "scenario": "mobfarm-flat"
+        }
+      ],
+      "interruptedWorldFinalSave": "UNCONFIRMED_FOR_SIX_INTERRUPTED_SCENARIOS",
+      "iteration": "repair-full01",
+      "rounds": {
+        "FINAL_FAIL": 1,
+        "FINAL_PASS": 20,
+        "INTERRUPTED": 6,
+        "QUEUED": 5
+      },
+      "scenarios": {
+        "FINAL_FAIL": 1,
+        "FINAL_PASS": 15,
+        "INTERRUPTED": 6,
+        "QUEUED": 2
+      },
+      "sourceHash": "05cab6287b0e65480d80eeb33f75fad8026d12058230220ecb3c64b02cacb71a",
+      "status": "INTERRUPTED_FOR_REPAIR_NOT_A_COMPLETED_SUITE"
+    },
+    {
+      "additionalFarmRoundPassed": 1,
+      "commit": "e1e22fd30cbd73c72043aadac4d97cc8fcc203fa",
+      "evidenceSha256": "31b0ad3f75b89f195463619c26d988ee1c9031f2b03fd79609c8d696d0a6d7a0",
+      "fullyPassedScenarios": 22,
+      "interruptedRounds": [
+        {
+          "round": 1,
+          "scenario": "e2e-flat"
+        },
+        {
+          "round": 2,
+          "scenario": "farm-flat"
+        }
+      ],
+      "interruptedWorldFinalSave": "CONFIRMED_FOR_BOTH_INTERRUPTED_SCENARIOS",
+      "iteration": "repair-full02",
+      "retainedRunningRoundCopies": "PRE_SIGNAL_BYTE_PREFIXES; COMPLETE_FINAL_RESULTS_REMAIN_IN_ORIGINAL_JSONL",
+      "rounds": {
+        "INTERRUPTED": 2,
+        "PASS": 30
+      },
+      "roundsWithinFullyPassedScenarios": 29,
+      "scenarios": {
+        "INTERRUPTED": 1,
+        "PARTIAL_PASS_INTERRUPTED": 1,
+        "PASS": 22
+      },
+      "sourceHash": "f2f24f073b968f3e32012f564dbdd9685c7b854804f2a065f821214bdf61da91",
+      "status": "INTERRUPTED_FOR_REPAIR_NOT_A_COMPLETED_SUITE",
+      "stopReceiptSha256": "7da09df3d02c1536efed97f48b226386d57b6f64a86fd6adeee06775c48a9636"
+    }
+  ],
+  "rounds": [
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 43943,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "1cf4b099febe1d96f8488ede79c82596db873afeb6b026f03f644ee5cb25a802",
+        "terminalLine": 71
+      },
+      "pass": true,
+      "readback": {
+        "logsOnServer": 11,
+        "target": 10
+      },
+      "round": 1,
+      "scenario": "collect-logs-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 42785,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 1,
+            "seed": 101
+          }
+        ],
+        "sha256": "d6b79f717e8f91d9f658a85fdb4e2266f066cd883927abdf84f5dcea284bef66",
+        "terminalLine": 71
+      },
+      "pass": true,
+      "readback": {
+        "logsOnServer": 11,
+        "target": 10
+      },
+      "round": 2,
+      "scenario": "collect-logs-flat",
+      "serverPass": true,
+      "setupSeed": 8020,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 43700,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 2,
+            "seed": 101
+          }
+        ],
+        "sha256": "d2b828d613ee53dc317f8131e091e36085b59d7d7f076cfe84cb179c5b1e955c",
+        "terminalLine": 71
+      },
+      "pass": true,
+      "readback": {
+        "logsOnServer": 11,
+        "target": 10
+      },
+      "round": 3,
+      "scenario": "collect-logs-flat",
+      "serverPass": true,
+      "setupSeed": 15939,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 47581,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 0,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "d912b01122455d4d9ff77560a9824cf9ffa889fd7f7938a0a1867c3a5db9cbce",
+        "terminalLine": 39
+      },
+      "pass": true,
+      "readback": {
+        "logsOnServer": 12,
+        "target": 10
+      },
+      "round": 1,
+      "scenario": "collect-logs-natural",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 68842,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 0,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 1,
+            "seed": 101
+          }
+        ],
+        "sha256": "7ffa072894431916a0d2bd8afb569c8ffee416495c6b6865cb776652c82a7798",
+        "terminalLine": 43
+      },
+      "pass": true,
+      "readback": {
+        "logsOnServer": 11,
+        "target": 10
+      },
+      "round": 2,
+      "scenario": "collect-logs-natural",
+      "serverPass": true,
+      "setupSeed": 8020,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 46761,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 0,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 2,
+            "seed": 101
+          }
+        ],
+        "sha256": "4f3ba4ecdf040c8bfb757e5b91b2105fcc18926de1f955ce1b15605c00077d05",
+        "terminalLine": 39
+      },
+      "pass": true,
+      "readback": {
+        "logsOnServer": 11,
+        "target": 10
+      },
+      "round": 3,
+      "scenario": "collect-logs-natural",
+      "serverPass": true,
+      "setupSeed": 15939,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 1284787,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {
+              "coal_ore": 16,
+              "iron_ore": 24
+            },
+            "oreCellCount": 40
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "cb9ee95f050e1ced29d4133451f6c7a826e88dac6b421d6e3eb9d76e0f56744f",
+        "terminalLine": 1182
+      },
+      "pass": true,
+      "readback": {
+        "anchor": {
+          "x": -2,
+          "y": 64,
+          "z": -5
+        },
+        "bedUsed": true,
+        "chestUsed": true,
+        "furnaceInteractions": 6,
+        "furnaceUsed": true,
+        "furniture": {
+          "bed": true,
+          "chest": true,
+          "crafting_table": true,
+          "door": true,
+          "furnace": true,
+          "torches": 2
+        },
+        "furnitureEvidence": {
+          "evidence": {
+            "errorCount": 0,
+            "initial": {
+              "furnace": 0,
+              "table": 0
+            },
+            "interactions": [
+              {
+                "after": 1,
+                "before": 0,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 2,
+                "before": 1,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 3,
+                "before": 2,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 4,
+                "before": 3,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 5,
+                "before": 4,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 6,
+                "before": 5,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 7,
+                "before": 6,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 1,
+                "before": 0,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 0,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 2,
+                "before": 1,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 0,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 3,
+                "before": 2,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 0,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 4,
+                "before": 3,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 0,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 8,
+                "before": 7,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 5,
+                "before": 4,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 0,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 9,
+                "before": 8,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 6,
+                "before": 5,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 0,
+                  "y": 64,
+                  "z": 0
+                }
+              },
+              {
+                "after": 10,
+                "before": 9,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": -1,
+                  "y": 64,
+                  "z": 0
+                }
+              }
+            ]
+          },
+          "furnaceUsed": true,
+          "tableUsed": true
+        },
+        "gear": {
+          "iron_pickaxe": 1,
+          "iron_sword": 1,
+          "shield": 1
+        },
+        "placed": 95,
+        "respawn": [
+          3,
+          64,
+          -4
+        ],
+        "tableInteractions": 10,
+        "tableUsed": true,
+        "total": 95
+      },
+      "round": 1,
+      "scenario": "homestead-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 1576897,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 0,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "498381643ffdeb5eefcf290aede92a9443ab4a9de90cb429a8eea3c842649662",
+        "terminalLine": 1172
+      },
+      "pass": true,
+      "readback": {
+        "anchor": {
+          "x": 251,
+          "y": 71,
+          "z": 302
+        },
+        "bedUsed": true,
+        "chestUsed": true,
+        "furnaceInteractions": 7,
+        "furnaceUsed": true,
+        "furniture": {
+          "bed": true,
+          "chest": true,
+          "crafting_table": true,
+          "door": true,
+          "furnace": true,
+          "torches": 2
+        },
+        "furnitureEvidence": {
+          "evidence": {
+            "errorCount": 0,
+            "initial": {
+              "furnace": 0,
+              "table": 0
+            },
+            "interactions": [
+              {
+                "after": 1,
+                "before": 0,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 2,
+                "before": 1,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 3,
+                "before": 2,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 4,
+                "before": 3,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 5,
+                "before": 4,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 6,
+                "before": 5,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 7,
+                "before": 6,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 1,
+                "before": 0,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 253,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 2,
+                "before": 1,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 253,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 3,
+                "before": 2,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 253,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 4,
+                "before": 3,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 253,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 5,
+                "before": 4,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 253,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 8,
+                "before": 7,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 9,
+                "before": 8,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 6,
+                "before": 5,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 253,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 10,
+                "before": 9,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 7,
+                "before": 6,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "furnace",
+                "position": {
+                  "x": 253,
+                  "y": 71,
+                  "z": 307
+                }
+              },
+              {
+                "after": 11,
+                "before": 10,
+                "blockConfirmed": true,
+                "confirmed": true,
+                "kind": "table",
+                "position": {
+                  "x": 252,
+                  "y": 71,
+                  "z": 307
+                }
+              }
+            ]
+          },
+          "furnaceUsed": true,
+          "tableUsed": true
+        },
+        "gear": {
+          "iron_pickaxe": 1,
+          "iron_sword": 1,
+          "shield": 1
+        },
+        "placed": 95,
+        "respawn": [
+          256,
+          71,
+          303
+        ],
+        "tableInteractions": 11,
+        "tableUsed": true,
+        "total": 95
+      },
+      "round": 1,
+      "scenario": "homestead-natural",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": null,
+      "deaths": 0,
+      "durationMs": 703230,
+      "evidence": {
+        "eventCounts": {
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "f963753b4fa14310438eef64b143679653f45bbed940e26612cd4c2a3f092a05",
+        "terminalLine": 671
+      },
+      "pass": true,
+      "readback": {
+        "alive": true,
+        "dawn": true,
+        "nightCompleted": true,
+        "nightEvidence": {
+          "bunkerConfirmed": true,
+          "initial": {
+            "day": 0,
+            "daytime": 11441
+          },
+          "latest": {
+            "day": 1,
+            "daytime": 1505
+          },
+          "sawNight": true
+        },
+        "serverPlayer": {
+          "health": 20,
+          "position": {
+            "x": 1.568636162009066,
+            "y": 64,
+            "z": -1.3295171411695585
+          }
+        },
+        "serverTime": {
+          "day": 1,
+          "daytime": 1517
+        },
+        "slept": 0,
+        "stillInBunker": false,
+        "surface": true
+      },
+      "round": 1,
+      "scenario": "night-bunker-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": null,
+      "deaths": 0,
+      "durationMs": 704833,
+      "evidence": {
+        "eventCounts": {
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 1,
+            "seed": 101
+          }
+        ],
+        "sha256": "bcca30fc427456be868f58d925c8d80acda66eb0e8eac417c01e1a6604ea1174",
+        "terminalLine": 681
+      },
+      "pass": true,
+      "readback": {
+        "alive": true,
+        "dawn": true,
+        "nightCompleted": true,
+        "nightEvidence": {
+          "bunkerConfirmed": true,
+          "initial": {
+            "day": 0,
+            "daytime": 11441
+          },
+          "latest": {
+            "day": 1,
+            "daytime": 1538
+          },
+          "sawNight": true
+        },
+        "serverPlayer": {
+          "health": 20,
+          "position": {
+            "x": -1.4999999999999503,
+            "y": 64,
+            "z": 14.470575577407196
+          }
+        },
+        "serverTime": {
+          "day": 1,
+          "daytime": 1549
+        },
+        "slept": 0,
+        "stillInBunker": false,
+        "surface": true
+      },
+      "round": 2,
+      "scenario": "night-bunker-flat",
+      "serverPass": true,
+      "setupSeed": 8020,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": null,
+      "deaths": 0,
+      "durationMs": 139589,
+      "evidence": {
+        "eventCounts": {
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "03559172d10efc24e21ab6b74f8ba7dabda89cb6cdd3aa3a98fadfc5169a4d2f",
+        "terminalLine": 204
+      },
+      "pass": true,
+      "readback": {
+        "alive": true,
+        "dawn": true,
+        "nightCompleted": true,
+        "nightEvidence": {
+          "bunkerConfirmed": false,
+          "initial": {
+            "day": 0,
+            "daytime": 11442
+          },
+          "latest": {
+            "day": 1,
+            "daytime": 1539
+          },
+          "sawNight": true
+        },
+        "serverPlayer": {
+          "health": 20,
+          "position": {
+            "x": 23.244828857312903,
+            "y": 64,
+            "z": 18.24436441553375
+          }
+        },
+        "serverTime": {
+          "day": 1,
+          "daytime": 1550
+        },
+        "slept": 1,
+        "stillInBunker": false,
+        "surface": true
+      },
+      "round": 1,
+      "scenario": "night-bed-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": null,
+      "deaths": 0,
+      "durationMs": 153543,
+      "evidence": {
+        "eventCounts": {
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 1,
+            "seed": 101
+          }
+        ],
+        "sha256": "c8cc85f5667a17ab9ca41499463970e31d9121912255e7188ff6da3ecf32b2e1",
+        "terminalLine": 163
+      },
+      "pass": true,
+      "readback": {
+        "alive": true,
+        "dawn": true,
+        "nightCompleted": true,
+        "nightEvidence": {
+          "bunkerConfirmed": false,
+          "initial": {
+            "day": 0,
+            "daytime": 11442
+          },
+          "latest": {
+            "day": 1,
+            "daytime": 1837
+          },
+          "sawNight": true
+        },
+        "serverPlayer": {
+          "health": 20,
+          "position": {
+            "x": 3.5568613925319887,
+            "y": 64,
+            "z": -4.4657163398511885
+          }
+        },
+        "serverTime": {
+          "day": 1,
+          "daytime": 1849
+        },
+        "slept": 1,
+        "stillInBunker": false,
+        "surface": true
+      },
+      "round": 2,
+      "scenario": "night-bed-flat",
+      "serverPass": true,
+      "setupSeed": 8020,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 774071,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "ac4de3f0931817821a251a8db84905d118d6e3dfd6d6ad96e7da6bc05f2e9a4a",
+        "terminalLine": 777
+      },
+      "pass": true,
+      "readback": {
+        "bread": 3,
+        "crops": 16,
+        "farmland": 16,
+        "harvested": 12,
+        "hydrated": 16,
+        "plots": 16
+      },
+      "round": 1,
+      "scenario": "farm-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 698374,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 1,
+            "seed": 101
+          }
+        ],
+        "sha256": "7de505ec9c81c6233f5d0dfa114398d784947d223736d7b0703aa8391c2f1b0e",
+        "terminalLine": 757
+      },
+      "pass": true,
+      "readback": {
+        "bread": 3,
+        "crops": 16,
+        "farmland": 16,
+        "harvested": 12,
+        "hydrated": 16,
+        "plots": 16
+      },
+      "round": 2,
+      "scenario": "farm-flat",
+      "serverPass": true,
+      "setupSeed": 8020,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 128368,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "d20e506690e92d5aff1c1cf9a6eb5c363b5452f231be305ad9f9bfc75ea32323",
+        "terminalLine": 195
+      },
+      "pass": true,
+      "readback": {
+        "born": 1,
+        "calves": 1,
+        "corner": {
+          "x": 0,
+          "y": 64,
+          "z": 0
+        },
+        "inPen": 3
+      },
+      "round": 1,
+      "scenario": "ranch-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 131485,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 1,
+            "seed": 101
+          }
+        ],
+        "sha256": "826807a2148f03245296509743640ae49e2e2ca7381c410a7f36d24595eaf542",
+        "terminalLine": 195
+      },
+      "pass": true,
+      "readback": {
+        "born": 1,
+        "calves": 1,
+        "corner": {
+          "x": 0,
+          "y": 64,
+          "z": 0
+        },
+        "inPen": 3
+      },
+      "round": 2,
+      "scenario": "ranch-flat",
+      "serverPass": true,
+      "setupSeed": 8020,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 64231,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 0,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "917f47edd77aec0a7da0642234f8f18b32015e9df0e256d989ca573d7c032961",
+        "terminalLine": 112
+      },
+      "pass": true,
+      "readback": {
+        "dimension": "overworld",
+        "netherPortal": {
+          "x": 209,
+          "y": 69,
+          "z": 237
+        },
+        "overworldPortal": {
+          "x": 1648,
+          "y": 65,
+          "z": 1882
+        },
+        "quartzOnServer": 18
+      },
+      "round": 1,
+      "scenario": "nether-quartz-given",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 27106,
+      "evidence": {
+        "eventCounts": {
+          "generator_harvest": 11,
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "35eac6e081f6348a379a4c0c01d10580bfe288039ae9b11058b7f0ab71ef4921",
+        "terminalLine": 83
+      },
+      "pass": true,
+      "readback": {
+        "blocks": {
+          "cobble": true,
+          "lava": true,
+          "water": true
+        },
+        "cobblestone": 8,
+        "device": {
+          "anchor": {
+            "x": -9,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "harvested": 8,
+        "regenerated": 11
+      },
+      "round": 1,
+      "scenario": "cobblegen-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 23541,
+      "evidence": {
+        "eventCounts": {
+          "generator_collect": 2,
+          "generator_harvest": 8,
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "52219711843df1cfbe2e9b6bd74dfbdf645f3bd023e2b0b2f971ce84210b85c5",
+        "terminalLine": 92
+      },
+      "pass": true,
+      "readback": {
+        "blocks": {
+          "cobble": true,
+          "lava": true,
+          "water": true
+        },
+        "cobblestone": 8,
+        "device": {
+          "anchor": {
+            "x": -9,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "harvested": 8,
+        "parts": {
+          "collectorChest": true,
+          "collectorHopper": true
+        },
+        "regenerated": 8
+      },
+      "round": 1,
+      "scenario": "cobblegen-hopper-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 95987,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "fe0a623cee1e54997d8e8d9d628400c7f0b2e158b1ff79c7ce1c0ed248df3b04",
+        "terminalLine": 95
+      },
+      "pass": true,
+      "readback": {
+        "device": {
+          "anchor": {
+            "x": -9,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "ingots": 8,
+        "parts": {
+          "fuelChest": true,
+          "fuelHopper": true,
+          "furnace": true,
+          "inChest": true,
+          "inHopper": true,
+          "outChest": true,
+          "outHopper": true
+        },
+        "taken": 8
+      },
+      "round": 1,
+      "scenario": "smelter-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 395295,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {
+              "coal_ore": 6,
+              "iron_ore": 9
+            },
+            "oreCellCount": 15
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "36b05f7ffbcc5048cccd401a707ffff2f193a0d5d4a775fa47ceb907146e0bb1",
+        "terminalLine": 308
+      },
+      "pass": true,
+      "readback": {
+        "chest": {
+          "cobblestone": 10,
+          "lava_bucket": 1,
+          "water_bucket": 1
+        },
+        "required": [
+          {
+            "count": 1,
+            "key": "water_bucket"
+          },
+          {
+            "count": 1,
+            "key": "lava_bucket"
+          },
+          {
+            "count": 10,
+            "key": "cobblestone"
+          }
+        ]
+      },
+      "round": 1,
+      "scenario": "materials-cobblegen-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 400018,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1,
+          "mine_ore": 10
+        },
+        "setupVerified": [
+          {
+            "chunks": 41,
+            "distribution": {
+              "iron_ore": 302
+            },
+            "oreCellCount": 302
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "d85f2b45b5e1daf059ee92f30afc1abd338c2e9f038f1467933c2b20fe995d84",
+        "terminalLine": 549
+      },
+      "pass": true,
+      "readback": {
+        "chest": {
+          "raw_iron": 12
+        },
+        "required": [
+          {
+            "count": 12,
+            "key": "raw_iron"
+          }
+        ]
+      },
+      "round": 1,
+      "scenario": "branch-mine-iron-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 183376,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "8337b3b692606690def34ff7355dea6face5d320d9ba38aae7fb95f147bc3f72",
+        "terminalLine": 103
+      },
+      "pass": true,
+      "readback": {
+        "cane": 8,
+        "farm": {
+          "anchor": {
+            "x": -9,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "harvested": 4,
+        "harvests": 6,
+        "parts": {
+          "block": true,
+          "cane": true,
+          "cover": true,
+          "dust": true,
+          "observer": true,
+          "piston": true,
+          "water": true
+        }
+      },
+      "round": 1,
+      "scenario": "canefarm-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 372188,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1,
+          "mob_collector_clear": 7
+        },
+        "setupVerified": [
+          {
+            "chunks": 49,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "79ea658ec713bce1e1a7ff8e2c618fca222e10fc26d39e6a2d4e1082533a49f0",
+        "terminalLine": 694
+      },
+      "pass": true,
+      "readback": {
+        "drops": {
+          "arrow": 2,
+          "bone": 3,
+          "ender_pearl": 0,
+          "gunpowder": 0,
+          "rotten_flesh": 0,
+          "spider_eye": 0,
+          "string": 0
+        },
+        "farm": {
+          "anchor": {
+            "x": -6,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "monsters": {
+          "all": 6,
+          "floor": 20,
+          "shaft": 0
+        },
+        "parts": {
+          "chest": true,
+          "hopper": true,
+          "water0": true,
+          "water1": true,
+          "water2": true,
+          "water3": true
+        },
+        "taken": 4,
+        "total": 5
+      },
+      "round": 1,
+      "scenario": "mobfarm-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 22241,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "a47ee1c4b13230f80cc3547321d44ac8061b85baada3ade41759e0c4b283bf5c",
+        "terminalLine": 81
+      },
+      "pass": true,
+      "readback": {
+        "carpets": 8,
+        "device": {
+          "anchor": {
+            "x": -9,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "parts": {
+          "button": true,
+          "carpet": true,
+          "fan": true,
+          "piston": true,
+          "slimeHigh": true,
+          "slimeLow": true
+        },
+        "presses": 8
+      },
+      "round": 1,
+      "scenario": "carpetdupe-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 109648,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "c72ed4efe5ff6a7ac8db55d56300ba5c0ca048a87cef94aba52453ea17dd2895",
+        "terminalLine": 110
+      },
+      "pass": true,
+      "readback": {
+        "casts": 5,
+        "catches": 5,
+        "caught": {
+          "cod": 3,
+          "pufferfish": 2
+        },
+        "fish": {
+          "cod": 3,
+          "pufferfish": 2,
+          "salmon": 0,
+          "tropical_fish": 0
+        },
+        "pond": {
+          "anchor": {
+            "x": -6,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "production": {
+          "confirmed": 5,
+          "evidence": {
+            "casts": [
+              {
+                "after": {
+                  "at": 1792809077359,
+                  "catches": 1,
+                  "pickedUp": 1
+                },
+                "before": {
+                  "at": 1792809064005,
+                  "catches": 0,
+                  "pickedUp": 0
+                },
+                "credited": 1
+              },
+              {
+                "after": {
+                  "at": 1792809105103,
+                  "catches": 2,
+                  "pickedUp": 2
+                },
+                "before": {
+                  "at": 1792809077510,
+                  "catches": 1,
+                  "pickedUp": 1
+                },
+                "credited": 1
+              },
+              {
+                "after": {
+                  "at": 1792809118458,
+                  "catches": 3,
+                  "pickedUp": 3
+                },
+                "before": {
+                  "at": 1792809105262,
+                  "catches": 2,
+                  "pickedUp": 2
+                },
+                "credited": 1
+              },
+              {
+                "after": {
+                  "at": 1792809140612,
+                  "catches": 4,
+                  "pickedUp": 4
+                },
+                "before": {
+                  "at": 1792809118603,
+                  "catches": 3,
+                  "pickedUp": 3
+                },
+                "credited": 1
+              },
+              {
+                "after": {
+                  "at": 1792809172161,
+                  "catches": 5,
+                  "pickedUp": 5
+                },
+                "before": {
+                  "at": 1792809140760,
+                  "catches": 4,
+                  "pickedUp": 4
+                },
+                "credited": 1
+              }
+            ],
+            "confirmed": 5,
+            "errorCount": 0
+          },
+          "pass": true,
+          "reported": 5,
+          "required": 5
+        },
+        "water": {
+          "pond0": true,
+          "pond1": true,
+          "pond2": true,
+          "pond3": true
+        }
+      },
+      "round": 1,
+      "scenario": "fishing-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 59505,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 16,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "615aade297841fa80bc75a3b43e3cf850980b6f721b0a2a8a361f9a73b5c1447",
+        "terminalLine": 127
+      },
+      "pass": true,
+      "readback": {
+        "carpets": 7,
+        "device": {
+          "anchor": {
+            "x": -9,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "parts": {
+          "base": true,
+          "bridge": true,
+          "button": true,
+          "carpet": true,
+          "fan": true,
+          "pillarHigh": true,
+          "pillarLow": true,
+          "piston": true,
+          "rail": true,
+          "sideTop": true,
+          "stepFoot": true,
+          "stepHigh": true,
+          "stepLow": true
+        },
+        "presses": 8,
+        "rails": 8
+      },
+      "round": 1,
+      "scenario": "raildupe-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 110250,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 49,
+            "distribution": {},
+            "oreCellCount": 0
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "903fe99bfcfffc379a9389fd51d3cc537861c28b6a69af094d63f8709d69425d",
+        "terminalLine": 285
+      },
+      "pass": true,
+      "readback": {
+        "device": {
+          "anchor": {
+            "x": -6,
+            "y": 63,
+            "z": 4
+          },
+          "facing": "east"
+        },
+        "eggs": 4,
+        "iron": 5,
+        "parts": {
+          "bed0": true,
+          "bed1": true,
+          "bed2": true,
+          "ladder0": true,
+          "ladder1": true,
+          "lava0": true,
+          "lava1": true,
+          "seal": true
+        },
+        "villagers": 3,
+        "zombies": 1
+      },
+      "round": 1,
+      "scenario": "ironfarm-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 1,
+      "brainOutcome": "goal_done",
+      "deaths": 2,
+      "durationMs": 4269204,
+      "evidence": {
+        "eventCounts": {
+          "death": 2,
+          "generator_collect": 2,
+          "generator_harvest": 8,
+          "goal_done": 4,
+          "goal_set": 4,
+          "inject": 4,
+          "inject_recovered": 4,
+          "mine_loot": 28,
+          "mine_ore": 13
+        },
+        "setupVerified": [
+          {
+            "chunks": 89,
+            "distribution": {
+              "coal_ore": 760,
+              "iron_ore": 2320
+            },
+            "oreCellCount": 3080
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "easy",
+            "run": 0,
+            "seed": 1
+          }
+        ],
+        "sha256": "1edd548adc86c27284cddb65924081e239d41f61ab240b8243c8946d13792f8c",
+        "terminalLine": 3185
+      },
+      "pass": true,
+      "readback": {
+        "alive": true,
+        "bedUsed": true,
+        "chestUsed": true,
+        "furniture": {
+          "bed": true,
+          "chest": true,
+          "crafting_table": true,
+          "door": true,
+          "furnace": true,
+          "torches": 2
+        },
+        "gear": {
+          "iron_pickaxe": 1,
+          "iron_sword": 1,
+          "shield": 1
+        },
+        "generator": {
+          "anchor": {
+            "x": 20,
+            "y": 63,
+            "z": 0
+          },
+          "blocks": {
+            "cobble": true,
+            "collectorChest": true,
+            "collectorHopper": true,
+            "lava": true,
+            "water": true
+          },
+          "facing": "east",
+          "harvested": 8,
+          "production": {
+            "baselineEmpty": true,
+            "collected": 8,
+            "evidence": {
+              "baseline": {
+                "at": 1792810506909,
+                "counts": {},
+                "output": 0,
+                "position": {
+                  "x": 21,
+                  "y": 62,
+                  "z": 1
+                }
+              },
+              "collected": 8,
+              "deposited": false,
+              "errorCount": 0,
+              "latest": {
+                "at": 1792812440562,
+                "containers": [
+                  {
+                    "counts": {
+                      "dirt": 1
+                    },
+                    "position": {
+                      "x": 21,
+                      "y": 62,
+                      "z": 1
+                    }
+                  },
+                  {
+                    "counts": {},
+                    "position": {
+                      "x": 21,
+                      "y": 62,
+                      "z": 0
+                    }
+                  }
+                ],
+                "output": 0,
+                "player": 292,
+                "recipes": 0
+              },
+              "placements": [
+                {
+                  "at": 1792810506909,
+                  "counts": {},
+                  "output": 0,
+                  "position": {
+                    "x": 21,
+                    "y": 62,
+                    "z": 1
+                  }
+                }
+              ],
+              "spec": {
+                "buffers": [
+                  {
+                    "x": 21,
+                    "y": 62,
+                    "z": 1
+                  },
+                  {
+                    "x": 21,
+                    "y": 62,
+                    "z": 0
+                  }
+                ],
+                "item": "cobblestone",
+                "kind": "generator",
+                "output": {
+                  "x": 21,
+                  "y": 62,
+                  "z": 1
+                }
+              },
+              "transfers": [
+                {
+                  "after": {
+                    "at": 1792810518861,
+                    "containers": [
+                      {
+                        "counts": {
+                          "dirt": 1
+                        },
+                        "position": {
+                          "x": 21,
+                          "y": 62,
+                          "z": 1
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 21,
+                          "y": 62,
+                          "z": 0
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 70,
+                    "recipes": 0
+                  },
+                  "before": {
+                    "at": 1792810518702,
+                    "containers": [
+                      {
+                        "counts": {
+                          "cobblestone": 4,
+                          "dirt": 1
+                        },
+                        "position": {
+                          "x": 21,
+                          "y": 62,
+                          "z": 1
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 21,
+                          "y": 62,
+                          "z": 0
+                        }
+                      }
+                    ],
+                    "output": 4,
+                    "player": 66,
+                    "recipes": 0
+                  },
+                  "credited": 4,
+                  "item": "cobblestone",
+                  "method": "withdraw",
+                  "position": {
+                    "x": 21,
+                    "y": 62,
+                    "z": 1
+                  },
+                  "requested": 4
+                },
+                {
+                  "after": {
+                    "at": 1792810526359,
+                    "containers": [
+                      {
+                        "counts": {
+                          "dirt": 1
+                        },
+                        "position": {
+                          "x": 21,
+                          "y": 62,
+                          "z": 1
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 21,
+                          "y": 62,
+                          "z": 0
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 74,
+                    "recipes": 0
+                  },
+                  "before": {
+                    "at": 1792810526208,
+                    "containers": [
+                      {
+                        "counts": {
+                          "cobblestone": 4,
+                          "dirt": 1
+                        },
+                        "position": {
+                          "x": 21,
+                          "y": 62,
+                          "z": 1
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 21,
+                          "y": 62,
+                          "z": 0
+                        }
+                      }
+                    ],
+                    "output": 4,
+                    "player": 70,
+                    "recipes": 0
+                  },
+                  "credited": 4,
+                  "item": "cobblestone",
+                  "method": "withdraw",
+                  "position": {
+                    "x": 21,
+                    "y": 62,
+                    "z": 1
+                  },
+                  "requested": 4
+                }
+              ]
+            },
+            "pass": true,
+            "reported": 8,
+            "required": 8
+          },
+          "regenerated": 8
+        },
+        "generatorOk": true,
+        "homestead": {
+          "anchor": {
+            "x": 1,
+            "y": 64,
+            "z": -2
+          },
+          "bedUsed": true,
+          "chestUsed": true,
+          "furnaceInteractions": 9,
+          "furnaceUsed": true,
+          "furniture": {
+            "bed": true,
+            "chest": true,
+            "crafting_table": true,
+            "door": true,
+            "furnace": true,
+            "torches": 2
+          },
+          "furnitureEvidence": {
+            "evidence": {
+              "errorCount": 0,
+              "initial": {
+                "furnace": 0,
+                "table": 0
+              },
+              "interactions": [
+                {
+                  "after": 1,
+                  "before": 0,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 2,
+                  "before": 1,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 3,
+                  "before": 2,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 4,
+                  "before": 3,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 5,
+                  "before": 4,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 6,
+                  "before": 5,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 7,
+                  "before": 6,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 8,
+                  "before": 7,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 1,
+                  "before": 0,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 2,
+                  "before": 1,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 9,
+                  "before": 8,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 3,
+                  "before": 2,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 10,
+                  "before": 9,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 4,
+                  "before": 3,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 11,
+                  "before": 10,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 12,
+                  "before": 11,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 13,
+                  "before": 12,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 14,
+                  "before": 13,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 15,
+                  "before": 14,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 5,
+                  "before": 4,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 16,
+                  "before": 15,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 6,
+                  "before": 5,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 17,
+                  "before": 16,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 18,
+                  "before": 17,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 7,
+                  "before": 6,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 19,
+                  "before": 18,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 20,
+                  "before": 19,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 21,
+                  "before": 20,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 22,
+                  "before": 21,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 23,
+                  "before": 22,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 24,
+                  "before": 23,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 25,
+                  "before": 24,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 8,
+                  "before": 7,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 9,
+                  "before": 8,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "furnace",
+                  "position": {
+                    "x": 3,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 26,
+                  "before": 25,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 27,
+                  "before": 26,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 28,
+                  "before": 27,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 29,
+                  "before": 28,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 30,
+                  "before": 29,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 31,
+                  "before": 30,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                },
+                {
+                  "after": 32,
+                  "before": 31,
+                  "blockConfirmed": true,
+                  "confirmed": true,
+                  "kind": "table",
+                  "position": {
+                    "x": 2,
+                    "y": 64,
+                    "z": 3
+                  }
+                }
+              ]
+            },
+            "furnaceUsed": true,
+            "tableUsed": true
+          },
+          "gear": {
+            "iron_pickaxe": 1,
+            "iron_sword": 1,
+            "shield": 1
+          },
+          "placed": 95,
+          "respawn": [
+            6,
+            64,
+            -1
+          ],
+          "tableInteractions": 32,
+          "tableUsed": true,
+          "total": 95
+        },
+        "injected": true,
+        "injections": [
+          {
+            "firedAt": 1792808881535,
+            "name": "death_during_house",
+            "recoveredAt": 1792808901628,
+            "seconds": 20
+          },
+          {
+            "firedAt": 1792810005207,
+            "name": "bag_full",
+            "recoveredAt": 1792810019212,
+            "seconds": 14
+          },
+          {
+            "firedAt": 1792810159307,
+            "name": "pit",
+            "recoveredAt": 1792810171335,
+            "seconds": 12
+          },
+          {
+            "firedAt": 1792810351434,
+            "name": "death_during_machines",
+            "recoveredAt": 1792810371444,
+            "seconds": 20
+          }
+        ],
+        "placed": 95,
+        "serverPlayer": {
+          "health": 20,
+          "position": {
+            "x": -12.5,
+            "y": 64,
+            "z": 1.499999999999849
+          }
+        },
+        "smelter": {
+          "anchor": {
+            "x": -12,
+            "y": 63,
+            "z": 2
+          },
+          "facing": "east",
+          "parts": {
+            "fuelChest": true,
+            "fuelHopper": true,
+            "furnace": true,
+            "inChest": true,
+            "inHopper": true,
+            "outChest": true,
+            "outHopper": true
+          },
+          "production": {
+            "baselineEmpty": true,
+            "collected": 4,
+            "evidence": {
+              "baseline": {
+                "at": 1792812378952,
+                "counts": {},
+                "output": 0,
+                "position": {
+                  "x": -11,
+                  "y": 62,
+                  "z": 2
+                }
+              },
+              "collected": 4,
+              "deposited": false,
+              "errorCount": 0,
+              "latest": {
+                "at": 1792812441204,
+                "containers": [
+                  {
+                    "counts": {
+                      "iron_ingot": 1
+                    },
+                    "position": {
+                      "x": -11,
+                      "y": 62,
+                      "z": 2
+                    }
+                  },
+                  {
+                    "counts": {},
+                    "position": {
+                      "x": -12,
+                      "y": 62,
+                      "z": 2
+                    }
+                  },
+                  {
+                    "counts": {
+                      "raw_iron": 27
+                    },
+                    "position": {
+                      "x": -12,
+                      "y": 63,
+                      "z": 2
+                    }
+                  }
+                ],
+                "output": 1,
+                "player": 4,
+                "recipes": 5
+              },
+              "placements": [
+                {
+                  "at": 1792812378952,
+                  "counts": {},
+                  "output": 0,
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": 2
+                  }
+                }
+              ],
+              "recipeBaseline": 0,
+              "spec": {
+                "buffers": [
+                  {
+                    "x": -11,
+                    "y": 62,
+                    "z": 2
+                  },
+                  {
+                    "x": -12,
+                    "y": 62,
+                    "z": 2
+                  },
+                  {
+                    "x": -12,
+                    "y": 63,
+                    "z": 2
+                  }
+                ],
+                "furnace": {
+                  "x": -12,
+                  "y": 63,
+                  "z": 2
+                },
+                "item": "iron_ingot",
+                "kind": "smelter",
+                "output": {
+                  "x": -11,
+                  "y": 62,
+                  "z": 2
+                }
+              },
+              "transfers": [
+                {
+                  "after": {
+                    "at": 1792812394560,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {
+                          "raw_iron": 28
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": 2
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 1,
+                    "recipes": 1
+                  },
+                  "before": {
+                    "at": 1792812394312,
+                    "containers": [
+                      {
+                        "counts": {
+                          "iron_ingot": 1
+                        },
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {
+                          "raw_iron": 27
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": 2
+                        }
+                      }
+                    ],
+                    "output": 1,
+                    "player": 0,
+                    "recipes": 1
+                  },
+                  "credited": 1,
+                  "item": "iron_ingot",
+                  "method": "withdraw",
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": 2
+                  },
+                  "requested": 1
+                },
+                {
+                  "after": {
+                    "at": 1792812405561,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {
+                          "raw_iron": 30
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": 2
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 2,
+                    "recipes": 2
+                  },
+                  "before": {
+                    "at": 1792812405307,
+                    "containers": [
+                      {
+                        "counts": {
+                          "iron_ingot": 1
+                        },
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {
+                          "raw_iron": 30
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": 2
+                        }
+                      }
+                    ],
+                    "output": 1,
+                    "player": 1,
+                    "recipes": 2
+                  },
+                  "credited": 1,
+                  "item": "iron_ingot",
+                  "method": "withdraw",
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": 2
+                  },
+                  "requested": 1
+                },
+                {
+                  "after": {
+                    "at": 1792812416561,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {
+                          "raw_iron": 29
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": 2
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 3,
+                    "recipes": 3
+                  },
+                  "before": {
+                    "at": 1792812416313,
+                    "containers": [
+                      {
+                        "counts": {
+                          "iron_ingot": 1
+                        },
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {
+                          "raw_iron": 29
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": 2
+                        }
+                      }
+                    ],
+                    "output": 1,
+                    "player": 2,
+                    "recipes": 3
+                  },
+                  "credited": 1,
+                  "item": "iron_ingot",
+                  "method": "withdraw",
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": 2
+                  },
+                  "requested": 1
+                },
+                {
+                  "after": {
+                    "at": 1792812427560,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {
+                          "raw_iron": 28
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": 2
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 4,
+                    "recipes": 4
+                  },
+                  "before": {
+                    "at": 1792812427312,
+                    "containers": [
+                      {
+                        "counts": {
+                          "iron_ingot": 1
+                        },
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": 2
+                        }
+                      },
+                      {
+                        "counts": {
+                          "raw_iron": 28
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": 2
+                        }
+                      }
+                    ],
+                    "output": 1,
+                    "player": 3,
+                    "recipes": 4
+                  },
+                  "credited": 1,
+                  "item": "iron_ingot",
+                  "method": "withdraw",
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": 2
+                  },
+                  "requested": 1
+                }
+              ]
+            },
+            "pass": true,
+            "produced": 5,
+            "reported": 4,
+            "required": 4
+          },
+          "taken": 4
+        },
+        "smelterOk": true,
+        "total": 95
+      },
+      "round": 1,
+      "scenario": "e2e-flat",
+      "serverPass": true,
+      "setupSeed": 1,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 1830000,
+      "evidence": {
+        "eventCounts": {
+          "generator_collect": 2,
+          "generator_harvest": 8,
+          "goal_done": 2,
+          "goal_set": 2,
+          "mine_loot": 12,
+          "mine_ore": 30
+        },
+        "setupVerified": [
+          {
+            "chunks": 87,
+            "distribution": {
+              "coal_ore": 784,
+              "iron_ore": 2292
+            },
+            "oreCellCount": 3076
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "976469c891fed521a83bff87cb30f6ea4da3249a0a287b87cc00dfaf223044f8",
+        "terminalLine": 2076
+      },
+      "pass": true,
+      "readback": {
+        "generator": {
+          "anchor": {
+            "x": 9,
+            "y": 63,
+            "z": 0
+          },
+          "blocks": {
+            "cobble": true,
+            "collectorChest": true,
+            "collectorHopper": true,
+            "lava": true,
+            "water": true
+          },
+          "facing": "east",
+          "harvested": 8,
+          "production": {
+            "baselineEmpty": true,
+            "collected": 8,
+            "evidence": {
+              "baseline": {
+                "at": 1792809256637,
+                "counts": {},
+                "output": 0,
+                "position": {
+                  "x": 10,
+                  "y": 62,
+                  "z": 1
+                }
+              },
+              "collected": 8,
+              "deposited": false,
+              "errorCount": 0,
+              "latest": {
+                "at": 1792809993457,
+                "containers": [
+                  {
+                    "counts": {},
+                    "position": {
+                      "x": 10,
+                      "y": 62,
+                      "z": 1
+                    }
+                  },
+                  {
+                    "counts": {},
+                    "position": {
+                      "x": 10,
+                      "y": 62,
+                      "z": 0
+                    }
+                  }
+                ],
+                "output": 0,
+                "player": 317,
+                "recipes": 0
+              },
+              "placements": [
+                {
+                  "at": 1792809256637,
+                  "counts": {},
+                  "output": 0,
+                  "position": {
+                    "x": 10,
+                    "y": 62,
+                    "z": 1
+                  }
+                }
+              ],
+              "spec": {
+                "buffers": [
+                  {
+                    "x": 10,
+                    "y": 62,
+                    "z": 1
+                  },
+                  {
+                    "x": 10,
+                    "y": 62,
+                    "z": 0
+                  }
+                ],
+                "item": "cobblestone",
+                "kind": "generator",
+                "output": {
+                  "x": 10,
+                  "y": 62,
+                  "z": 1
+                }
+              },
+              "transfers": [
+                {
+                  "after": {
+                    "at": 1792809268636,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 10,
+                          "y": 62,
+                          "z": 1
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 10,
+                          "y": 62,
+                          "z": 0
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 147,
+                    "recipes": 0
+                  },
+                  "before": {
+                    "at": 1792809268487,
+                    "containers": [
+                      {
+                        "counts": {
+                          "cobblestone": 4
+                        },
+                        "position": {
+                          "x": 10,
+                          "y": 62,
+                          "z": 1
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 10,
+                          "y": 62,
+                          "z": 0
+                        }
+                      }
+                    ],
+                    "output": 4,
+                    "player": 143,
+                    "recipes": 0
+                  },
+                  "credited": 4,
+                  "item": "cobblestone",
+                  "method": "withdraw",
+                  "position": {
+                    "x": 10,
+                    "y": 62,
+                    "z": 1
+                  },
+                  "requested": 4
+                },
+                {
+                  "after": {
+                    "at": 1792809276092,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 10,
+                          "y": 62,
+                          "z": 1
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 10,
+                          "y": 62,
+                          "z": 0
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 151,
+                    "recipes": 0
+                  },
+                  "before": {
+                    "at": 1792809275940,
+                    "containers": [
+                      {
+                        "counts": {
+                          "cobblestone": 4
+                        },
+                        "position": {
+                          "x": 10,
+                          "y": 62,
+                          "z": 1
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": 10,
+                          "y": 62,
+                          "z": 0
+                        }
+                      }
+                    ],
+                    "output": 4,
+                    "player": 147,
+                    "recipes": 0
+                  },
+                  "credited": 4,
+                  "item": "cobblestone",
+                  "method": "withdraw",
+                  "position": {
+                    "x": 10,
+                    "y": 62,
+                    "z": 1
+                  },
+                  "requested": 4
+                }
+              ]
+            },
+            "pass": true,
+            "reported": 8,
+            "required": 8
+          },
+          "regenerated": 8
+        },
+        "generatorOk": true,
+        "serverPlayer": {
+          "health": 20,
+          "position": {
+            "x": -12.5,
+            "y": 64,
+            "z": -9.500056320551288
+          }
+        },
+        "smelter": {
+          "anchor": {
+            "x": -12,
+            "y": 63,
+            "z": -9
+          },
+          "facing": "east",
+          "parts": {
+            "fuelChest": true,
+            "fuelHopper": true,
+            "furnace": true,
+            "inChest": true,
+            "inHopper": true,
+            "outChest": true,
+            "outHopper": true
+          },
+          "production": {
+            "baselineEmpty": true,
+            "collected": 4,
+            "evidence": {
+              "baseline": {
+                "at": 1792809940507,
+                "counts": {},
+                "output": 0,
+                "position": {
+                  "x": -11,
+                  "y": 62,
+                  "z": -9
+                }
+              },
+              "collected": 4,
+              "deposited": false,
+              "errorCount": 0,
+              "latest": {
+                "at": 1792809994106,
+                "containers": [
+                  {
+                    "counts": {},
+                    "position": {
+                      "x": -11,
+                      "y": 62,
+                      "z": -9
+                    }
+                  },
+                  {
+                    "counts": {},
+                    "position": {
+                      "x": -12,
+                      "y": 62,
+                      "z": -9
+                    }
+                  },
+                  {
+                    "counts": {
+                      "coal": 9
+                    },
+                    "position": {
+                      "x": -12,
+                      "y": 63,
+                      "z": -9
+                    }
+                  }
+                ],
+                "output": 0,
+                "player": 4,
+                "recipes": 4
+              },
+              "placements": [
+                {
+                  "at": 1792809940507,
+                  "counts": {},
+                  "output": 0,
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": -9
+                  }
+                }
+              ],
+              "recipeBaseline": 0,
+              "spec": {
+                "buffers": [
+                  {
+                    "x": -11,
+                    "y": 62,
+                    "z": -9
+                  },
+                  {
+                    "x": -12,
+                    "y": 62,
+                    "z": -9
+                  },
+                  {
+                    "x": -12,
+                    "y": 63,
+                    "z": -9
+                  }
+                ],
+                "furnace": {
+                  "x": -12,
+                  "y": 63,
+                  "z": -9
+                },
+                "item": "iron_ingot",
+                "kind": "smelter",
+                "output": {
+                  "x": -11,
+                  "y": 62,
+                  "z": -9
+                }
+              },
+              "transfers": [
+                {
+                  "after": {
+                    "at": 1792809956161,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {
+                          "coal": 9,
+                          "raw_iron": 3
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": -9
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 1,
+                    "recipes": 1
+                  },
+                  "before": {
+                    "at": 1792809955908,
+                    "containers": [
+                      {
+                        "counts": {
+                          "iron_ingot": 1
+                        },
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {
+                          "coal": 9,
+                          "raw_iron": 3
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": -9
+                        }
+                      }
+                    ],
+                    "output": 1,
+                    "player": 0,
+                    "recipes": 1
+                  },
+                  "credited": 1,
+                  "item": "iron_ingot",
+                  "method": "withdraw",
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": -9
+                  },
+                  "requested": 1
+                },
+                {
+                  "after": {
+                    "at": 1792809967058,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {
+                          "coal": 9,
+                          "raw_iron": 2
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": -9
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 2,
+                    "recipes": 2
+                  },
+                  "before": {
+                    "at": 1792809966856,
+                    "containers": [
+                      {
+                        "counts": {
+                          "iron_ingot": 1
+                        },
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {
+                          "coal": 9,
+                          "raw_iron": 2
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": -9
+                        }
+                      }
+                    ],
+                    "output": 1,
+                    "player": 1,
+                    "recipes": 2
+                  },
+                  "credited": 1,
+                  "item": "iron_ingot",
+                  "method": "withdraw",
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": -9
+                  },
+                  "requested": 1
+                },
+                {
+                  "after": {
+                    "at": 1792809978167,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {
+                          "coal": 9,
+                          "raw_iron": 1
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": -9
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 3,
+                    "recipes": 3
+                  },
+                  "before": {
+                    "at": 1792809977916,
+                    "containers": [
+                      {
+                        "counts": {
+                          "iron_ingot": 1
+                        },
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {
+                          "coal": 9,
+                          "raw_iron": 1
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": -9
+                        }
+                      }
+                    ],
+                    "output": 1,
+                    "player": 2,
+                    "recipes": 3
+                  },
+                  "credited": 1,
+                  "item": "iron_ingot",
+                  "method": "withdraw",
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": -9
+                  },
+                  "requested": 1
+                },
+                {
+                  "after": {
+                    "at": 1792809989163,
+                    "containers": [
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {
+                          "coal": 9
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": -9
+                        }
+                      }
+                    ],
+                    "output": 0,
+                    "player": 4,
+                    "recipes": 4
+                  },
+                  "before": {
+                    "at": 1792809988913,
+                    "containers": [
+                      {
+                        "counts": {
+                          "iron_ingot": 1
+                        },
+                        "position": {
+                          "x": -11,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {},
+                        "position": {
+                          "x": -12,
+                          "y": 62,
+                          "z": -9
+                        }
+                      },
+                      {
+                        "counts": {
+                          "coal": 9
+                        },
+                        "position": {
+                          "x": -12,
+                          "y": 63,
+                          "z": -9
+                        }
+                      }
+                    ],
+                    "output": 1,
+                    "player": 3,
+                    "recipes": 4
+                  },
+                  "credited": 1,
+                  "item": "iron_ingot",
+                  "method": "withdraw",
+                  "position": {
+                    "x": -11,
+                    "y": 62,
+                    "z": -9
+                  },
+                  "requested": 1
+                }
+              ]
+            },
+            "pass": true,
+            "produced": 4,
+            "reported": 4,
+            "required": 4
+          },
+          "taken": 4
+        },
+        "smelterOk": true
+      },
+      "round": 1,
+      "scenario": "machines-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 807204,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1,
+          "mine_loot": 3,
+          "mine_ore": 7
+        },
+        "setupVerified": [
+          {
+            "chunks": 308,
+            "distribution": {
+              "deepslate_coal_ore": 898,
+              "deepslate_diamond_ore": 460,
+              "deepslate_gold_ore": 1808,
+              "deepslate_lapis_ore": 1840,
+              "deepslate_redstone_ore": 4722,
+              "iron_ore": 302
+            },
+            "oreCellCount": 10030
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "0913a6794406fdb02fcecf52099e4c147f32cd654298aec3844d839362b9acd1",
+        "terminalLine": 2584
+      },
+      "pass": true,
+      "readback": {
+        "chest": {
+          "raw_iron": 5,
+          "redstone": 18
+        },
+        "required": [
+          {
+            "count": 16,
+            "key": "redstone"
+          }
+        ]
+      },
+      "round": 1,
+      "scenario": "branch-mine-redstone-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    },
+    {
+      "baseSeed": 101,
+      "brainOutcome": "goal_done",
+      "deaths": 0,
+      "durationMs": 1068046,
+      "evidence": {
+        "eventCounts": {
+          "goal_done": 1,
+          "goal_set": 1,
+          "mine_loot": 26,
+          "mine_ore": 6,
+          "mine_restart": 1
+        },
+        "setupVerified": [
+          {
+            "chunks": 308,
+            "distribution": {
+              "deepslate_coal_ore": 898,
+              "deepslate_diamond_ore": 1769,
+              "deepslate_gold_ore": 1808,
+              "deepslate_lapis_ore": 1840,
+              "deepslate_redstone_ore": 4722,
+              "iron_ore": 302
+            },
+            "oreCellCount": 11339
+          }
+        ],
+        "setups": [
+          {
+            "botLifecycle": "reuse",
+            "difficulty": "peaceful",
+            "run": 0,
+            "seed": 101
+          }
+        ],
+        "sha256": "67ddff3bea329a2326375a3f5f3f4c7ae44301f3da55466b71ac8363230148f3",
+        "terminalLine": 2929
+      },
+      "pass": true,
+      "readback": {
+        "chest": {
+          "diamond": 4,
+          "raw_iron": 5,
+          "redstone": 142
+        },
+        "loot": [
+          "redstone",
+          "raw_iron"
+        ],
+        "required": [
+          {
+            "count": 3,
+            "key": "diamond"
+          }
+        ]
+      },
+      "round": 1,
+      "scenario": "branch-mine-diamond-flat",
+      "serverPass": true,
+      "setupSeed": 101,
+      "timedOut": false
+    }
+  ],
+  "scenarios": [
+    {
+      "deaths": 0,
+      "durationMs": 130428,
+      "medianSeconds": 44,
+      "passed": 3,
+      "rounds": 3,
+      "scenario": "collect-logs-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 416,
+          "kind": "console_log",
+          "sha256": "5f6c7dbdad385df1d32ad6065b9b52b49da9abb7a532c6de729458e4fdc3cf23",
+          "stopLine": 407
+        },
+        {
+          "finalSaveLine": 371,
+          "kind": "java_latest_log",
+          "sha256": "47cb387df6ffdd10f47a704a912875b97c264de31610e8c9afbe95b62c031ac6",
+          "stopLine": 362
+        }
+      ],
+      "summarySha256": "b58eaa1e4f42e72957ec23d3c4905e9ccdb71cd621a78e1e9cda0f355540e76e"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 163184,
+      "medianSeconds": 48,
+      "passed": 3,
+      "rounds": 3,
+      "scenario": "collect-logs-natural",
+      "serverLogs": [
+        {
+          "finalSaveLine": 162,
+          "kind": "console_log",
+          "sha256": "484028c5887a50601a4dfc35c197856040821c228954a56139ee46fd246c988f",
+          "stopLine": 153
+        },
+        {
+          "finalSaveLine": 117,
+          "kind": "java_latest_log",
+          "sha256": "37531d2ad353f1fa709070e9481a17ae0f4340fe1271344b9495ef5b9664b8a6",
+          "stopLine": 108
+        }
+      ],
+      "summarySha256": "ddab58f2212179889abef76bde75d9ba2037190034bdc83da92126cb2b47e753"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1284787,
+      "medianSeconds": 1285,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "homestead-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 449,
+          "kind": "console_log",
+          "sha256": "b512efebc4ba70a3c7322f75ec01364bb6c4d65555a019c9207c99ef54e2af24",
+          "stopLine": 440
+        },
+        {
+          "finalSaveLine": 404,
+          "kind": "java_latest_log",
+          "sha256": "5fea1700dcab26522918f65141271fec4e9ed84955a3d679b864ba5369704600",
+          "stopLine": 395
+        }
+      ],
+      "summarySha256": "66f0ae67f5576c4f19952037125ead89762459a45095072929130ea3c0d48fc3"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1576897,
+      "medianSeconds": 1577,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "homestead-natural",
+      "serverLogs": [
+        {
+          "finalSaveLine": 275,
+          "kind": "console_log",
+          "sha256": "93394d0d8233ae8dee39aae4bc7094886927b36839edc1602b8300cfb4aa61c4",
+          "stopLine": 266
+        },
+        {
+          "finalSaveLine": 230,
+          "kind": "java_latest_log",
+          "sha256": "de501c4a3eba6c5c122b2a48572db18f79018fa6a62312e9a09e3650f126e657",
+          "stopLine": 221
+        }
+      ],
+      "summarySha256": "adb0b0a0738f94692aca5cac9d3326143780b8bf85c7d78b00c489cb605f50a5"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1408063,
+      "medianSeconds": 705,
+      "passed": 2,
+      "rounds": 2,
+      "scenario": "night-bunker-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 1692,
+          "kind": "console_log",
+          "sha256": "49cab92029646057756bd9343b3505bf793555d91e627189702ad4985cb86e40",
+          "stopLine": 1683
+        },
+        {
+          "finalSaveLine": 1647,
+          "kind": "java_latest_log",
+          "sha256": "adc0c03443c62d9478735dce8299e9afbbb877ad68c3eccd68c4980743962695",
+          "stopLine": 1638
+        }
+      ],
+      "summarySha256": "ffdc32b08db4165fd3511791b108ca193c4b72f9d316e6b33b9bccbdb4a35bbf"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 293132,
+      "medianSeconds": 154,
+      "passed": 2,
+      "rounds": 2,
+      "scenario": "night-bed-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 618,
+          "kind": "console_log",
+          "sha256": "a5a8d6ca76eafbb003a8efad792b92440039fc3ea7efc5760d551400cd50e60f",
+          "stopLine": 609
+        },
+        {
+          "finalSaveLine": 573,
+          "kind": "java_latest_log",
+          "sha256": "b6658f982b9dd5f661d727398e0034b04143e68197ba80221d745832c417b212",
+          "stopLine": 564
+        }
+      ],
+      "summarySha256": "2878fbf85a40f8aaa4b723aaaf70e9b5c185e003fb3e3787133091ae50c9b128"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1472445,
+      "medianSeconds": 774,
+      "passed": 2,
+      "rounds": 2,
+      "scenario": "farm-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 663,
+          "kind": "console_log",
+          "sha256": "303f6d50bc2d33b0af2fae2316d85f6db870ff2640d33fce89968f69ad10ba8f",
+          "stopLine": 654
+        },
+        {
+          "finalSaveLine": 618,
+          "kind": "java_latest_log",
+          "sha256": "4188bd4cc234cbd06432ee74c8f6b25ee433289b525bbcd59d9197cabb3e0b92",
+          "stopLine": 609
+        }
+      ],
+      "summarySha256": "2db125c466a5f75a80ff3d95b69af2fc57e5f6595503051470bf564e9561aaa7"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 259853,
+      "medianSeconds": 131,
+      "passed": 2,
+      "rounds": 2,
+      "scenario": "ranch-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 358,
+          "kind": "console_log",
+          "sha256": "b10e2d4069a7bb0cf666d9b419801a7e676570df47cccd8bc2ca5b73fbac9060",
+          "stopLine": 349
+        },
+        {
+          "finalSaveLine": 313,
+          "kind": "java_latest_log",
+          "sha256": "2a9fd464a3ad4827928376284beed2dfd6e76751cf04a16fceed00cc1e65b23a",
+          "stopLine": 304
+        }
+      ],
+      "summarySha256": "6d9e09855297686e2f299c4f560395f1d1f6efd200d19b4a69c2e770828dac07"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 64231,
+      "medianSeconds": 64,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "nether-quartz-given",
+      "serverLogs": [
+        {
+          "finalSaveLine": 131,
+          "kind": "console_log",
+          "sha256": "0e79f3c5b53e98e89f88cc095aae5e1cc5bf64018496d85c547a67be0be75dd7",
+          "stopLine": 122
+        },
+        {
+          "finalSaveLine": 86,
+          "kind": "java_latest_log",
+          "sha256": "8312b2a87777144af5139a27f4839afa83cb55a3ee673d0aa15c2d93e0b81e6e",
+          "stopLine": 77
+        }
+      ],
+      "summarySha256": "b150cf28ccd6e58d8d0ec16bef4fcef28e8361c24c14389ad6f5f70b92ad50c2"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 27106,
+      "medianSeconds": 27,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "cobblegen-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 159,
+          "kind": "console_log",
+          "sha256": "3f91d4a4f9b8f273fa32abc45ab575351b14cf3ed90c9b129aecbbaba61c384d",
+          "stopLine": 150
+        },
+        {
+          "finalSaveLine": 114,
+          "kind": "java_latest_log",
+          "sha256": "ad105880b137a7eff28219dbe2c6916f7ea1d7a132004a13dd51fd52611ea430",
+          "stopLine": 105
+        }
+      ],
+      "summarySha256": "7ba764306a9e3bfd98d36a7559110560074c566e1151920c1c0acd0495a30ffa"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 23541,
+      "medianSeconds": 24,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "cobblegen-hopper-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 165,
+          "kind": "console_log",
+          "sha256": "10b7f3ec90d446658aaaa954f4eb2eea1bca929e5e0b1e8666de73e36bd6acdb",
+          "stopLine": 156
+        },
+        {
+          "finalSaveLine": 120,
+          "kind": "java_latest_log",
+          "sha256": "4fc3f414443a31200f6d08d1a02f328ffef93019936bdaf76b5d69417f2bfa92",
+          "stopLine": 111
+        }
+      ],
+      "summarySha256": "c74eba3a806284216ce51797a6e7f5daba5c294f539b574b0f01ef2cc142a1e0"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 95987,
+      "medianSeconds": 96,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "smelter-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 165,
+          "kind": "console_log",
+          "sha256": "b757960264180be1bb2a0941567acb43107c25d99b46de308bfc524f80c3facb",
+          "stopLine": 156
+        },
+        {
+          "finalSaveLine": 120,
+          "kind": "java_latest_log",
+          "sha256": "8a79df37e8c13e71951b165fd3adb1e53b2680a13a258c15995181b229cb1abd",
+          "stopLine": 111
+        }
+      ],
+      "summarySha256": "fa75614a662f8bd3c32da40c128c89e8865aa7d7126321525a5016deda0ec241"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 395295,
+      "medianSeconds": 395,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "materials-cobblegen-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 214,
+          "kind": "console_log",
+          "sha256": "d1fd958613469b84b835d67d01596bd79d04a7eb9e488485bf1b3dc4b27e61a1",
+          "stopLine": 205
+        },
+        {
+          "finalSaveLine": 169,
+          "kind": "java_latest_log",
+          "sha256": "f62fb897e1caa5f3de929aa8a272e3c774f62779f4b20a1343bba45187cce2ff",
+          "stopLine": 160
+        }
+      ],
+      "summarySha256": "4f61d21601a4319d957267f01ee0b257a139a3e0d9209faa8f8ce22b970fcffe"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 400018,
+      "medianSeconds": 400,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "branch-mine-iron-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 327,
+          "kind": "console_log",
+          "sha256": "a24d5457f65ed44dc65f698d2df266458fc600b63ef4abab1575e03168a0db49",
+          "stopLine": 318
+        },
+        {
+          "finalSaveLine": 282,
+          "kind": "java_latest_log",
+          "sha256": "2be474dac62ce8d01c2e8d9fbe5a861e3ced57e431e03aa2a80cb87702981722",
+          "stopLine": 273
+        }
+      ],
+      "summarySha256": "7348d1caa2b4c4ce3db1d3b2dd49a9cd64977c0ca8bdf6d9ae184a62bfab1619"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 183376,
+      "medianSeconds": 183,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "canefarm-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 171,
+          "kind": "console_log",
+          "sha256": "c9a7c250fe1c283e24818c5c88dcf0299e6d3f8a082dff27716871e902ce1b84",
+          "stopLine": 162
+        },
+        {
+          "finalSaveLine": 126,
+          "kind": "java_latest_log",
+          "sha256": "bfbdd980bc2eaffef1662c51c74e163abc318db40105410ed8bf10a21521cf1a",
+          "stopLine": 117
+        }
+      ],
+      "summarySha256": "72ba1b9bf408d94b3d7bcf584f3e455e4bef0de2565a6e0e0bc31e7773c0d7a1"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 372188,
+      "medianSeconds": 372,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "mobfarm-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 250,
+          "kind": "console_log",
+          "sha256": "79b390cb51754b69d8492735311c9748aa3d39201ec7d1275b0b70fd3780489a",
+          "stopLine": 241
+        },
+        {
+          "finalSaveLine": 205,
+          "kind": "java_latest_log",
+          "sha256": "6be4a18c830fc613aa9f1a2d642eea19b8f0065532f4bdd661476767cd84f835",
+          "stopLine": 196
+        }
+      ],
+      "summarySha256": "161632af30794a4e08d92535aa9c4cded73df9f5bc1cf34bdd06ee41edbdfe08"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 22241,
+      "medianSeconds": 22,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "carpetdupe-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 161,
+          "kind": "console_log",
+          "sha256": "ed487c76a7d1e38fa55ace1414560d5aefd61137c8bd61ca6159d20ed93260d5",
+          "stopLine": 152
+        },
+        {
+          "finalSaveLine": 116,
+          "kind": "java_latest_log",
+          "sha256": "1512023c706deba90a8b87cd36b5674c823cf4cd7bbf121f8f0a684d47db55d2",
+          "stopLine": 107
+        }
+      ],
+      "summarySha256": "11a936cd440e7166083a3eaa0f1b134316648fe8f7e65e9a6c3f05a23fe583d0"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 109648,
+      "medianSeconds": 110,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "fishing-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 315,
+          "kind": "console_log",
+          "sha256": "bb1895bf387d5692bcb55b36c405a7b52d37303a90bf5de551600f8498bb829c",
+          "stopLine": 306
+        },
+        {
+          "finalSaveLine": 270,
+          "kind": "java_latest_log",
+          "sha256": "6cd8ec1dfabf11ae04660500b7434042eed43f40c713cc7f4b8311e77d34389e",
+          "stopLine": 261
+        }
+      ],
+      "summarySha256": "d67103420e985fd3eb471de01f9e1c4d60baad1f8bbc89966a41e8a278874b98"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 59505,
+      "medianSeconds": 60,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "raildupe-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 179,
+          "kind": "console_log",
+          "sha256": "6bd6528de5857d504768716f5eeaec18e1b65155fbb2db07bc16ab48007d4cec",
+          "stopLine": 170
+        },
+        {
+          "finalSaveLine": 134,
+          "kind": "java_latest_log",
+          "sha256": "94894860cc61795c57d41cf307dc6be77362f23cecfe973cfca5ad9ad3b55acc",
+          "stopLine": 125
+        }
+      ],
+      "summarySha256": "348473f21f8b34464b3594e3295569bac9a6b28948d1c34dd5304b9da428d4e7"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 110250,
+      "medianSeconds": 110,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "ironfarm-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 250,
+          "kind": "console_log",
+          "sha256": "653ad7e4c4770fb635d3a7a922c1024a45ef408b4fbc8685df3277d677918313",
+          "stopLine": 241
+        },
+        {
+          "finalSaveLine": 205,
+          "kind": "java_latest_log",
+          "sha256": "d17cbcf0da4084fbc4b9b0a569dc9d15cff7da257a7c55f899d14f6432594010",
+          "stopLine": 196
+        }
+      ],
+      "summarySha256": "5b54350da18c4f4ab8bcde0cb649986c869a5ed34e159c9bfb1aa086e23c7948"
+    },
+    {
+      "deaths": 2,
+      "durationMs": 4269204,
+      "medianSeconds": 4269,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "e2e-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 1773,
+          "kind": "console_log",
+          "sha256": "254b6efa812bd8b86d45a617370a729e616c0ad8591a133bf5730c193845e9f5",
+          "stopLine": 1764
+        },
+        {
+          "finalSaveLine": 1728,
+          "kind": "java_latest_log",
+          "sha256": "dc10dfd4f5e94bc4525a2c60dc083312cd2ad71b5f2e42079c7ad73190f02778",
+          "stopLine": 1719
+        }
+      ],
+      "summarySha256": "db731e89fb6063c0322ad7eca7912b099a36c1393875f8a54cb867bbc8c3a511"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1830000,
+      "medianSeconds": 1830,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "machines-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 1641,
+          "kind": "console_log",
+          "sha256": "4636f12f80665845301d249f9766716aeeb41b5f2ec44868f9b7cf649fe194a8",
+          "stopLine": 1632
+        },
+        {
+          "finalSaveLine": 1596,
+          "kind": "java_latest_log",
+          "sha256": "797f9a1be33876b2db7a34dfc07e7a257b97cc03374d33088d55cb9033ae2772",
+          "stopLine": 1587
+        }
+      ],
+      "summarySha256": "586330ee8778282efd08e9d69bd70c70217409e00776393f835c381dbd865d62"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 807204,
+      "medianSeconds": 807,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "branch-mine-redstone-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 4369,
+          "kind": "console_log",
+          "sha256": "aca089be6d08cedfb3cc2bfa49c8828868209ac62c8f220378e900875fb81a98",
+          "stopLine": 4360
+        },
+        {
+          "finalSaveLine": 4324,
+          "kind": "java_latest_log",
+          "sha256": "423f409dce16c285aeaaf1c780dd05c8a864f2024f5e8fc969b47c7e07c91b19",
+          "stopLine": 4315
+        }
+      ],
+      "summarySha256": "06e99f7a700f7f8e4d1d9244dec2094bbd923416f9bc881127bbe2843a641b86"
+    },
+    {
+      "deaths": 0,
+      "durationMs": 1068046,
+      "medianSeconds": 1068,
+      "passed": 1,
+      "rounds": 1,
+      "scenario": "branch-mine-diamond-flat",
+      "serverLogs": [
+        {
+          "finalSaveLine": 4769,
+          "kind": "console_log",
+          "sha256": "30b1822e484e23674b16c463acfc93875b98c8e5ce414b72309023e5783498d9",
+          "stopLine": 4760
+        },
+        {
+          "finalSaveLine": 4724,
+          "kind": "java_latest_log",
+          "sha256": "a2be31c580372366978224332b39e450a8591b899db471e1b4eaaef8940a376a",
+          "stopLine": 4715
+        }
+      ],
+      "summarySha256": "6f07444a8f8e4afad1f3955d2d8e316f071e3fc9303d4623211fa98a9b22b55f"
+    }
+  ],
+  "schema": 1,
+  "scope": "source-only core developer preview validation; new core is not connected to the desktop host",
+  "startedAtUtc": "2026-10-24T02:15:09.845Z",
+  "status": "ALL_PASS"
+}

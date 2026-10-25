@@ -6,6 +6,7 @@ const HAZARDS = new Set(['lava','water','fire','soul_fire','magma_block','powder
 const GRAVITY = new Set(['sand','red_sand','gravel']);
 const { isNaturalHouseTerrain } = require('./houseNaturalTerrain');
 const PREPARABLE_TERRAIN = /^(?:dirt|grass_block|coarse_dirt|rooted_dirt|podzol|mycelium|stone|deepslate|tuff|granite|diorite|andesite)$/;
+const CLEARABLE_SURFACE = new Set(['red_sand', 'snow_block']);
 const key = p => `${p.x},${p.y},${p.z}`;
 const support = b => Boolean(b && b.boundingBox === 'block' && !HAZARDS.has(b.name) && b.getProperties?.().waterlogged !== true);
 const error = (reason, position, block) => ({ valid: false, reason, position, block: block?.name || null });
@@ -48,7 +49,8 @@ function inspectNaturalHouseSite({ anchor, profile = 'cottage', blockAt, allowSi
  const removals=new Map(),excavation=new Map();
  const inspectClear=p=>{const b=blockAt(p);if(!b||HAZARDS.has(b.name)||b.getProperties?.().waterlogged===true)return error('unsafe_clearance',p,b);
   if(AIR.has(b.name))return null;if(!isNaturalHouseTerrain(b.name))return error('foreign_site_block',p,b);
-  if(b.boundingBox==='block'&&!b.name.endsWith('_leaves')){
+  const matchingSurface=CLEARABLE_SURFACE.has(b.name)&&blockAt({...p,y:anchor.y-1})?.name===b.name;
+  if(b.boundingBox==='block'&&!b.name.endsWith('_leaves')&&!matchingSurface){
    if(!allowTerrainPreparation||!PREPARABLE_TERRAIN.test(b.name)||p.y>anchor.y+1)return error('terrain_excavation_required',p,b);
    excavation.set(key(p),{position:{...p},name:b.name,stateId:b.stateId});if(excavation.size>96)return error('terrain_preparation_cut_limit',p,b);}
   removals.set(key(p),{...p});return null;};

@@ -89,6 +89,7 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
         const step = { kind: 'gather', key, blocks: source.blocks, tool: source.tool || null, count: deficit };
         if (source.dimension) step.dimension = source.dimension;
         if (Number.isFinite(source.mineY)) step.mineY = source.mineY;
+        if (source.rare) step.rare = true;
         return step;
       }
       if (source.kind === 'smelt') {
@@ -111,6 +112,14 @@ function planNext({ requirements, inventory, stations = {}, kb = KNOWLEDGE }) {
       }
       if (source.kind === 'hunt') {
         return { kind: 'hunt', key, mobs: source.mobs, count: deficit };
+      }
+      if (source.kind === 'cast') {
+        // One lava bucket a block, the water bucket and the pickaxe come back.
+        for (const kept of [source.tool, source.water, source.lava]) {
+          const step = ensureTool(kept, depth);
+          if (step) return step;
+        }
+        return { kind: 'cast', key, count: deficit };
       }
     }
     return { kind: 'unplannable', key, reason: 'no_source' };

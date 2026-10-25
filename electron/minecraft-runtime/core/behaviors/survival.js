@@ -92,7 +92,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
-    eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, oxygen: 8, dropsTtlMs: 270000,
+    eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, recoverFood: 18, oxygen: 8, dropsTtlMs: 270000,
     walkSpeed: 4, dropsMaxDistance: 600,
     ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
@@ -101,11 +101,18 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const foodCheck = isFood || ((name) => Boolean(bot.registry.foodsByName?.[name]));
   const hasSafeFood = (state, desperate) => Object.entries(state.inventory)
     .some(([name, count]) => count > 0 && foodCheck(name) && (desperate || !RISKY_FOODS.has(name)));
+  const desperateForFood = (state) => state.food <= 6 || state.health <= 8;
   // Zombified piglins (and piglins, while the bot wears gold) leave the bot
   // alone unless provoked, and hitting one turns the whole group. Only a mob
   // of a pack that has hurt the bot counts as a threat.
   const provoked = new Map(); // entity id -> until
+  const creepyIndex = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
+  const endermanAngry = (h) => (creepyIndex >= 0 && bot.entities?.[h.id]?.metadata?.[creepyIndex] === true)
+    || (provoked.get(h.id) || 0) > Date.now();
   const calm = (h) => {
+    // Proximity does not make an enderman hostile. Attacking a calm one is
+    // precisely what turns an avoidable encounter into a deadly fight.
+    if (h.name === 'enderman') return !endermanAngry(h);
     if (!CALM_UNLESS_PROVOKED.has(h.name)) return false;
     if ((provoked.get(h.id) || 0) > Date.now()) return false;
     return h.name === 'zombified_piglin' || wearsGold(bot);
@@ -115,17 +122,23 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // swung its arm at melee range just before the hit; a skeleton arrow, a fall
   // or fire next to a calm piglin must not turn the pack hostile.
   const swings = new Map(); // entity id -> time of last arm swing
+  const trackedNeutral = (e) => CALM_UNLESS_PROVOKED.has(e.name) || e.name === 'enderman';
   const onSwing = (entity) => {
-    if (entity && CALM_UNLESS_PROVOKED.has(entity.name)) swings.set(entity.id, Date.now());
+    if (entity && trackedNeutral(entity)) swings.set(entity.id, Date.now());
   };
   const onHurt = (entity) => {
     if (entity !== bot.entity) return;
     const here = bot.entity.position;
     const culprit = Object.values(bot.entities || {})
-      .filter((e) => CALM_UNLESS_PROVOKED.has(e.name) && e.position && e.position.distanceTo(here) <= 4
+      .filter((e) => trackedNeutral(e) && e.position && e.position.distanceTo(here) <= 4
         && Date.now() - (swings.get(e.id) || 0) <= 600)
       .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0];
     if (!culprit) return;
+    if (culprit.name === 'enderman') {
+      // Endermen do not share the piglin group's provocation state.
+      provoked.set(culprit.id, Date.now() + 60000);
+      return;
+    }
     for (const e of Object.values(bot.entities || {})) {
       if (e.name === culprit.name && e.position && e.position.distanceTo(culprit.position) <= 24) provoked.set(e.id, Date.now() + 60000);
     }
@@ -153,6 +166,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const threat = nearest(state);
       if (!threat || state.sheltered) return 0;
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
+      // In the End an enderman teleports after anything that runs, and the
+      // run ends in the void: fight it out there instead.
+      if (threat.name === 'enderman' && dimensionOf(bot) === 'the_end') return 0;
       return state.health <= t.escapeHealth && threat.distance <= t.escapeRange ? 1 : 0;
     },
     run: (ctx) => actions.fleeFrom(bot, ctx, nearest(ctx.perceive())?.position || bot.entity.position),
@@ -187,9 +203,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.MAINTENANCE,
     want(state) {
       if (threats(state).some((h) => h.distance <= t.eatQuietRange)) return 0;
+      // A goal mid-dodge (out of a taking-off dragon's path) must not stop to eat.
+      if ((bot.companionNoEatUntil || 0) > Date.now() && state.health > 6) return 0;
       const hungry = state.food <= t.eatFood || (state.health < 16 && state.food < 20);
       // Risky food (rotten flesh, raw chicken) only when starving or nearly dead.
-      return hungry && hasSafeFood(state, state.food <= 6 || state.health <= 8) ? 1 : 0;
+      return hungry && hasSafeFood(state, desperateForFood(state)) ? 1 : 0;
     },
     run: (ctx) => actions.eat(bot, ctx),
   };
@@ -223,7 +241,13 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     name: 'provision',
     band: BAND.MAINTENANCE,
     want(state) {
-      if (state.sheltered || state.food > t.provisionFood || hasSafeFood(state, true)) return 0;
+      // Hunger alone is not the only reason to get food: below 18 a badly
+      // injured bot cannot regenerate, even at food 16. Stop supplying at the
+      // same threshold at which recovery can take over, and eat carried food
+      // first using exactly the eat behavior's risky-food policy.
+      const needsFood = state.food <= t.provisionFood
+        || (state.health < t.recoverHealth && state.food < t.recoverFood);
+      if (state.sheltered || !needsFood || hasSafeFood(state, desperateForFood(state))) return 0;
       // Nothing to hunt in the nether but hoglins; wandering off there to look for food kills.
       if (dimensionOf(bot) !== 'overworld') return 0;
       if (threats(state).some((h) => h.distance <= 8)) return 0;
@@ -258,7 +282,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const recover = {
     name: 'recover',
     band: BAND.MAINTENANCE,
-    want: (state) => (state.health < t.recoverHealth && state.food >= 18
+    want: (state) => (state.health < t.recoverHealth && state.food >= t.recoverFood
       && !threats(state).some((h) => h.distance <= 8) ? 0.3 : 0),
     async run(ctx) {
       actions.haltBody(bot);
@@ -306,9 +330,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // An angry enderman out-damages a stone or iron sword and teleports out of
   // reach, but cannot follow into a sealed 1x1 hole: hide there until it calms
   // down or wanders off, then climb out.
-  const creepyIndex = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
   const angryEnderman = (state, range) => threats(state).find((h) => h.name === 'enderman' && h.distance <= range
-    && creepyIndex >= 0 && bot.entities?.[h.id]?.metadata?.[creepyIndex] === true);
+    && endermanAngry(h));
   // Remember where raiders were seen; the homestead keeps its site away from there.
   const danger = (bot.companionDanger = bot.companionDanger || []);
   const avoid = {
@@ -334,6 +357,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.ESCAPE,
     want(state) {
       if (hidden) return 1;
+      // The End is full of them and the fight cannot wait: there an angry one
+      // is fought (defend). A bunker dug mid-fight left the bot to the dragon.
+      if (dimensionOf(bot) === 'the_end') return 0;
       return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
     },
     async run(ctx) {

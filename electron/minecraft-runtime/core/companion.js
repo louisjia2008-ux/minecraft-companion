@@ -9,10 +9,13 @@ const { perceive } = require('./perception');
 const { createSurvivalBehaviors } = require('./behaviors/survival');
 const { createRecovery } = require('./behaviors/recovery');
 const { createNightRest } = require('./behaviors/nightRest');
+const { createEndHazards } = require('./behaviors/endHazards');
+const { createHomeMaintenance } = require('./behaviors/homeMaintenance');
 const { createGatherLogsGoal } = require('./goals/gatherBlocks');
 const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
 const { createRanchGoal } = require('./goals/ranch');
+const { installDigTimeFix } = require('./digTime');
 const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
@@ -24,11 +27,16 @@ const { createCarpetDuperGoal } = require('./goals/carpetDuper');
 const { createFishingGoal } = require('./goals/fishing');
 const { createRailDuperGoal } = require('./goals/railDuper');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
+const { createEndDragonGoal } = require('./goals/endDragon');
+const { createEnterEndGoal } = require('./goals/enterEnd');
+const { createEndCityGoal } = require('./goals/endCity');
+const { createEndJourneyGoal } = require('./goals/endJourney');
 const { createDefaultCards } = require('./goals/registry');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 const { installEdgeNudge } = require('./edgeNudge');
+const { installOpenDoorPassage, uninstallOpenDoorPassage } = require('./openDoorPassage');
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
@@ -60,6 +68,7 @@ function configureMovements(bot) {
     const below = bot.blockAt(block.position.offset(0, -1, 0));
     return below && leaves.has(below.type) ? 25 : 0;
   });
+  installOpenDoorPassage(bot, movements);
   bot.pathfinder.setMovements(movements);
   // Mining paths through stone need more search time than surface walks.
   bot.pathfinder.thinkTimeout = 10000;
@@ -68,10 +77,12 @@ function configureMovements(bot) {
 
 function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false } = {}) {
   if (!bot) throw new TypeError('bot is required');
+  const priorHomeProtection = bot.companionProtectBlock;
   installInventoryCompatibility(bot);
+  installDigTimeFix(bot);
   const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
-  configureMovements(bot);
+  const configuredMovements = configureMovements(bot);
 
   // Stuck bodies, full bags and death loops are recovered for every goal alike.
   const recovery = createRecovery({ bot });
@@ -89,8 +100,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     // Out of sight means far away (it digs in there); seen and gone means sleep without it.
     return { bed: !block || block.name.endsWith('_bed') ? bed : null, centre: house.interiorCenter };
   } });
-  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors, nightRest];
-  const useGoal = (goal) => { spare = goal.spares || (() => false); brain.setGoal(goal); };
+  const homeMaintenance = createHomeMaintenance({ bot, home: () => director?.memory.homestead,
+    activeGoal: () => brain?.status().goal?.name });
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors,
+    nightRest, homeMaintenance, ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];
+  const usedGoals = new Set();
+  const useGoal = (goal) => { usedGoals.add(goal); spare = goal.spares || (() => false); brain.setGoal(goal); };
   brain = createBrain({
     perceive: () => perceive(bot),
     behaviors,
@@ -155,6 +170,31 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       useGoal(goal);
       return brain.tick().then(() => goal);
     },
+    enterEnd(options = {}) {
+      const goal = createEnterEndGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    /** Stronghold portal, dragon, gateway and an end city, in one goal. */
+    endJourney(options = {}) {
+      const goal = createEndJourneyGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    endCity(options = {}) {
+      const goal = createEndCityGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
+    endDragon(options = {}) {
+      const goal = createEndDragonGoal({ bot, ...options });
+      director.notePlayerGoal();
+      useGoal(goal);
+      return brain.tick().then(() => goal);
+    },
     /** Materials for a machine, stored in the chest at `chest` (see goals/gatherMaterials.js). */
     gatherMaterials(options) {
       const goal = createGatherMaterialsGoal({ bot, ...options });
@@ -177,19 +217,19 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     caneFarm(options = {}) {
       const goal = createCaneFarmGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     mobFarm(options = {}) {
       const goal = createMobFarmGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     ironFarm(options = {}) {
       const goal = createIronFarmGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     villageIronFarm(options = {}) {
@@ -201,19 +241,19 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     carpetDuper(options = {}) {
       const goal = createCarpetDuperGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     railDuper(options = {}) {
       const goal = createRailDuperGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     fishing(options = {}) {
       const goal = createFishingGoal({ bot, ...options });
       director.notePlayerGoal();
-      brain.setGoal(goal);
+      useGoal(goal);
       return brain.tick().then(() => goal);
     },
     setGoal(goal) {
@@ -240,9 +280,16 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       bot.removeListener('death', onDeath);
       removeEdgeNudge();
       await brain.dispose();
+      for (const goal of usedGoals) await goal.dispose?.();
+      usedGoals.clear();
       for (const behavior of behaviors) behavior.dispose?.();
       recovery.dispose();
+      if (bot.companionProtectBlock === director.memory.homestead?.memory.protectBlock) {
+        if (priorHomeProtection === undefined) delete bot.companionProtectBlock;
+        else bot.companionProtectBlock = priorHomeProtection;
+      }
       haltBody(bot);
+      uninstallOpenDoorPassage(bot, configuredMovements);
     },
   };
 }

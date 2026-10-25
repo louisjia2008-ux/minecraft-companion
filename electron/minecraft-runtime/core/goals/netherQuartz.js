@@ -11,10 +11,15 @@ const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const nether = require('../nether');
 const { createBlacklist } = require('../blacklist');
+const { sleep } = require('../confirm');
 
 const isQuartz = (n) => n === 'quartz';
 const isQuartzOre = (n) => n === 'nether_quartz_ore';
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
+// Hurt in the Nether with nothing to eat: home to heal before going on.
+const RETREAT_HEALTH = 8;
+// Back in the overworld, fed: wait to heal this far before going through again.
+const READY_HEALTH = 16;
 
 function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
@@ -46,7 +51,7 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     if (head && /^golden_/.test(head.name)) return;
     const helmet = bot.inventory.items().find((i) => i.name === 'golden_helmet');
     if (!helmet) return;
-    try { await bot.equip(helmet, 'head'); ctx.record('equip', { item: 'golden_helmet' }); } catch (_) { /* retried next run */ }
+    try { await bot.equip(helmet, 'head'); ctx.record('equip', { item: 'golden_helmet' }); } catch { /* retried next run */ }
   }
 
   async function goThrough(ctx, portal) {
@@ -66,6 +71,14 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
   async function overworldStep(ctx, state) {
     leaveNetherMode();
     if (quartz(state) >= count) return { ok: true };
+    // Nothing to mine quartz with: going through would only mean coming back.
+    if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
+    // Health comes back on a full stomach; the Nether is no place to wait for it.
+    if (bot.health < READY_HEALTH && bot.food >= 18) {
+      ctx.record('rest', { health: Math.round(bot.health) });
+      await sleep(5000, ctx.signal);
+      return { ok: true, resting: true };
+    }
     const remembered = memory.overworldPortal && bot.blockAt(memory.overworldPortal)?.name === 'nether_portal'
       ? memory.overworldPortal : null;
     // Far from a remembered portal (respawned at world spawn): walk back first.
@@ -107,11 +120,23 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     if (!memory.netherPortal || bot.blockAt(memory.netherPortal)?.name !== 'nether_portal') {
       memory.netherPortal = nether.findPortal(bot, 128) || memory.netherPortal;
     }
-    if (quartz(state) >= count) {
+    // Badly hurt with nothing to eat, or the pickaxe worn out: home, and back when fit.
+    const hasPick = bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'));
+    const retreat = !hasPick || (bot.health <= RETREAT_HEALTH && !actions.pickFood?.(bot));
+    if (quartz(state) >= count || retreat) {
+      if (retreat) ctx.record('retreat', { health: Math.round(bot.health), pickaxe: hasPick });
       if (!memory.netherPortal) return fail('nether_portal_lost');
+      // A ghast's blast puts a portal out; the frame stays. Light it again
+      // (the corners do not matter to a portal, only the ten obsidian).
+      if (bot.blockAt(memory.netherPortal)?.name !== 'nether_portal') {
+        const frame = frameAround(memory.netherPortal);
+        if (frame) {
+          ctx.record('portal_relight', { portal: `${memory.netherPortal.x},${memory.netherPortal.y},${memory.netherPortal.z}` });
+          return nether.ignite(bot, ctx, nether.portalFrame(frame.base, frame.axis));
+        }
+      }
       return goThrough(ctx, memory.netherPortal);
     }
-    if (!bot.inventory.items().some((i) => i.name.endsWith('_pickaxe'))) return fail('no_pickaxe');
     const home = memory.netherPortal;
     const result = await skills.gatherOne(bot, ctx, {
       blocks: isQuartzOre,
@@ -123,6 +148,18 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     });
     if (result.ok || result.reason !== 'no_target_in_range') return result;
     return exploreNear(ctx, home);
+  }
+
+  /** The obsidian frame whose bottom interior holds `cell`, or null. */
+  function frameAround(cell) {
+    for (const axis of ['x', 'z']) {
+      for (const u of [1, 2]) {
+        const base = axis === 'x' ? cell.offset(-u, -1, 0) : cell.offset(0, -1, -u);
+        const frame = nether.portalFrame(base, axis);
+        if (frame.cells.every((c) => c.corner || bot.blockAt(c.pos)?.name === 'obsidian')) return { base, axis };
+      }
+    }
+    return null;
   }
 
   /** Walks ~24 blocks along one heading; turns around past `roam` from the portal. */

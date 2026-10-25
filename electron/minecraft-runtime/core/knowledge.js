@@ -9,6 +9,8 @@
 //   smelt  { input: key, fuel: true }                 at the home furnace
 //   hunt   { mobs: [names] }                          kill, collect drops
 //   fill   { liquid, bucket: key }                     use an empty bucket on a source block
+//   cast   { tool, water, lava: keys }                 lava poured in a pit, water run over it (obsidian.js)
+//   gather ... rare?: the drop only comes some of the time (flint from gravel)
 //   station                                           a placed crafting table / furnace
 
 const WOODS = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak'];
@@ -158,9 +160,30 @@ const KNOWLEDGE = {
     match: exact('redstone'),
     sources: [{ kind: 'gather', blocks: exact('redstone_ore', 'deepslate_redstone_ore'), tool: 'iron_tier_pickaxe', mineY: -53 }],
   },
+  diamond: {
+    match: exact('diamond'),
+    sources: [{ kind: 'gather', blocks: exact('diamond_ore', 'deepslate_diamond_ore'), tool: 'iron_tier_pickaxe', mineY: -53 }],
+  },
+  // The way to the Nether: a portal of obsidian lit with flint and steel.
+  diamond_pickaxe: {
+    match: exact('diamond_pickaxe', 'netherite_pickaxe'),
+    tool: true,
+    sources: [{ kind: 'craft', yields: 1, needs: { diamond: 3, stick: 2 }, table: true, pick: () => 'diamond_pickaxe' }],
+  },
+  obsidian: {
+    match: exact('obsidian'),
+    sources: [{ kind: 'cast', tool: 'diamond_pickaxe', water: 'water_bucket', lava: 'lava_bucket' }],
+  },
+  flint: { match: exact('flint'), sources: [{ kind: 'gather', blocks: exact('gravel'), rare: true }] },
+  flint_and_steel: {
+    match: exact('flint_and_steel'),
+    tool: true,
+    sources: [{ kind: 'craft', yields: 1, needs: { iron_ingot: 1, flint: 1 }, table: false, pick: () => 'flint_and_steel' }],
+  },
   quartz: {
     match: exact('quartz'),
-    sources: [{ kind: 'gather', blocks: exact('nether_quartz_ore'), tool: 'pickaxe', dimension: 'the_nether' }],
+    // A wooden pickaxe wears out on the netherrack of the way before the quartz is in.
+    sources: [{ kind: 'gather', blocks: exact('nether_quartz_ore'), tool: 'stone_tier_pickaxe', dimension: 'the_nether' }],
   },
   // Smooth stone for repeaters: cobblestone smelted once.
   stone: { match: exact('stone'), sources: [{ kind: 'smelt', input: 'cobblestone', inputItem: 'cobblestone' }] },

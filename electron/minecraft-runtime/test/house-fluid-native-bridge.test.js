@@ -1,4 +1,4 @@
-/* global require, setTimeout, clearTimeout, setInterval, clearInterval */
+/* global require, setTimeout, setInterval, clearInterval */
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {EventEmitter}=require('node:events'),{AsyncLocalStorage}=require('node:async_hooks');

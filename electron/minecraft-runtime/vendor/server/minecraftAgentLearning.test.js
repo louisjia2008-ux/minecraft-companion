@@ -6,6 +6,12 @@ const test = require("node:test");
 const { createMinecraftActionRegistry } = require("./action/actionRegistry");
 const { createMinecraftTaskAgent } = require("./minecraftTaskAgent");
 
+function createTestAgent(t, deps) {
+  const agent = createMinecraftTaskAgent(deps);
+  t.after(() => agent.dispose());
+  return agent;
+}
+
 test("learned task script scoring prefers successful similar plans", () => {
   const registry = createMinecraftActionRegistry();
   const taskScripts = {};
@@ -137,12 +143,12 @@ test("legacy single-step small house success does not override playbook plan", (
   assert.equal(registry.findBestLearnedTaskScript(playbookPlan, "在附近造一个小木屋", taskScripts), null);
 });
 
-test("dynamic pathfinder goals do not repeatedly reset movement state", () => {
+test("dynamic pathfinder goals do not repeatedly reset movement state", (t) => {
   process.env.MC_AGENT_LEARNING_PATH = path.join(
     os.tmpdir(),
     `live2d-mc-agent-hotpath-test-${process.pid}.json`
   );
-  const agent = createMinecraftTaskAgent({
+  const agent = createTestAgent(t, {
     appPaths: {
       appDataDir: os.tmpdir(),
     },
@@ -159,7 +165,6 @@ test("dynamic pathfinder goals do not repeatedly reset movement state", () => {
   assert.equal(result.setGoalCalls, 1);
   assert.equal(result.loadPluginCalls, 0);
   assert.equal(result.movementSessionGoalSignature, "entity:42:2:d");
-  agent.dispose();
 });
 
 test("small house recovery resumes from material phase when materials run out", () => {
@@ -180,12 +185,12 @@ test("small house recovery resumes from material phase when materials run out", 
   assert.ok(recovery.steps.some((step) => step.args.phase === "verify"));
 });
 
-function createReconnectTestAgent() {
+function createReconnectTestAgent(t) {
   process.env.MC_AGENT_LEARNING_PATH = path.join(
     os.tmpdir(),
     `live2d-mc-agent-reconnect-${process.pid}-${Math.random().toString(36).slice(2)}.json`
   );
-  return createMinecraftTaskAgent({
+  return createTestAgent(t, {
     appPaths: { appDataDir: os.tmpdir() },
     readConfig: () => ({ mcAgentAutoReconnect: true }),
     broadcast: () => {},
@@ -216,8 +221,8 @@ function makeParkedTask() {
   };
 }
 
-test("parked reconnect task fails cleanly after the supervisor gives up", () => {
-  const agent = createReconnectTestAgent();
+test("parked reconnect task fails cleanly after the supervisor gives up", (t) => {
+  const agent = createReconnectTestAgent(t);
   const task = makeParkedTask();
   agent.__testSetReconnectTask(task);
 
@@ -229,11 +234,10 @@ test("parked reconnect task fails cleanly after the supervisor gives up", () => 
   assert.equal(agent.hasParkedReconnectTask(), false);
   assert.equal(agent.__testGetReconnectTask(), null);
 
-  agent.dispose();
 });
 
-test("resumeAfterReconnect refuses to resume while no live bot is attached", () => {
-  const agent = createReconnectTestAgent();
+test("resumeAfterReconnect refuses to resume while no live bot is attached", (t) => {
+  const agent = createReconnectTestAgent(t);
   const task = makeParkedTask();
   agent.__testSetReconnectTask(task);
 
@@ -242,15 +246,14 @@ test("resumeAfterReconnect refuses to resume while no live bot is attached", () 
   assert.equal(task.status, "paused");
   assert.equal(task.reconnectState.status, "waiting_supervisor");
 
-  agent.dispose();
 });
 
-test("planner JavaScript scriptlets are rejected without evaluation", () => {
+test("planner JavaScript scriptlets are rejected without evaluation", (t) => {
   process.env.MC_AGENT_LEARNING_PATH = path.join(
     os.tmpdir(),
     `live2d-mc-agent-test-${process.pid}.json`
   );
-  const agent = createMinecraftTaskAgent({
+  const agent = createTestAgent(t, {
     appPaths: {
       appDataDir: os.tmpdir(),
     },
@@ -271,15 +274,14 @@ test("planner JavaScript scriptlets are rejected without evaluation", () => {
     /不再支持 JavaScript scriptlet/
   );
   assert.doesNotThrow(() => agent.__testRejectPlannerScriptlet(""));
-  agent.dispose();
 });
 
-test("AI safety metadata creates explicit approval reasons", () => {
+test("AI safety metadata creates explicit approval reasons", (t) => {
   process.env.MC_AGENT_LEARNING_PATH = path.join(
     os.tmpdir(),
     `live2d-mc-agent-approval-test-${process.pid}.json`
   );
-  const agent = createMinecraftTaskAgent({
+  const agent = createTestAgent(t, {
     appPaths: { appDataDir: os.tmpdir() },
     readConfig: () => ({}),
     broadcast: () => {},
@@ -298,5 +300,4 @@ test("AI safety metadata creates explicit approval reasons", () => {
     ["模型要求用户确认", "安全风险：可能掉入岩浆", "缺少资源：水桶、食物"]
   );
 
-  agent.dispose();
 });

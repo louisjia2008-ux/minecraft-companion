@@ -7,15 +7,15 @@
 // Recovery is not done here: the caller picks another target or gives up.
 
 const { goals } = require('mineflayer-pathfinder');
-const { waitUntil, runCancellable, sleep } = require('./confirm');
+const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { ownedItems } = require('./perception');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
 
 function haltBody(bot) {
-  try { bot.pathfinder?.setGoal(null); } catch (_) { /* ignore */ }
-  try { bot.clearControlStates?.(); } catch (_) { /* ignore */ }
+  try { bot.pathfinder?.setGoal(null); } catch { /* ignore */ }
+  try { bot.clearControlStates?.(); } catch { /* ignore */ }
 }
 
 // Climbing out of a mine needs pillaring: allow it, with dirt or cobblestone,
@@ -100,7 +100,8 @@ async function goTo(bot, ctx, goal, options = {}) {
   }
   if (offCentre(bot) && !goal.isEnd(bot.entity.position.floored())) await recentre(bot, ctx);
   const first = await goToOnce(bot, ctx, goal, options);
-  if (first.reason !== 'no_progress') return first;
+  // A caller with its own shared recovery deadline can own the next attempt.
+  if (first.reason !== 'no_progress' || options.retryNoProgress === false) return first;
   // Stuck at the start: step into an open neighbouring cell and try once more.
   await nudge(bot, ctx);
   return goToOnce(bot, ctx, goal, options);
@@ -136,30 +137,58 @@ async function goToOnce(bot, ctx, goal, { timeoutMs = 30000, arrived } = {}) {
 }
 
 async function goNear(bot, ctx, position, range = 2, options = {}) {
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  // One original action budget, including direct, waypoint and final approach.
+  // A native path_timeout must not create a fresh budget for each fallback.
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const deadline = Date.now() + timeoutMs;
+  const expiry = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, expiry.signal]) : expiry.signal;
+  const scoped = { ...ctx, signal };
+  const timer = setTimeout(() => { expiry.abort('path_timeout'); haltBody(bot); }, timeoutMs);
+  const remaining = () => Math.max(0, deadline - Date.now());
+  const attempt = async (goal, options) => {
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    const result = await goTo(bot, scoped, goal, options);
+    // A native timeout can resolve as {ok:false} after cancellation as well
+    // as reject. Respect the root owner in both completion paths.
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    return result;
+  };
   const goal = new goals.GoalNear(position.x, position.y, position.z, range);
-  const direct = () => goTo(bot, ctx, goal, {
-    targetY: position.y,
-    ...options,
-    arrived: (at) => at.distanceTo(position) <= range + 1.5,
-  });
-  const result = await direct();
-  if (result.ok || !['Timeout', 'no_progress', 'NoPath'].includes(result.reason)) return result;
-  // Long trips over rough ground (hills, cliffs, foliage) can exhaust the
-  // planner before a full path is found. Walk in legs of ~16 blocks instead.
-  const deadline = Date.now() + (options.timeoutMs ?? 30000);
-  for (let leg = 0; leg < 6 && Date.now() < deadline; leg += 1) {
-    const here = bot.entity.position;
-    const dx = position.x - here.x;
-    const dz = position.z - here.z;
-    const flat = Math.hypot(dx, dz);
-    if (flat <= 20) return direct();
-    const step = 16 / flat;
-    const waypoint = new goals.GoalNearXZ(here.x + dx * step, here.z + dz * step, 3);
-    const before = here.clone();
-    const moved = await goTo(bot, ctx, waypoint, { timeoutMs: Math.min(20000, deadline - Date.now()), arrived: () => true });
-    if (bot.entity.position.distanceTo(before) < 4) return moved.ok ? fail('leg_blocked') : moved;
+  const direct = (limit = remaining()) => remaining() <= 0 ? Promise.resolve(fail('path_timeout'))
+    : attempt(goal, {
+      targetY: position.y, ...options, timeoutMs: Math.min(limit, remaining()),
+      arrived: (at) => at.distanceTo(position) <= range + 1.5,
+    });
+  try {
+    // Reserve room for existing 16-block legs on a long trip; close trips keep
+    // their full direct budget. 20s is the existing waypoint attempt cap.
+    const far = Math.hypot(position.x - bot.entity.position.x, position.z - bot.entity.position.z) > 20;
+    const result = await direct(far ? Math.min(20000, remaining()) : remaining());
+    if (result.ok || !['Timeout', 'path_timeout', 'no_progress', 'NoPath'].includes(result.reason)) return result;
+    for (let leg = 0; leg < 6 && remaining() > 0; leg += 1) {
+      const here = bot.entity.position;
+      const dx = position.x - here.x;
+      const dz = position.z - here.z;
+      const flat = Math.hypot(dx, dz);
+      if (flat <= 20) return await direct();
+      const step = 16 / flat;
+      const waypoint = new goals.GoalNearXZ(here.x + dx * step, here.z + dz * step, 3);
+      const before = here.clone();
+      const moved = await attempt(waypoint, { timeoutMs: Math.min(20000, remaining()), arrived: () => true });
+      if (bot.entity.position.distanceTo(before) < 4) return moved.ok ? fail('leg_blocked') : moved;
+    }
+    return await direct();
+  } catch (error) {
+    // Native cancellation can acknowledge after our own deadline. The root
+    // owner still decides cancellation; never relabel it as our timeout.
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    if (expiry.signal.aborted) return fail('path_timeout');
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return direct();
 }
 
 /** Moves to any spot from which `block` can be seen and dug. */
@@ -183,13 +212,15 @@ function withinReach(bot, position, reach = 4.5) {
   return eye.distanceTo(position.offset(0.5, 0.5, 0.5)) <= reach;
 }
 
-async function digBlock(bot, ctx, block, { timeoutMs = 12000 } = {}) {
+async function digBlock(bot, ctx, block, { timeoutMs = 12000, tool: chosen = null } = {}) {
+  if (bot.companionProtectBlock?.(block)) return fail('protected_home');
   const position = block.position;
   const originalName = block.name;
   if (!withinReach(bot, position)) return fail('out_of_reach');
-  const tool = bot.pathfinder?.bestHarvestTool?.(block);
+  // The fastest tool unless the caller picked one (to spare a better pickaxe).
+  const tool = chosen || bot.pathfinder?.bestHarvestTool?.(block);
   if (tool) {
-    try { await bot.equip(tool, 'hand'); } catch (_) { /* digging by hand still works, slower */ }
+    try { await bot.equip(tool, 'hand'); } catch { /* digging by hand still works, slower */ }
   }
   const current = bot.blockAt(position);
   if (!current || current.name !== originalName) return fail('block_changed');
@@ -213,7 +244,7 @@ async function digBlock(bot, ctx, block, { timeoutMs = 12000 } = {}) {
 }
 
 function droppedItemName(entity) {
-  try { return entity.getDroppedItem?.()?.name || null; } catch (_) { return null; }
+  try { return entity.getDroppedItem?.()?.name || null; } catch { return null; }
 }
 
 function nearbyDrops(bot, origin, radius, matchName) {
@@ -270,7 +301,7 @@ async function eat(bot, ctx, { timeoutMs = 5000 } = {}) {
   const foodBefore = bot.food;
   try {
     await bot.equip(food, 'hand');
-  } catch (error) {
+  } catch {
     return fail('equip_failed');
   }
   try {
@@ -304,12 +335,12 @@ async function equipBestWeapon(bot) {
     .filter((entry) => entry.score >= 0)
     .sort((a, b) => b.score - a.score)[0];
   if (best && bot.heldItem?.name !== best.item.name) {
-    try { await bot.equip(best.item, 'hand'); } catch (_) { /* fight with whatever is held */ }
+    try { await bot.equip(best.item, 'hand'); } catch { /* fight with whatever is held */ }
   }
   const shield = bot.inventory.items().find((item) => item.name === 'shield');
   const offhand = bot.inventory.slots?.[45];
   if (shield && offhand?.name !== 'shield') {
-    try { await bot.equip(shield, 'off-hand'); } catch (_) { /* optional */ }
+    try { await bot.equip(shield, 'off-hand'); } catch { /* optional */ }
   }
 }
 
@@ -434,9 +465,12 @@ async function unstick(bot, ctx) {
     if (stairs >= 2) return { ok: true, moved: 'stairs' };
   }
   const saved = movements.maxDropDown;
+  // In the Nether a drop or a hole dug down may end in a lava sea: no deeper drops than the
+  // Nether movements allow, and no digging down.
+  const nether = String(bot.game?.dimension || '').endsWith('the_nether');
   try {
     // Fall damage is (height - 3); keep at least 5 health after any drop.
-    movements.maxDropDown = Math.max(saved, Math.min(12, Math.floor(bot.health) - 2));
+    if (!nether) movements.maxDropDown = Math.max(saved, Math.min(12, Math.floor(bot.health) - 2));
     for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
       const goal = new goals.GoalNearXZ(start.x + Math.cos(angle) * 8, start.z + Math.sin(angle) * 8, 2);
       await goTo(bot, ctx, goal, { timeoutMs: 15000, arrived: () => true });
@@ -445,7 +479,7 @@ async function unstick(bot, ctx) {
   } finally {
     movements.maxDropDown = saved;
   }
-  for (let i = 0; i < 8; i += 1) {
+  for (let i = 0; i < (nether ? 0 : 8); i += 1) {
     const below = bot.blockAt(bot.entity.position.offset(0, -1, 0));
     if (!below || below.boundingBox !== 'block' || !bot.canDigBlock(below)) break;
     const dug = await digBlock(bot, ctx, below);
@@ -548,6 +582,91 @@ async function digStairsUp(bot, ctx, targetY, { maxSteps = 24 } = {}) {
   return climbed;
 }
 
+/**
+ * Digs a staircase down toward `target` (a position): each step clears the
+ * two cells ahead and the one below them, then steps down onto solid floor.
+ * Never digs a block touching water or lava, and never steps onto a floor
+ * with lava under it; a blocked heading turns. Returns how many steps went down.
+ */
+/** Walks onto the cell `into` (one block over and one down), by hand. */
+async function stepInto(bot, ctx, into) {
+  const centre = into.offset(0.5, 0, 0.5);
+  try {
+    for (let i = 0; i < 40; i += 1) {
+      const p = bot.entity.position;
+      if (p.floored().y <= into.y && Math.hypot(p.x - centre.x, p.z - centre.z) < 0.4) break;
+      await bot.lookAt(centre.offset(0, 1.6, 0), true);
+      bot.setControlState('forward', Math.hypot(p.x - centre.x, p.z - centre.z) > 0.25);
+      await new Promise((r) => setTimeout(r, 75));
+      if (ctx.signal?.aborted) break;
+    }
+  } finally {
+    bot.setControlState('forward', false);
+  }
+}
+
+async function digStairsDown(bot, ctx, target, { maxSteps = 16 } = {}) {
+  const clearable = (p) => {
+    const b = bot.blockAt(p);
+    if (!b || FLUID.test(b.name)) return false;
+    if (b.boundingBox === 'empty') return !fluidNext(bot, p);
+    return bot.canDigBlock(b) && b.diggable !== false && !fluidNext(bot, p);
+  };
+  const floorOk = (p) => {
+    const b = bot.blockAt(p);
+    return b && b.boundingBox === 'block' && !FLUID.test(b.name) && !/magma/.test(b.name)
+      && !FLUID.test(bot.blockAt(p.offset(0, -1, 0))?.name || '');
+  };
+  let down = 0;
+  for (let step = 0; step < maxSteps; step += 1) {
+    const feet = bot.entity.position.floored();
+    if (feet.y <= target.y) break;
+    const dx = target.x - feet.x;
+    const dz = target.z - feet.z;
+    const toward = Math.abs(dx) >= Math.abs(dz) ? [Math.sign(dx) || 1, 0] : [0, Math.sign(dz) || 1];
+    const order = [toward, ...SIDES.filter(([x, z]) => x !== toward[0] || z !== toward[1])];
+    const next = order.find(([x, z]) => {
+      const ahead = feet.offset(x, 0, z);
+      return clearable(ahead.offset(0, 1, 0)) && clearable(ahead) && clearable(ahead.offset(0, -1, 0)) && floorOk(ahead.offset(0, -2, 0));
+    });
+    if (!next) {
+      ctx.record?.('stairs_blocked', { at: `${feet.x},${feet.y},${feet.z}`, sides: order.map(([x, z]) => {
+        const a = feet.offset(x, 0, z);
+        return [clearable(a.offset(0, 1, 0)), clearable(a), clearable(a.offset(0, -1, 0)), floorOk(a.offset(0, -2, 0))].map(Number).join('');
+      }) });
+      break;
+    }
+    const ahead = feet.offset(next[0], 0, next[1]);
+    for (const p of [ahead.offset(0, 1, 0), ahead, ahead.offset(0, -1, 0)]) {
+      // Sand or gravel overhead falls into the cell again: dig until it stays open.
+      for (let tries = 0; tries < 8; tries += 1) {
+        const b = bot.blockAt(p);
+        if (!b || b.boundingBox === 'empty') break;
+        if (tries === 0) haltBody(bot);
+        const dug = await digBlock(bot, ctx, b, { timeoutMs: 8000 });
+        // Unconfirmed: sand fell back in, or the server dropped the break; dig again.
+        if (dug.ok || (dug.reason === 'dig_unconfirmed' && tries < 7)) {
+          await new Promise((r) => setTimeout(r, 250));
+          continue;
+        }
+        ctx.record?.('stairs_dig_failed', { block: b.name, at: `${p.x},${p.y},${p.z}`, reason: dug.reason || null });
+        return down;
+      }
+    }
+    const into = ahead.offset(0, -1, 0);
+    const moved = await goToOnce(bot, ctx, new goals.GoalBlock(into.x, into.y, into.z), { timeoutMs: 5000 });
+    // The pathfinder can call a one-block step down done before the body
+    // drops; walk it by hand.
+    if (bot.entity.position.floored().y >= feet.y) await stepInto(bot, ctx, into);
+    if (bot.entity.position.floored().y >= feet.y) {
+      ctx.record?.('stairs_step_failed', { reason: moved.reason || null, into: `${into.x},${into.y},${into.z}` });
+      return down;
+    }
+    down += 1;
+  }
+  return down;
+}
+
 /** Climbs back to the surface reference level if the bot is below it. */
 async function surface(bot, ctx) {
   if (!Number.isFinite(bot.companionSurfaceY) || bot.entity.position.y >= bot.companionSurfaceY - 1) return null;
@@ -562,6 +681,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, gatherClimbBlocks, digStairsUp, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
-  equipBestWeapon, haltBody, weaponScore, RISKY_FOODS,
+  recentre, surface, underground, unstick, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };

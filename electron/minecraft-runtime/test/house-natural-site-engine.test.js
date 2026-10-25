@@ -49,6 +49,7 @@ function probe(options = {}) {
     ensureMovements: () => {}, appliedMovementsBot: null, appliedMovementsInstance: null,
     Vec3, Movements: class {}, goals: { GoalBlock: class {} },
     isBotConnectionWritable: () => true, ensureMovementLeaseActive: () => {}, sleep, Date,
+    require: Module.createRequire(engineFile), toPlainPosition: p => ({x:Math.floor(p.x),y:Math.floor(p.y),z:Math.floor(p.z)}),
   };
   const sandbox = vm.createContext(env);
   const load = name => vm.runInContext(declaration(name) + '\n' + name, sandbox);
@@ -223,6 +224,10 @@ function nativeFixture(t) {
   loaded._compile(raw.slice(0, end) + '\nmodule.exports={fixture};\n', filename);
   f = loaded.exports.fixture(t, { stableCamp: true });
   f.bot.inventory.slots.fill(null); f.bot.heldItem = null; f.cells.clear();
+  // The current host collects three real carried logs before the site phase.
+  // This factory contract starts after that separately tested bootstrap; it
+  // neither models tree harvesting nor claims empty-inventory acceptance.
+  f.bot.inventory.slots[36] = {name:'oak_log',type:f.bot.registry.itemsByName.oak_log.id,count:3,slot:36};
   for (let x = -48; x <= 48; x++) for (let z = -48; z <= 48; z++) f.cells.set(`${x},63,${z}`, 'grass_block');
   delete f.task.materialSupply; delete f.task.stepCheckpoint;
   const step = { skill: 'build_furnished_house_phase', args: { schema: 2, phase: 'inspect_inventory', profile: 'cottage', materialSource: 'self_gathered' } };
@@ -237,14 +242,14 @@ function nativeFixture(t) {
   } };
 }
 
-test('true production watchdog/factory records an actual native start node and valid camp without initializing material supply', { timeout: 20000 }, async t => {
+test('true production watchdog/factory preserves carried bootstrap wood while recording native site/camp without material credit', { timeout: 20000 }, async t => {
   const f = nativeFixture(t), beforePlan = JSON.stringify(f.task.completionPlan), start = Date.now(); await f.inspect();
   assert.equal(f.task.materialSupply, undefined); assert.equal(f.task.siteSearch.kind, 'loaded_natural_house_site_search');
   assert.equal(f.task.siteSearch.graph.order.length, 1); assert.equal(f.task.siteSearch.graph.current, '0,64,0');
   assert.ok(f.task.siteSearch.deadline >= start && f.task.siteSearch.deadline <= Date.now() + 1200000);
   assert.equal(f.task.siteSearch.reservation.kind, 'actual_loaded_house_site_and_camp');
   assert.deepEqual(f.task.siteSearch.reservation.camp.anchor, { x: 0, y: 64, z: 0 });
-  assert.equal(JSON.stringify(f.task.completionPlan), beforePlan); assert.equal(f.bot.inventory.items().length, 0); assert.equal(f.digs.length, 0);
+  assert.equal(JSON.stringify(f.task.completionPlan), beforePlan); assert.deepEqual(f.bot.inventory.items().map(i=>({name:i.name,count:i.count})),[{name:'oak_log',count:3}]); assert.equal(f.digs.length, 0);
   assert.equal(f.moves.length, 0); assert.equal(f.packets.some(p => p.name === 'block_place'), false);
   const init = await f.agent.__testHouseSelfSupply({}, { anchor: f.task.siteSearch.reservation.houseAnchor, profile: 'cottage' });
   assert.equal(init.confirmed, true); assert.deepEqual(f.task.materialSupply.camp.anchor, { x: 0, y: 64, z: 0 });

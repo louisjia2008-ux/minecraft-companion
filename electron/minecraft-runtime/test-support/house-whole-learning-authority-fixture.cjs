@@ -71,7 +71,7 @@ function fixture(t, policy = {}) {
         const body = JSON.parse(bytes);
         return { digestMatches: hash(bytes.toString()) === artifact.digest,
           evidenceMatches: body.authority === authority && hash(body) === hash(expected) };
-      } catch (_) { return { digestMatches: false, evidenceMatches: false }; }
+      } catch { return { digestMatches: false, evidenceMatches: false }; }
     },
     nativeVerifier: async request => {
       const override = overrides.get(request.reference);
