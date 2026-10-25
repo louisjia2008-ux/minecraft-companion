@@ -473,11 +473,17 @@ async function unstick(bot, ctx) {
   try {
     // Fall damage is (height - 3); keep at least 5 health after any drop.
     if (!nether) movements.maxDropDown = Math.max(saved, Math.min(12, Math.floor(bot.health) - 2));
-    for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
-      const goal = new goals.GoalNearXZ(start.x + Math.cos(angle) * 8, start.z + Math.sin(angle) * 8, 2);
-      await goTo(bot, ctx, goal, { timeoutMs: 15000, arrived: () => true });
-      if (bot.entity.position.distanceTo(start) > 3) return { ok: true, moved: 'walked' };
-    }
+    const walkOut = async () => {
+      for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+        const goal = new goals.GoalNearXZ(start.x + Math.cos(angle) * 8, start.z + Math.sin(angle) * 8, 2);
+        await goTo(bot, ctx, goal, { timeoutMs: 15000, arrived: () => true });
+        if (bot.entity.position.distanceTo(start) > 3) return true;
+      }
+      return false;
+    };
+    if (await walkOut()) return { ok: true, moved: 'walked' };
+    // Boxed in beside lava: try again with only the lava cells themselves shut.
+    if (nether && await require('./nether').withLavaMarginsLifted(bot, walkOut)) return { ok: true, moved: 'walked_near_lava' };
   } finally {
     movements.maxDropDown = saved;
   }

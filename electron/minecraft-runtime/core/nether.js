@@ -267,6 +267,29 @@ function applyNetherMovements(bot) {
   };
 }
 
+/**
+ * Runs `fn` with the nether movement's lava margins lifted: only a cell with
+ * lava (or fire, or magma) at, under or over it stays shut. Boxed into a pocket
+ * by magma and a lava pool, every way out runs beside lava, and with the full
+ * margins the pathfinder ran out of time before it found one.
+ */
+async function withLavaMarginsLifted(bot, fn) {
+  const m = bot.pathfinder?.movements;
+  if (!m?.companionNether) return fn();
+  const steps = m.exclusionAreasStep.slice();
+  const digCost = m.digCost;
+  const at = (p, dy) => bot.blockAt(p.offset(0, dy, 0))?.name || '';
+  m.exclusionAreasStep.splice(0, m.exclusionAreasStep.length,
+    (block) => (block?.position && [-1, 0, 1].some((dy) => LAVA.test(at(block.position, dy))) ? 1000 : 0));
+  m.digCost = 1;
+  try {
+    return await fn();
+  } finally {
+    m.exclusionAreasStep.splice(0, m.exclusionAreasStep.length, ...steps);
+    m.digCost = digCost;
+  }
+}
+
 /** Extra path cost for standing in `p`: lava or fire beside, below, or under the floor. */
 function lavaRisk(bot, p) {
   const at = (dx, dy, dz) => bot.blockAt(p.offset(dx, dy, dz))?.name || '';
@@ -292,7 +315,7 @@ function lavaNear(bot, range = 2) {
 }
 
 module.exports = {
-  netherScaffolding,
+  netherScaffolding, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
   applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };

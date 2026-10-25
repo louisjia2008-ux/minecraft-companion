@@ -75,6 +75,21 @@ test('nether movements are applied once and fully restored', () => {
   assert.equal(movements.exclusionAreasStep.length, 1);
 });
 
+test('lifting the lava margins keeps lava cells shut and restores the nether costs', async () => {
+  const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set(), exclusionAreasStep: [], scafoldingBlocks: [] };
+  const bot = { ...makeWorld({ '3,64,0': 'lava', '0,63,5': 'magma_block' }), pathfinder: { movements },
+    registry: { blocksByName: {}, itemsByName: { netherrack: { id: 21 } } } };
+  const restore = nether.applyNetherMovements(bot);
+  const cost = (x, y, z) => movements.exclusionAreasStep.reduce((sum, f) => sum + f({ position: new Vec3(x, y, z) }), 0);
+  assert.ok(cost(2, 64, 0) >= 60, 'beside lava costs extra');
+  const inside = await nether.withLavaMarginsLifted(bot, () => ({ beside: cost(2, 64, 0), over: cost(0, 64, 5), into: cost(3, 64, 0), dig: movements.digCost }));
+  assert.deepEqual(inside, { beside: 0, over: 1000, into: 1000, dig: 1 });
+  assert.ok(cost(2, 64, 0) >= 60, 'margins back afterwards');
+  assert.equal(movements.digCost, 6);
+  restore();
+  assert.equal(movements.exclusionAreasStep.length, 0);
+});
+
 const { EventEmitter } = require('node:events');
 const { createSurvivalBehaviors } = require('../core/behaviors/survival');
 

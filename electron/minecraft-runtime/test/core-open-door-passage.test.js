@@ -141,3 +141,18 @@ for (const [facing,hinge] of [['north','left'],['east','right']]) test(`native g
   assert.equal(getterCalls,2,'one initial getter per independent goto; partial continuation bypass remains proven');
   assert.equal(JSON.stringify([f.at(f.world(0)),f.at(f.world(0,0,1))]),before,'world door blocks and shapes remain unchanged');
 });
+
+test('death and respawn stop the path goal so it is not walked in another dimension', async () => {
+  const f = fixture();
+  const companion = createCompanion({ bot: f.bot, tickMs: 1000000 });
+  try {
+    for (const event of ['death', 'respawn']) {
+      f.bot.pathfinder.setGoal(new GoalBlock(414, 64, -429));
+      f.bot.setControlState?.('forward', true);
+      f.bot.emit(event);
+      assert.equal(f.bot.pathfinder.goal, null, `${event} clears the goal`);
+      if (f.bot.controlState) assert.equal(f.bot.controlState.forward, false);
+    }
+  } finally { await companion.dispose(); }
+  assert.equal(f.bot.listenerCount('respawn'), 0);
+});

@@ -125,9 +125,13 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   }, tickMs);
   timer.unref?.();
   // Death interrupts the current action only: progress lives in the world, so
-  // after respawning the goal simply re-plans from what is left.
-  const onDeath = () => { brain.interrupt('death').catch(() => {}); };
+  // after respawning the goal simply re-plans from what is left. The body stops
+  // too: a path goal set by a chase outlives the action, and after a nether death
+  // the pathfinder walked on towards its nether coordinates across the overworld.
+  const onDeath = () => { haltBody(bot); brain.interrupt('death').catch(() => {}); };
+  const onRespawn = () => haltBody(bot);
   bot.on('death', onDeath);
+  bot.on('respawn', onRespawn);
 
   return {
     brain,
@@ -249,6 +253,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       clearInterval(timer);
       await director.disable('disposed');
       bot.removeListener('death', onDeath);
+      bot.removeListener('respawn', onRespawn);
       removeEdgeNudge();
       await brain.dispose();
       for (const goal of usedGoals) await goal.dispose?.();
