@@ -71,6 +71,17 @@ test('a bridge deck is found above the thousands of pillar bricks under it', () 
   assert.ok(floor.every((p) => p.y === 104));
 });
 
+test('a deck out of reach is towered up to from open ground beside its edge, never from lava', () => {
+  // Deck x 0..4 at y 80 over a pillar at x 2; ground at y 64 west of it, lava east.
+  const cells = { ...row('nether_bricks', 0, 5, 80), ...row('netherrack', -3, 3, 64), ...row('lava', 5, 3, 64) };
+  for (let y = 64; y < 80; y += 1) cells[`2,${y},0`] = 'nether_bricks';
+  const bot = world(cells);
+  const floor = structures.fortressFloor(bot, new Vec3(2, 80, 0), 8, 16);
+  const spots = structures.towerSpots(bot, floor, new Vec3(-2, 65, 0));
+  assert.deepEqual(spots.map((s) => `${s.stand.x},${s.stand.y},${s.stand.z}>${s.deck.x}`), ['-1,65,0>0']);
+  assert.equal(spots[0].top, 81);
+});
+
 test('baby piglins and busy piglins are told apart', () => {
   const bot = world({});
   assert.equal(structures.isAdultPiglin(bot, { name: 'piglin', metadata: {} }), true);

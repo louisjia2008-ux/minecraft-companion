@@ -469,12 +469,12 @@ async function leaveShelter(bot, ctx, top) {
   return bot.entity.position.y >= top.y - 0.5 ? { ok: true } : fail('still_in_shelter');
 }
 
-/** Jumps and places a block underfoot until the feet are at `y`. Returns the blocks placed. */
-async function pillarUp(bot, ctx, y, { maxSteps = 32, stop = () => false, dig = false } = {}) {
+/** Jumps and places a block underfoot (one matching `blocks`) until the feet are at `y`. Returns the blocks placed. */
+async function pillarUp(bot, ctx, y, { maxSteps = 32, stop = () => false, dig = false, blocks = BRIDGE } = {}) {
   let placed = 0;
   let misses = 0;
   for (let i = 0; i < maxSteps && bot.entity.position.y < y - 0.5 && misses < 3 && !stop(); i += 1) {
-    const item = bot.inventory.items().find((it) => BRIDGE.test(it.name));
+    const item = bot.inventory.items().find((it) => blocks.test(it.name));
     if (!item) break;
     const feet = bot.entity.position.floored();
     const below = bot.blockAt(feet.offset(0, -1, 0));

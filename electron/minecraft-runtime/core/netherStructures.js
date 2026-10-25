@@ -56,6 +56,39 @@ function fortressFloor(bot, near, radius = 48, count = 64) {
     .slice(0, count);
 }
 
+/**
+ * Where to tower up to a fortress deck that no walk reaches: columns of open
+ * air right beside a deck edge, with solid ground (not lava) under them.
+ * Feet at `top` in such a column, the deck cell is one step sideways. Each
+ * spot: `stand` (the cell above the ground), `deck` (the floor brick) and
+ * `top`, nearest to `from` first.
+ */
+function towerSpots(bot, floor, from, { maxDrop = 48 } = {}) {
+  const at = (p) => bot.blockAt(p);
+  const open = (p) => { const b = at(p); return b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name); };
+  const seen = new Set();
+  const spots = [];
+  for (const deck of floor) {
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const side = deck.offset(dx, 0, dz);
+      if (!open(side) || !open(side.offset(0, 1, 0)) || !open(side.offset(0, 2, 0))) continue;
+      let ground = null;
+      for (let y = side.y - 1; y >= side.y - maxDrop; y -= 1) {
+        const p = side.offset(0, y - side.y, 0);
+        const b = at(p);
+        if (!b || /lava|fire|magma/.test(b.name)) break;
+        if (b.boundingBox === 'block') { ground = p; break; }
+      }
+      if (!ground || ground.y >= side.y - 1) continue;
+      const key = `${ground.x},${ground.y},${ground.z}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      spots.push({ stand: ground.offset(0, 1, 0), deck, top: deck.y + 1 });
+    }
+  }
+  return spots.sort((a, b) => a.stand.distanceTo(from) - b.stand.distanceTo(from));
+}
+
 const metaIndex = (bot, entity, key) => bot.registry.entitiesByName?.[entity]?.metadataKeys?.indexOf(key) ?? -1;
 
 /** Adult piglins barter; babies keep the gold. */
@@ -97,6 +130,6 @@ function hasEffect(bot, name) {
 }
 
 module.exports = {
-  findStructure, findSpawners, fortressFloor, isAdultPiglin, piglinBusy, isFireResistancePotion, hasEffect,
+  findStructure, findSpawners, fortressFloor, towerSpots, isAdultPiglin, piglinBusy, isFireResistancePotion, hasEffect,
   FORTRESS_BLOCKS, BASTION_BLOCKS, BARTER_LOOT,
 };

@@ -16,6 +16,7 @@ const { goals } = require('mineflayer-pathfinder');
 const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const nether = require('../nether');
+const end = require('../end');
 const structures = require('../netherStructures');
 const { createPortalTrip } = require('../netherTrip');
 const { createBlacklist, posKey } = require('../blacklist');
@@ -244,6 +245,54 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return result;
   }
 
+  // A deck this far above the bot is towered up to instead of left to the
+  // pathfinder, which spent whole runs planning 30-block climbs and giving up.
+  const CLIMB = 6;
+  const TOWER = /^(netherrack|nether_bricks|blackstone|basalt|polished_basalt|smooth_basalt|soul_soil|cobblestone)$/;
+  const towerBlocks = () => bot.inventory.items().filter((i) => TOWER.test(i.name)).reduce((n, i) => n + i.count, 0);
+
+  /** Walks to open ground beside a deck edge, pillars straight up and steps onto the deck. */
+  async function climbTo(ctx, floor) {
+    const here = bot.entity.position;
+    const feet = here.floored();
+    const spots = structures.towerSpots(bot, floor.slice(0, 96), here)
+      .filter((s) => !blacklist.has(`tower:${posKey(s.stand)}`) && Math.hypot(s.stand.x - here.x, s.stand.z - here.z) <= 32);
+    // Knocked off half way, or interrupted by a fight on the way up: the same column again.
+    const inColumn = (s) => feet.x === s.stand.x && feet.z === s.stand.z && feet.y >= s.stand.y && feet.y <= s.top;
+    const spot = spots.find(inColumn) || spots[0];
+    if (!spot) return fail('no_tower_spot');
+    const key = `tower:${posKey(spot.stand)}`;
+    const climb = spot.top - Math.max(spot.stand.y, inColumn(spot) ? feet.y : spot.stand.y);
+    ctx.record('tower', { stand: posKey(spot.stand), deck: posKey(spot.deck), climb });
+    if (!inColumn(spot)) {
+      await stockScaffolding(ctx, climb);
+      if (towerBlocks() < climb) {
+        blacklist.add(key, 'few_blocks');
+        return fail('tower_blocks');
+      }
+      const walk = await withScaffolding(() => actions.goTo(bot, ctx, new goals.GoalBlock(spot.stand.x, spot.stand.y, spot.stand.z),
+        { timeoutMs: 60000 }));
+      const at = bot.entity.position.floored();
+      if (at.x !== spot.stand.x || at.z !== spot.stand.z || Math.abs(at.y - spot.stand.y) > 1) {
+        blacklist.add(key, walk.reason || 'not_arrived');
+        return walk.ok ? fail('tower_not_reached') : walk;
+      }
+    }
+    actions.haltBody(bot);
+    await end.pillarUp(bot, ctx, spot.top, { maxSteps: climb + 6, blocks: TOWER,
+      stop: () => Boolean(bot.entity?.isInLava) || bot.health < 8 });
+    if (bot.entity.position.y < spot.top - 0.5) {
+      blacklist.add(key, 'pillar_short');
+      return fail('tower_short');
+    }
+    const step = await actions.goTo(bot, ctx, new goals.GoalBlock(spot.deck.x, spot.deck.y + 1, spot.deck.z), { timeoutMs: 10000 });
+    const onDeck = inFortress();
+    ctx.record('towered', { onDeck, y: Math.round(bot.entity.position.y) });
+    if (onDeck) return { ok: true };
+    blacklist.add(key, 'off_deck');
+    return step.ok ? fail('tower_off_deck') : step;
+  }
+
   // ---- fortress -------------------------------------------------------------
 
   const inFortress = () => structures.fortressFloor(bot, bot.entity.position, 6, 1).length > 0;
@@ -294,6 +343,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       // The first brick seen can be a buried pillar foot: look for floor anywhere in sight.
       if (!floor.length) floor = structures.fortressFloor(bot, here, 96, 32);
       floor.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
+      if (floor.length && floor[0].y + 1 - here.y > CLIMB) {
+        const climbed = await climbTo(ctx, floor);
+        if (climbed.ok) return climbed;
+      }
       if (floor.length) return approach(ctx, 'fortress', floor);
       // Standing at that brick with no walkable floor in sight: look from elsewhere.
       if (here.distanceTo(memory.fortress) <= 8) return explore(ctx, memory.fortress);
