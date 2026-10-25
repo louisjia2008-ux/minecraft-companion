@@ -160,10 +160,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
    * for a structure the bot may pillar up and bridge with cobblestone or
    * netherrack. Placing is made costly so it still walks where it can.
    */
-  // Where the bot stood at its last nether steps: all within a few blocks
-  // of each other means nothing it tries gets it anywhere.
+  // Where the bot stood after its last failed nether steps: eight failures
+  // in a row, all within a few blocks of each other, mean nothing it tries
+  // gets it anywhere. Any step that works (waiting by a spawner too) clears it.
   const trail = [];
-  function noteStep() {
+  function noteStep(result) {
+    if (result?.ok) {
+      trail.length = 0;
+      return;
+    }
     trail.push(bot.entity.position.clone());
     if (trail.length > 8) trail.shift();
   }
@@ -233,7 +238,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
     const target = Object.values(bot.entities).find((e) => mobs.includes(e.name) && e.position
       && e.position.distanceTo(here) <= 32 && Math.abs(e.position.y - here.y) <= 6 && !blacklist.has(`mob:${e.id}`));
-    if (target) {
+    // Boxed in (a pillar under a blaze it cannot reach): get somewhere first.
+    if (target && !boxedIn()) {
       const name = target.name;
       const result = await skills.huntOne(bot, ctx, {
         mobs, radius: 32, blacklist, dropMatch: (n) => n === 'blaze_rod' || n === 'wither_skeleton_skull',
@@ -483,7 +489,6 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await sleep(1000, ctx.signal);
       return { ok: true, waited: true };
     }
-    noteStep();
     if (allDone(state)) return withScaffolding(() => trip.toOverworld(ctx));
     const lost = lostKit(state);
     if (lost) return fail(lost);
@@ -534,7 +539,11 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     async run(ctx) {
       await wearArmour(ctx);
       const state = ctx.perceive();
-      if (nether.inNether(bot)) return netherStep(ctx, state);
+      if (nether.inNether(bot)) {
+        const result = await netherStep(ctx, state);
+        noteStep(result);
+        return result;
+      }
       trip.leaveNetherMode();
       if (allDone(state)) return { ok: true };
       // Respawned without it: going back through to the fortress only dies again.
