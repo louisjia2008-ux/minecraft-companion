@@ -153,6 +153,7 @@ const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled
 const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
 const SHOOTERS = new Set(['blaze', 'ghast']);
 const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull']);
+const SKULL_DROPPERS = new Set(['wither_skeleton', 'blaze']);
 // Hoglins too: their charge tosses the bot, into lava as often as not.
 const CHARGERS = new Set(['piglin_brute', 'hoglin']);
 // One that got this close outruns the bot: turn and fight it.
@@ -269,6 +270,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     run: (ctx) => actions.fleeFrom(bot, ctx, nearest(ctx.perceive())?.position || bot.entity.position),
   };
 
+  const droppedNear = (at, radius) => Object.values(bot.entities || {})
+    .filter((e) => e.name === 'item' && e.position && e.position.distanceTo(at) <= radius)
+    .map((e) => { try { return e.getDroppedItem?.()?.name || '?'; } catch { return '?'; } });
   const defend = {
     name: 'defend',
     band: BAND.DEFENSE,
@@ -285,7 +289,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       } finally {
         clearInterval(tracker);
       }
-      if (result.ok) ctx.record('defend_result', { mob: threat.name, died: result.died === true, hits: result.hits });
+      if (result.ok) {
+        // What fell where it died (a skull lost to lava shows here as nothing).
+        if (result.died && SKULL_DROPPERS.has(threat.name)) await sleep(600, ctx.signal);
+        const drops = result.died && SKULL_DROPPERS.has(threat.name) ? droppedNear(last, 6) : undefined;
+        ctx.record('defend_result', { mob: threat.name, died: result.died === true, hits: result.hits, ...(drops ? { drops, y: Math.round(last.y) } : {}) });
+      }
       // Spiders drop string (wool where there are no sheep); blazes and wither
       // skeletons fought off in a fortress drop what the expedition is there for.
       if (result.ok && typeof actions.collectDrops === 'function') {
