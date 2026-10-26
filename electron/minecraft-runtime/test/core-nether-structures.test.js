@@ -442,3 +442,19 @@ test('held by a shore it never reaches, the bot builds its own step instead', as
   assert.ok(records.some(([, d]) => d.shore === '-7,31,0'), 'tried the shore first');
   assert.ok(placed.length, "then built a step");
 });
+
+test('perched in a lattice of fences, the bot breaks them away', async () => {
+  const { breakLattice } = require('../core/actions');
+  const cells = { '0,61,0': 'nether_brick_fence', '1,61,0': 'nether_brick_fence', '-1,62,0': 'nether_brick_fence', '0,60,0': 'nether_bricks' };
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 61, 0.5);
+  bot.entity.onGround = true;
+  const dug = [];
+  Object.assign(bot, { canDigBlock: () => true, equip: async () => {},
+    dig: async (b) => { dug.push(b.position.toString()); delete cells[`${b.position.x},${b.position.y},${b.position.z}`]; bot.blockAt = world(cells).blockAt; } });
+  bot.blockAt = world(cells).blockAt;
+  const records = [];
+  assert.equal(await breakLattice(bot, { record: (t, d) => records.push([t, d]) }), true);
+  assert.deepEqual(dug.sort(), ['(-1, 62, 0)', '(0, 61, 0)', '(1, 61, 0)']);
+  assert.deepEqual(records, [['unstick_lattice', { broke: 3 }]]);
+});

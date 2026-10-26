@@ -486,6 +486,9 @@ async function unstick(bot, ctx) {
     if (await walkOut()) return { ok: true, moved: 'walked' };
     // Boxed in beside lava: try again with only the lava cells themselves shut.
     if (nether && await require('./nether').withLavaMarginsLifted(bot, walkOut)) return { ok: true, moved: 'walked_near_lava' };
+    // Perched in a lattice of fences (a fortress balcony rail): the pathfinder
+    // plans nothing from a fence top. An hour went by there. Break them away.
+    if (await breakLattice(bot, ctx) && await walkOut()) return { ok: true, moved: 'broke_lattice' };
   } finally {
     movements.maxDropDown = saved;
   }
@@ -498,6 +501,23 @@ async function unstick(bot, ctx) {
     if (start.y - bot.entity.position.y >= 2) return { ok: true, moved: 'dug_down' };
   }
   return bot.entity.position.distanceTo(start) > 2 ? { ok: true, moved: 'partial' } : fail('stuck');
+}
+
+const LATTICE = /(_fence|_wall|iron_bars|_pane)$/;
+/** Digs fences, walls and bars in and around the bot's body. True if any went. */
+async function breakLattice(bot, ctx) {
+  const feet = bot.entity.position.floored();
+  const cells = [];
+  for (let dy = -1; dy <= 1; dy += 1) for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) cells.push(feet.offset(dx, dy, dz));
+  let broke = 0;
+  for (const cell of cells) {
+    const block = bot.blockAt(cell);
+    if (!block || !LATTICE.test(block.name) || !bot.canDigBlock?.(block)) continue;
+    const dug = await digBlock(bot, ctx, block);
+    if (dug.ok) broke += 1;
+  }
+  if (broke) ctx.record?.('unstick_lattice', { broke });
+  return broke > 0;
 }
 
 const FLUID = /water|lava/;
@@ -691,6 +711,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, breakLattice, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };

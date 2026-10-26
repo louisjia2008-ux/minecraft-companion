@@ -367,10 +367,19 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const reach = (e) => (e.name === 'wither_skeleton' ? HUNT_DY_WITHER : 6);
     const target = Object.values(bot.entities).find((e) => mobs.includes(e.name) && e.position
       && e.position.distanceTo(here) <= 40 && Math.abs(e.position.y - here.y) <= reach(e) && !blacklist.has(`mob:${e.id}`));
-    if (!target && Date.now() - (memory.sightedAt || 0) > 30000) {
-      memory.sightedAt = Date.now();
+    if (!target && mobs.includes('wither_skeleton')) {
       const seen = Object.values(bot.entities).filter((e) => e.name === 'wither_skeleton' && e.position && e.position.distanceTo(here) <= 64);
-      if (seen.length) ctx.record('sighted', { mob: 'wither_skeleton', at: seen.map((e) => `${Math.round(e.position.distanceTo(here))}/${Math.round(e.position.y - here.y)}`) });
+      if (seen.length && Date.now() - (memory.sightedAt || 0) > 30000) {
+        memory.sightedAt = Date.now();
+        ctx.record('sighted', { mob: 'wither_skeleton', at: seen.map((e) => `${Math.round(e.position.distanceTo(here))}/${Math.round(e.position.y - here.y)}`) });
+      }
+      // Nearly every one seen but not hunted was 20-30 blocks overhead, on
+      // the decks, while the bot walked the ground under them: go up there.
+      if (seen.some((e) => e.position.y - here.y > HUNT_DY_WITHER) && Date.now() - (memory.climbedForAt || 0) > 60000) {
+        memory.climbedForAt = Date.now();
+        const climbed = await climbTo(ctx, { minClimb: CLIMB });
+        if (climbed.ok) return climbed;
+      }
     }
     // Boxed in (a pillar under a blaze it cannot reach): get somewhere first.
     if (target && !boxedIn()) {
