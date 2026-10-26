@@ -188,7 +188,15 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   // after respawning the goal simply re-plans from what is left. The body stops
   // too: a path goal set by a chase outlives the action, and after a nether death
   // the pathfinder walked on towards its nether coordinates across the overworld.
-  const onDeath = () => { if (disposed) return; haltBody(bot); brain.interrupt('death').catch(() => {}); };
+  // Effects die with the body too, but the server sends no removal for them:
+  // a fire resistance kept on the client after a death meant the bot never
+  // drank again, and burned to death at the next blaze.
+  const onDeath = () => {
+    if (disposed) return;
+    if (bot.entity?.effects) bot.entity.effects = {};
+    haltBody(bot);
+    brain.interrupt('death').catch(() => {});
+  };
   const onRespawn = () => { if (!disposed) haltBody(bot); };
   bot.on('death', onDeath);
   bot.on('respawn', onRespawn);

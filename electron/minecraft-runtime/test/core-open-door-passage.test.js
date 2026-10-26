@@ -142,6 +142,16 @@ for (const [facing,hinge] of [['north','left'],['east','right']]) test(`native g
   assert.equal(JSON.stringify([f.at(f.world(0)),f.at(f.world(0,0,1))]),before,'world door blocks and shapes remain unchanged');
 });
 
+test('a death forgets the effects the body had, so fire resistance is drunk again', async () => {
+  const f = fixture();
+  const companion = createCompanion({ bot: f.bot, tickMs: 1000000 });
+  try {
+    f.bot.entity.effects = { 11: { id: 11, amplifier: 0, duration: 9600 } };
+    f.bot.emit('death');
+    assert.deepEqual(f.bot.entity.effects, {});
+  } finally { await companion.dispose(); }
+});
+
 test('death and respawn stop the path goal so it is not walked in another dimension', async () => {
   const f = fixture();
   const companion = createCompanion({ bot: f.bot, tickMs: 1000000 });

@@ -255,6 +255,22 @@ test('a hoglin is fought when it comes close, not run from, while the bot is arm
   assert.equal(avoid.want(state(10, 20, {})), 1, 'unarmed: kept away from');
 });
 
+test('a skull left lying after a fight is fetched before anything else', async () => {
+  const items = [{ name: 'diamond_sword', count: 1 }];
+  const bot = { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items }, equip: async () => {} };
+  bot.entities = { 7: { id: 7, name: 'item', position: new Vec3(3, 65, 0), getDroppedItem: () => ({ name: 'wither_skeleton_skull' }) } };
+  const actions = {
+    haltBody() {},
+    goNear: async (b, ctx, p) => { assert.equal(p.x, 3); items.push({ name: 'wither_skeleton_skull', count: 1 }); delete bot.entities[7]; return { ok: true }; },
+  };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 0, witherSkulls: 1, trades: 0, actions });
+  const events = [];
+  const result = await goal.run({ record: (type) => events.push(type), perceive: () => ({ inventory: { diamond_sword: 1 }, health: 20, hostiles: [] }),
+    signal: new AbortController().signal });
+  assert.equal(result.looted, 'wither_skeleton_skull');
+  assert.ok(events.includes('loot'));
+});
+
 test('respawned at home without a weapon, the expedition stops instead of going back to die', async () => {
   const bot = { ...world({}), game: { dimension: 'overworld' }, inventory: { slots: [], items: () => [] }, equip: async () => {} };
   const goal = createNetherExpeditionGoal({ bot, blazeRods: 2, witherSkulls: 0, trades: 0 });

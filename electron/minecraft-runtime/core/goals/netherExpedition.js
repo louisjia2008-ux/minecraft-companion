@@ -591,6 +591,35 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return result.ok || bot.entity.position.distanceTo(here) > 8 ? { ok: true, waited: true } : result;
   }
 
+  // ---- loot on the ground ---------------------------------------------------
+
+  // A skull or rod left lying after a fight (the pickup after a kill gave up,
+  // or another mob pulled the bot away) is worth more than the next kill:
+  // one skull in eighteen kills was seen on the deck and walked away from.
+  const LOOT_RANGE = 32;
+  function lootOnGround(state) {
+    const wanted = new Set();
+    if (skulls(state) < witherSkulls) wanted.add('wither_skeleton_skull');
+    if (rods(state) < blazeRods) wanted.add('blaze_rod');
+    if (!wanted.size) return null;
+    const here = bot.entity.position;
+    return Object.values(bot.entities).filter((e) => e.name === 'item' && e.position && e.position.distanceTo(here) <= LOOT_RANGE
+      && !blacklist.has(`loot:${e.id}`) && (() => { try { return wanted.has(e.getDroppedItem?.()?.name); } catch { return false; } })())
+      .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0] || null;
+  }
+
+  async function pickUp(ctx, drop) {
+    const name = drop.getDroppedItem?.()?.name;
+    const count = () => bot.inventory.items().filter((i) => i.name === name).reduce((n, i) => n + i.count, 0);
+    const before = count();
+    ctx.record('loot', { item: name, distance: Math.round(drop.position.distanceTo(bot.entity.position)) });
+    const moved = await withScaffolding(() => actions.goNear(bot, ctx, drop.position.clone(), 0.5, { timeoutMs: 30000 }));
+    await waitUntil(() => count() > before || !bot.entities[drop.id], { timeoutMs: 1500, signal: ctx.signal });
+    if (count() > before) return { ok: true, looted: name };
+    blacklist.add(`loot:${drop.id}`, moved.reason || 'not_picked', 30000);
+    return moved.ok ? fail('loot_not_picked') : moved;
+  }
+
   // ---- the expedition -------------------------------------------------------
 
   // Lost the kit (died, drops gone): a bare-handed fortress run only dies
@@ -614,6 +643,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const lost = lostKit(state);
     if (lost) return fail(lost);
     scan(ctx);
+    const drop = lootOnGround(state);
+    if (drop) return pickUp(ctx, drop);
     if (tradeWork()) {
       const piglin = pickPiglin(memory.bastion && bot.entity.position.distanceTo(memory.bastion) <= 40 ? 24 : 12);
       if (piglin) return barter(ctx, piglin);
