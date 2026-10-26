@@ -63,8 +63,12 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
     return { ok: true, dimension: nether.dimension(bot) };
   }
 
+  // Out of sight (chased off by a patrol, say) the frame's chunk is not
+  // loaded and reads as nothing there: the obsidian already in it would be
+  // lost to a new site. Keep the site and walk back to it instead.
+  const siteUnseen = () => !bot.blockAt(memory.site.base);
   function siteStillUsable() {
-    return framePlaced() > 0 || nether.portalSiteOk(bot, memory.site.base, memory.site.axis);
+    return siteUnseen() || framePlaced() > 0 || nether.portalSiteOk(bot, memory.site.base, memory.site.axis);
   }
 
   /** One overworld step towards the nether: walk back, build, light or enter the portal. */
@@ -85,6 +89,9 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
       memory.site = nether.findPortalSite(bot, 16);
       if (!memory.site) return fail('no_portal_site');
       ctx.record('portal_site', { base: `${memory.site.base.x},${memory.site.base.y},${memory.site.base.z}`, axis: memory.site.axis });
+    }
+    if (siteUnseen() || bot.entity.position.distanceTo(memory.site.base) > 24) {
+      return actions.goNear(bot, ctx, memory.site.base, 3, { timeoutMs: 90000 });
     }
     const frame = nether.portalFrame(memory.site.base, memory.site.axis);
     const missing = frame.cells.filter((c) => !c.corner && bot.blockAt(c.pos)?.name !== 'obsidian').length;

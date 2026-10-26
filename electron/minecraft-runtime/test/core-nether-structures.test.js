@@ -389,3 +389,34 @@ test('with skullTries set, that many wither skeletons killed nearby without a sk
   assert.equal(goal.memory.witherKills, 2);
   assert.equal(goal.isDone(rodsOnly), true);
 });
+
+test('a pillager is fought by a bot in diamond armour with a sword, and avoided otherwise', () => {
+  const bot = new EventEmitter();
+  bot.entity = { position: new Vec3(0, 64, 0) };
+  bot.game = { dimension: 'overworld' };
+  bot.registry = { foodsByName: {} };
+  bot.entities = {};
+  bot.inventory = { slots: {}, items: () => [] };
+  const behaviors = createSurvivalBehaviors({ bot });
+  const defend = behaviors.find((b) => b.name === 'defend');
+  const avoid = behaviors.find((b) => b.name === 'avoid');
+  const state = (inventory) => ({ alive: true, health: 20, food: 20, isDay: true, position: bot.entity.position, inventory,
+    hostiles: [{ id: 1, name: 'pillager', distance: 10, position: new Vec3(10, 64, 0) }] });
+  assert.equal(avoid.want(state({ diamond_sword: 1 })), 1, 'no armour: run');
+  bot.inventory.slots[6] = { name: 'diamond_chestplate' };
+  assert.equal(avoid.want(state({ diamond_sword: 1 })), 0);
+  assert.equal(defend.want(state({ diamond_sword: 1 })), 1);
+});
+
+const { createPortalTrip } = require('../core/netherTrip');
+
+test('a portal frame out of sight is walked back to, not given up for a new site', async () => {
+  const bot = { ...world({}), game: { dimension: 'overworld' }, inventory: { slots: [], items: () => [] } };
+  bot.blockAt = () => null; // the frame's chunk is not loaded
+  const walks = [];
+  const actions = { goNear: async (b, ctx, p) => { walks.push(p); return { ok: true }; } };
+  const trip = createPortalTrip({ bot, memory: { site: { base: new Vec3(0, 64, 300), axis: 'x' } }, actions });
+  await trip.toNether({ record() {} }, { inventory: { obsidian: 2, flint_and_steel: 1 } });
+  assert.deepEqual(walks, [new Vec3(0, 64, 300)]);
+  assert.deepEqual(trip.memory.site.base, new Vec3(0, 64, 300));
+});

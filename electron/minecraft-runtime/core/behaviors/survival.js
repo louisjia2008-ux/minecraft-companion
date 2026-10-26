@@ -266,12 +266,17 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const flights = new Map(); // entity id -> times fled from
   const standing = (state, h) => CHARGERS.has(h.name) && armed(state) && state.health > 12
     && (h.name === 'hoglin' || (flights.get(h.id) || []).filter((at) => Date.now() - at < 180000).length >= 5);
+  // A pillager patrol chased a bot in diamond armour with a sword across the
+  // map for seven minutes, away from the portal it was building. So kitted,
+  // pillagers are fought like skeletons; the rest of a raid is still avoided.
+  const kitted = (state) => armed(state) && /^(diamond|netherite)_chestplate$/.test(bot.inventory?.slots?.[6]?.name || '');
+  const avoided = (state, h) => AVOIDED.has(h.name) && !(h.name === 'pillager' && kitted(state) && state.health > t.rangedHealth);
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;
-    return threats(state).find((h) => h.name !== 'creeper' && !((AVOIDED.has(h.name) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
+    return threats(state).find((h) => h.name !== 'creeper' && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
-        || (RANGED.has(h.name) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
+        || ((RANGED.has(h.name) || (h.name === 'pillager' && !avoided(state, h))) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
           && state.health > t.rangedHealth && armed(state)
           && Math.abs(h.position.y - state.position.y) <= 4))) || null;
   };
@@ -527,6 +532,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           } catch { /* the next try looks again */ }
         }
       }
+      // Overhangs over the lava sea: the wall beside it has no room on top
+      // either. Make room there (every hold seen had a roof two blocks up).
+      if (held && await digShore(ctx)) return lavaResult(ctx, out());
       if (shore) {
         ctx.record('leave_lava', { shore: `${shore.x},${shore.y},${shore.z}` });
         await swimTo(ctx, shore.offset(0.5, 1.2, 0.5), out);
@@ -704,7 +712,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     want(state) {
       const brute = threats(state).find((h) => CHARGERS.has(h.name) && h.distance <= BRUTE_RANGE && !standing(state, h));
       if (brute) return !state.sheltered && brute.distance > BRUTE_FIGHT ? 1 : 0;
-      const raider = threats(state).find((h) => AVOIDED.has(h.name) && h.distance <= 24);
+      const raider = threats(state).find((h) => avoided(state, h) && h.distance <= 24);
       if (raider && !danger.some((d) => Math.hypot(d.x - raider.position.x, d.z - raider.position.z) < 32)) {
         danger.push({ x: Math.round(raider.position.x), z: Math.round(raider.position.z) });
       }
@@ -712,7 +720,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       const state = ctx.perceive();
-      const raider = state.hostiles.find((h) => AVOIDED.has(h.name) || (CHARGERS.has(h.name) && !standing(state, h)));
+      const raider = state.hostiles.find((h) => avoided(state, h) || (CHARGERS.has(h.name) && !standing(state, h)));
       if (!raider) return { ok: true };
       ctx.record('avoid', { mob: raider.name, distance: Math.round(raider.distance) });
       const brute = CHARGERS.has(raider.name);
