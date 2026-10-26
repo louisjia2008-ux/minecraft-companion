@@ -30,6 +30,8 @@ const ARMOR_RANK = ['leather', 'golden', 'chainmail', 'iron', 'diamond', 'nether
 const SCAN_EVERY_MS = 10000;
 // Below this the fortress is left to its mobs until health is back.
 const HUNT_HEALTH = 15;
+// How far above or below the bot a wither skeleton is still hunted.
+const HUNT_DY_WITHER = 12;
 
 function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trades = 10, roam = 400, skullTries = 0,
   skills = defaultSkills, actions = defaultActions } = {}) {
@@ -358,14 +360,24 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await sleep(2000, ctx.signal);
       return { ok: true, waited: true };
     }
+    // Wither skeletons spawn anywhere in the fortress's bounds, on the
+    // netherrack under and beside the decks too: one is worth a short climb
+    // or drop. A fortress gave 25 kills in 85 minutes while patrols walked
+    // past those below. Blazes float, so theirs stays level.
+    const reach = (e) => (e.name === 'wither_skeleton' ? HUNT_DY_WITHER : 6);
     const target = Object.values(bot.entities).find((e) => mobs.includes(e.name) && e.position
-      && e.position.distanceTo(here) <= 32 && Math.abs(e.position.y - here.y) <= 6 && !blacklist.has(`mob:${e.id}`));
+      && e.position.distanceTo(here) <= 40 && Math.abs(e.position.y - here.y) <= reach(e) && !blacklist.has(`mob:${e.id}`));
+    if (!target && Date.now() - (memory.sightedAt || 0) > 30000) {
+      memory.sightedAt = Date.now();
+      const seen = Object.values(bot.entities).filter((e) => e.name === 'wither_skeleton' && e.position && e.position.distanceTo(here) <= 64);
+      if (seen.length) ctx.record('sighted', { mob: 'wither_skeleton', at: seen.map((e) => `${Math.round(e.position.distanceTo(here))}/${Math.round(e.position.y - here.y)}`) });
+    }
     // Boxed in (a pillar under a blaze it cannot reach): get somewhere first.
     if (target && !boxedIn()) {
       const name = target.name;
       const result = await skills.huntOne(bot, ctx, {
-        mobs, radius: 32, blacklist, dropMatch: (n) => n === 'blaze_rod' || n === 'wither_skeleton_skull',
-        accept: (e) => Math.abs(e.position.y - bot.entity.position.y) <= 6,
+        mobs, radius: 40, blacklist, dropMatch: (n) => n === 'blaze_rod' || n === 'wither_skeleton_skull',
+        accept: (e) => Math.abs(e.position.y - bot.entity.position.y) <= reach(e),
       });
       if (result.ok) {
         memory.kills[name] = (memory.kills[name] || 0) + 1;
