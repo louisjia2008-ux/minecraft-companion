@@ -143,6 +143,19 @@ function incomingFireball(bot) {
   }) || null;
 }
 
+/** A blaze's fireball flying at the bot, or null. */
+function incomingBlazeShot(bot, range = 10) {
+  const head = bot.entity?.position?.offset(0, 1.2, 0);
+  if (!head) return null;
+  return Object.values(bot.entities || {}).find((e) => {
+    if (e.name !== 'small_fireball' || !e.position) return false;
+    const distance = e.position.distanceTo(head);
+    if (distance > range) return false;
+    const v = e.velocity;
+    return !v || v.norm() === 0 || e.position.plus(v).distanceTo(head) < distance;
+  }) || null;
+}
+
 const { RISKY_FOODS } = defaultActions;
 const RANGED = new Set(['skeleton', 'stray', 'bogged']);
 // Pillagers come in groups from outposts that keep spawning them: keep away.
@@ -691,6 +704,41 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
 
+  // A blaze out of reach of the sword fires volley after volley; each ball
+  // hits for a heart and a half through fire resistance. A raised shield
+  // takes them all: it was golden apples, then a death, without one.
+  const hasShield = () => bot.inventory?.slots?.[45]?.name === 'shield' || bot.inventory?.items?.().some((i) => i.name === 'shield');
+  const block = {
+    name: 'block',
+    band: BAND.ESCAPE,
+    want: () => (hasShield() && incomingBlazeShot(bot) ? 1 : 0),
+    async run(ctx) {
+      const shield = bot.inventory.items().find((i) => i.name === 'shield');
+      if (bot.inventory.slots?.[45]?.name !== 'shield' && shield) {
+        try { await bot.equip(shield, 'off-hand'); } catch { return { ok: false, reason: 'no_shield' }; }
+      }
+      const first = incomingBlazeShot(bot);
+      if (!first) return { ok: true };
+      ctx.record('block', { distance: Math.round(first.position.distanceTo(bot.entity.position) * 10) / 10 });
+      bot.pathfinder?.setGoal?.(null);
+      try {
+        bot.activateItem(true);
+        // A volley is three shots: hold the shield until none is coming.
+        for (let quiet = 0, i = 0; i < 40 && quiet < 6; i += 1) {
+          const ball = incomingBlazeShot(bot, 16);
+          if (ball) {
+            quiet = 0;
+            await bot.lookAt(ball.position, true);
+          } else quiet += 1;
+          await sleep(100, ctx.signal);
+        }
+      } finally {
+        bot.deactivateItem();
+      }
+      return { ok: true };
+    },
+  };
+
   // A ghast that can see the bot keeps shooting: get under a roof, out of its sight.
   let coverUntil = 0;
   const cover = {
@@ -733,7 +781,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
   deflect.dispose = disposeNether;
 
-  return [quench, leaveLava, heal, escape, breathe, deflect, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
+  return [quench, leaveLava, heal, escape, breathe, deflect, block, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };

@@ -271,6 +271,26 @@ test('a skull left lying after a fight is fetched before anything else', async (
   assert.ok(events.includes('loot'));
 });
 
+test('a blaze volley is taken on a raised shield', async () => {
+  const bot = new EventEmitter();
+  bot.entity = { position: new Vec3(0, 64, 0) };
+  bot.game = { dimension: 'the_nether' };
+  bot.registry = { foodsByName: {} };
+  const ball = { id: 9, name: 'small_fireball', position: new Vec3(6, 65, 0), velocity: new Vec3(-1, 0, 0) };
+  bot.entities = { 9: ball };
+  bot.inventory = { slots: { 45: { name: 'shield' } }, items: () => [{ name: 'shield' }] };
+  const used = [];
+  Object.assign(bot, { lookAt: async () => {}, activateItem: (off) => { used.push(`up:${off}`); delete bot.entities[9]; },
+    deactivateItem: () => used.push('down') });
+  const block = createSurvivalBehaviors({ bot }).find((b) => b.name === 'block');
+  assert.equal(block.want({}), 1);
+  await block.run({ record() {}, signal: new AbortController().signal });
+  assert.deepEqual(used, ['up:true', 'down']);
+  ball.velocity = new Vec3(1, 0, 0);
+  bot.entities = { 9: ball };
+  assert.equal(block.want({}), 0, 'flying away');
+});
+
 test('respawned at home without a weapon, the expedition stops instead of going back to die', async () => {
   const bot = { ...world({}), game: { dimension: 'overworld' }, inventory: { slots: [], items: () => [] }, equip: async () => {} };
   const goal = createNetherExpeditionGoal({ bot, blazeRods: 2, witherSkulls: 0, trades: 0 });
