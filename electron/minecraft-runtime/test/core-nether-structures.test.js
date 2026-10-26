@@ -458,3 +458,30 @@ test('perched in a lattice of fences, the bot breaks them away', async () => {
   assert.deepEqual(dug.sort(), ['(-1, 62, 0)', '(0, 61, 0)', '(1, 61, 0)']);
   assert.deepEqual(records, [['unstick_lattice', { broke: 3 }]]);
 });
+
+test('a pillar up through lava digs out a cave roof over its head', async () => {
+  const cells = {};
+  for (let y = 20; y <= 26; y += 1) for (let x = -1; x <= 1; x += 1) cells[`${x},${y},0`] = 'lava';
+  cells['0,19,0'] = 'netherrack';
+  cells['0,28,0'] = 'blackstone';
+  let bot = world(cells);
+  let y = 20;
+  bot.entity.position = new Vec3(0.5, y, 0.5);
+  Object.defineProperty(bot.entity, 'isInLava', { get: () => bot.entity.position.y <= 26 });
+  bot.entity.onGround = true;
+  bot.entity.yaw = 0;
+  const dug = [];
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'cobblestone', count: 16 }, { name: 'diamond_pickaxe', count: 1 }] },
+    setControlState: (control, on) => { if (control === 'jump' && on) bot.entity.position = new Vec3(0.5, y + 2, 0.5); },
+    look: async () => {}, lookAt: async () => {}, equip: async () => {},
+    dig: async (b) => { dug.push(b.position.toString()); delete cells[`${b.position.x},${b.position.y},${b.position.z}`]; bot.blockAt = world(cells).blockAt; },
+    placeBlock: async (floor) => { const top = floor.position.offset(0, 1, 0); cells[`${top.x},${top.y},${top.z}`] = 'cobblestone'; bot.blockAt = world(cells).blockAt; y = top.y + 1; bot.entity.position = new Vec3(0.5, y, 0.5); } });
+  bot.blockAt = world(cells).blockAt;
+  bot.registry.foodsByName = {};
+  bot.registry.blocksByName.cobblestone = { id: 99, name: 'cobblestone' };
+  const leaveLava = createSurvivalBehaviors({ bot, thresholds: { swimScale: 0.05 } }).find((b) => b.name === 'leave_lava');
+  await leaveLava.run({ record() {} });
+  assert.deepEqual(dug, ['(0, 28, 0)']);
+  assert.equal(bot.entity.isInLava, false);
+});

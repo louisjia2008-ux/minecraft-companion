@@ -420,12 +420,30 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   }
   // Jump, and once clear of the floor put a block on it: one block higher
   // each round, until the head is out of the lava.
+  // Something over its head (its own bridge, an overhang, the roof of a
+  // lava cave) stops both the hop out and a pillar one block short of the
+  // surface: dig the two cells above open, unless lava waits behind them.
+  async function digRoof(ctx) {
+    const feet = bot.entity.position.floored();
+    const roof = [1, 2].map((up) => bot.blockAt(feet.offset(0, up, 0)))
+      .filter((b) => b && b.boundingBox === 'block' && b.diggable !== false && !/lava/.test(bot.blockAt(b.position.offset(0, 1, 0))?.name || ''));
+    if (!roof.length) return false;
+    ctx.record('leave_lava', { roof: roof.map((b) => `${b.name}@${b.position.y - feet.y}`) });
+    const pick = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
+    try {
+      if (pick) await bot.equip(pick, 'hand');
+      for (const b of roof) await bot.dig(b, true);
+    } catch { /* the next try looks again */ }
+    return true;
+  }
   async function towerUp(ctx, block, out) {
-    try { await bot.equip(block, 'hand'); } catch { return; }
     for (let i = 0; i < 12 && !out() && !ctx.signal?.aborted; i += 1) {
       const floor = bot.blockAt(bot.entity.position.offset(0, -0.5, 0));
       if (!floor || floor.boundingBox !== 'block') return;
       if (!bot.inventory.items().some((it) => it.name === block.name)) return;
+      // Two pillars ended a block under the surface, heads against a cave roof.
+      await digRoof(ctx);
+      try { await bot.equip(block, 'hand'); } catch { return; }
       try {
         await bot.look(bot.entity.yaw, -Math.PI / 2, true);
         bot.setControlState('jump', true);
@@ -510,26 +528,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
       const feet = bot.entity.position.floored();
       const held = lavaStuck.count >= 3 && Date.now() - lavaStuck.last < 120000;
+      if (held) {
+        if (lavaStuck.count === 3) ctx.record('lava_held', { around: surroundings(feet) });
+        await digRoof(ctx);
+      }
       if (block && bot.entity.onGround && (held || (!shore && lavaSurface(bot, feet) - feet.y >= 2))) {
         ctx.record('leave_lava', { tower: `${feet.x},${feet.y},${feet.z}`, surface: lavaSurface(bot, feet), block: block.name });
         await towerUp(ctx, block, out);
         if (out()) return { ok: true };
-      }
-      // Floating at the surface beside a shore it never gets onto: something
-      // over its head (its own bridge, a tower's foot) stops the hop out,
-      // which needs the space above clear. Dig that open.
-      if (held && !bot.entity.onGround) {
-        if (lavaStuck.count === 3) ctx.record('lava_held', { around: surroundings(feet) });
-        const roof = [1, 2].map((up) => bot.blockAt(feet.offset(0, up, 0)))
-          .filter((b) => b && b.boundingBox === 'block' && b.diggable !== false && !/lava/.test(bot.blockAt(b.position.offset(0, 1, 0))?.name || ''));
-        if (roof.length) {
-          ctx.record('leave_lava', { roof: roof.map((b) => `${b.name}@${b.position.y - feet.y}`) });
-          const pick = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
-          try {
-            if (pick) await bot.equip(pick, 'hand');
-            for (const b of roof) await bot.dig(b, true);
-          } catch { /* the next try looks again */ }
-        }
       }
       // Overhangs over the lava sea: the wall beside it has no room on top
       // either. Make room there (every hold seen had a roof two blocks up).
