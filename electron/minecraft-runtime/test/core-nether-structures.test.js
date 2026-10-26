@@ -145,7 +145,7 @@ test('deep in a lava sea the step goes on the surface, not where the bot sank to
     placeBlock: async (wall, face) => { placed.push(wall.position.plus(face)); cells[`${placed[0].x},${placed[0].y},0`] = 'cobblestone'; } });
   bot.registry.foodsByName = {};
   bot.blockAt = world(cells).blockAt;
-  const leaveLava = createSurvivalBehaviors({ bot }).find((b) => b.name === 'leave_lava');
+  const leaveLava = createSurvivalBehaviors({ bot, thresholds: { swimScale: 0.05 } }).find((b) => b.name === 'leave_lava');
   // Swimming: rise to the surface next to the wall.
   bot.setControlState = () => { bot.entity.position = new Vec3(3.5, 31, 0.5); };
   await leaveLava.run({ record() {}, signal: undefined });
@@ -344,10 +344,33 @@ test('held in the same spot of a shallow lava pocket try after try, the bot buil
     placeBlock: async (floor) => { const top = floor.position.offset(0, 1, 0); cells[`${top.x},${top.y},${top.z}`] = 'cobblestone'; bot.blockAt = world(cells).blockAt; y = top.y + 1; bot.entity.position = new Vec3(0.5, y, 0.5); } });
   bot.registry.foodsByName = {};
   bot.registry.blocksByName.cobblestone = { id: 99, name: 'cobblestone' };
-  const leaveLava = createSurvivalBehaviors({ bot }).find((b) => b.name === 'leave_lava');
+  const leaveLava = createSurvivalBehaviors({ bot, thresholds: { swimScale: 0.05 } }).find((b) => b.name === 'leave_lava');
   const records = [];
   const ctx = { record: (type, data) => records.push([type, data]) };
   for (let i = 0; i < 4 && bot.entity.isInLava; i += 1) await leaveLava.run(ctx);
   assert.ok(records.some(([, d]) => d.tower), 'built a pillar');
   assert.equal(bot.entity.isInLava, false);
+});
+
+test('floating beside a shore it cannot get onto, the bot digs open the space over its head', async () => {
+  const cells = {};
+  for (let x = -3; x <= 0; x += 1) for (let y = 20; y <= 31; y += 1) cells[`${x},${y},0`] = 'lava';
+  cells['1,31,0'] = 'netherrack';
+  cells['0,33,0'] = 'cobblestone'; // its own bridge overhead
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 31.2, 0.5);
+  bot.entity.isInLava = true;
+  bot.entity.onGround = false;
+  const dug = [];
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'diamond_pickaxe', count: 1 }] },
+    setControlState: () => {}, lookAt: async () => {}, equip: async () => {},
+    dig: async (b) => { dug.push(b.position.toString()); cells[`${b.position.x},${b.position.y},${b.position.z}`] = 'air'; } });
+  bot.registry.foodsByName = {};
+  const leaveLava = createSurvivalBehaviors({ bot, thresholds: { swimScale: 0.05 } }).find((b) => b.name === 'leave_lava');
+  const records = [];
+  const ctx = { record: (type, data) => records.push([type, data]) };
+  for (let i = 0; i < 4 && !dug.length; i += 1) await leaveLava.run(ctx);
+  assert.deepEqual(dug, ['(0, 33, 0)']);
+  assert.ok(records.some(([type]) => type === 'lava_held'));
 });

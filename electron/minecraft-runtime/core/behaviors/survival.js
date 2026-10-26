@@ -188,7 +188,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
     eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, recoverFood: 18, oxygen: 8, dropsTtlMs: 270000,
-    walkSpeed: 4, dropsMaxDistance: 600,
+    walkSpeed: 4, dropsMaxDistance: 600, swimScale: 1,
     ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
   const exploreMemory = {};
@@ -403,7 +403,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   }
   async function swimTo(ctx, point, until, maxTicks = 150) {
     try {
-      for (let i = 0; i < maxTicks && !until(); i += 1) {
+      for (let i = 0; i < maxTicks * t.swimScale && !until(); i += 1) {
         await hitInPassing();
         await bot.lookAt(point, true);
         for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, true);
@@ -437,11 +437,13 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const shoreMisses = new Map(); // "(x, y, z)" -> { count, until }
   // Tries that ended still in lava where they began: a shallow pocket under
   // a ledge can hold the bot for an hour with every shore just out of reach.
-  let lavaStuck = { at: '', count: 0 };
+  // Drifting a block or two between tries is still being held there.
+  let lavaStuck = { at: null, count: 0 };
+  const heldNear = (p) => Boolean(lavaStuck.at && lavaStuck.at.distanceTo(p) <= 3);
   const lavaResult = (ctx, done) => {
     if (!done) {
-      const at = bot.entity.position.floored().toString();
-      lavaStuck = { at, count: lavaStuck.at === at ? lavaStuck.count + 1 : 1 };
+      const at = bot.entity.position.floored();
+      lavaStuck = heldNear(at) ? { at: lavaStuck.at, count: lavaStuck.count + 1 } : { at, count: 1 };
       ctx.record('still_in_lava', { tries: lavaStuck.count });
     }
     return { ok: true, waited: !done };
@@ -473,6 +475,19 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     }
     return false;
   }
+  // What is around a bot stuck in lava, for the log: solid cells only.
+  function surroundings(feet) {
+    const cells = [];
+    for (let dy = -1; dy <= 3; dy += 1) {
+      for (let dx = -2; dx <= 2; dx += 1) {
+        for (let dz = -2; dz <= 2; dz += 1) {
+          const b = bot.blockAt(feet.offset(dx, dy, dz));
+          if (b && b.boundingBox === 'block') cells.push(`${dx},${dy},${dz}:${b.name}`);
+        }
+      }
+    }
+    return cells.join(' ');
+  }
   const leaveLava = {
     name: 'leave_lava',
     band: BAND.ESCAPE,
@@ -490,11 +505,27 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // try: build a pillar up through the lava.
       const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
       const feet = bot.entity.position.floored();
-      const held = lavaStuck.at === feet.toString() && lavaStuck.count >= 3;
+      const held = heldNear(feet) && lavaStuck.count >= 3;
       if (block && bot.entity.onGround && (held || (!shore && lavaSurface(bot, feet) - feet.y >= 2))) {
         ctx.record('leave_lava', { tower: `${feet.x},${feet.y},${feet.z}`, surface: lavaSurface(bot, feet), block: block.name });
         await towerUp(ctx, block, out);
         if (out()) return { ok: true };
+      }
+      // Floating at the surface beside a shore it never gets onto: something
+      // over its head (its own bridge, a tower's foot) stops the hop out,
+      // which needs the space above clear. Dig that open.
+      if (held && !bot.entity.onGround) {
+        if (lavaStuck.count === 3) ctx.record('lava_held', { around: surroundings(feet) });
+        const roof = [1, 2].map((up) => bot.blockAt(feet.offset(0, up, 0)))
+          .filter((b) => b && b.boundingBox === 'block' && b.diggable !== false && !/lava/.test(bot.blockAt(b.position.offset(0, 1, 0))?.name || ''));
+        if (roof.length) {
+          ctx.record('leave_lava', { roof: roof.map((b) => `${b.name}@${b.position.y - feet.y}`) });
+          const pick = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
+          try {
+            if (pick) await bot.equip(pick, 'hand');
+            for (const b of roof) await bot.dig(b, true);
+          } catch { /* the next try looks again */ }
+        }
       }
       if (shore) {
         ctx.record('leave_lava', { shore: `${shore.x},${shore.y},${shore.z}` });
