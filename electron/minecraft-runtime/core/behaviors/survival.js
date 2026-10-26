@@ -459,8 +459,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       }
       const centre = step.cell.offset(0.5, 0.5, 0.5);
       // Out in a lava sea the nearest wall can be far: a long swim with fire resistance.
-      // Sunk deep, it also has to come up within reach of the wall's top.
-      await swimTo(ctx, centre, () => out() || (Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z) <= 2.2
+      // Sunk deep, it also has to come up within reach of the wall's top. It
+      // swims for the cell beyond the step and stops short of the step's own
+      // column: with its head in that cell the server refuses the block.
+      const beyond = centre.plus(step.cell.minus(step.wall).scaled(1.2));
+      const inCell = () => Math.abs(bot.entity.position.x - centre.x) < 0.8 && Math.abs(bot.entity.position.z - centre.z) < 0.8;
+      await swimTo(ctx, beyond, () => out() || (!inCell() && Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z) <= 2.2
         && bot.entity.position.y >= step.cell.y - 1.5), 400);
       if (!out()) {
         try {
