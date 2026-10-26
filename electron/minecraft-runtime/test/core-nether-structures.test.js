@@ -297,3 +297,25 @@ test('respawned at home without a weapon, the expedition stops instead of going 
   const result = await goal.run({ record() {}, perceive: () => ({ inventory: {} }), signal: new AbortController().signal });
   assert.equal(result.reason, 'no_weapon');
 });
+
+test('a magma cube beside the swimming bot is hit on the way to the shore', async () => {
+  const cells = {};
+  for (let x = -3; x <= 3; x += 1) for (let y = 20; y <= 31; y += 1) cells[`${x},${y},0`] = 'lava';
+  for (let y = 20; y <= 40; y += 1) cells[`4,${y},0`] = 'netherrack';
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 31, 0.5);
+  bot.entity.isInLava = true;
+  const hits = [];
+  const equipped = [];
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'diamond_sword', count: 1 }, { name: 'cobblestone', count: 8 }] },
+    setControlState: () => {}, lookAt: async () => {}, equip: async (item) => { equipped.push(item.name); },
+    attack: (e) => { hits.push(e.id); bot.entity.isInLava = false; bot.entity.onGround = true; },
+    placeBlock: async () => {} });
+  bot.entities = { 3: { id: 3, name: 'magma_cube', position: new Vec3(1.5, 31, 0.5) } };
+  bot.registry.foodsByName = {};
+  const leaveLava = createSurvivalBehaviors({ bot }).find((b) => b.name === 'leave_lava');
+  await leaveLava.run({ record() {}, signal: undefined });
+  assert.deepEqual(hits, [3]);
+  assert.equal(equipped[0], 'diamond_sword');
+});

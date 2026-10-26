@@ -212,3 +212,13 @@ test('a worn-out pickaxe in the Nether sends the bot home, not round in circles'
   assert.ok(records.some((r) => r.type === 'retreat' && r.pickaxe === false));
   assert.equal(result.reason, 'nether_portal_lost');
 });
+
+test('a zombified piglin the server flags as aggressive is fought, wither skeleton about or not', () => {
+  const bot = piglinBot();
+  bot.registry.entitiesByName = { zombified_piglin: { metadataKeys: ['a', 'b', 'mob_flags'] } };
+  bot.entities[9] = { id: 9, name: 'wither_skeleton', position: new Vec3(-6, 64, 0) };
+  const defend = createSurvivalBehaviors({ bot }).find((b) => b.name === 'defend');
+  assert.equal(defend.want(nearPiglin(bot)), 0);
+  bot.entities[7].metadata = { 2: 4 };
+  assert.equal(defend.want(nearPiglin(bot)), 1);
+});

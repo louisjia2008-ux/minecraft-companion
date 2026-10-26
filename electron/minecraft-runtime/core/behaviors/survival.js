@@ -204,12 +204,19 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const creepyIndex = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
   const endermanAngry = (h) => (creepyIndex >= 0 && bot.entities?.[h.id]?.metadata?.[creepyIndex] === true)
     || (provoked.get(h.id) || 0) > Date.now();
+  // The server flags a mob that is going for its target (mob_flags bit 4).
+  // In a fortress the swing heuristic below never blames a zombified piglin
+  // (a wither skeleton is always about), so a pack that turned on the bot
+  // hit it to death while it was let alone as calm.
+  const mobFlagsIndex = bot.registry?.entitiesByName?.zombified_piglin?.metadataKeys?.indexOf('mob_flags') ?? -1;
+  const aggressive = (h) => mobFlagsIndex >= 0 && ((bot.entities?.[h.id]?.metadata?.[mobFlagsIndex] || 0) & 4) !== 0;
   const calm = (h) => {
     // Proximity does not make an enderman hostile. Attacking a calm one is
     // precisely what turns an avoidable encounter into a deadly fight.
     if (h.name === 'enderman') return !endermanAngry(h);
     if (!CALM_UNLESS_PROVOKED.has(h.name)) return false;
     if ((provoked.get(h.id) || 0) > Date.now()) return false;
+    if (aggressive(h)) return false;
     return h.name === 'zombified_piglin' || wearsGold(bot);
   };
   const threats = (state) => state.hostiles.filter((h) => !calm(h));
@@ -377,9 +384,27 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Swimming in lava (a hoglin's toss, a slip): the pathfinder cannot plan from
   // there. Swim for the nearest shore it can climb; with only cliffs around,
   // swim to one, put a block on the lava against it and climb onto that.
+  // Magma cubes live in the lava seas: one beside a swimming bot knocks it
+  // back off every step it climbs and hits it to death with fire resistance
+  // on. Hit any in reach on the way, without stopping the swim.
+  let lastSwimHit = 0;
+  async function hitInPassing() {
+    if (Date.now() - lastSwimHit < 500) return;
+    const here = bot.entity.position;
+    const cube = Object.values(bot.entities || {}).find((e) => e.name === 'magma_cube' && e.position
+      && e.position.distanceTo(here) <= 3);
+    if (!cube) return;
+    const sword = bot.inventory.items().find((i) => i.name.endsWith('_sword'));
+    if (sword && bot.heldItem?.name !== sword.name) {
+      try { await bot.equip(sword, 'hand'); } catch { return; }
+    }
+    lastSwimHit = Date.now();
+    bot.attack(cube);
+  }
   async function swimTo(ctx, point, until, maxTicks = 150) {
     try {
       for (let i = 0; i < maxTicks && !until(); i += 1) {
+        await hitInPassing();
         await bot.lookAt(point, true);
         for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, true);
         await sleep(100, ctx.signal);

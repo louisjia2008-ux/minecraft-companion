@@ -416,10 +416,23 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const band = (lo, hi) => (p) => { const d = p.distanceTo(here); return d >= lo && d <= hi; };
     const avoid = kind === 'fortress' && memory.spawner && state && rods(state) >= blazeRods
       ? (p) => p.distanceTo(memory.spawner) >= SPAWNER_CLEAR : () => true;
-    let floor = structures.fortressFloor(bot, here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
-    if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter((p) => band(12, 96)(p) && avoid(p));
-    if (!floor.length) floor = structures.fortressFloor(bot, here, 48, 512).filter(band(12, 40));
-    if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter(band(12, 96));
+    // A pillar foot by the lava sea counts as fortress floor too: from there
+    // the decks, where nearly all the floor is, are far overhead and walks to
+    // them only fail. Tower up first.
+    const near = structures.fortressFloor(bot, here, 48, 512);
+    const wide = structures.fortressFloor(bot, centre, 96, 512);
+    const levels = wide.map((p) => p.y).sort((a, b) => a - b);
+    const deckY = levels.length ? levels[Math.floor(levels.length / 2)] : -Infinity;
+    const below = kind === 'fortress' && deckY + 1 - here.y > CLIMB;
+    if (below) {
+      const climbed = await climbTo(ctx);
+      if (climbed.ok) return climbed;
+    }
+    const reachable = (p) => !below || p.y + 1 - here.y <= CLIMB;
+    let floor = near.filter((p) => band(12, 40)(p) && avoid(p) && reachable(p));
+    if (!floor.length) floor = wide.filter((p) => band(12, 96)(p) && avoid(p) && reachable(p));
+    if (!floor.length) floor = near.filter(band(12, 40));
+    if (!floor.length) floor = wide.filter(band(12, 96));
     // Nothing else to walk to here: go and stand by the spawner (or the first brick
     // seen); already there, look around from a lookout instead.
     const fallback = kind === 'fortress' && memory.spawner ? memory.spawner : centre;
