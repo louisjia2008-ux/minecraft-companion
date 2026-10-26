@@ -535,7 +535,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // Overhangs over the lava sea: the wall beside it has no room on top
       // either. Make room there (every hold seen had a roof two blocks up).
       if (held && await digShore(ctx)) return lavaResult(ctx, out());
-      if (shore) {
+      // A shore it keeps failing to reach (a current from flowing lava, a lip):
+      // build its own step instead, which also stems the flow.
+      const step = lavaStep(bot);
+      if (shore && !(held && step && block)) {
         ctx.record('leave_lava', { shore: `${shore.x},${shore.y},${shore.z}` });
         await swimTo(ctx, shore.offset(0.5, 1.2, 0.5), out);
         if (out()) await sleep(400, ctx.signal);
@@ -548,7 +551,6 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         }
         return lavaResult(ctx, out());
       }
-      const step = lavaStep(bot);
       ctx.record('leave_lava', { shore: null, step: step ? `${step.cell.x},${step.cell.y},${step.cell.z}` : null, block: block?.name || null });
       if (!step && await digShore(ctx)) return lavaResult(ctx, out());
       if (!step || !block) {

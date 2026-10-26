@@ -420,3 +420,25 @@ test('a portal frame out of sight is walked back to, not given up for a new site
   assert.deepEqual(walks, [new Vec3(0, 64, 300)]);
   assert.deepEqual(trip.memory.site.base, new Vec3(0, 64, 300));
 });
+
+test('held by a shore it never reaches, the bot builds its own step instead', async () => {
+  const cells = {};
+  for (let x = -6; x <= 3; x += 1) for (let y = 20; y <= 31; y += 1) cells[`${x},${y},0`] = 'lava';
+  for (let y = 20; y <= 40; y += 1) cells[`4,${y},0`] = 'netherrack';
+  cells['-7,31,0'] = 'netherrack'; // a shore across the pool
+  const bot = world(cells);
+  bot.entity.position = new Vec3(3.5, 31.2, 0.5);
+  bot.entity.isInLava = true;
+  bot.entity.onGround = false;
+  const placed = [];
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'cobblestone', count: 8 }] },
+    setControlState: () => {}, lookAt: async () => {}, equip: async () => {}, dig: async () => { throw new Error('too hard'); },
+    placeBlock: async (wall, face) => { placed.push(wall.position.plus(face)); } });
+  bot.registry.foodsByName = {};
+  const leaveLava = createSurvivalBehaviors({ bot, thresholds: { swimScale: 0.05 } }).find((b) => b.name === 'leave_lava');
+  const records = [];
+  for (let i = 0; i < 5 && !placed.length; i += 1) await leaveLava.run({ record: (type, data) => records.push([type, data]) });
+  assert.ok(records.some(([, d]) => d.shore === '-7,31,0'), 'tried the shore first');
+  assert.ok(placed.length, "then built a step");
+});
