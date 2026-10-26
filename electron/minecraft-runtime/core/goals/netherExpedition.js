@@ -31,22 +31,30 @@ const SCAN_EVERY_MS = 10000;
 // Below this the fortress is left to its mobs until health is back.
 const HUNT_HEALTH = 15;
 
-function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trades = 10, roam = 400,
+function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trades = 10, roam = 400, skullTries = 0,
   skills = defaultSkills, actions = defaultActions } = {}) {
-  for (const [name, value] of Object.entries({ blazeRods, witherSkulls, trades })) {
+  for (const [name, value] of Object.entries({ blazeRods, witherSkulls, trades, skullTries })) {
     if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative integer`);
   }
   const blacklist = createBlacklist({ ttlMs: 120000 });
   const memory = {
     explore: {}, fortress: null, bastion: null, spawner: null, visited: { fortress: false, bastion: false },
-    trades: 0, barter: {}, kills: {}, scannedAt: 0, scannedFrom: null, waitSince: 0,
+    trades: 0, barter: {}, kills: {}, witherKills: 0, scannedAt: 0, scannedFrom: null, waitSince: 0,
   };
+  // A skull is luck (5.5% a kill with Looting III). With skullTries set, that
+  // many wither skeletons killed without one ends the hunt for it.
+  bot.on?.('entityDead', (e) => {
+    if (e?.name === 'wither_skeleton' && e.position && bot.entity?.position && e.position.distanceTo(bot.entity.position) <= 6) {
+      memory.witherKills += 1;
+    }
+  });
   const trip = createPortalTrip({ bot, memory, actions });
 
   const rods = (state) => state.inventory.blaze_rod || 0;
   const skulls = (state) => state.inventory.wither_skeleton_skull || 0;
   const gold = (state) => state.inventory.gold_ingot || 0;
-  const fortressWork = (state) => rods(state) < blazeRods || skulls(state) < witherSkulls;
+  const skullsWanted = (state) => skulls(state) < witherSkulls && !(skullTries > 0 && memory.witherKills >= skullTries);
+  const fortressWork = (state) => rods(state) < blazeRods || skullsWanted(state);
   const tradeWork = () => memory.trades < trades;
   const allDone = (state) => !fortressWork(state) && !tradeWork();
 
@@ -327,7 +335,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   function fortressTarget(state) {
     const wanted = [];
     if (rods(state) < blazeRods) wanted.push('blaze');
-    if (skulls(state) < witherSkulls) wanted.push('wither_skeleton');
+    if (skullsWanted(state)) wanted.push('wither_skeleton');
     return wanted;
   }
 
@@ -615,7 +623,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   const LOOT_RANGE = 32;
   function lootOnGround(state) {
     const wanted = new Set();
-    if (skulls(state) < witherSkulls) wanted.add('wither_skeleton_skull');
+    if (skullsWanted(state)) wanted.add('wither_skeleton_skull');
     if (rods(state) < blazeRods) wanted.add('blaze_rod');
     if (!wanted.size) return null;
     const here = bot.entity.position;
@@ -687,7 +695,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
 
   return {
     name: 'nether_expedition',
-    target: { blazeRods, witherSkulls, trades },
+    target: { blazeRods, witherSkulls, trades, skullTries },
     noProgressLimit: 30,
     maxRecoveries: 4,
     memory,
@@ -697,7 +705,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     progress(state) {
       const found = ['fortress', 'bastion'].reduce((sum, k) => sum + (memory[k] ? 20 : 0) + (memory.visited[k] ? 10 : 0), 0);
       return trip.portalProgress() + (nether.inNether(bot) ? 5 : 0) + found
-        + Math.min(rods(state), blazeRods) * 30 + Math.min(skulls(state), witherSkulls) * 60 + Math.min(memory.trades, trades) * 15;
+        + Math.min(rods(state), blazeRods) * 30 + Math.min(skulls(state), witherSkulls) * 60 + Math.min(memory.trades, trades) * 15
+        + Math.min(memory.witherKills, skullTries) * 2;
     },
     recover() {
       blacklist.clear?.();

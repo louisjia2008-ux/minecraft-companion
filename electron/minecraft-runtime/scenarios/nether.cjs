@@ -69,7 +69,9 @@ const netherQuartzGiven = {
 
 // ---- fortress and bastion ------------------------------------------------------
 
-const EXPEDITION = { blazeRods: 6, witherSkulls: 1, trades: 10 };
+const EXPEDITION = { blazeRods: 6, witherSkulls: 1, trades: 10, skullTries: 30 };
+// Server-side count of the wither skeletons the player killed.
+const WITHER_KILLS = 'witherKills';
 const GOLD = 24;
 // Gold helmets wear out in a fortress fight (77 durability): two spares keep piglins calm afterwards.
 // Armour as a player takes it to a fortress: Protection IV, and Feather Falling
@@ -86,6 +88,12 @@ const EXPEDITION_KIT = [
   // and eight ran out 84 minutes into the full chain.
   ['potion[potion_contents={potion:"minecraft:long_fire_resistance"}]', 12],
 ];
+
+async function killsOnServer(server, username) {
+  const match = await server.query(`scoreboard players get ${username} ${WITHER_KILLS}`,
+    /has (-?\d+) \[|Can't get value|Unknown scoreboard objective/);
+  return match[1] ? Number(match[1]) : 0;
+}
 
 /** Where the nearest structure of a kind is, asked of the server from a nether point. */
 async function locate(server, structure, x, z) {
@@ -128,7 +136,7 @@ async function pickExpeditionStart(server, rng, run, near) {
 }
 
 function expeditionScenario({ name, near, targets, timeoutMs, experimental = false }) {
-  const wants = [targets.blazeRods && `${targets.blazeRods} blaze rods`, targets.witherSkulls && `${targets.witherSkulls} wither skeleton skull`,
+  const wants = [targets.blazeRods && `${targets.blazeRods} blaze rods`, targets.witherSkulls && `${targets.witherSkulls} wither skeleton skull${targets.skullTries ? ` (or ${targets.skullTries} wither skeletons killed without one)` : ''}`,
     targets.trades && `${targets.trades} piglin trades`].filter(Boolean).join(', ');
   return {
     name,
@@ -156,6 +164,8 @@ function expeditionScenario({ name, near, targets, timeoutMs, experimental = fal
           `clear ${username}`, `effect clear ${username}`, `gamemode survival ${username}`,
           `effect give ${username} minecraft:instant_health 1 5`, `effect give ${username} minecraft:saturation 1 20`,
           ...EXPEDITION_KIT.map(([item, count]) => `give ${username} ${item} ${count}`),
+          `scoreboard objectives add ${WITHER_KILLS} minecraft.killed:minecraft.wither_skeleton`,
+          `scoreboard players set ${username} ${WITHER_KILLS} 0`,
         ],
         details: { start: { x, z }, netherStart: pick.nether, fortress: pick.fortress || null, bastion: pick.bastion || null },
       };
@@ -169,10 +179,14 @@ function expeditionScenario({ name, near, targets, timeoutMs, experimental = fal
       const m = goal?.memory || {};
       const at = (p) => (p ? `${p.x},${p.y},${p.z}` : null);
       const trades = m.trades || 0;
+      const witherKills = await killsOnServer(server, username);
+      // The skull is luck: a fortress hunt that killed skullTries wither
+      // skeletons with the looting sword and rolled none still did its job.
+      const skullsOk = skulls >= targets.witherSkulls || (targets.skullTries > 0 && witherKills >= targets.skullTries);
       return {
-        pass: rods >= targets.blazeRods && skulls >= targets.witherSkulls && trades >= targets.trades
+        pass: rods >= targets.blazeRods && skullsOk && trades >= targets.trades
           && gold <= GOLD - targets.trades && dimension === 'overworld',
-        details: { rodsOnServer: rods, skullsOnServer: skulls, goldOnServer: gold, trades, barter: m.barter, kills: m.kills,
+        details: { rodsOnServer: rods, skullsOnServer: skulls, witherKillsOnServer: witherKills, goldOnServer: gold, trades, barter: m.barter, kills: m.kills,
           dimension, fortress: at(m.fortress), bastion: at(m.bastion), visited: m.visited, netherPortal: at(m.netherPortal) },
       };
     },
@@ -188,9 +202,9 @@ function expeditionScenario({ name, near, targets, timeoutMs, experimental = fal
 const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION,
   timeoutMs: 120 * 60 * 1000, experimental: true });
 const netherFortressGiven = expeditionScenario({ name: 'nether-fortress-given', near: 'fortress',
-  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, trades: 0 }, timeoutMs: 90 * 60 * 1000,
+  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, skullTries: EXPEDITION.skullTries, trades: 0 }, timeoutMs: 90 * 60 * 1000,
   experimental: true });
 const netherBastionGiven = expeditionScenario({ name: 'nether-bastion-given', near: 'bastion',
-  targets: { blazeRods: 0, witherSkulls: 0, trades: EXPEDITION.trades }, timeoutMs: 30 * 60 * 1000 });
+  targets: { blazeRods: 0, witherSkulls: 0, skullTries: 0, trades: EXPEDITION.trades }, timeoutMs: 30 * 60 * 1000 });
 
 module.exports = { netherQuartzGiven, netherStructuresGiven, netherFortressGiven, netherBastionGiven };

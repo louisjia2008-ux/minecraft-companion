@@ -374,3 +374,18 @@ test('floating beside a shore it cannot get onto, the bot digs open the space ov
   assert.deepEqual(dug, ['(0, 33, 0)']);
   assert.ok(records.some(([type]) => type === 'lava_held'));
 });
+
+test('with skullTries set, that many wither skeletons killed nearby without a skull end the hunt for one', () => {
+  const bot = Object.assign(new EventEmitter(), { ...world({}), game: { dimension: 'overworld' }, inventory: { slots: [], items: () => [] } });
+  bot.entity.position = new Vec3(0, 64, 0);
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 1, trades: 0, skullTries: 2 });
+  const rodsOnly = { inventory: { blaze_rod: 1 } };
+  assert.equal(goal.isDone(rodsOnly), false);
+  bot.emit('entityDead', { name: 'wither_skeleton', position: new Vec3(3, 64, 0) });
+  bot.emit('entityDead', { name: 'wither_skeleton', position: new Vec3(40, 64, 0) }); // not ours
+  bot.emit('entityDead', { name: 'blaze', position: new Vec3(1, 64, 0) });
+  assert.equal(goal.isDone(rodsOnly), false);
+  bot.emit('entityDead', { name: 'wither_skeleton', position: new Vec3(0, 65, 2) });
+  assert.equal(goal.memory.witherKills, 2);
+  assert.equal(goal.isDone(rodsOnly), true);
+});
