@@ -146,7 +146,6 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (centre && memory.circle?.key !== posKey(centre)) memory.circle = { key: posKey(centre) };
     const m = centre ? memory.circle : memory.explore;
     const home = memory.netherPortal || bot.entity.position;
-    const here = bot.entity.position;
     m.index = m.index || 0;
     m.misses = m.misses || 0;
     // Done with the bastion: start with the lookouts away from its brutes.
@@ -159,12 +158,18 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     ctx.record('explore', { lookout: m.index, x: target.x, z: target.z, ...(centre ? { around: posKey(centre) } : {}),
       want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
     const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8), { timeoutMs: 60000, arrived: () => true });
-    const result = await (centre || boxedIn() ? withScaffolding(walk) : walk());
-    const moved = bot.entity.position.distanceTo(here);
+    // A walk that went nowhere last time (an island in the lava sea, a ledge
+    // under a fortress): bridge and tower this time.
+    const bridge = centre || m.stuck > 0 || boxedIn();
+    if (bridge) await stockScaffolding(ctx, 16);
+    const start = bot.entity.position.clone();
+    const result = await (bridge ? withScaffolding(walk) : walk());
+    const moved = bot.entity.position.distanceTo(start);
     const left = Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
     scan(ctx, true);
     // Reached it, or stuck short of it twice: on to the next lookout.
     m.misses = moved < 10 ? m.misses + 1 : 0;
+    m.stuck = moved < 10 ? (m.stuck || 0) + 1 : 0;
     if (left <= 16 || m.misses >= 2) {
       m.index += 1;
       m.misses = 0;
