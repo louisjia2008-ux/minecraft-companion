@@ -251,16 +251,32 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   const TOWER = /^(netherrack|nether_bricks|blackstone|basalt|polished_basalt|smooth_basalt|soul_soil|cobblestone)$/;
   const towerBlocks = () => bot.inventory.items().filter((i) => TOWER.test(i.name)).reduce((n, i) => n + i.count, 0);
 
-  /** Walks to open ground beside a deck edge, pillars straight up and steps onto the deck. */
-  async function climbTo(ctx, floor) {
+  /**
+   * Walks to open ground beside a deck edge, pillars straight up and steps
+   * onto the deck. Any edge of the fortress will do: under the nearest deck
+   * there is often only the lava sea. Walking uphill is what the pathfinder
+   * gets wrong, so a spot costs its distance plus three per block it stands
+   * above the bot, plus the climb.
+   */
+  async function climbTo(ctx) {
     const here = bot.entity.position;
     const feet = here.floored();
-    const spots = structures.towerSpots(bot, floor.slice(0, 96), here)
-      .filter((s) => !blacklist.has(`tower:${posKey(s.stand)}`) && Math.hypot(s.stand.x - here.x, s.stand.z - here.z) <= 32);
+    const floor = structures.fortressFloor(bot, memory.fortress, 96, 4096);
+    const flat = (s) => Math.hypot(s.stand.x - here.x, s.stand.z - here.z);
+    const cost = (s) => flat(s) + 3 * Math.max(0, s.stand.y - here.y) + (s.top - s.stand.y);
+    const spots = structures.towerSpots(bot, floor, here)
+      .filter((s) => !blacklist.has(`tower:${posKey(s.stand)}`) && flat(s) <= 64 && s.top - s.stand.y <= 48)
+      .sort((a, b) => cost(a) - cost(b));
     // Knocked off half way, or interrupted by a fight on the way up: the same column again.
     const inColumn = (s) => feet.x === s.stand.x && feet.z === s.stand.z && feet.y >= s.stand.y && feet.y <= s.top;
     const spot = spots.find(inColumn) || spots[0];
-    if (!spot) return fail('no_tower_spot');
+    if (!spot) {
+      if (Date.now() - (memory.noTowerAt || 0) > 60000) {
+        memory.noTowerAt = Date.now();
+        ctx.record('no_tower_spot', { floor: floor.length });
+      }
+      return fail('no_tower_spot');
+    }
     const key = `tower:${posKey(spot.stand)}`;
     const climb = spot.top - Math.max(spot.stand.y, inColumn(spot) ? feet.y : spot.stand.y);
     ctx.record('tower', { stand: posKey(spot.stand), deck: posKey(spot.deck), climb });
@@ -344,7 +360,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       if (!floor.length) floor = structures.fortressFloor(bot, here, 96, 32);
       floor.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
       if (floor.length && floor[0].y + 1 - here.y > CLIMB) {
-        const climbed = await climbTo(ctx, floor);
+        const climbed = await climbTo(ctx);
         if (climbed.ok) return climbed;
       }
       if (floor.length) return approach(ctx, 'fortress', floor);
