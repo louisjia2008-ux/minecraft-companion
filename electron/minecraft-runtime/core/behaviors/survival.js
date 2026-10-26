@@ -440,15 +440,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Still in lava is not a failure to back off from: the next try comes at
   // once, before the bot sinks out of reach of the walls.
   const shoreMisses = new Map(); // "(x, y, z)" -> { count, until }
-  // Tries that ended still in lava where they began: a shallow pocket under
-  // a ledge can hold the bot for an hour with every shore just out of reach.
-  // Drifting a block or two between tries is still being held there.
-  let lavaStuck = { at: null, count: 0 };
-  const heldNear = (p) => Boolean(lavaStuck.at && lavaStuck.at.distanceTo(p) <= 3);
+  // Tries in a row that ended still in lava: a shallow pocket under a ledge
+  // held the bot for an hour with every shore just out of reach, drifting
+  // from one spot to the next. Getting out, or two quiet minutes, ends it.
+  let lavaStuck = { count: 0, last: 0 };
   const lavaResult = (ctx, done) => {
-    if (!done) {
-      const at = bot.entity.position.floored();
-      lavaStuck = heldNear(at) ? { at: lavaStuck.at, count: lavaStuck.count + 1 } : { at, count: 1 };
+    if (done) lavaStuck = { count: 0, last: 0 };
+    else {
+      lavaStuck = { count: Date.now() - lavaStuck.last < 120000 ? lavaStuck.count + 1 : 1, last: Date.now() };
       ctx.record('still_in_lava', { tries: lavaStuck.count });
     }
     return { ok: true, waited: !done };
@@ -510,7 +509,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // try: build a pillar up through the lava.
       const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
       const feet = bot.entity.position.floored();
-      const held = heldNear(feet) && lavaStuck.count >= 3;
+      const held = lavaStuck.count >= 3 && Date.now() - lavaStuck.last < 120000;
       if (block && bot.entity.onGround && (held || (!shore && lavaSurface(bot, feet) - feet.y >= 2))) {
         ctx.record('leave_lava', { tower: `${feet.x},${feet.y},${feet.z}`, surface: lavaSurface(bot, feet), block: block.name });
         await towerUp(ctx, block, out);
