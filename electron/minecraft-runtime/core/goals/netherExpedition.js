@@ -218,6 +218,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
   }
 
+  // Netherrack, or whatever rubble a basalt delta or a soul sand valley has;
+  // never the fortress's own bricks, which may be the deck underfoot.
+  const DIGGABLE_RUBBLE = (n) => ['netherrack', 'blackstone', 'basalt', 'soul_soil', 'soul_sand'].includes(n);
   // A climb to a fortress deck or a spawner can take twenty blocks of tower.
   const SCAFFOLD_LOW = 8;
   const SCAFFOLD_STOCK = 24;
@@ -232,7 +235,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const stock = Math.max(need, SCAFFOLD_STOCK);
     ctx.record('stock_scaffolding', { have: nether.scaffoldCount(bot), want: stock });
     for (let misses = 0, i = 0; i < stock && misses < 3 && nether.scaffoldCount(bot) < stock; i += 1) {
-      const got = await skills.gatherOne(bot, ctx, { blocks: (n) => n === 'netherrack', dropMatch: (n) => n === 'netherrack',
+      const got = await skills.gatherOne(bot, ctx, { blocks: DIGGABLE_RUBBLE, dropMatch: (n) => nether.SCAFFOLD.includes(n),
         blacklist, radius: 16 });
       if (!got.ok) misses += 1;
     }
@@ -253,8 +256,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   // A deck this far above the bot is towered up to instead of left to the
   // pathfinder, which spent whole runs planning 30-block climbs and giving up.
   const CLIMB = 6;
-  const TOWER = /^(netherrack|nether_bricks|blackstone|basalt|polished_basalt|smooth_basalt|soul_soil|cobblestone)$/;
-  const towerBlocks = () => bot.inventory.items().filter((i) => TOWER.test(i.name)).reduce((n, i) => n + i.count, 0);
+  // Cobblestone last: it is what lava steps fall back on.
+  const RUBBLE = /^(netherrack|nether_bricks|blackstone|basalt|polished_basalt|smooth_basalt|soul_soil|soul_sand)$/;
+  const TOWER = /^(netherrack|nether_bricks|blackstone|basalt|polished_basalt|smooth_basalt|soul_soil|soul_sand|cobblestone)$/;
+  const towerBlocks = (pattern = TOWER) => bot.inventory.items().filter((i) => pattern.test(i.name)).reduce((n, i) => n + i.count, 0);
 
   /**
    * Walks to open ground beside a deck edge, pillars straight up and steps
@@ -300,7 +305,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       }
     }
     actions.haltBody(bot);
-    await end.pillarUp(bot, ctx, spot.top, { maxSteps: climb + 6, blocks: TOWER,
+    await end.pillarUp(bot, ctx, spot.top, { maxSteps: climb + 6, blocks: towerBlocks(RUBBLE) >= climb ? RUBBLE : TOWER,
       stop: () => Boolean(bot.entity?.isInLava) || bot.health < 8 });
     if (bot.entity.position.y < spot.top - 0.5) {
       blacklist.add(key, 'pillar_short');

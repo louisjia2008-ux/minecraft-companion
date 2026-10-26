@@ -239,7 +239,9 @@ const NEVER_BREAK = ['nether_gold_ore', 'gilded_blackstone', 'gold_block', 'ches
  * ran out and could not climb up to it for an hour). Cobblestone is kept for steps out of a lava sea; letting the
  * pathfinder build with it spent a whole stack on bridges in a minute.
  */
-const SCAFFOLD = ['netherrack', 'nether_bricks', 'blackstone', 'basalt', 'polished_basalt', 'smooth_basalt', 'soul_soil'];
+// Soul sand too: a bastion trade brings stacks of it, and one run ended on a
+// basalt pillar in the lava sea with 49 soul sand and nothing else to build with.
+const SCAFFOLD = ['netherrack', 'nether_bricks', 'blackstone', 'basalt', 'polished_basalt', 'smooth_basalt', 'soul_soil', 'soul_sand'];
 
 function netherScaffolding(bot) {
   return SCAFFOLD.map((n) => bot.registry.itemsByName?.[n]?.id).filter(Number.isInteger);
@@ -329,6 +331,7 @@ function lavaNear(bot, range = 2) {
 }
 
 module.exports = {
+  SCAFFOLD,
   netherScaffolding, scaffoldCount, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
   applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,

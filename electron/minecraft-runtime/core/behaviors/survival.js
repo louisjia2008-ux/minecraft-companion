@@ -149,7 +149,10 @@ const RANGED = new Set(['skeleton', 'stray', 'bogged']);
 const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 // Piglin brutes ignore gold armour and hit for half a heart bar with their axe: keep clear of them too.
 const BRUTE_RANGE = 12;
-const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled_deepslate', 'dirt', 'basalt', 'soul_soil']);
+// Anything solid it carries makes a lava step: a fortress run ends with
+// stacks of nether bricks and no cobblestone left after a tower.
+const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled_deepslate', 'dirt', 'basalt', 'soul_soil',
+  'nether_bricks', 'polished_basalt', 'smooth_basalt', 'soul_sand', 'stone', 'end_stone']);
 const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
 const SHOOTERS = new Set(['blaze', 'ghast']);
 const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull']);
