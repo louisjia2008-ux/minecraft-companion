@@ -268,14 +268,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
    * gets wrong, so a spot costs its distance plus three per block it stands
    * above the bot, plus the climb.
    */
-  async function climbTo(ctx) {
+  async function climbTo(ctx, { minClimb = 0 } = {}) {
     const here = bot.entity.position;
     const feet = here.floored();
     const floor = structures.fortressFloor(bot, memory.fortress, 96, 4096);
     const flat = (s) => Math.hypot(s.stand.x - here.x, s.stand.z - here.z);
     const cost = (s) => flat(s) + 3 * Math.max(0, s.stand.y - here.y) + (s.top - s.stand.y);
     const spots = structures.towerSpots(bot, floor, here)
-      .filter((s) => !blacklist.has(`tower:${posKey(s.stand)}`) && flat(s) <= 64 && s.top - s.stand.y <= 48)
+      .filter((s) => !blacklist.has(`tower:${posKey(s.stand)}`) && flat(s) <= 64 && s.top - s.stand.y <= 48
+        && s.top - here.y >= minClimb)
       .sort((a, b) => cost(a) - cost(b));
     // Knocked off half way, or interrupted by a fight on the way up: the same column again.
     const inColumn = (s) => feet.x === s.stand.x && feet.z === s.stand.z && feet.y >= s.stand.y && feet.y <= s.top;
@@ -417,22 +418,17 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const avoid = kind === 'fortress' && memory.spawner && state && rods(state) >= blazeRods
       ? (p) => p.distanceTo(memory.spawner) >= SPAWNER_CLEAR : () => true;
     // A pillar foot by the lava sea counts as fortress floor too: from there
-    // the decks, where nearly all the floor is, are far overhead and walks to
-    // them only fail. Tower up first.
-    const near = structures.fortressFloor(bot, here, 48, 512);
-    const wide = structures.fortressFloor(bot, centre, 96, 512);
-    const levels = wide.map((p) => p.y).sort((a, b) => a - b);
-    const deckY = levels.length ? levels[Math.floor(levels.length / 2)] : -Infinity;
-    const below = kind === 'fortress' && deckY + 1 - here.y > CLIMB;
-    if (below) {
-      const climbed = await climbTo(ctx);
+    // the decks are far overhead and walks to them fail one after another.
+    // After two such misses, tower up to a deck instead.
+    if (kind === 'fortress' && (memory.highMisses || 0) >= 2) {
+      memory.highMisses = 0;
+      const climbed = await climbTo(ctx, { minClimb: CLIMB });
       if (climbed.ok) return climbed;
     }
-    const reachable = (p) => !below || p.y + 1 - here.y <= CLIMB;
-    let floor = near.filter((p) => band(12, 40)(p) && avoid(p) && reachable(p));
-    if (!floor.length) floor = wide.filter((p) => band(12, 96)(p) && avoid(p) && reachable(p));
-    if (!floor.length) floor = near.filter(band(12, 40));
-    if (!floor.length) floor = wide.filter(band(12, 96));
+    let floor = structures.fortressFloor(bot, here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
+    if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter((p) => band(12, 96)(p) && avoid(p));
+    if (!floor.length) floor = structures.fortressFloor(bot, here, 48, 512).filter(band(12, 40));
+    if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter(band(12, 96));
     // Nothing else to walk to here: go and stand by the spawner (or the first brick
     // seen); already there, look around from a lookout instead.
     const fallback = kind === 'fortress' && memory.spawner ? memory.spawner : centre;
@@ -440,6 +436,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const pick = floor[Math.floor(Math.random() * floor.length)];
     ctx.record('patrol', { kind, target: posKey(pick) });
     const result = await actions.goNear(bot, ctx, pick.offset(0, 1, 0), 2, { timeoutMs: 45000 });
+    const high = pick.y + 1 - here.y > CLIMB;
+    memory.highMisses = !result.ok && high ? (memory.highMisses || 0) + 1 : 0;
     return result.ok ? { ok: true, waited: true } : result;
   }
 

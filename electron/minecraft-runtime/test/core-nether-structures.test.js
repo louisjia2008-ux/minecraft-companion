@@ -289,6 +289,11 @@ test('a blaze volley is taken on a raised shield', async () => {
   ball.velocity = new Vec3(1, 0, 0);
   bot.entities = { 9: ball };
   assert.equal(block.want({}), 0, 'flying away');
+  ball.velocity = new Vec3(-1, 0, 0);
+  assert.equal(block.want({}), 1);
+  bot.registry.effects = { 12: { id: 12, name: 'FireResistance' } };
+  bot.entity.effects = { 12: { id: 12 } };
+  assert.equal(block.want({}), 0, 'fire resistance takes the fireball');
 });
 
 test('respawned at home without a weapon, the expedition stops instead of going back to die', async () => {
@@ -318,4 +323,31 @@ test('a magma cube beside the swimming bot is hit on the way to the shore', asyn
   await leaveLava.run({ record() {}, signal: undefined });
   assert.deepEqual(hits, [3]);
   assert.equal(equipped[0], 'diamond_sword');
+});
+
+test('held in the same spot of a shallow lava pocket try after try, the bot builds up out of it', async () => {
+  const cells = {};
+  for (let x = -1; x <= 0; x += 1) for (let y = 29; y <= 30; y += 1) cells[`${x},${y},0`] = 'lava';
+  cells['0,28,0'] = 'netherrack';
+  cells['1,30,0'] = 'netherrack';
+  const bot = world(cells);
+  let y = 29;
+  bot.entity.position = new Vec3(0.5, y, 0.5);
+  Object.defineProperty(bot.entity, 'isInLava', { get: () => bot.entity.position.y <= 30 });
+  bot.entity.onGround = true;
+  bot.entity.yaw = 0;
+  let towering = false;
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'cobblestone', count: 16 }] },
+    setControlState: (control, on) => { if (towering && control === 'jump' && on) bot.entity.position = new Vec3(0.5, y + 2, 0.5); },
+    look: async () => { towering = true; }, lookAt: async () => {}, equip: async () => {},
+    placeBlock: async (floor) => { const top = floor.position.offset(0, 1, 0); cells[`${top.x},${top.y},${top.z}`] = 'cobblestone'; bot.blockAt = world(cells).blockAt; y = top.y + 1; bot.entity.position = new Vec3(0.5, y, 0.5); } });
+  bot.registry.foodsByName = {};
+  bot.registry.blocksByName.cobblestone = { id: 99, name: 'cobblestone' };
+  const leaveLava = createSurvivalBehaviors({ bot }).find((b) => b.name === 'leave_lava');
+  const records = [];
+  const ctx = { record: (type, data) => records.push([type, data]) };
+  for (let i = 0; i < 4 && bot.entity.isInLava; i += 1) await leaveLava.run(ctx);
+  assert.ok(records.some(([, d]) => d.tower), 'built a pillar');
+  assert.equal(bot.entity.isInLava, false);
 });

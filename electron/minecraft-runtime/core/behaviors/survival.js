@@ -435,8 +435,15 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Still in lava is not a failure to back off from: the next try comes at
   // once, before the bot sinks out of reach of the walls.
   const shoreMisses = new Map(); // "(x, y, z)" -> { count, until }
+  // Tries that ended still in lava where they began: a shallow pocket under
+  // a ledge can hold the bot for an hour with every shore just out of reach.
+  let lavaStuck = { at: '', count: 0 };
   const lavaResult = (ctx, done) => {
-    if (!done) ctx.record('still_in_lava', {});
+    if (!done) {
+      const at = bot.entity.position.floored().toString();
+      lavaStuck = { at, count: lavaStuck.at === at ? lavaStuck.count + 1 : 1 };
+      ctx.record('still_in_lava', { tries: lavaStuck.count });
+    }
     return { ok: true, waited: !done };
   };
   // A pocket of lava under a low roof has no shore with room to stand: dig
@@ -479,6 +486,16 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         const miss = shoreMisses.get(p.toString());
         return !miss || miss.until <= Date.now() || miss.count < 4;
       });
+      // Sunk to the floor of a deep pool, or held in the same spot try after
+      // try: build a pillar up through the lava.
+      const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
+      const feet = bot.entity.position.floored();
+      const held = lavaStuck.at === feet.toString() && lavaStuck.count >= 3;
+      if (block && bot.entity.onGround && (held || (!shore && lavaSurface(bot, feet) - feet.y >= 2))) {
+        ctx.record('leave_lava', { tower: `${feet.x},${feet.y},${feet.z}`, surface: lavaSurface(bot, feet), block: block.name });
+        await towerUp(ctx, block, out);
+        if (out()) return { ok: true };
+      }
       if (shore) {
         ctx.record('leave_lava', { shore: `${shore.x},${shore.y},${shore.z}` });
         await swimTo(ctx, shore.offset(0.5, 1.2, 0.5), out);
@@ -492,19 +509,13 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         }
         return lavaResult(ctx, out());
       }
-      const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
-      // Sunk to the floor of a deep pool: build a pillar up through the lava.
-      const feet = bot.entity.position.floored();
-      if (block && bot.entity.onGround && lavaSurface(bot, feet) - feet.y >= 2) {
-        ctx.record('leave_lava', { tower: `${feet.x},${feet.y},${feet.z}`, surface: lavaSurface(bot, feet), block: block.name });
-        await towerUp(ctx, block, out);
-        if (out()) return { ok: true };
-      }
       const step = lavaStep(bot);
       ctx.record('leave_lava', { shore: null, step: step ? `${step.cell.x},${step.cell.y},${step.cell.z}` : null, block: block?.name || null });
       if (!step && await digShore(ctx)) return lavaResult(ctx, out());
       if (!step || !block) {
         await swimTo(ctx, bot.entity.position.offset(0, 3, 0), out, 20);
+        if (out()) return { ok: true };
+        lavaResult(ctx, false);
         return { ok: false, reason: step ? 'no_step_block' : 'no_shore' };
       }
       const centre = step.cell.offset(0.5, 0.5, 0.5);
@@ -736,7 +747,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const block = {
     name: 'block',
     band: BAND.ESCAPE,
-    want: () => (hasShield() && incomingBlazeShot(bot) ? 1 : 0),
+    // Fire resistance makes a blaze's fireball harmless (it is fire damage):
+    // then raising the shield only cuts a tower up to a deck short, again and again.
+    want: () => (hasShield() && !hasEffect(bot, 'FireResistance') && incomingBlazeShot(bot) ? 1 : 0),
     async run(ctx) {
       const shield = bot.inventory.items().find((i) => i.name === 'shield');
       if (bot.inventory.slots?.[45]?.name !== 'shield' && shield) {
