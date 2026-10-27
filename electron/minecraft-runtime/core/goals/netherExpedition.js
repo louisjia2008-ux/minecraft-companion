@@ -469,7 +469,11 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // back (a full stomach regenerates), then hunt again.
     if (state.health < HUNT_HEALTH) {
       const near = state.hostiles.find((h) => h.distance <= 12 && h.name !== 'zombified_piglin');
-      if (near) {
+      // On a fortress deck a run away is a run along the drop: one ended in
+      // the lava sea thirty blocks down. With golden apples in hand, stand
+      // and let the fight (and the apples) see it through.
+      const apples = bot.inventory.items().filter((i) => /golden_apple$/.test(i.name)).reduce((n, i) => n + i.count, 0);
+      if (near && !(apples >= 2 && inFortress())) {
         ctx.record('fall_back', { health: Math.round(state.health), from: near.name });
         const moved = await actions.fleeFrom(bot, ctx, near.position, { distance: 16, timeoutMs: 10000 });
         return moved.ok || bot.entity.position.distanceTo(here) >= 4 ? { ok: true, waited: true } : moved;
