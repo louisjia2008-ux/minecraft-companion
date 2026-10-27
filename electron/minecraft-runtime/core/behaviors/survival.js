@@ -636,6 +636,26 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       }
       ctx.record('leave_lava', { shore: null, step: step ? `${step.cell.x},${step.cell.y},${step.cell.z}` : null, block: block?.name || null });
       if (!step && await digShore(ctx)) return lavaResult(ctx, out());
+      // A step but nothing to build it with: swim over to its wall and dig
+      // standing room into the wall's top. One run sank to the lava floor
+      // with no blocks left and sat there ninety minutes, a wall eight
+      // blocks off.
+      if (step && !block && step.wall.y === step.cell.y) {
+        const centre = step.cell.offset(0.5, 0.5, 0.5);
+        await swimTo(ctx, centre, () => out() || Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z) <= 0.6, 400);
+        const above = [1, 2].map((up) => bot.blockAt(step.wall.offset(0, up, 0)));
+        const solid = above.filter((a) => a && a.boundingBox === 'block' && a.diggable !== false);
+        if (!out() && !above.some((a) => a?.name === 'lava')) {
+          ctx.record('leave_lava', { dig: `${step.wall.x},${step.wall.y},${step.wall.z}`, blocks: solid.length, noBlocks: true });
+          const pick = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
+          try {
+            if (pick && solid.length) await bot.equip(pick, 'hand');
+            for (const a of solid) await digNow(ctx, a);
+          } catch { /* the next try looks again */ }
+          await swimTo(ctx, step.wall.offset(0.5, 1.2, 0.5), out, 80);
+          return lavaResult(ctx, out());
+        }
+      }
       if (!step || !block) {
         await swimTo(ctx, bot.entity.position.offset(0, 3, 0), out, 20);
         if (out()) return { ok: true };

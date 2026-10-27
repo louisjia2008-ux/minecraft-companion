@@ -229,12 +229,23 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // Boxed in (a pillar in a lava pit) with no netherrack left: build with
     // cobblestone too, all but the last stack-quarter kept for lava steps.
     const cobble = bot.registry.itemsByName?.cobblestone?.id;
-    const spare = bot.inventory.items().filter((i) => i.name === 'cobblestone').reduce((n, i) => n + i.count, 0) > 16;
-    if ((anyCobble || boxedIn()) && spare && Number.isInteger(cobble)) m.scafoldingBlocks = [...m.scafoldingBlocks, cobble];
+    const cobbles = () => bot.inventory.items().filter((i) => i.name === 'cobblestone').reduce((n, i) => n + i.count, 0);
+    // Taken back out at the last sixteen: one bridge across the lava sea
+    // spent all sixty in two minutes, and the bot then fell in with nothing
+    // to step out on.
+    const keep = () => {
+      if (cobbles() <= 16) m.scafoldingBlocks = m.scafoldingBlocks.filter((id) => id !== cobble);
+    };
+    const watched = (anyCobble || boxedIn()) && cobbles() > 16 && Number.isInteger(cobble);
+    if (watched) {
+      m.scafoldingBlocks = [...m.scafoldingBlocks, cobble];
+      bot.inventory.on?.('updateSlot', keep);
+    }
     m.placeCost = 4;
     try {
       return await run();
     } finally {
+      if (watched) bot.inventory.removeListener?.('updateSlot', keep);
       m.allow1by1towers = saved.towers;
       m.scafoldingBlocks = saved.blocks;
       m.placeCost = saved.placeCost;
