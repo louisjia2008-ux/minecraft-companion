@@ -564,9 +564,11 @@ test('with everything in hand, the bot fills up on blocks once before the walk h
     goTo: async () => ({ ok: false, reason: 'no_progress' }) };
   const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 1, trades: 0, skills, actions });
   goal.memory.netherPortal = new Vec3(100, 64, 100);
-  const ctx = { record() {}, perceive: () => ({ inventory: { blaze_rod: 1, wither_skeleton_skull: 1, cobblestone: 27 } }) };
+  const wanted = [];
+  const ctx = { record: (t, d) => { if (t === 'stock_scaffolding') wanted.push(d.want); }, perceive: () => ({ inventory: { blaze_rod: 1, wither_skeleton_skull: 1, cobblestone: 27 } }) };
   await goal.run(ctx);
   assert.equal(gathers, 6, 'the low-stock top-up, then the fill-up for the walk home (three misses end each)');
+  assert.ok(wanted.at(-1) > 64 && wanted.at(-1) <= 192, 'enough for the whole way home, up to three stacks');
   assert.ok(builtWith[0].includes(1), 'cobblestone allowed for the walk home');
   await goal.run(ctx);
   assert.equal(gathers, 6, 'only once');

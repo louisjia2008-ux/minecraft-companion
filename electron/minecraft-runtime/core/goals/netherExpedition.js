@@ -238,13 +238,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   // A climb to a fortress deck or a spawner can take twenty blocks of tower.
   const SCAFFOLD_LOW = 8;
   const SCAFFOLD_STOCK = 24;
+  // Three stacks: the most a walk home is stocked for.
+  const HOME_STOCK = 192;
 
   /**
    * Too few blocks to tower `climb` blocks up: dig some netherrack nearby
    * first. A bridge deck can stand 35 blocks above the lava shore.
    */
-  async function stockScaffolding(ctx, climb = 0) {
-    const need = Math.min(64, Math.max(SCAFFOLD_LOW, Math.ceil(climb) + 8));
+  async function stockScaffolding(ctx, climb = 0, cap = 64) {
+    const need = Math.min(cap, Math.max(SCAFFOLD_LOW, Math.ceil(climb) + 8));
     if (nether.scaffoldCount(bot) >= need || bot.entity?.isInLava) return;
     const stock = Math.max(need, SCAFFOLD_STOCK);
     ctx.record('stock_scaffolding', { have: nether.scaffoldCount(bot), want: stock });
@@ -699,12 +701,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (allDone(state)) {
       // The walk home can cross a lava sea: a run with every rod, skull and
       // trade bridged its 100 netherrack away and spent the last 20 minutes on
-      // its own bridge 40 blocks short. Fill up once while the shore is near,
-      // and build with the cobblestone too.
+      // its own bridge 40 blocks short; another bridged a stack and a half
+      // across 110 blocks of sea under a portal 40 blocks up. Fill up once,
+      // while there is something to dig, with enough to bridge and climb the
+      // whole way, and build with the cobblestone too.
       const portal = memory.netherPortal;
-      if (!memory.homeStocked && portal && bot.entity.position.distanceTo(portal) > 24) {
+      const here = bot.entity.position;
+      if (!memory.homeStocked && portal && here.distanceTo(portal) > 24) {
         memory.homeStocked = true;
-        await stockScaffolding(ctx, 56);
+        await stockScaffolding(ctx, Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16, HOME_STOCK);
       }
       return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
     }
