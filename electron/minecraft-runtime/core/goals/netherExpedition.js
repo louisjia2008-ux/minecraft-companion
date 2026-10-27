@@ -230,7 +230,11 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
 
   // Netherrack, or whatever rubble a basalt delta or a soul sand valley has;
   // never the fortress's own bricks, which may be the deck underfoot.
-  const DIGGABLE_RUBBLE = (n) => ['netherrack', 'blackstone', 'basalt', 'soul_soil', 'soul_sand'].includes(n);
+  // Fortress bricks too: inside a fortress there was no netherrack in reach,
+  // stocking came back empty and a bot that fell in the lava had nothing to
+  // step out with. Only walls at or above its feet, never the deck it is on.
+  const DIGGABLE_RUBBLE = (n) => ['netherrack', 'blackstone', 'basalt', 'soul_soil', 'soul_sand', 'nether_bricks'].includes(n);
+  const floorBrick = (p) => bot.blockAt(p)?.name === 'nether_bricks' && p.y < Math.floor(bot.entity.position.y);
   // A climb to a fortress deck or a spawner can take twenty blocks of tower.
   const SCAFFOLD_LOW = 8;
   const SCAFFOLD_STOCK = 24;
@@ -246,7 +250,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     ctx.record('stock_scaffolding', { have: nether.scaffoldCount(bot), want: stock });
     for (let misses = 0, i = 0; i < stock && misses < 3 && nether.scaffoldCount(bot) < stock; i += 1) {
       const got = await skills.gatherOne(bot, ctx, { blocks: DIGGABLE_RUBBLE, dropMatch: (n) => nether.SCAFFOLD.includes(n),
-        blacklist, radius: 16 });
+        blacklist, radius: 16, exclude: floorBrick });
       if (!got.ok) misses += 1;
     }
   }
@@ -303,7 +307,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     ctx.record('tower', { stand: posKey(spot.stand), deck: posKey(spot.deck), climb });
     if (!inColumn(spot)) {
       await stockScaffolding(ctx, climb);
-      if (towerBlocks() < climb) {
+      // A few left over at the top: what it steps out of lava with.
+      if (towerBlocks() < climb + 4) {
         blacklist.add(key, 'few_blocks');
         return fail('tower_blocks');
       }
@@ -343,6 +348,11 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
 
   async function fortressStep(ctx, state) {
     const mobs = fortressTarget(state);
+    // Run out of blocks, a fall into the lava sea has no way out: keep some.
+    if (nether.scaffoldCount(bot) < SCAFFOLD_LOW && Date.now() - (memory.restockedAt || 0) > 60000) {
+      memory.restockedAt = Date.now();
+      await stockScaffolding(ctx, 16);
+    }
     const here = bot.entity.position;
     const blazeNear = Object.values(bot.entities).some((e) => e.name === 'blaze' && e.position?.distanceTo(here) <= 24);
     const drink = await fireProof(ctx, { danger: blazeNear });
