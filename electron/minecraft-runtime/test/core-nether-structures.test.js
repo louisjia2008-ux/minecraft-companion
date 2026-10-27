@@ -727,3 +727,23 @@ test('on a pillar top two under the surface beside a cliff, the bot digs a ledge
   assert.ok(records.some(([t, d]) => t === 'leave_lava' && d.dig === '-1,30,0'), JSON.stringify(records));
   assert.deepEqual(dug, ['(-1, 31, 0)', '(-1, 32, 0)']);
 });
+
+test('under the edge of a slab over the lava, the bot swims out for the slab top from the open lava beside it', async () => {
+  const cells = {};
+  for (let x = -8; x <= 8; x += 1) for (let z = -8; z <= 8; z += 1) for (let y = 26; y <= 30; y += 1) cells[`${x},${y},${z}`] = 'lava';
+  for (let x = -8; x <= 8; x += 1) for (let z = -8; z <= 8; z += 1) cells[`${x},31,${z}`] = x <= 0 ? 'netherrack' : 'lava';
+  for (let x = -8; x <= 0; x += 1) for (let z = -8; z <= 8; z += 1) cells[`${x},32,${z}`] = 'netherrack';
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 29, 0.5);
+  bot.entity.isInLava = true;
+  bot.entity.onGround = false;
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [] },
+    setControlState: () => {}, look: async () => {}, lookAt: async () => {}, equip: async () => {}, dig: async () => {}, stopDigging: () => {} });
+  bot.registry.foodsByName = {};
+  const leaveLava = createSurvivalBehaviors({ bot, thresholds: { swimScale: 0.05 } }).find((b) => b.name === 'leave_lava');
+  const records = [];
+  await leaveLava.run({ record: (type, data) => records.push([type, data]) });
+  const shore = records.find(([t, d]) => t === 'leave_lava' && d.shore)?.[1].shore;
+  assert.match(shore || '', /^0,32,/, JSON.stringify(records));
+});

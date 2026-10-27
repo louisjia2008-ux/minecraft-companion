@@ -37,7 +37,17 @@ const SIDES = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec
 
 function lavaShore(bot, radius = 16, usable = () => true, lip = 0) {
   const feet = bot.entity.position.floored();
-  const surface = lavaSurface(bot, feet) + lip;
+  // Under the edge of an overhang its own column's surface is the overhang's
+  // underside: the open lava a stroke away is higher. One run sat under a
+  // bastion's slab an hour, the slab's top a ledge from the open lava beside.
+  let top = lavaSurface(bot, feet);
+  if (lip) {
+    for (const s of SIDES) {
+      const beside = feet.plus(s);
+      if (bot.blockAt(beside)?.name === 'lava') top = Math.max(top, lavaSurface(bot, beside));
+    }
+  }
+  const surface = top + lip;
   const open = (b) => b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 1) {
