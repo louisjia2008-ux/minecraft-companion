@@ -33,9 +33,9 @@ function lavaSurface(bot, feet) {
  * The nearest solid cell, out of the lava, that a swimmer can climb onto: its
  * top no higher than one block above the lava's surface.
  */
-function lavaShore(bot, radius = 16, usable = () => true) {
+function lavaShore(bot, radius = 16, usable = () => true, lip = 0) {
   const feet = bot.entity.position.floored();
-  const surface = lavaSurface(bot, feet);
+  const surface = lavaSurface(bot, feet) + lip;
   const open = (b) => b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 1) {
@@ -568,10 +568,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // Out means standing out of it: bobbing up at the surface for a tick is
       // not, and stopping the swim there lets the bot slide straight back.
       const out = () => !bot.entity.isInLava && bot.entity.onGround !== false;
-      const shore = lavaShore(bot, 16, (p) => {
+      const usable = (p) => {
         const miss = shoreMisses.get(p.toString());
         return !miss || miss.until <= Date.now() || miss.count < 4;
-      });
+      };
+      // Nothing level with the lava: a ledge one block up will do. One run
+      // sat an hour in a hole in a basalt crust over the lava sea, every
+      // block around it a step up, with nothing to build with.
+      const shore = lavaShore(bot, 16, usable) || lavaShore(bot, 8, usable, 1);
       // Sunk to the floor of a deep pool, or held in the same spot try after
       // try: build a pillar up through the lava.
       const block = bot.inventory.items().find((i) => STEP_BLOCKS.has(i.name));
