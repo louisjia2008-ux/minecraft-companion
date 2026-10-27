@@ -42,9 +42,11 @@ function lavaShore(bot, radius = 16, usable = () => true, lip = 0) {
   // bastion's slab an hour, the slab's top a ledge from the open lava beside.
   let top = lavaSurface(bot, feet);
   if (lip) {
-    for (const s of SIDES) {
-      const beside = feet.plus(s);
-      if (bot.blockAt(beside)?.name === 'lava') top = Math.max(top, lavaSurface(bot, beside));
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dz = -2; dz <= 2; dz += 1) {
+        const beside = feet.offset(dx, 0, dz);
+        if (bot.blockAt(beside)?.name === 'lava') top = Math.max(top, lavaSurface(bot, beside));
+      }
     }
   }
   const surface = top + lip;
