@@ -257,6 +257,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
   }
 
+  async function stockForTravel(ctx) {
+    if (nether.scaffoldCount(bot) >= 64 || Date.now() - (memory.travelStockedAt || 0) < 60000) return;
+    memory.travelStockedAt = Date.now();
+    await stockScaffolding(ctx, 56);
+  }
+
   async function approach(ctx, kind, cells) {
     const here = bot.entity.position;
     const target = cells.find((p) => !blacklist.has(`${kind}:${posKey(p)}`));
@@ -737,6 +743,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // Stay with the fortress once inside: walking off to the bastion mid-fight wastes the trip.
     const pick = options.find(([kind]) => kind === 'fortress' && inFortress()) || options[0];
     if (pick?.[0] === 'fortress') return fortressStep(ctx, state);
+    // Off across the lava sea (to the bastion, or to look for one): a stack
+    // first. A bot that left the fortress with one block of basalt ended on
+    // a pillar in the sea, every walk out of it blocked.
+    if (here.distanceTo(pick?.[1] || here) > 24 || !pick) await stockForTravel(ctx);
     if (pick?.[0] === 'bastion') return bastionStep(ctx);
     // Nothing found yet that has work left: look further. A resting bastion is
     // only skipped while there is something else to look for.

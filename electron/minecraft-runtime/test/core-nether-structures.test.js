@@ -573,3 +573,20 @@ test('with everything in hand, the bot fills up on blocks once before the walk h
   await goal.run(ctx);
   assert.equal(gathers, 6, 'not again within a minute');
 });
+
+test('leaving for a bastion across the lava sea, the bot stocks a stack of blocks first', async () => {
+  const items = [{ name: 'blaze_rod', count: 1 }, { name: 'gold_ingot', count: 8 }];
+  const bot = { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items }, entities: {},
+    registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} } };
+  bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+  const wanted = [];
+  const skills = { gatherOne: async () => ({ ok: false }) };
+  const fails = async () => ({ ok: false, reason: 'no_progress' });
+  const actions = { goNear: fails, goTo: fails };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 1, skills, actions });
+  goal.memory.bastion = new Vec3(200, 64, 0);
+  const ctx = { record: (t, d) => { if (t === 'stock_scaffolding') wanted.push(d.want); },
+    perceive: () => ({ inventory: { blaze_rod: 1, gold_ingot: 8 } }) };
+  await goal.run(ctx);
+  assert.ok(wanted.includes(64), `stocked for the trip: ${wanted}`);
+});
