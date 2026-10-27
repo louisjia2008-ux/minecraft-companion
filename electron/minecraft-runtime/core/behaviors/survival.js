@@ -33,6 +33,8 @@ function lavaSurface(bot, feet) {
  * The nearest solid cell, out of the lava, that a swimmer can climb onto: its
  * top no higher than one block above the lava's surface.
  */
+const SIDES = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
+
 function lavaShore(bot, radius = 16, usable = () => true, lip = 0) {
   const feet = bot.entity.position.floored();
   const surface = lavaSurface(bot, feet) + lip;
@@ -47,6 +49,12 @@ function lavaShore(bot, radius = 16, usable = () => true, lip = 0) {
         const floor = bot.blockAt(p);
         if (!floor || floor.boundingBox !== 'block' || /magma/.test(floor.name)) continue;
         if (!open(bot.blockAt(p.offset(0, 1, 0))) || !open(bot.blockAt(p.offset(0, 2, 0)))) continue;
+        // A ledge a block up is climbed from open lava beside it, not from
+        // under the ledge's own overhang.
+        if (lip && y > surface - lip && !SIDES.some((s) => {
+          const beside = p.plus(s);
+          return bot.blockAt(beside.offset(0, -1, 0))?.name === 'lava' && open(bot.blockAt(beside)) && open(bot.blockAt(beside.offset(0, 1, 0)));
+        })) continue;
         if (!usable(p)) continue;
         best = { p, d };
       }
@@ -524,7 +532,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   async function digShore(ctx) {
     const feet = bot.entity.position.floored();
     const surface = lavaSurface(bot, feet);
-    if (surface - feet.y > 1) return false;
+    // Two under is still a swim up: one pillar ended two blocks under the
+    // surface beside a cliff, could build no higher, and the bot sat on it
+    // for a quarter of an hour until magma cubes killed it.
+    if (surface - feet.y > 2) return false;
     const sides = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
     for (const side of sides) {
       const wall = new Vec3(feet.x, surface, feet.z).plus(side);
@@ -541,7 +552,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         if (pick) await bot.equip(pick, 'hand');
         for (const a of solid) await digNow(ctx, a);
       } catch { return false; }
-      await swimTo(ctx, wall.offset(0.5, 1.2, 0.5), () => !bot.entity.isInLava && bot.entity.onGround !== false, 50);
+      await swimTo(ctx, wall.offset(0.5, 1.2, 0.5), () => !bot.entity.isInLava && bot.entity.onGround !== false, 80);
       return true;
     }
     return false;
