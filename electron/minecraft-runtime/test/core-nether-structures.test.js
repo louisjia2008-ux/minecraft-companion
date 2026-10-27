@@ -636,3 +636,23 @@ test('retracing never turns back up the trail, even when every earlier crumb is 
   assert.deepEqual(walks, ['(36, 64, 0)', '(6, 64, 0)', '(0, 64, 0)']);
   goal.dispose();
 });
+
+test('stocking blocks never digs one touching lava or one at its feet over a drop', async () => {
+  const items = [{ name: 'blaze_rod', count: 1 }, { name: 'gold_ingot', count: 8 }];
+  const cells = { '3,64,0': 'netherrack', '3,63,0': 'lava', '0,65,3': 'netherrack', '0,66,3': 'netherrack', '0,64,3': 'netherrack', '5,66,0': 'netherrack' };
+  const bot = { ...world(cells), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items }, entities: {},
+    registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} } };
+  bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+  let exclude = null;
+  const skills = { gatherOne: async (b, c, opts) => { exclude = exclude || opts.exclude; return { ok: false }; } };
+  const fails = async () => ({ ok: false, reason: 'no_progress' });
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 1, skills, actions: { goNear: fails, goTo: fails } });
+  goal.memory.bastion = new Vec3(200, 64, 0);
+  await goal.run({ record() {}, perceive: () => ({ inventory: { blaze_rod: 1, gold_ingot: 8 } }) });
+  assert.ok(exclude, 'stocked');
+  assert.equal(exclude(new Vec3(3, 64, 0)), true, 'over lava');
+  assert.equal(exclude(new Vec3(5, 66, 0)), false, 'a wall at head height');
+  assert.equal(exclude(new Vec3(0, 65, 3)), false, 'feet level on solid ground');
+  bot.blockAt = ((at) => (p) => (p.y === 64 && p.z === 3 ? { name: 'air', position: p, boundingBox: 'empty' } : at(p)))(bot.blockAt);
+  assert.equal(exclude(new Vec3(0, 65, 3)), true, 'feet level over a drop');
+});

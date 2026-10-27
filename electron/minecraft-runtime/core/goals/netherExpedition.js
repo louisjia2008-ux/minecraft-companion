@@ -247,7 +247,17 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   // stocking came back empty and a bot that fell in the lava had nothing to
   // step out with. Only walls at or above its feet, never the deck it is on.
   const DIGGABLE_RUBBLE = (n) => ['netherrack', 'blackstone', 'basalt', 'soul_soil', 'soul_sand', 'nether_bricks'].includes(n);
-  const floorBrick = (p) => bot.blockAt(p)?.name === 'nether_bricks' && p.y < Math.floor(bot.entity.position.y);
+  // Nor anything touching lava, nor a block at its feet over a drop: a run
+  // below a fortress dug the pillar bricks beside the lava sea one by one,
+  // walked into the gap and fell in twice, and a quarter of its hour went on
+  // climbing back up.
+  const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  const unsafeDig = (p) => {
+    if (bot.blockAt(p)?.name === 'nether_bricks' && p.y < Math.floor(bot.entity.position.y)) return true;
+    if (SIDES.some(([x, y, z]) => /^lava$/.test(bot.blockAt(p.offset(x, y, z))?.name || ''))) return true;
+    const below = bot.blockAt(p.offset(0, -1, 0));
+    return p.y <= Math.floor(bot.entity.position.y) && (!below || below.boundingBox === 'empty');
+  };
   // A climb to a fortress deck or a spawner can take twenty blocks of tower.
   const SCAFFOLD_LOW = 8;
   const SCAFFOLD_STOCK = 24;
@@ -265,7 +275,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     ctx.record('stock_scaffolding', { have: nether.scaffoldCount(bot), want: stock });
     for (let misses = 0, i = 0; i < stock && misses < 3 && nether.scaffoldCount(bot) < stock; i += 1) {
       const got = await skills.gatherOne(bot, ctx, { blocks: DIGGABLE_RUBBLE, dropMatch: (n) => nether.SCAFFOLD.includes(n),
-        blacklist, radius: 16, exclude: floorBrick });
+        blacklist, radius: 16, exclude: unsafeDig });
       if (!got.ok) misses += 1;
     }
   }
