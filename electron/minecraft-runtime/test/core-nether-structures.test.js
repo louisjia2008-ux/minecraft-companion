@@ -485,3 +485,23 @@ test('a pillar up through lava digs out a cave roof over its head', async () => 
   assert.deepEqual(dug, ['(0, 28, 0)']);
   assert.equal(bot.entity.isInLava, false);
 });
+
+test('stuck in a cave pocket on the walk home, the bot digs a staircase up out of it', async () => {
+  const bot = { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => [] } };
+  bot.entity.position = new Vec3(0.5, 61, 0.5);
+  const calls = [];
+  const actions = {
+    goNear: async () => { calls.push('goNear'); return { ok: false, reason: 'no_progress' }; },
+    goTo: async () => { calls.push('goTo'); return { ok: false, reason: 'no_progress' }; },
+    digStairsUp: async (b, ctx, y) => { calls.push(`stairs:${y}`); bot.entity.position = new Vec3(4.5, 65, 0.5); return 4; },
+  };
+  const trip = createPortalTrip({ bot, memory: { netherPortal: new Vec3(-96, 78, -83) }, actions });
+  const records = [];
+  const ctx = { record: (t) => records.push(t) };
+  await trip.toOverworld(ctx);
+  assert.deepEqual(calls, ['goNear'], 'one stalled walk is only retried');
+  await trip.toOverworld(ctx);
+  assert.deepEqual(calls, ['goNear', 'goNear', 'goTo', 'stairs:78']);
+  assert.deepEqual(records, ['home_stuck']);
+  assert.equal(trip.memory.homeStalls, 0);
+});

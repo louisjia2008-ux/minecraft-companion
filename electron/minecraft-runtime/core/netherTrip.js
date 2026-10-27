@@ -130,7 +130,23 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
     const portal = netherPortal();
     if (!portal) return fail('nether_portal_lost');
     if (bot.entity.position.distanceTo(portal) > 24) {
-      return actions.goNear(bot, ctx, portal, 3, { timeoutMs: 120000 });
+      const start = bot.entity.position.clone();
+      const result = await actions.goNear(bot, ctx, portal, 3, { timeoutMs: 120000 });
+      memory.homeStalls = bot.entity.position.distanceTo(start) >= 4 ? 0 : (memory.homeStalls || 0) + 1;
+      if (memory.homeStalls < 2) return result;
+      // Every rod and skull in hand, an hour in a cave pocket beside the
+      // fortress: the pathfinder replanned without one step. Walk the first
+      // leg with the lava margins lifted, then dig a staircase up.
+      ctx.record('home_stuck', { stalls: memory.homeStalls, at: `${start.x | 0},${start.y | 0},${start.z | 0}` });
+      const here = bot.entity.position;
+      const flat = Math.hypot(portal.x - here.x, portal.z - here.z) || 1;
+      const leg = new goals.GoalNearXZ(here.x + (portal.x - here.x) * 12 / flat, here.z + (portal.z - here.z) * 12 / flat, 3);
+      await nether.withLavaMarginsLifted(bot, () => actions.goTo(bot, ctx, leg, { timeoutMs: 20000, arrived: () => true }));
+      if (bot.entity.position.distanceTo(start) < 4 && actions.digStairsUp) {
+        await actions.digStairsUp(bot, ctx, Math.max(portal.y, start.y + 6), { maxSteps: 12 });
+      }
+      if (bot.entity.position.distanceTo(start) >= 4) memory.homeStalls = 0;
+      return result;
     }
     // Close but stuck above or below it (a fortress floor over the portal):
     // first get over its column, then step in.
