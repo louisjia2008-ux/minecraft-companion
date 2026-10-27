@@ -370,7 +370,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const flat = (s) => Math.hypot(s.stand.x - here.x, s.stand.z - here.z);
     const cost = (s) => flat(s) + 3 * Math.max(0, s.stand.y - here.y) + (s.top - s.stand.y);
     const spots = structures.towerSpots(bot, floor, here)
-      .filter((s) => !blacklist.has(`tower:${posKey(s.stand)}`) && !((memory.towerFails[`tower:${posKey(s.stand)}`]?.until || 0) > Date.now()) && flat(s) <= 64 && s.top - s.stand.y <= 48
+      .filter((s) => !bySea(s.stand.offset(0, -1, 0)) && !blacklist.has(`tower:${posKey(s.stand)}`) && !((memory.towerFails[`tower:${posKey(s.stand)}`]?.until || 0) > Date.now()) && flat(s) <= 64 && s.top - s.stand.y <= 48
         && s.top - here.y >= minClimb)
       .sort((a, b) => cost(a) - cost(b));
     // Knocked off half way, or interrupted by a fight on the way up: the same column again.
@@ -561,7 +561,11 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const climbed = await climbTo(ctx, { minClimb: CLIMB });
       if (climbed.ok) return climbed;
     }
-    let floor = deckFloor(here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
+    // On the level it walks now first: a walk down to a lower ledge is a
+    // walk along the drop, and the falls from it ended in the lava sea.
+    const level = (p) => Math.abs(p.y + 1 - here.y) <= 6;
+    let floor = deckFloor(here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p) && level(p));
+    if (!floor.length) floor = deckFloor(here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
     if (!floor.length) floor = deckFloor(centre, 96, 512).filter((p) => band(12, 96)(p) && avoid(p));
     if (!floor.length) floor = deckFloor(here, 48, 512).filter(band(12, 40));
     if (!floor.length) floor = deckFloor(centre, 96, 512).filter(band(12, 96));
