@@ -656,3 +656,9 @@ test('stocking blocks never digs one touching lava or one at its feet over a dro
   bot.blockAt = ((at) => (p) => (p.y === 64 && p.z === 3 ? { name: 'air', position: p, boundingBox: 'empty' } : at(p)))(bot.blockAt);
   assert.equal(exclude(new Vec3(0, 65, 3)), true, 'feet level over a drop');
 });
+
+test('fortress floor can leave out cells before counting, so the nearest kept one is still found', () => {
+  const bot = world({ ...row('nether_bricks', 0, 1, 33), '0,31,1': 'lava', ...row('nether_bricks', 6, 1, 64) });
+  const keep = (p) => p.y > 40;
+  assert.deepEqual(structures.fortressFloor(bot, new Vec3(0, 34, 0), 48, 1, keep).map((p) => p.toString()), ['(6, 64, 0)']);
+});

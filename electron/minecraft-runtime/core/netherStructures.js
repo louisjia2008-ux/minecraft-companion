@@ -44,7 +44,7 @@ function findSpawners(bot, near, radius = 64) {
  * fortress floor, nearest first. Every brick in range is looked at: a bridge's
  * pillars hold thousands of bricks under its deck, all nearer than the floor.
  */
-function fortressFloor(bot, near, radius = 48, count = 64) {
+function fortressFloor(bot, near, radius = 48, count = 64, keep = () => true) {
   const id = bot.registry.blocksByName.nether_bricks?.id;
   if (!Number.isInteger(id)) return [];
   const open = (p) => {
@@ -52,7 +52,7 @@ function fortressFloor(bot, near, radius = 48, count = 64) {
     return b && b.boundingBox === 'empty' && !/lava|fire/.test(b.name);
   };
   return bot.findBlocks({ point: near, matching: id, maxDistance: radius, count: Number.MAX_SAFE_INTEGER })
-    .filter((p) => p.distanceTo(near) <= radius && open(p.offset(0, 1, 0)) && open(p.offset(0, 2, 0)))
+    .filter((p) => p.distanceTo(near) <= radius && open(p.offset(0, 1, 0)) && open(p.offset(0, 2, 0)) && keep(p))
     .slice(0, count);
 }
 

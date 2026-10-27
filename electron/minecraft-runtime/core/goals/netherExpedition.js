@@ -357,7 +357,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function climbTo(ctx, { minClimb = 0 } = {}) {
     const here = bot.entity.position;
     const feet = here.floored();
-    const floor = structures.fortressFloor(bot, memory.fortress, 96, 4096);
+    const floor = deckFloor(memory.fortress, 96, 4096);
     const flat = (s) => Math.hypot(s.stand.x - here.x, s.stand.z - here.z);
     const cost = (s) => flat(s) + 3 * Math.max(0, s.stand.y - here.y) + (s.top - s.stand.y);
     const spots = structures.towerSpots(bot, floor, here)
@@ -411,7 +411,26 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
 
   // ---- fortress -------------------------------------------------------------
 
-  const inFortress = () => structures.fortressFloor(bot, bot.entity.position, 6, 1).length > 0;
+  // The pillar feet standing in the lava sea are fortress bricks with open
+  // air over them too, but no deck: one run spent an hour and a half walking
+  // between them and the decks, fell in fifty times and ran out of fire
+  // resistance. Floor within reach of lava below is not walked to.
+  const seaSide = new Map();
+  const bySea = (p) => {
+    const key = posKey(p);
+    if (!seaSide.has(key)) {
+      let lava = false;
+      for (let dy = 0; dy >= -4 && !lava; dy -= 1) {
+        for (let dx = -2; dx <= 2 && !lava; dx += 1) {
+          for (let dz = -2; dz <= 2 && !lava; dz += 1) lava = /^lava$/.test(bot.blockAt(p.offset(dx, dy, dz))?.name || '');
+        }
+      }
+      seaSide.set(key, lava);
+    }
+    return seaSide.get(key);
+  };
+  const deckFloor = (near, radius, count) => structures.fortressFloor(bot, near, radius, count, (p) => !bySea(p));
+  const inFortress = () => deckFloor(bot.entity.position, 6, 1).length > 0;
 
   function fortressTarget(state) {
     const wanted = [];
@@ -474,9 +493,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return result;
     }
     if (!inFortress()) {
-      let floor = structures.fortressFloor(bot, memory.fortress, 48, 32);
+      let floor = deckFloor(memory.fortress, 48, 32);
       // The first brick seen can be a buried pillar foot: look for floor anywhere in sight.
-      if (!floor.length) floor = structures.fortressFloor(bot, here, 96, 32);
+      if (!floor.length) floor = deckFloor(here, 96, 32);
       floor.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
       if (floor.length && floor[0].y + 1 - here.y > CLIMB) {
         const climbed = await climbTo(ctx);
@@ -502,7 +521,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const byspawner = memory.spawner && rods(state) < blazeRods;
     if (byspawner && now - memory.waitSince < 45000) {
       if (here.distanceTo(memory.spawner) > 7) {
-        const floor = structures.fortressFloor(bot, memory.spawner, 8, 32)
+        const floor = deckFloor(memory.spawner, 8, 32)
           .filter((p) => p.distanceTo(memory.spawner) >= 3)
           .sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
         if (floor.length) return approach(ctx, 'spawner', floor);
@@ -533,10 +552,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const climbed = await climbTo(ctx, { minClimb: CLIMB });
       if (climbed.ok) return climbed;
     }
-    let floor = structures.fortressFloor(bot, here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
-    if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter((p) => band(12, 96)(p) && avoid(p));
-    if (!floor.length) floor = structures.fortressFloor(bot, here, 48, 512).filter(band(12, 40));
-    if (!floor.length) floor = structures.fortressFloor(bot, centre, 96, 512).filter(band(12, 96));
+    let floor = deckFloor(here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
+    if (!floor.length) floor = deckFloor(centre, 96, 512).filter((p) => band(12, 96)(p) && avoid(p));
+    if (!floor.length) floor = deckFloor(here, 48, 512).filter(band(12, 40));
+    if (!floor.length) floor = deckFloor(centre, 96, 512).filter(band(12, 96));
     // Nothing else to walk to here: go and stand by the spawner (or the first brick
     // seen); already there, look around from a lookout instead.
     const fallback = kind === 'fortress' && memory.spawner ? memory.spawner : centre;
