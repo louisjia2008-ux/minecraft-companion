@@ -505,3 +505,24 @@ test('stuck in a cave pocket on the walk home, the bot digs a staircase up out o
   assert.deepEqual(records, ['home_stuck']);
   assert.equal(trip.memory.homeStalls, 0);
 });
+
+test('out on a lava sea one block deep with no shore, the bot puts a step on the floor beside it', async () => {
+  const cells = {};
+  for (let x = -8; x <= 8; x += 1) for (let z = -8; z <= 8; z += 1) { cells[`${x},30,${z}`] = 'netherrack'; cells[`${x},31,${z}`] = 'lava'; }
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 31, 0.5);
+  bot.entity.isInLava = true;
+  bot.entity.onGround = true;
+  const placed = [];
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'netherrack', count: 32 }] },
+    setControlState: () => {}, look: async () => {}, lookAt: async () => {}, equip: async () => {}, dig: async () => {},
+    placeBlock: async (ref, face) => { placed.push([ref.position.toString(), face.toString()]); } });
+  bot.registry.foodsByName = {};
+  const leaveLava = createSurvivalBehaviors({ bot, thresholds: { swimScale: 0.05 } }).find((b) => b.name === 'leave_lava');
+  const records = [];
+  await leaveLava.run({ record: (type, data) => records.push([type, data]) });
+  assert.ok(!records.some(([, d]) => d.tower), 'no pillar');
+  assert.equal(placed.length, 1);
+  assert.equal(placed[0][1], '(0, 1, 0)', 'placed on top of the floor');
+});

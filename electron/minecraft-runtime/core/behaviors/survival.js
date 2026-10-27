@@ -75,7 +75,10 @@ function lavaStep(bot, radius = 40) {
       if (Math.abs(at.x - (cell.x + 0.5)) < 0.8 && Math.abs(at.z - (cell.z + 0.5)) < 0.8) continue;
       // Room to stand on the step once it is placed.
       if (![1, 2].every((up) => { const b = bot.blockAt(cell.offset(0, up, 0)); return b?.boundingBox === 'empty' && b.name !== 'lava'; })) continue;
-      const wall = sides.map((f) => cell.plus(f)).find((p) => {
+      // The floor under a shallow sea is a wall too: out on a lava sea one
+      // block deep, with no shore in 40 blocks, a pillar never got up (a jump
+      // in lava is a swim stroke) and the bot spent the last half hour there.
+      const wall = [...sides, new Vec3(0, -1, 0)].map((f) => cell.plus(f)).find((p) => {
         const b = bot.blockAt(p);
         return b && b.boundingBox === 'block' && !/magma/.test(b.name);
       });
@@ -554,7 +557,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         if (lavaStuck.count === 3) ctx.record('lava_held', { around: surroundings(feet) });
         await digRoof(ctx);
       }
-      if (block && bot.entity.onGround && (held || (!shore && lavaSurface(bot, feet) - feet.y >= 2))) {
+      // Shallow, with a cell beside it to put a step on: the step, not a pillar.
+      const step = lavaStep(bot);
+      const stepBeside = step && step.d <= 2 && lavaSurface(bot, feet) - feet.y <= 1;
+      if (block && bot.entity.onGround && !stepBeside && (held || (!shore && lavaSurface(bot, feet) - feet.y >= 2))) {
         ctx.record('leave_lava', { tower: `${feet.x},${feet.y},${feet.z}`, surface: lavaSurface(bot, feet), block: block.name });
         await towerUp(ctx, block, out);
         if (out()) return { ok: true };
@@ -564,7 +570,6 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (held && await digShore(ctx)) return lavaResult(ctx, out());
       // A shore it keeps failing to reach (a current from flowing lava, a lip):
       // build its own step instead, which also stems the flow.
-      const step = lavaStep(bot);
       if (shore && !(held && step && block)) {
         ctx.record('leave_lava', { shore: `${shore.x},${shore.y},${shore.z}` });
         await swimTo(ctx, shore.offset(0.5, 1.2, 0.5), out);
