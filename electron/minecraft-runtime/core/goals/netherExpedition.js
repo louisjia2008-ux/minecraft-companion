@@ -41,7 +41,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   const blacklist = createBlacklist({ ttlMs: 120000 });
   const memory = {
     explore: {}, fortress: null, bastion: null, spawner: null, visited: { fortress: false, bastion: false },
-    trades: 0, barter: {}, kills: {}, witherKills: 0, scannedAt: 0, scannedFrom: null, waitSince: 0,
+    trades: 0, barter: {}, kills: {}, witherKills: 0, scannedAt: 0, scannedFrom: null, waitSince: 0, towerFails: {},
   };
   // A skull is luck (5.5% a kill with Looting III). With skullTries set, that
   // many wither skeletons killed without one ends the hunt for it.
@@ -291,7 +291,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const flat = (s) => Math.hypot(s.stand.x - here.x, s.stand.z - here.z);
     const cost = (s) => flat(s) + 3 * Math.max(0, s.stand.y - here.y) + (s.top - s.stand.y);
     const spots = structures.towerSpots(bot, floor, here)
-      .filter((s) => !blacklist.has(`tower:${posKey(s.stand)}`) && flat(s) <= 64 && s.top - s.stand.y <= 48
+      .filter((s) => !blacklist.has(`tower:${posKey(s.stand)}`) && !((memory.towerFails[`tower:${posKey(s.stand)}`]?.until || 0) > Date.now()) && flat(s) <= 64 && s.top - s.stand.y <= 48
         && s.top - here.y >= minClimb)
       .sort((a, b) => cost(a) - cost(b));
     // Knocked off half way, or interrupted by a fight on the way up: the same column again.
@@ -305,36 +305,38 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return fail('no_tower_spot');
     }
     const key = `tower:${posKey(spot.stand)}`;
+    // A spot that failed before fails the same way again: one run went back
+    // to the same 27-block column eight times in forty minutes. Twice, and
+    // it is left alone for ten minutes.
+    const giveUp = (reason, result) => {
+      const fails = (memory.towerFails[key]?.fails || 0) + 1;
+      memory.towerFails[key] = { fails, until: fails >= 2 ? Date.now() + 600000 : 0 };
+      blacklist.add(key, reason);
+      ctx.record('tower_failed', { stand: posKey(spot.stand), reason, fails });
+      return result;
+    };
     const climb = spot.top - Math.max(spot.stand.y, inColumn(spot) ? feet.y : spot.stand.y);
     ctx.record('tower', { stand: posKey(spot.stand), deck: posKey(spot.deck), climb });
     if (!inColumn(spot)) {
       await stockScaffolding(ctx, climb);
       // A few left over at the top: what it steps out of lava with.
-      if (towerBlocks() < climb + 4) {
-        blacklist.add(key, 'few_blocks');
-        return fail('tower_blocks');
-      }
+      if (towerBlocks() < climb + 4) return giveUp('few_blocks', fail('tower_blocks'));
       const walk = await withScaffolding(() => actions.goTo(bot, ctx, new goals.GoalBlock(spot.stand.x, spot.stand.y, spot.stand.z),
         { timeoutMs: 60000 }));
       const at = bot.entity.position.floored();
       if (at.x !== spot.stand.x || at.z !== spot.stand.z || Math.abs(at.y - spot.stand.y) > 1) {
-        blacklist.add(key, walk.reason || 'not_arrived');
-        return walk.ok ? fail('tower_not_reached') : walk;
+        return giveUp(walk.reason || 'not_arrived', walk.ok ? fail('tower_not_reached') : walk);
       }
     }
     actions.haltBody(bot);
     await end.pillarUp(bot, ctx, spot.top, { maxSteps: climb + 6, blocks: towerBlocks(RUBBLE) >= climb ? RUBBLE : TOWER,
       stop: () => Boolean(bot.entity?.isInLava) || bot.health < 8 });
-    if (bot.entity.position.y < spot.top - 0.5) {
-      blacklist.add(key, 'pillar_short');
-      return fail('tower_short');
-    }
+    if (bot.entity.position.y < spot.top - 0.5) return giveUp('pillar_short', fail('tower_short'));
     const step = await actions.goTo(bot, ctx, new goals.GoalBlock(spot.deck.x, spot.deck.y + 1, spot.deck.z), { timeoutMs: 10000 });
     const onDeck = inFortress();
     ctx.record('towered', { onDeck, y: Math.round(bot.entity.position.y) });
     if (onDeck) return { ok: true };
-    blacklist.add(key, 'off_deck');
-    return step.ok ? fail('tower_off_deck') : step;
+    return giveUp('off_deck', step.ok ? fail('tower_off_deck') : step);
   }
 
   // ---- fortress -------------------------------------------------------------
