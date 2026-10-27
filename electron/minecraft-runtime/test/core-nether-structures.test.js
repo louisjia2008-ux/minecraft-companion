@@ -662,3 +662,25 @@ test('fortress floor can leave out cells before counting, so the nearest kept on
   const keep = (p) => p.y > 40;
   assert.deepEqual(structures.fortressFloor(bot, new Vec3(0, 34, 0), 48, 1, keep).map((p) => p.toString()), ['(6, 64, 0)']);
 });
+
+test('retracing skips ahead only to crumbs on about the same level', async () => {
+  const items = [{ name: 'blaze_rod', count: 1 }, { name: 'netherrack', count: 64 }];
+  const bot = Object.assign(new EventEmitter(), { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items },
+    entities: {}, registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} } });
+  bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+  bot.entity.onGround = true;
+  bot.entity.isInLava = false;
+  const walks = [];
+  const actions = { goNear: async (b, ctx, p) => { walks.push(p.toString()); bot.entity.position = p.offset(0.5, 0, 0.5); return { ok: true }; } };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) }, actions });
+  goal.memory.netherPortal = new Vec3(-100, 64, 0);
+  // In on a hill 15 blocks up, then down and round below it.
+  for (const [x, y] of [[0, 79], [6, 79], [30, 64], [18, 64], [12, 64]]) {
+    bot.entity.position = new Vec3(x + 0.5, y, 0.5);
+    bot.emit('move');
+  }
+  const ctx = { record() {}, perceive: () => ({ inventory: { blaze_rod: 1, netherrack: 64 } }) };
+  await goal.run(ctx);
+  assert.deepEqual(walks, ['(30, 64, 0)']);
+  goal.dispose();
+});

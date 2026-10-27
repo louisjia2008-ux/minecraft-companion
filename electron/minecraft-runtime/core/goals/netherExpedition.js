@@ -299,7 +299,11 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       let best = Infinity;
       crumbs.forEach((p, i) => { if (p.distanceTo(here) < best) { best = p.distanceTo(here); reached = i; } });
     }
-    let index = crumbs.findIndex((p, i) => i < reached && p.distanceTo(here) <= 20 && p.distanceTo(here) >= 4 && open(p));
+    // On about the same level only: back past a fortress, the earliest crumb
+    // in reach was one from the first walk in, twenty blocks up on the hill
+    // over the lava sea, and the climb to it ended in the lava.
+    const level = (p) => Math.abs(p.y - here.y) <= 6;
+    let index = crumbs.findIndex((p, i) => i < reached && p.distanceTo(here) <= 20 && p.distanceTo(here) >= 4 && level(p) && open(p));
     // The one before, further off (a drop the bot came down): try it anyway.
     if (index < 0 && reached > 0 && crumbs[reached - 1].distanceTo(here) <= 40 && open(crumbs[reached - 1])) index = reached - 1;
     if (index < 0) return null;
