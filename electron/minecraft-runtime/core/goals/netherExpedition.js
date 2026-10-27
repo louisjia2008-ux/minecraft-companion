@@ -50,6 +50,19 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.witherKills += 1;
     }
   });
+  // Where the bot has stood in the nether, every six blocks: the way home.
+  // A straight walk to the portal bridged the lava sea it had walked round
+  // on the way out, and ran out of blocks half way across.
+  memory.crumbs = [];
+  const dropCrumb = () => {
+    const e = bot.entity;
+    if (!e?.position || !e.onGround || e.isInLava || !nether.inNether(bot)) return;
+    const last = memory.crumbs[memory.crumbs.length - 1];
+    if (last && last.distanceTo(e.position) < 6) return;
+    memory.crumbs.push(e.position.floored());
+    if (memory.crumbs.length > 4000) memory.crumbs.shift();
+  };
+  bot.on?.('move', dropCrumb);
   const trip = createPortalTrip({ bot, memory, actions });
 
   const rods = (state) => state.inventory.blaze_rod || 0;
@@ -255,6 +268,34 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
         blacklist, radius: 16, exclude: floorBrick });
       if (!got.ok) misses += 1;
     }
+  }
+
+  /**
+   * One leg back along the crumbs: to the earliest-dropped one within 20
+   * blocks, which skips the loops the bot walked on the way. Null when there
+   * is none to take, or the last three legs went nowhere.
+   */
+  async function retraceHome(ctx) {
+    if ((memory.retraceOffUntil || 0) > Date.now()) return null;
+    const here = bot.entity.position;
+    const index = memory.crumbs.findIndex((p) => p.distanceTo(here) <= 20 && p.distanceTo(here) >= 4
+      && !blacklist.has(`crumb:${posKey(p)}`));
+    if (index < 0) return null;
+    const crumb = memory.crumbs[index];
+    ctx.record('retrace', { to: posKey(crumb), index, of: memory.crumbs.length });
+    const start = here.clone();
+    const result = await withScaffolding(() => actions.goNear(bot, ctx, crumb, 2, { timeoutMs: 45000 }), { cobble: true });
+    if (bot.entity.position.distanceTo(start) >= 3) {
+      memory.retraceMisses = 0;
+      return result.ok ? result : { ok: true, moved: true };
+    }
+    blacklist.add(`crumb:${posKey(crumb)}`, result.reason || 'not_moved');
+    memory.retraceMisses = (memory.retraceMisses || 0) + 1;
+    if (memory.retraceMisses >= 3) {
+      memory.retraceMisses = 0;
+      memory.retraceOffUntil = Date.now() + 120000;
+    }
+    return result;
   }
 
   async function stockForTravel(ctx) {
@@ -723,6 +764,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
         memory.homeStockedAt = Date.now();
         await stockScaffolding(ctx, need, HOME_STOCK);
       }
+      if (portal && here.distanceTo(portal) > 24) {
+        const leg = await retraceHome(ctx);
+        if (leg) return leg;
+      }
       return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
     }
     const lost = lostKit(state);
@@ -793,7 +838,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       if (lost) return fail(lost);
       return trip.toNether(ctx, state);
     },
-    dispose: trip.leaveNetherMode,
+    dispose() {
+      bot.removeListener?.('move', dropCrumb);
+      trip.leaveNetherMode();
+    },
   };
 }
 

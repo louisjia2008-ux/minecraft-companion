@@ -590,3 +590,27 @@ test('leaving for a bastion across the lava sea, the bot stocks a stack of block
   await goal.run(ctx);
   assert.ok(wanted.includes(64), `stocked for the trip: ${wanted}`);
 });
+
+test('walking home, the bot retraces the crumbs it dropped on the way out, skipping their loops', async () => {
+  const items = [{ name: 'blaze_rod', count: 1 }, { name: 'netherrack', count: 64 }];
+  const bot = Object.assign(new EventEmitter(), { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items },
+    entities: {}, registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} } });
+  bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+  bot.entity.onGround = true;
+  bot.entity.isInLava = false;
+  const walks = [];
+  const actions = { goNear: async (b, ctx, p) => { walks.push(p.toString()); bot.entity.position = p.offset(0.5, 0, 0.5); return { ok: true }; } };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) }, actions });
+  goal.memory.netherPortal = new Vec3(0, 64, 0);
+  // Out from the portal along x, a loop out to z=30 and back, on to x=60.
+  for (const [x, z] of [[0, 0], [8, 0], [16, 0], [24, 0], [24, 10], [24, 20], [24, 30], [30, 20], [32, 10], [32, 0], [40, 0], [48, 0], [56, 0], [60, 0]]) {
+    bot.entity.position = new Vec3(x + 0.5, 64, z + 0.5);
+    bot.emit('move');
+  }
+  const ctx = { record() {}, perceive: () => ({ inventory: { blaze_rod: 1, netherrack: 64 } }) };
+  for (let i = 0; i < 3; i += 1) await goal.run(ctx);
+  // From (32, 10) the loop's far end at z=30 is never walked: the earliest crumb in reach is back on the line.
+  assert.deepEqual(walks, ['(48, 64, 0)', '(32, 64, 10)', '(16, 64, 0)']);
+  goal.dispose();
+  assert.equal(bot.listenerCount('move'), 0);
+});
