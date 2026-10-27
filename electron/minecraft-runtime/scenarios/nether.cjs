@@ -199,8 +199,10 @@ function expeditionScenario({ name, near, targets, timeoutMs, experimental = fal
 // Experimental (left out of the full regression run): both still pass only some
 // runs. The fortress hunt passed 3 of the last 5 (skull luck, wither skeleton
 // knockback off bridges); the full chain has not passed yet on seed 3.
+// Three hours for the full chain: two runs had every rod, skull and trade at
+// 99 minutes, and a fortress at the lava sea's edge alone can take 80.
 const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION,
-  timeoutMs: 120 * 60 * 1000, experimental: true });
+  timeoutMs: 180 * 60 * 1000, experimental: true });
 const netherFortressGiven = expeditionScenario({ name: 'nether-fortress-given', near: 'fortress',
   targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, skullTries: EXPEDITION.skullTries, trades: 0 }, timeoutMs: 90 * 60 * 1000,
   experimental: true });
