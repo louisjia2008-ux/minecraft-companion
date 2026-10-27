@@ -614,3 +614,25 @@ test('walking home, the bot retraces the crumbs it dropped on the way out, skipp
   goal.dispose();
   assert.equal(bot.listenerCount('move'), 0);
 });
+
+test('retracing never turns back up the trail, even when every earlier crumb is out of reach', async () => {
+  const items = [{ name: 'blaze_rod', count: 1 }, { name: 'netherrack', count: 64 }];
+  const bot = Object.assign(new EventEmitter(), { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items },
+    entities: {}, registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} } });
+  bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+  bot.entity.onGround = true;
+  bot.entity.isInLava = false;
+  const walks = [];
+  const actions = { goNear: async (b, ctx, p) => { walks.push(p.toString()); bot.entity.position = p.offset(0.5, 0, 0.5); return { ok: true }; } };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) }, actions });
+  goal.memory.netherPortal = new Vec3(-100, 64, 0);
+  // A 30-block drop between the second and third crumbs, then crumbs close together.
+  for (const x of [0, 6, 36, 42, 48]) {
+    bot.entity.position = new Vec3(x + 0.5, 64, 0.5);
+    bot.emit('move');
+  }
+  const ctx = { record() {}, perceive: () => ({ inventory: { blaze_rod: 1, netherrack: 64 } }) };
+  for (let i = 0; i < 3; i += 1) await goal.run(ctx);
+  assert.deepEqual(walks, ['(36, 64, 0)', '(6, 64, 0)', '(0, 64, 0)']);
+  goal.dispose();
+});

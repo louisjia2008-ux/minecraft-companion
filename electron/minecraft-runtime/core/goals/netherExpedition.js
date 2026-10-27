@@ -278,15 +278,28 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function retraceHome(ctx) {
     if ((memory.retraceOffUntil || 0) > Date.now()) return null;
     const here = bot.entity.position;
-    const index = memory.crumbs.findIndex((p) => p.distanceTo(here) <= 20 && p.distanceTo(here) >= 4
-      && !blacklist.has(`crumb:${posKey(p)}`));
+    const crumbs = memory.crumbs;
+    const open = (p) => !blacklist.has(`crumb:${posKey(p)}`);
+    // Only ever back along the trail: from a crumb whose earlier ones were
+    // all out of reach, the nearest in reach was a later one, and a run that
+    // had everything went back and forth between two crumbs until it failed.
+    let reached = crumbs[memory.crumbAt]?.distanceTo(here) <= 12 ? memory.crumbAt : -1;
+    if (reached < 0) {
+      reached = crumbs.length;
+      let best = Infinity;
+      crumbs.forEach((p, i) => { if (p.distanceTo(here) < best) { best = p.distanceTo(here); reached = i; } });
+    }
+    let index = crumbs.findIndex((p, i) => i < reached && p.distanceTo(here) <= 20 && p.distanceTo(here) >= 4 && open(p));
+    // The one before, further off (a drop the bot came down): try it anyway.
+    if (index < 0 && reached > 0 && crumbs[reached - 1].distanceTo(here) <= 40 && open(crumbs[reached - 1])) index = reached - 1;
     if (index < 0) return null;
-    const crumb = memory.crumbs[index];
-    ctx.record('retrace', { to: posKey(crumb), index, of: memory.crumbs.length });
+    const crumb = crumbs[index];
+    ctx.record('retrace', { to: posKey(crumb), index, of: crumbs.length });
     const start = here.clone();
     const result = await withScaffolding(() => actions.goNear(bot, ctx, crumb, 2, { timeoutMs: 45000 }), { cobble: true });
     if (bot.entity.position.distanceTo(start) >= 3) {
       memory.retraceMisses = 0;
+      memory.crumbAt = index;
       return result.ok ? result : { ok: true, moved: true };
     }
     blacklist.add(`crumb:${posKey(crumb)}`, result.reason || 'not_moved');
