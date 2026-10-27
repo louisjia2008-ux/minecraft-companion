@@ -429,7 +429,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const key = posKey(p);
     if (!seaSide.has(key)) {
       let lava = false;
-      for (let dy = 0; dy >= -4 && !lava; dy -= 1) {
+      for (let dy = 0; dy >= -5 && !lava; dy -= 1) {
         for (let dx = -2; dx <= 2 && !lava; dx += 1) {
           for (let dz = -2; dz <= 2 && !lava; dz += 1) lava = /^lava$/.test(bot.blockAt(p.offset(dx, dy, dz))?.name || '');
         }
