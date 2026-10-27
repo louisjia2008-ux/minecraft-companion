@@ -406,12 +406,33 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     lastSwimHit = Date.now();
     bot.attack(cube);
   }
+  // A long escape (a pillar, an hour-long hold) outlasts the potion, and the
+  // drink waits on leave_lava finishing: a bot died a minute after its last
+  // one ran out mid-pillar with eight left. Drink on the way.
+  async function quenchInPassing() {
+    if (hasEffect(bot, 'FireResistance')) return;
+    const potion = bot.inventory?.items?.().find(isFireResistancePotion);
+    if (!potion) return;
+    try {
+      await bot.equip(potion, 'hand');
+      await bot.consume();
+    } catch { /* tried again next tick */ }
+  }
+  // Physics plays every jump in lava as a swim stroke; the server lets a
+  // player on the floor of a shallow (flowing) pool jump out like on land.
+  const hopOffFloor = () => {
+    if (bot.entity?.onGround && bot.entity.isInLava && bot.entity.velocity) {
+      bot.entity.velocity.y = Math.max(bot.entity.velocity.y, 0.42);
+    }
+  };
   async function swimTo(ctx, point, until, maxTicks = 150) {
     try {
       for (let i = 0; i < maxTicks * t.swimScale && !until(); i += 1) {
+        await quenchInPassing();
         await hitInPassing();
         await bot.lookAt(point, true);
         for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, true);
+        hopOffFloor();
         await sleep(100, ctx.signal);
       }
     } finally {
@@ -442,6 +463,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (!floor || floor.boundingBox !== 'block') return;
       if (!bot.inventory.items().some((it) => it.name === block.name)) return;
       // Two pillars ended a block under the surface, heads against a cave roof.
+      await quenchInPassing();
       await digRoof(ctx);
       try { await bot.equip(block, 'hand'); } catch { return; }
       try {

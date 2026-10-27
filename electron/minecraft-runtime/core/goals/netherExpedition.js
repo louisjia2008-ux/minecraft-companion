@@ -348,11 +348,6 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
 
   async function fortressStep(ctx, state) {
     const mobs = fortressTarget(state);
-    // Run out of blocks, a fall into the lava sea has no way out: keep some.
-    if (nether.scaffoldCount(bot) < SCAFFOLD_LOW && Date.now() - (memory.restockedAt || 0) > 60000) {
-      memory.restockedAt = Date.now();
-      await stockScaffolding(ctx, 16);
-    }
     const here = bot.entity.position;
     const blazeNear = Object.values(bot.entities).some((e) => e.name === 'blaze' && e.position?.distanceTo(here) <= 24);
     const drink = await fireProof(ctx, { danger: blazeNear });
@@ -693,6 +688,13 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (bot.entity?.isInLava) {
       await sleep(1000, ctx.signal);
       return { ok: true, waited: true };
+    }
+    // Run out of blocks, a fall into the lava sea has no way out and the walk
+    // home has nothing to bridge with (a run with every rod, skull and trade
+    // in hand spent its last hour 135 blocks from the portal): keep some.
+    if (nether.scaffoldCount(bot) < SCAFFOLD_LOW && Date.now() - (memory.restockedAt || 0) > 60000) {
+      memory.restockedAt = Date.now();
+      await stockScaffolding(ctx, 16);
     }
     if (allDone(state)) return withScaffolding(() => trip.toOverworld(ctx));
     const lost = lostKit(state);
