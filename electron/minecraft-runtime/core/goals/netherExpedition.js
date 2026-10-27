@@ -706,12 +706,16 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       // its own bridge 40 blocks short; another bridged a stack and a half
       // across 110 blocks of sea under a portal 40 blocks up. Fill up once,
       // while there is something to dig, with enough to bridge and climb the
-      // whole way, and build with the cobblestone too.
+      // whole way, and build with the cobblestone too. Again after a fall:
+      // one bot lost its footing digging the deck it stood on and landed in
+      // the lava sea 40 blocks under the portal with nothing to climb with.
       const portal = memory.netherPortal;
       const here = bot.entity.position;
-      if (!memory.homeStocked && portal && here.distanceTo(portal) > 24) {
-        memory.homeStocked = true;
-        await stockScaffolding(ctx, Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16, HOME_STOCK);
+      const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
+      if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
+        && Date.now() - (memory.homeStockedAt || 0) > 60000) {
+        memory.homeStockedAt = Date.now();
+        await stockScaffolding(ctx, need, HOME_STOCK);
       }
       return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
     }

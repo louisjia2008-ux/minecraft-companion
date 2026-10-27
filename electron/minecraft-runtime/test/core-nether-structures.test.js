@@ -571,5 +571,5 @@ test('with everything in hand, the bot fills up on blocks once before the walk h
   assert.ok(wanted.at(-1) > 64 && wanted.at(-1) <= 192, 'enough for the whole way home, up to three stacks');
   assert.ok(builtWith[0].includes(1), 'cobblestone allowed for the walk home');
   await goal.run(ctx);
-  assert.equal(gathers, 6, 'only once');
+  assert.equal(gathers, 6, 'not again within a minute');
 });
