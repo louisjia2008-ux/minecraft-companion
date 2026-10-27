@@ -526,3 +526,28 @@ test('out on a lava sea one block deep with no shore, the bot puts a step on the
   assert.equal(placed.length, 1);
   assert.equal(placed[0][1], '(0, 1, 0)', 'placed on top of the floor');
 });
+
+test('a roof dig that never settles (the bot died mid-dig) lets leave_lava end on abort', async () => {
+  const cells = {};
+  for (let x = -3; x <= 0; x += 1) for (let y = 20; y <= 31; y += 1) cells[`${x},${y},0`] = 'lava';
+  cells['1,31,0'] = 'netherrack';
+  cells['0,33,0'] = 'basalt';
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 31.2, 0.5);
+  bot.entity.isInLava = true;
+  bot.entity.onGround = false;
+  let digs = 0;
+  Object.assign(bot, new EventEmitter(), { game: { dimension: 'the_nether' }, health: 20, food: 20,
+    inventory: { slots: {}, items: () => [{ name: 'diamond_pickaxe', count: 1 }] },
+    setControlState: () => {}, lookAt: async () => {}, equip: async () => {}, stopDigging: () => {},
+    dig: () => { digs += 1; return new Promise(() => {}); } });
+  bot.registry.foodsByName = {};
+  const leaveLava = createSurvivalBehaviors({ bot, thresholds: { swimScale: 0.05 } }).find((b) => b.name === 'leave_lava');
+  const controller = new AbortController();
+  const ctx = { signal: controller.signal, record: () => {} };
+  for (let i = 0; i < 3; i += 1) await leaveLava.run(ctx);
+  const run = leaveLava.run(ctx);
+  setTimeout(() => controller.abort('death'), 50);
+  await Promise.race([run.catch(() => {}), new Promise((resolve, reject) => setTimeout(() => reject(new Error('still held')), 3000))]);
+  assert.ok(digs >= 1);
+});

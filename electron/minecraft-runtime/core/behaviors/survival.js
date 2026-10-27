@@ -442,6 +442,30 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       for (const control of ['jump', 'forward', 'sprint']) bot.setControlState(control, false);
     }
   }
+  // A dig under way when the bot dies never settles (mineflayer drops its
+  // listeners on death): leave_lava then held the body for the last hour of a
+  // run, respawned in the overworld. Bounded, and given up on abort.
+  // Raced, not awaited: a stop does not settle it either.
+  async function digNow(ctx, block) {
+    let timer = null;
+    let onAbort = null;
+    const done = bot.dig(block, true);
+    done.catch(() => {});
+    try {
+      await Promise.race([done, new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('dig_timeout')), 10000);
+        onAbort = () => reject(new Error('aborted'));
+        if (ctx.signal?.aborted) onAbort();
+        ctx.signal?.addEventListener('abort', onAbort, { once: true });
+      })]);
+    } catch (error) {
+      try { bot.stopDigging(); } catch { /* not digging */ }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) ctx.signal?.removeEventListener('abort', onAbort);
+    }
+  }
   // Jump, and once clear of the floor put a block on it: one block higher
   // each round, until the head is out of the lava.
   // Something over its head (its own bridge, an overhang, the roof of a
@@ -456,7 +480,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     const pick = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
     try {
       if (pick) await bot.equip(pick, 'hand');
-      for (const b of roof) await bot.dig(b, true);
+      for (const b of roof) await digNow(ctx, b);
     } catch { /* the next try looks again */ }
     return true;
   }
@@ -515,7 +539,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const pick = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
       try {
         if (pick) await bot.equip(pick, 'hand');
-        for (const a of solid) await bot.dig(a, true);
+        for (const a of solid) await digNow(ctx, a);
       } catch { return false; }
       await swimTo(ctx, wall.offset(0.5, 1.2, 0.5), () => !bot.entity.isInLava && bot.entity.onGround !== false, 50);
       return true;
