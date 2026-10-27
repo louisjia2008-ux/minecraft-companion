@@ -207,7 +207,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   }
   const boxedIn = () => trail.length >= 8 && trail.every((p) => p.distanceTo(trail[0]) <= 4);
 
-  async function withScaffolding(run) {
+  async function withScaffolding(run, { cobble: anyCobble = false } = {}) {
     const m = bot.pathfinder?.movements;
     if (!m) return run();
     const saved = { towers: m.allow1by1towers, blocks: m.scafoldingBlocks, placeCost: m.placeCost };
@@ -217,7 +217,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // cobblestone too, all but the last stack-quarter kept for lava steps.
     const cobble = bot.registry.itemsByName?.cobblestone?.id;
     const spare = bot.inventory.items().filter((i) => i.name === 'cobblestone').reduce((n, i) => n + i.count, 0) > 16;
-    if (boxedIn() && spare && Number.isInteger(cobble)) m.scafoldingBlocks = [...m.scafoldingBlocks, cobble];
+    if ((anyCobble || boxedIn()) && spare && Number.isInteger(cobble)) m.scafoldingBlocks = [...m.scafoldingBlocks, cobble];
     m.placeCost = 4;
     try {
       return await run();
@@ -696,7 +696,18 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.restockedAt = Date.now();
       await stockScaffolding(ctx, 16);
     }
-    if (allDone(state)) return withScaffolding(() => trip.toOverworld(ctx));
+    if (allDone(state)) {
+      // The walk home can cross a lava sea: a run with every rod, skull and
+      // trade bridged its 100 netherrack away and spent the last 20 minutes on
+      // its own bridge 40 blocks short. Fill up once while the shore is near,
+      // and build with the cobblestone too.
+      const portal = memory.netherPortal;
+      if (!memory.homeStocked && portal && bot.entity.position.distanceTo(portal) > 24) {
+        memory.homeStocked = true;
+        await stockScaffolding(ctx, 56);
+      }
+      return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
+    }
     const lost = lostKit(state);
     if (lost) return fail(lost);
     scan(ctx);

@@ -551,3 +551,23 @@ test('a roof dig that never settles (the bot died mid-dig) lets leave_lava end o
   await Promise.race([run.catch(() => {}), new Promise((resolve, reject) => setTimeout(() => reject(new Error('still held')), 3000))]);
   assert.ok(digs >= 1);
 });
+
+test('with everything in hand, the bot fills up on blocks once before the walk home and builds with cobblestone too', async () => {
+  const items = [{ name: 'blaze_rod', count: 1 }, { name: 'wither_skeleton_skull', count: 1 }, { name: 'cobblestone', count: 27 }];
+  const bot = { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items }, entities: {},
+    registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} } };
+  bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+  let gathers = 0;
+  const builtWith = [];
+  const skills = { gatherOne: async () => { gathers += 1; return { ok: false }; } };
+  const actions = { goNear: async () => { builtWith.push([...bot.pathfinder.movements.scafoldingBlocks]); return { ok: false, reason: 'no_progress' }; },
+    goTo: async () => ({ ok: false, reason: 'no_progress' }) };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 1, trades: 0, skills, actions });
+  goal.memory.netherPortal = new Vec3(100, 64, 100);
+  const ctx = { record() {}, perceive: () => ({ inventory: { blaze_rod: 1, wither_skeleton_skull: 1, cobblestone: 27 } }) };
+  await goal.run(ctx);
+  assert.equal(gathers, 6, 'the low-stock top-up, then the fill-up for the walk home (three misses end each)');
+  assert.ok(builtWith[0].includes(1), 'cobblestone allowed for the walk home');
+  await goal.run(ctx);
+  assert.equal(gathers, 6, 'only once');
+});
