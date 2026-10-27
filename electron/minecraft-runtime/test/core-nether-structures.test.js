@@ -567,11 +567,11 @@ test('with everything in hand, the bot fills up on blocks once before the walk h
   const wanted = [];
   const ctx = { record: (t, d) => { if (t === 'stock_scaffolding') wanted.push(d.want); }, perceive: () => ({ inventory: { blaze_rod: 1, wither_skeleton_skull: 1, cobblestone: 27 } }) };
   await goal.run(ctx);
-  assert.equal(gathers, 6, 'the low-stock top-up, then the fill-up for the walk home (three misses end each)');
+  assert.equal(gathers, 12, 'the low-stock top-up, then the fill-up for the walk home (three misses end each search, near then far)');
   assert.ok(wanted.at(-1) > 64 && wanted.at(-1) <= 192, 'enough for the whole way home, up to three stacks');
   assert.ok(builtWith[0].includes(1), 'cobblestone allowed for the walk home');
   await goal.run(ctx);
-  assert.equal(gathers, 6, 'not again within a minute');
+  assert.equal(gathers, 12, 'not again within a minute');
 });
 
 test('leaving for a bastion across the lava sea, the bot stocks a stack of blocks first', async () => {

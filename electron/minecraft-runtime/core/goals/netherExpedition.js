@@ -273,10 +273,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (nether.scaffoldCount(bot) >= need || bot.entity?.isInLava) return;
     const stock = Math.max(need, SCAFFOLD_STOCK);
     ctx.record('stock_scaffolding', { have: nether.scaffoldCount(bot), want: stock });
-    for (let misses = 0, i = 0; i < stock && misses < 3 && nether.scaffoldCount(bot) < stock; i += 1) {
-      const got = await skills.gatherOne(bot, ctx, { blocks: DIGGABLE_RUBBLE, dropMatch: (n) => nether.SCAFFOLD.includes(n),
-        blacklist, radius: 16, exclude: unsafeDig });
-      if (!got.ok) misses += 1;
+    // Nothing safe to dig close by (a fortress at the lava sea's edge, all
+    // bricks and a basalt crust on the lava): look further off.
+    for (const radius of [16, 48]) {
+      for (let misses = 0, i = 0; i < stock && misses < 3 && nether.scaffoldCount(bot) < stock; i += 1) {
+        const got = await skills.gatherOne(bot, ctx, { blocks: DIGGABLE_RUBBLE, dropMatch: (n) => nether.SCAFFOLD.includes(n),
+          blacklist, radius, exclude: unsafeDig });
+        if (!got.ok) misses += 1;
+      }
+      if (nether.scaffoldCount(bot) >= need) return;
     }
   }
 
