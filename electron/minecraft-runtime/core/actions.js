@@ -348,6 +348,11 @@ async function equipBestWeapon(bot) {
   }
 }
 
+// Mobs that a stray sweep turns on the bot, the whole pack at once.
+const BYSTANDERS = new Set(['zombified_piglin', 'piglin', 'enderman', 'villager', 'iron_golem']);
+const bystanderBeside = (bot, target) => Object.values(bot.entities).some((e) => e !== target && BYSTANDERS.has(e.name)
+  && e.position && e.position.distanceTo(target.position) <= 2.5 && e.position.distanceTo(bot.entity.position) <= 4.5);
+
 /** Fights one entity until it is gone, the timeout passes, or the signal aborts. */
 async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3 } = {}) {
   await equipBestWeapon(bot);
@@ -389,6 +394,15 @@ async function attackLoop(bot, ctx, entityId, deadline, reach) {
       } else {
         bot.pathfinder.setGoal(null);
         await bot.lookAt(target.position.offset(0, (target.height || 1.6) * 0.8, 0), true);
+        // A sword's sweep from the ground also hits whatever stands beside the
+        // target: one sweep at a wither skeleton angered a zombified piglin
+        // pack, which beat the bot down into the lava. Hit mid-jump there, as
+        // it falls: a critical hit, which never sweeps.
+        if (bot.entity.onGround && bystanderBeside(bot, target)) {
+          bot.setControlState('jump', true);
+          await waitUntil(() => !bot.entity.onGround && (bot.entity.velocity?.y ?? 0) < 0, { timeoutMs: 800, signal: ctx.signal }).catch(() => {});
+          bot.setControlState('jump', false);
+        }
         bot.attack(target);
         hits += 1;
       }

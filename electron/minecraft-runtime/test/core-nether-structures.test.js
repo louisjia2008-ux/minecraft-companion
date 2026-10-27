@@ -747,3 +747,20 @@ test('under the edge of a slab over the lava, the bot swims out for the slab top
   const shore = records.find(([t, d]) => t === 'leave_lava' && d.shore)?.[1].shore;
   assert.match(shore || '', /^0,32,/, JSON.stringify(records));
 });
+
+test('a wither skeleton beside a zombified piglin is hit mid-jump, never with a sweep from the ground', async () => {
+  const actions = require('../core/actions');
+  const target = { id: 1, name: 'wither_skeleton', position: new Vec3(2, 64, 0), height: 2.4, isValid: true };
+  const piglin = { id: 2, name: 'zombified_piglin', position: new Vec3(3, 64, 1), isValid: true };
+  const bot = Object.assign(new EventEmitter(), world({}), { entities: { 1: target, 2: piglin } });
+  bot.entity.onGround = true;
+  bot.entity.velocity = new Vec3(0, 0, 0);
+  const events = [];
+  Object.assign(bot, { inventory: { slots: [], items: () => [] }, heldItem: null,
+    pathfinder: { goal: null, setGoal() {} }, lookAt: async () => {}, clearControlStates() {},
+    setControlState: (c, on) => { events.push(`${c}:${on}`); if (c === 'jump' && on) { bot.entity.onGround = false; bot.entity.velocity = new Vec3(0, -0.1, 0); } },
+    attack: () => { events.push(`attack:${bot.entity.onGround ? 'ground' : 'air'}`); target.isValid = false; bot.emit('entityDead', target); } });
+  const result = await actions.attack(bot, { record() {} }, 1, { timeoutMs: 3000 });
+  assert.equal(result.ok, true);
+  assert.ok(events.includes('attack:air'), events.join(' '));
+});
