@@ -228,7 +228,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function withScaffolding(run, { cobble: anyCobble = false } = {}) {
     const m = bot.pathfinder?.movements;
     if (!m) return run();
-    const saved = { towers: m.allow1by1towers, blocks: m.scafoldingBlocks, placeCost: m.placeCost };
+    const saved = { towers: m.allow1by1towers, blocks: m.scafoldingBlocks, placeCost: m.placeCost, nether: m.companionNether };
     m.allow1by1towers = true;
     m.scafoldingBlocks = nether.netherScaffolding(bot);
     // Boxed in (a pillar in a lava pit) with no netherrack left: build with
@@ -252,7 +252,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     } finally {
       if (watched) bot.inventory.removeListener?.('updateSlot', keep);
       m.allow1by1towers = saved.towers;
-      m.scafoldingBlocks = saved.blocks;
+      // The walk home went through the portal and nether mode already put the
+      // overworld blocks back: the nether list must not come back with it.
+      if (!saved.nether || m.companionNether) m.scafoldingBlocks = saved.blocks;
       m.placeCost = saved.placeCost;
     }
   }
@@ -735,6 +737,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const before = totals();
     const goldBefore = before.get('gold_ingot') || 0;
     const known = new Set(goldOnGround(bot.entity.position, 12).map((e) => e.id));
+    // An adult that starts admiring gold after the toss is the one that took it.
+    const adults = () => Object.values(bot.entities).filter((e) => structures.isAdultPiglin(bot, e) && near(e, bot.entity.position, 16));
+    const busyBefore = new Set(adults().filter((e) => structures.piglinBusy(e)).map((e) => e.id));
+    let admirer = null;
+    const admiring = () => {
+      admirer = admirer || adults().find((e) => !busyBefore.has(e.id) && structures.piglinBusy(e)) || null;
+      return admirer;
+    };
     try {
       await bot.lookAt(piglin.position.offset(0, 0.3, 0), true);
       await bot.toss(ingot.type, null, 1);
@@ -755,7 +765,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
     // Taken: the ingot leaves the ground and does not come back into the bag
     // (the bot itself may pick it up again after two seconds).
-    const taken = await waitUntil(() => (!thrown || !bot.entities[thrown.id]) && goldNow() < goldBefore,
+    const taken = await waitUntil(() => { admiring(); return (!thrown || !bot.entities[thrown.id]) && goldNow() < goldBefore; },
       { timeoutMs: 8000, signal: ctx.signal }) && goldNow() < goldBefore;
     if (!taken) {
       blacklist.add(`piglin:${piglin.id}`, 'ignored_gold', 20000);
@@ -765,12 +775,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return fail('gold_not_taken');
     }
     // Whoever took it looks at the gold for six seconds, then throws the loot towards the player.
+    // A baby piglin or lava may take it too: no adult admiring it and no loot
+    // afterwards is not a trade.
     const takenAt = Date.now();
-    await waitUntil(() => Date.now() - takenAt > 6500 && !structures.piglinBusy(bot.entities[piglin.id]),
+    await waitUntil(() => { const a = admiring(); return Date.now() - takenAt > 6500 && !structures.piglinBusy(bot.entities[(a || piglin).id]); },
       { timeoutMs: 12000, signal: ctx.signal });
     await sleep(1000, ctx.signal);
-    memory.trades += 1;
-    const where = bot.entities[piglin.id]?.position?.clone() || bot.entity.position.clone();
+    const trader = admirer || piglin;
+    const where = bot.entities[trader.id]?.position?.clone() || bot.entity.position.clone();
     for (const origin of [where, bot.entity.position.clone()]) {
       await actions.collectDrops(bot, ctx, origin, (n) => structures.BARTER_LOOT.has(n), { radius: 8, timeoutMs: 6000 });
     }
@@ -778,12 +790,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const gained = {};
     for (const [name, n] of after) {
       const d = n - (before.get(name) || 0);
-      if (name !== 'gold_ingot' && structures.BARTER_LOOT.has(name) && d > 0) {
-        gained[name] = d;
-        memory.barter[name] = (memory.barter[name] || 0) + d;
-      }
+      if (name !== 'gold_ingot' && structures.BARTER_LOOT.has(name) && d > 0) gained[name] = d;
     }
-    ctx.record('barter', { trades: memory.trades, gained });
+    if (!admirer && Object.keys(gained).length === 0) {
+      ctx.record('barter_lost', { piglin: piglin.id });
+      return fail('gold_lost');
+    }
+    memory.trades += 1;
+    for (const [name, d] of Object.entries(gained)) memory.barter[name] = (memory.barter[name] || 0) + d;
+    ctx.record('barter', { trades: memory.trades, gained, admirer: admirer?.id ?? null });
     return { ok: true, trades: memory.trades };
   }
 
