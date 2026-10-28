@@ -448,12 +448,16 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   const open = (p) => { const b = bot.blockAt(p); return Boolean(b) && b.boundingBox === 'empty' && b.name !== 'lava'; };
   const solid = (p) => bot.blockAt(p)?.boundingBox === 'block';
 
-  async function causeway(ctx) {
+  async function causeway(ctx, { home = false } = {}) {
     const here = bot.entity.position;
     const flat = (p) => Math.hypot(p.x - here.x, p.z - here.z);
-    const target = structures.towerSpots(bot, deckFloor(memory.fortress, 96, 4096), here)
-      .map((s) => s.stand)
-      .filter((p) => !bySea(p.offset(0, -1, 0)) && !blacklist.has(`causeway:${posKey(p)}`) && flat(p) <= 48)
+    // Out: the nearest tower spot. Home: the nearest crumb of the trail, which
+    // is ground the bot once stood on (one run held every rod and skull on a
+    // basalt post six blocks from its trail, and never got off it).
+    const choices = home
+      ? memory.crumbs.filter((p) => p.distanceTo(here) >= 4)
+      : structures.towerSpots(bot, deckFloor(memory.fortress, 96, 4096), here).map((s) => s.stand).filter((p) => !bySea(p.offset(0, -1, 0)));
+    const target = choices.filter((p) => !blacklist.has(`causeway:${posKey(p)}`) && flat(p) <= 48)
       .sort((a, b) => flat(a) - flat(b))[0];
     if (!target) return fail('no_causeway_target');
     blacklist.add(`causeway:${posKey(target)}`, 'tried');
@@ -906,6 +910,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
         await stockScaffolding(ctx, need, HOME_STOCK);
       }
       if (portal && here.distanceTo(portal) > 24) {
+        if (marooned()) {
+          const crossed = await causeway(ctx, { home: true });
+          if (crossed.ok) return crossed;
+        }
         const leg = await retraceHome(ctx);
         if (leg) return leg;
       }
