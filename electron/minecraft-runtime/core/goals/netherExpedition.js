@@ -460,6 +460,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const target = choices.filter((p) => !blacklist.has(`causeway:${posKey(p)}`) && flat(p) <= 48)
       .sort((a, b) => flat(a) - flat(b))[0];
     if (!target) return fail('no_causeway_target');
+    if (towerBlocks() < 4) return fail('causeway_blocks');
     blacklist.add(`causeway:${posKey(target)}`, 'tried');
     await fireProof(ctx, { danger: true, reserve: true });
     ctx.record('causeway', { to: posKey(target), blocks: towerBlocks() });
