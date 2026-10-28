@@ -95,7 +95,11 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
 
   /** Drinks fire resistance before a blaze fight or when burning, if it has none active. */
   async function fireProof(ctx, { danger }) {
-    if (!danger && !onFire()) return { ok: true, skipped: true };
+    // The last three are kept for a fall in the lava: drunk ahead of every
+    // blaze in sight, twelve lasted a run 110 minutes, and it then died in
+    // the lava sea with none left.
+    const left = bot.inventory.items().filter(structures.isFireResistancePotion).reduce((n, i) => n + i.count, 0);
+    if (!(danger && left > 3) && !onFire()) return { ok: true, skipped: true };
     if (structures.hasEffect(bot, 'FireResistance')) return { ok: true, skipped: true };
     const potion = bot.inventory.items().find(structures.isFireResistancePotion);
     if (!potion) {
