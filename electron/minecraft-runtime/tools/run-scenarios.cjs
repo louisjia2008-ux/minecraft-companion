@@ -17,6 +17,7 @@ const mineflayer = require('mineflayer');
 const { startVanillaServer } = require('../scenarios/vanillaServer.cjs');
 const { SCENARIOS } = require('../scenarios/index.cjs');
 const { createCompanion } = require('../core/companion');
+const { haltBody } = require('../core/actions');
 const { acknowledgePlayerLoaded } = require('../runtime');
 const { withMinecraftProtocolCompatibility } = require('../protocolCompatibility');
 const { ownedItems, countInventory } = require('../core/perception');
@@ -27,7 +28,7 @@ const { runSetup } = require('./scenario-setup.cjs');
 function usage(message) {
   if (message) console.error(message);
   console.error(`Usage: node tools/run-scenarios.cjs --accept-eula [--scenario NAME[,NAME]] [--runs N]
-  [--start-run N] [--bot-lifecycle reuse|fresh] [--inventory-trace]
+  [--start-run N] [--bot-lifecycle reuse|fresh] [--inventory-trace] [--trace-movement]
   [--difficulty peaceful|easy|normal] [--seed N] [--batch NAME] [--installation DIR] [--java PATH]
   [--server-jar PATH] [--version V]
 Scenarios: ${Object.keys(SCENARIOS).join(', ')}`);
@@ -78,6 +79,17 @@ function inventorySnapshot(bot) {
       slots: bot.currentWindow.slots.map(item), cursor: item(bot.currentWindow.selectedItem) } };
 }
 
+// What the body is doing right now: tells a bot stuck in a loop (jumping,
+// digging, swimming) apart from one standing still.
+function bodyState(bot) {
+  const e = bot.entity;
+  if (!e) return null;
+  const controls = Object.entries(bot.controlState || {}).filter(([, on]) => on).map(([name]) => name);
+  return { onGround: e.onGround, inLava: e.isInLava || false, inWater: e.isInWater || false, controls,
+    pathing: bot.pathfinder?.isMoving?.() || false, mining: bot.pathfinder?.isMining?.() || false,
+    digging: bot.targetDigBlock?.name || null, vehicle: bot.vehicle?.name || null, velocity: e.velocity && [e.velocity.x, e.velocity.y, e.velocity.z].map((v) => Math.round(v * 100) / 100) };
+}
+
 function interruptionError(signal) {
   return Object.assign(new Error(String(signal?.reason || 'external_abort')), { code: 'interrupted' });
 }
@@ -87,7 +99,7 @@ function interruptedResult(result, signal) {
     interrupted: true, interruption: String(signal.reason || 'external_abort') };
 }
 
-async function runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir, lifecycle, traceInventory,
+async function runOnce({ scenario, server, bot, username, run, seed, difficulty, runDir, lifecycle, traceInventory, traceMovement,
   companionFactory = createCompanion, settleMs = 2000, hookIntervalMs = 2000, signal }) {
   const rng = mulberry32(seed + run * 7919);
   const eventsFile = fs.createWriteStream(path.join(runDir, `run-${String(run + 1).padStart(2, '0')}.jsonl`));
@@ -189,6 +201,8 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     const onDeath = () => { deaths += 1; write('death', { position: bot.entity?.position }); };
     bot.on('death', onDeath);
     cleanup.push(() => bot.removeListener('death', onDeath));
+    // A reused bot must not carry the last run's movement into this one.
+    haltBody(bot);
     const runState = {};
     cleanup.push(() => scenario.dispose?.({ server: scopedServer, bot, username, state: runState, write }));
     await scenario.initialize?.({ server: scopedServer, bot, username, state: runState, write, signal: deadline.signal });
@@ -217,13 +231,37 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     check();
     const goal = await scenario.start(companion, runState, bot);
     check();
+    // --trace-movement: who last set a path goal or pressed forward, in each heartbeat.
+    const moves = {};
+    if (traceMovement && bot.pathfinder && !bot.companionMoveTrace) {
+      const where = () => new Error().stack.split('\n').slice(3, 7).map((l) => l.trim().replace(/^at /, '').replace(/\(.*minecraft-runtime\//, '(')).join(' < ');
+      const setGoal = bot.pathfinder.setGoal.bind(bot.pathfinder);
+      const setControlState = bot.setControlState.bind(bot);
+      bot.pathfinder.setGoal = (goal, dynamic) => {
+        if (goal) moves.goal = { at: Date.now(), goal: goal.constructor?.name, x: goal.x, z: goal.z, by: where() };
+        return setGoal(goal, dynamic);
+      };
+      bot.setControlState = (control, on) => {
+        if (on && control === 'forward') moves.forward = { at: Date.now(), by: where() };
+        return setControlState(control, on);
+      };
+      // Physics ticks and server corrections since the last heartbeat: a frozen
+      // body shows no ticks (nothing simulated) or a stream of corrections.
+      moves.ticks = 0; moves.forced = 0;
+      bot.on('physicsTick', () => { moves.ticks += 1; });
+      bot.on('forcedMove', () => { moves.forced += 1; });
+      bot.companionMoveTrace = moves;
+    }
     heartbeat = setInterval(() => {
       const inv = {};
       for (const item of bot.inventory.items()) inv[item.name] = (inv[item.name] || 0) + item.count;
       const status = companion.status();
       const line = { minute: Math.round((Date.now() - startedAt) / 60000), running: status.running,
         steps: status.goal?.progress, health: bot.health, food: bot.food, deaths,
-        position: bot.entity?.position?.floored?.(), dimension: bot.game?.dimension, inventory: inv };
+        position: bot.entity?.position?.floored?.(), dimension: bot.game?.dimension, inventory: inv, body: bodyState(bot),
+        ...(bot.companionMoveTrace ? { moves: { ...bot.companionMoveTrace,
+          here: bot.entity?.position ? (bot.blockAt(bot.entity.position)?.name ?? 'unloaded') : null } } : {}) };
+      if (bot.companionMoveTrace) Object.assign(bot.companionMoveTrace, { ticks: 0, forced: 0 });
       write('heartbeat', line);
       line.autonomy = status.autonomy?.current || null;
       console.log(`    [${line.minute}m] ${line.running || 'idle'}${line.autonomy ? ` (auto:${line.autonomy})` : ''} steps=${line.steps ?? '-'} hp=${Math.round(bot.health)}`
@@ -325,6 +363,7 @@ async function main({ argv = process.argv.slice(2), processTarget = process, sig
   const startRun = Number(option('--start-run', 1));
   const lifecycle = option('--bot-lifecycle', 'reuse');
   const traceInventory = args.includes('--inventory-trace');
+  const traceMovement = args.includes('--trace-movement');
   const seed = Number(option('--seed', Date.now() % 1_000_000));
   const difficultyOption = option('--difficulty', null);
   const names = option('--scenario', 'collect-logs-flat').split(',');
@@ -397,7 +436,7 @@ async function main({ argv = process.argv.slice(2), processTarget = process, sig
             }
             if (interruption.signal.aborted) throw interruptionError(interruption.signal);
             result = await runScenario({ scenario, server, bot, username, run, seed, difficulty, runDir: batchDir,
-              lifecycle, traceInventory, signal: interruption.signal });
+              lifecycle, traceInventory, traceMovement, signal: interruption.signal });
           } catch (error) { result = errorResult(error, run + 1); }
           results.push(result);
           if (lifecycle === 'fresh' && bot) { await disconnect(bot); bot = null; }

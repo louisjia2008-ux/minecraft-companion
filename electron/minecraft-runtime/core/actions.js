@@ -9,12 +9,14 @@
 const { goals } = require('mineflayer-pathfinder');
 const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { ownedItems } = require('./perception');
+const { dropReturnPosition } = require('./pathReturn');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
 
 function haltBody(bot) {
   try { bot.pathfinder?.setGoal(null); } catch { /* ignore */ }
+  try { dropReturnPosition(bot); } catch { /* ignore */ }
   try { bot.clearControlStates?.(); } catch { /* ignore */ }
 }
 
@@ -27,7 +29,9 @@ async function withClimbing(bot, targetY, run) {
   if (!movements || !Number.isFinite(targetY) || targetY - bot.entity.position.y <= 3 || !underground(bot)) return run();
   const saved = { towers: movements.allow1by1towers, scaffold: movements.scafoldingBlocks };
   movements.allow1by1towers = true;
-  movements.scafoldingBlocks = CLIMB_BLOCKS.map((name) => bot.registry.itemsByName[name]?.id).filter(Number.isInteger);
+  // In the nether, mostly netherrack: some cobblestone is kept for steps out of lava.
+  movements.scafoldingBlocks = movements.companionNether ? require('./nether').netherScaffolding(bot)
+    : CLIMB_BLOCKS.map((name) => bot.registry.itemsByName[name]?.id).filter(Number.isInteger);
   try {
     return await run();
   } finally {
@@ -344,6 +348,11 @@ async function equipBestWeapon(bot) {
   }
 }
 
+// Mobs that a stray sweep turns on the bot, the whole pack at once.
+const BYSTANDERS = new Set(['zombified_piglin', 'piglin', 'enderman', 'villager', 'iron_golem']);
+const bystanderBeside = (bot, target) => Object.values(bot.entities).some((e) => e !== target && BYSTANDERS.has(e.name)
+  && e.position && e.position.distanceTo(target.position) <= 2.5 && e.position.distanceTo(bot.entity.position) <= 4.5);
+
 /** Fights one entity until it is gone, the timeout passes, or the signal aborts. */
 async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3 } = {}) {
   await equipBestWeapon(bot);
@@ -370,7 +379,7 @@ async function attackLoop(bot, ctx, entityId, deadline, reach) {
   try {
     while (Date.now() < deadline) {
       const target = bot.entities[entityId];
-      if (!target || !target.isValid) return died || (hits > 0 && lastDistance <= reach + 2) ? { ok: true } : fail('target_lost');
+      if (!target || !target.isValid) return died || (hits > 0 && lastDistance <= reach + 2) ? { ok: true, died, hits } : fail('target_lost');
       const distance = target.position.distanceTo(bot.entity.position);
       lastDistance = distance;
       if (distance < closest - 0.5) { closest = distance; closestAt = Date.now(); }
@@ -385,6 +394,15 @@ async function attackLoop(bot, ctx, entityId, deadline, reach) {
       } else {
         bot.pathfinder.setGoal(null);
         await bot.lookAt(target.position.offset(0, (target.height || 1.6) * 0.8, 0), true);
+        // A sword's sweep from the ground also hits whatever stands beside the
+        // target: one sweep at a wither skeleton angered a zombified piglin
+        // pack, which beat the bot down into the lava. Hit mid-jump there, as
+        // it falls: a critical hit, which never sweeps.
+        if (bot.entity.onGround && bystanderBeside(bot, target)) {
+          bot.setControlState('jump', true);
+          await waitUntil(() => !bot.entity.onGround && (bot.entity.velocity?.y ?? 0) < 0, { timeoutMs: 800, signal: ctx.signal }).catch(() => {});
+          bot.setControlState('jump', false);
+        }
         bot.attack(target);
         hits += 1;
       }
@@ -471,11 +489,20 @@ async function unstick(bot, ctx) {
   try {
     // Fall damage is (height - 3); keep at least 5 health after any drop.
     if (!nether) movements.maxDropDown = Math.max(saved, Math.min(12, Math.floor(bot.health) - 2));
-    for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
-      const goal = new goals.GoalNearXZ(start.x + Math.cos(angle) * 8, start.z + Math.sin(angle) * 8, 2);
-      await goTo(bot, ctx, goal, { timeoutMs: 15000, arrived: () => true });
-      if (bot.entity.position.distanceTo(start) > 3) return { ok: true, moved: 'walked' };
-    }
+    const walkOut = async () => {
+      for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+        const goal = new goals.GoalNearXZ(start.x + Math.cos(angle) * 8, start.z + Math.sin(angle) * 8, 2);
+        await goTo(bot, ctx, goal, { timeoutMs: 15000, arrived: () => true });
+        if (bot.entity.position.distanceTo(start) > 3) return true;
+      }
+      return false;
+    };
+    if (await walkOut()) return { ok: true, moved: 'walked' };
+    // Boxed in beside lava: try again with only the lava cells themselves shut.
+    if (nether && await require('./nether').withLavaMarginsLifted(bot, walkOut)) return { ok: true, moved: 'walked_near_lava' };
+    // Perched in a lattice of fences (a fortress balcony rail): the pathfinder
+    // plans nothing from a fence top. An hour went by there. Break them away.
+    if (await breakLattice(bot, ctx) && await walkOut()) return { ok: true, moved: 'broke_lattice' };
   } finally {
     movements.maxDropDown = saved;
   }
@@ -488,6 +515,23 @@ async function unstick(bot, ctx) {
     if (start.y - bot.entity.position.y >= 2) return { ok: true, moved: 'dug_down' };
   }
   return bot.entity.position.distanceTo(start) > 2 ? { ok: true, moved: 'partial' } : fail('stuck');
+}
+
+const LATTICE = /(_fence|_wall|iron_bars|_pane)$/;
+/** Digs fences, walls and bars in and around the bot's body. True if any went. */
+async function breakLattice(bot, ctx) {
+  const feet = bot.entity.position.floored();
+  const cells = [];
+  for (let dy = -1; dy <= 1; dy += 1) for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) cells.push(feet.offset(dx, dy, dz));
+  let broke = 0;
+  for (const cell of cells) {
+    const block = bot.blockAt(cell);
+    if (!block || !LATTICE.test(block.name) || !bot.canDigBlock?.(block)) continue;
+    const dug = await digBlock(bot, ctx, block);
+    if (dug.ok) broke += 1;
+  }
+  if (broke) ctx.record?.('unstick_lattice', { broke });
+  return broke > 0;
 }
 
 const FLUID = /water|lava/;
@@ -681,6 +725,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, breakLattice, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };

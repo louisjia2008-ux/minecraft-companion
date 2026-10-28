@@ -33,7 +33,7 @@ function setupChunks(commands) {
 }
 
 const FAILURE = /not loaded|Unknown or incomplete command|Incorrect argument|Unknown (?:block|item|entity|scoreboard)|Too many blocks|Could not summon|No player was found|No entity was found for|not a valid|Cannot /i;
-const SUCCESS = /Successfully filled|Generated structure|No blocks were filled|Changed the block|Could not set the block|Gave \d+|Removed \d+|No items were found|No entit(?:y|ies) (?:was|were) found|Killed |Summoned new|Teleported |Spread \d+|Set (?:the |world |game |.*'s)|difficulty.*(?:set|already)|difficulty has not changed|Gamerule .* (?:set|is)|weather|already (?:in|set|marked)|Marked|force loaded|forceloaded|objective already exists|Created new objective|set .* to|nothing changed|has no effects|doesn't have any effects|Applied effect|Revoked |No advancements were found/i;
+const SUCCESS = /Successfully filled|Generated structure|No blocks were filled|Changed the block|Could not set the block|Gave \d+|Removed \d+|No items were found|No entit(?:y|ies) (?:was|were) found|Killed |Summoned new|Teleported |Spread \d+|Set (?:the |world |game |.*'s)|difficulty.*(?:set|already)|difficulty has not changed|Gamerule .* (?:set|is)|weather|already (?:in|set|marked)|Marked|force loaded|forceloaded|objective already exists|Created new objective|set .* to|nothing changed|has no effects|Removed every effect|doesn't have any effects|Applied effect|Revoked |No advancements were found/i;
 
 function validateResponse(command, response) {
   const kind = command.replace(/^execute in \S+ run /, '').split(' ')[0];

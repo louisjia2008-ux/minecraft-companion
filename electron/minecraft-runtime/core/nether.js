@@ -232,23 +232,78 @@ const NEVER_BREAK = ['nether_gold_ore', 'gilded_blackstone', 'gold_block', 'ches
  * on every cell next to lava or fire, never stand on magma, never dig gold.
  * Returns a function that restores the overworld settings.
  */
+/**
+ * Blocks to bridge and tower with in the nether: netherrack, which every walk
+ * here digs up, and the other rubble of the nether (a fortress walk digs nether
+ * bricks, a bastion blackstone; with netherrack alone a run below a fortress
+ * ran out and could not climb up to it for an hour). Cobblestone is kept for steps out of a lava sea; letting the
+ * pathfinder build with it spent a whole stack on bridges in a minute.
+ */
+// Soul sand too: a bastion trade brings stacks of it, and one run ended on a
+// basalt pillar in the lava sea with 49 soul sand and nothing else to build with.
+const SCAFFOLD = ['netherrack', 'nether_bricks', 'blackstone', 'basalt', 'polished_basalt', 'smooth_basalt', 'soul_soil', 'soul_sand'];
+
+function netherScaffolding(bot) {
+  return SCAFFOLD.map((n) => bot.registry.itemsByName?.[n]?.id).filter(Number.isInteger);
+}
+
+/** How many blocks the bot carries that nether paths may build with. */
+function scaffoldCount(bot) {
+  return bot.inventory.items().filter((i) => SCAFFOLD.includes(i.name)).reduce((n, i) => n + i.count, 0);
+}
+
 function applyNetherMovements(bot) {
   const m = bot.pathfinder?.movements;
   if (!m || m.companionNether) return () => {};
-  const saved = { maxDropDown: m.maxDropDown, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length };
+  const saved = { maxDropDown: m.maxDropDown, digCost: m.digCost, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length,
+    scaffold: m.scafoldingBlocks, sprint: m.allowSprinting };
   m.companionNether = true;
   m.maxDropDown = 3;
+  // Netherrack breaks in an instant, so plain paths tunnel straight through
+  // hills: one long walk wore out an iron pickaxe. Walk around when there is a way.
+  m.digCost = 6;
+  m.scafoldingBlocks = netherScaffolding(bot);
   for (const name of NEVER_BREAK) {
     const id = bot.registry.blocksByName[name]?.id;
     if (Number.isInteger(id)) m.blocksCantBreak.add(id);
   }
+  // Fortress bridges hang 30 blocks over lava: no sprinting (a sprint overshoots
+  // a turn and walks off the side). A cost on cells beside a drop was tried and
+  // dropped: it sent walks the long way round, or tunnelling through hills.
+  m.allowSprinting = false;
   m.exclusionAreasStep.push((block) => (block?.position ? lavaRisk(bot, block.position) : 0));
   return () => {
     m.maxDropDown = saved.maxDropDown;
+    m.digCost = saved.digCost;
+    m.scafoldingBlocks = saved.scaffold;
+    m.allowSprinting = saved.sprint;
     m.blocksCantBreak = saved.cantBreak;
     m.exclusionAreasStep.length = saved.steps;
     m.companionNether = false;
   };
+}
+
+/**
+ * Runs `fn` with the nether movement's lava margins lifted: only a cell with
+ * lava (or fire, or magma) at, under or over it stays shut. Boxed into a pocket
+ * by magma and a lava pool, every way out runs beside lava, and with the full
+ * margins the pathfinder ran out of time before it found one.
+ */
+async function withLavaMarginsLifted(bot, fn) {
+  const m = bot.pathfinder?.movements;
+  if (!m?.companionNether) return fn();
+  const steps = m.exclusionAreasStep.slice();
+  const digCost = m.digCost;
+  const at = (p, dy) => bot.blockAt(p.offset(0, dy, 0))?.name || '';
+  m.exclusionAreasStep.splice(0, m.exclusionAreasStep.length,
+    (block) => (block?.position && [-1, 0, 1].some((dy) => LAVA.test(at(block.position, dy))) ? 1000 : 0));
+  m.digCost = 1;
+  try {
+    return await fn();
+  } finally {
+    m.exclusionAreasStep.splice(0, m.exclusionAreasStep.length, ...steps);
+    m.digCost = digCost;
+  }
 }
 
 /** Extra path cost for standing in `p`: lava or fire beside, below, or under the floor. */
@@ -276,6 +331,8 @@ function lavaNear(bot, range = 2) {
 }
 
 module.exports = {
+  SCAFFOLD,
+  netherScaffolding, scaffoldCount, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
   applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };

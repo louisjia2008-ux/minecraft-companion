@@ -56,19 +56,48 @@ test('cells by lava cost more, standing in or over lava is effectively banned', 
 });
 
 test('nether movements are applied once and fully restored', () => {
-  const movements = { maxDropDown: 4, blocksCantBreak: new Set([1]), exclusionAreasStep: [() => 0] };
+  const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set([1]), exclusionAreasStep: [() => 0], scafoldingBlocks: [20, 21],
+    allowSprinting: true };
   const bot = { ...makeWorld(), pathfinder: { movements },
-    registry: { blocksByName: { nether_gold_ore: { id: 7 }, obsidian: { id: 8 } } } };
+    registry: { blocksByName: { nether_gold_ore: { id: 7 }, obsidian: { id: 8 } }, itemsByName: { netherrack: { id: 21 }, cobblestone: { id: 20 } } } };
   const restore = nether.applyNetherMovements(bot);
   assert.equal(movements.maxDropDown, 3);
+  assert.ok(movements.digCost > 1, 'digging costs more than walking around');
   assert.ok(movements.blocksCantBreak.has(7) && movements.blocksCantBreak.has(8));
   assert.equal(movements.exclusionAreasStep.length, 2);
+  assert.deepEqual(movements.scafoldingBlocks, [21], 'cobblestone is kept for lava steps');
+  assert.equal(movements.allowSprinting, false, 'no sprinting along fortress bridges');
   nether.applyNetherMovements(bot)();
   assert.equal(movements.exclusionAreasStep.length, 2, 'a second apply is a no-op');
   restore();
   assert.equal(movements.maxDropDown, 4);
+  assert.equal(movements.digCost, 1);
+  assert.equal(movements.allowSprinting, true);
+  assert.deepEqual(movements.scafoldingBlocks, [20, 21]);
   assert.deepEqual([...movements.blocksCantBreak], [1]);
   assert.equal(movements.exclusionAreasStep.length, 1);
+});
+
+test('nether rubble counts as scaffolding, cobblestone is kept for lava steps', () => {
+  const bot = { registry: { itemsByName: { netherrack: { id: 1 }, nether_bricks: { id: 2 }, blackstone: { id: 3 }, cobblestone: { id: 4 } } },
+    inventory: { items: () => [{ name: 'nether_bricks', count: 5 }, { name: 'blackstone', count: 3 }, { name: 'cobblestone', count: 60 }] } };
+  assert.deepEqual(nether.netherScaffolding(bot), [1, 2, 3]);
+  assert.equal(nether.scaffoldCount(bot), 8);
+});
+
+test('lifting the lava margins keeps lava cells shut and restores the nether costs', async () => {
+  const movements = { maxDropDown: 4, digCost: 1, blocksCantBreak: new Set(), exclusionAreasStep: [], scafoldingBlocks: [] };
+  const bot = { ...makeWorld({ '3,64,0': 'lava', '0,63,5': 'magma_block' }), pathfinder: { movements },
+    registry: { blocksByName: {}, itemsByName: { netherrack: { id: 21 } } } };
+  const restore = nether.applyNetherMovements(bot);
+  const cost = (x, y, z) => movements.exclusionAreasStep.reduce((sum, f) => sum + f({ position: new Vec3(x, y, z) }), 0);
+  assert.ok(cost(2, 64, 0) >= 60, 'beside lava costs extra');
+  const inside = await nether.withLavaMarginsLifted(bot, () => ({ beside: cost(2, 64, 0), over: cost(0, 64, 5), into: cost(3, 64, 0), dig: movements.digCost }));
+  assert.deepEqual(inside, { beside: 0, over: 1000, into: 1000, dig: 1 });
+  assert.ok(cost(2, 64, 0) >= 60, 'margins back afterwards');
+  assert.equal(movements.digCost, 6);
+  restore();
+  assert.equal(movements.exclusionAreasStep.length, 0);
 });
 
 const { EventEmitter } = require('node:events');
@@ -123,6 +152,38 @@ test('returning to the overworld restores the overworld movement settings', asyn
   assert.equal(movements.exclusionAreasStep.length, 0);
 });
 
+test('a swing next to a hit is not blamed while a wither skeleton could have dealt it', () => {
+  const bot = piglinBot();
+  bot.entities[9] = { id: 9, name: 'wither_skeleton', position: new Vec3(-2, 64, 0) };
+  const defend = createSurvivalBehaviors({ bot }).find((b) => b.name === 'defend');
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  assert.equal(defend.want(nearPiglin(bot)), 0);
+  // Once the skeleton is gone, a swing before a hit is the pack's own.
+  delete bot.entities[9];
+  bot.emit('entitySwingArm', bot.entities[7]);
+  bot.emit('entityHurt', bot.entity);
+  assert.equal(defend.want(nearPiglin(bot)), 1);
+});
+
+test('quartz next to a fortress is left alone: blazes spawn there', async () => {
+  const bricks = Array.from({ length: 30 }, (_, i) => new Vec3(10 + i, 64, 0));
+  const bot = { ...makeWorld(), pathfinder: { movements: { maxDropDown: 4, blocksCantBreak: new Set(), exclusionAreasStep: [] } },
+    registry: { blocksByName: { nether_portal: { id: 1 }, nether_bricks: { id: 2 } } },
+    inventory: { slots: [], items: () => [{ name: 'iron_pickaxe' }] },
+    findBlocks: ({ matching }) => ([].concat(matching).includes(2) ? bricks : []) };
+  let exclude = null;
+  const skills = { gatherOne: async (_b, _c, options) => { exclude = options.exclude; return { ok: true }; } };
+  const goal = createNetherQuartzGoal({ bot, count: 1, skills });
+  goal.memory.netherPortal = new Vec3(0, 64, 0);
+  const ctx = { signal: new AbortController().signal, record: () => {}, perceive: () => ({ inventory: {} }) };
+  await goal.run(ctx);
+  assert.equal(exclude(new Vec3(20, 40, 0)), true, 'ore in the fortress');
+  assert.equal(exclude(new Vec3(-50, 40, 0)), false, 'ore on the far side of the portal');
+});
+
 test('a Nether portal blown out is lit again from its frame before going home', async () => {
   // Frame along x from base 0,63,0: obsidian at u=0..3, y=63..67, interior air.
   const blocks = {};
@@ -150,4 +211,14 @@ test('a worn-out pickaxe in the Nether sends the bot home, not round in circles'
   const result = await goal.run(ctx);
   assert.ok(records.some((r) => r.type === 'retreat' && r.pickaxe === false));
   assert.equal(result.reason, 'nether_portal_lost');
+});
+
+test('a zombified piglin the server flags as aggressive is fought, wither skeleton about or not', () => {
+  const bot = piglinBot();
+  bot.registry.entitiesByName = { zombified_piglin: { metadataKeys: ['a', 'b', 'mob_flags'] } };
+  bot.entities[9] = { id: 9, name: 'wither_skeleton', position: new Vec3(-6, 64, 0) };
+  const defend = createSurvivalBehaviors({ bot }).find((b) => b.name === 'defend');
+  assert.equal(defend.want(nearPiglin(bot)), 0);
+  bot.entities[7].metadata = { 2: 4 };
+  assert.equal(defend.want(nearPiglin(bot)), 1);
 });

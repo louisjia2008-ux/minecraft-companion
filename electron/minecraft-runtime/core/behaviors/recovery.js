@@ -18,9 +18,10 @@ const { sleep } = require('../confirm');
 const PATH_FAILURES = new Set(['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck', 'leg_blocked']);
 // Never wanted by any goal; thrown away first when the bag is full.
 const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff', 'calcite', 'dripstone_block',
-  'pointed_dripstone', 'rotten_flesh', 'poisonous_potato', 'spider_eye', 'cobweb', 'dead_bush', 'netherrack']);
+  'pointed_dripstone', 'rotten_flesh', 'poisonous_potato', 'spider_eye', 'cobweb', 'dead_bush']);
 // Useful in moderation: one stack is kept, the rest goes.
-const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64 };
+// A stack of netherrack is the nether's building block: bridges, steps out of lava.
+const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64 };
 const SAPLINGS_KEPT = 8;
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
@@ -36,6 +37,22 @@ function discardable(inventory, keep = () => false) {
     else if (name.endsWith('_sapling') && count > SAPLINGS_KEPT) surplus.push({ name, count: count - SAPLINGS_KEPT });
   }
   return [...junk, ...surplus];
+}
+
+/** What boxes the bot in, for the log: every non-air block within one cell of its body. */
+function surroundings(bot) {
+  const feet = bot.entity?.position?.floored?.();
+  if (!feet || typeof bot.blockAt !== 'function') return null;
+  const cells = [];
+  for (let dy = -1; dy <= 2; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        const name = bot.blockAt(feet.offset(dx, dy, dz))?.name;
+        if (name && !/^(cave_|void_)?air$/.test(name)) cells.push(`${dx},${dy},${dz}:${name}`);
+      }
+    }
+  }
+  return { feet: `${feet.x},${feet.y},${feet.z}`, cells };
 }
 
 function createRecovery({
@@ -128,7 +145,9 @@ function createRecovery({
       const state = ctx.perceive();
       ctx.record('unstick', { why: stuckReason(state), at: state.position?.floored?.() || state.position });
       try {
-        return await actions.unstick(bot, ctx);
+        const result = await actions.unstick(bot, ctx);
+        if (!result?.ok) ctx.record('unstick_failed', { reason: result?.reason, around: surroundings(bot) });
+        return result;
       } finally {
         // Whatever happened, the goal gets a fresh look before the next attempt.
         goalTrack.pathStreak = 0;

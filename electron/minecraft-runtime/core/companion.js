@@ -27,6 +27,7 @@ const { createCarpetDuperGoal } = require('./goals/carpetDuper');
 const { createFishingGoal } = require('./goals/fishing');
 const { createRailDuperGoal } = require('./goals/railDuper');
 const { createNetherQuartzGoal } = require('./goals/netherQuartz');
+const { createNetherExpeditionGoal } = require('./goals/netherExpedition');
 const { createEndDragonGoal } = require('./goals/endDragon');
 const { createEnterEndGoal } = require('./goals/enterEnd');
 const { createEndCityGoal } = require('./goals/endCity');
@@ -36,6 +37,7 @@ const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 const { installEdgeNudge } = require('./edgeNudge');
+const { trackReturnPositions } = require('./pathReturn');
 const { installOpenDoorPassage, uninstallOpenDoorPassage } = require('./openDoorPassage');
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
@@ -68,6 +70,7 @@ function configureMovements(bot) {
     const below = bot.blockAt(block.position.offset(0, -1, 0));
     return below && leaves.has(below.type) ? 25 : 0;
   });
+  trackReturnPositions(bot, movements);
   installOpenDoorPassage(bot, movements);
   bot.pathfinder.setMovements(movements);
   // Mining paths through stone need more search time than surface walks.
@@ -182,9 +185,21 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   }, tickMs);
   timer.unref?.();
   // Death interrupts the current action only: progress lives in the world, so
-  // after respawning the goal simply re-plans from what is left.
-  const onDeath = () => { if (!disposed) brain.interrupt('death').catch(() => {}); };
+  // after respawning the goal simply re-plans from what is left. The body stops
+  // too: a path goal set by a chase outlives the action, and after a nether death
+  // the pathfinder walked on towards its nether coordinates across the overworld.
+  // Effects die with the body too, but the server sends no removal for them:
+  // a fire resistance kept on the client after a death meant the bot never
+  // drank again, and burned to death at the next blaze.
+  const onDeath = () => {
+    if (disposed) return;
+    if (bot.entity?.effects) bot.entity.effects = {};
+    haltBody(bot);
+    brain.interrupt('death').catch(() => {});
+  };
+  const onRespawn = () => { if (!disposed) haltBody(bot); };
   bot.on('death', onDeath);
+  bot.on('respawn', onRespawn);
 
   function startPlayerGoal(create, metadata, returnGoal = true) {
     assertActive();
@@ -225,6 +240,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     farm: goalMethod(createFarmGoal),
     ranch: goalMethod(createRanchGoal),
     netherQuartz: goalMethod(createNetherQuartzGoal),
+    /** Fortress (blaze rods, wither skulls) and bastion (piglin bartering), then home. */
+    netherExpedition: goalMethod(createNetherExpeditionGoal),
     enterEnd: goalMethod(createEnterEndGoal),
     endJourney: goalMethod(createEndJourneyGoal),
     endCity: goalMethod(createEndCityGoal),
@@ -248,6 +265,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     paused = false;
     clearInterval(timer);
     bot.removeListener('death', onDeath);
+    bot.removeListener('respawn', onRespawn);
     removeEdgeNudge();
     // Both calls start synchronously: director cannot choose more work, and
     // brain cannot restart a reflex while an abort or goal cleanup is pending.

@@ -67,4 +67,145 @@ const netherQuartzGiven = {
   },
 };
 
-module.exports = { netherQuartzGiven };
+// ---- fortress and bastion ------------------------------------------------------
+
+const EXPEDITION = { blazeRods: 6, witherSkulls: 1, trades: 10, skullTries: 30 };
+// Server-side count of the wither skeletons the player killed.
+const WITHER_KILLS = 'witherKills';
+const GOLD = 24;
+// Gold helmets wear out in a fortress fight (77 durability): two spares keep piglins calm afterwards.
+// Armour as a player takes it to a fortress: Protection IV, and Feather Falling
+// on the boots. Without it a wither skeleton's swing or a hoglin's toss off a
+// bridge, or a zombified piglin pack while swimming in lava, ended runs.
+const PROTECTED = '[enchantments={protection:4,unbreaking:3}]';
+const EXPEDITION_KIT = [
+  ['obsidian', 10], ['cobblestone', 64], ['flint_and_steel', 1], ['diamond_pickaxe', 1],
+  ['diamond_sword[enchantments={looting:3,sharpness:3}]', 1], ['shield', 1],
+  [`golden_helmet${PROTECTED}`, 3], [`diamond_chestplate${PROTECTED}`, 1], [`diamond_leggings${PROTECTED}`, 1],
+  ['diamond_boots[enchantments={protection:4,feather_falling:4,unbreaking:3}]', 1],
+  ['cooked_beef', 32], ['golden_apple', 8], ['gold_ingot', GOLD],
+  // Eight minutes each: four ran out half way through a 90-minute fortress hunt,
+  // and eight ran out 84 minutes into the full chain.
+  ['potion[potion_contents={potion:"minecraft:long_fire_resistance"}]', 12],
+];
+
+async function killsOnServer(server, username) {
+  const match = await server.query(`scoreboard players get ${username} ${WITHER_KILLS}`,
+    /has (-?\d+) \[|Can't get value|Unknown scoreboard objective/);
+  return match[1] ? Number(match[1]) : 0;
+}
+
+/** Where the nearest structure of a kind is, asked of the server from a nether point. */
+async function locate(server, structure, x, z) {
+  const match = await server.query(`execute in minecraft:the_nether positioned ${x} 64 ${z} run locate structure minecraft:${structure}`,
+    /(?:The nearest minecraft:\w+ is at \[(-?\d+), ~, (-?\d+)\]|(Could not find))/, 60000);
+  return match[3] ? null : { x: Number(match[1]), z: Number(match[2]) };
+}
+
+/**
+ * Where the bot starts in the nether. `both`: between a fortress and a bastion
+ * that lie close together, so the whole expedition fits in the time limit.
+ * `fortress` / `bastion`: 60-110 blocks from one of them, in a random
+ * direction. The bot is never told where they are: it has to see them in the
+ * loaded chunks.
+ */
+async function pickExpeditionStart(server, rng, run, near) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const angle = rng() * Math.PI * 2;
+    const r = 400 + rng() * 2600 + run * 300;
+    const px = Math.round(Math.cos(angle) * r);
+    const pz = Math.round(Math.sin(angle) * r);
+    if (near !== 'both') {
+      const target = await locate(server, near === 'fortress' ? 'fortress' : 'bastion_remnant', px, pz);
+      if (!target) continue;
+      const a = rng() * Math.PI * 2;
+      const d = 60 + rng() * 50;
+      return { [near]: target, nether: { x: Math.round(target.x + Math.cos(a) * d), z: Math.round(target.z + Math.sin(a) * d) }, attempt };
+    }
+    const fortress = await locate(server, 'fortress', px, pz);
+    if (!fortress) continue;
+    const bastion = await locate(server, 'bastion_remnant', fortress.x, fortress.z);
+    if (!bastion) continue;
+    const apart = Math.hypot(fortress.x - bastion.x, fortress.z - bastion.z);
+    if (apart < 64 || apart > 400) continue;
+    const jitter = () => Math.round((rng() - 0.5) * 60);
+    const nether = { x: Math.round((fortress.x + bastion.x) / 2) + jitter(), z: Math.round((fortress.z + bastion.z) / 2) + jitter() };
+    return { fortress, bastion, nether, attempt };
+  }
+  throw new Error(`no ${near === 'both' ? 'fortress and bastion close together' : near} found`);
+}
+
+function expeditionScenario({ name, near, targets, timeoutMs, experimental = false }) {
+  const wants = [targets.blazeRods && `${targets.blazeRods} blaze rods`, targets.witherSkulls && `${targets.witherSkulls} wither skeleton skull${targets.skullTries ? ` (or ${targets.skullTries} wither skeletons killed without one)` : ''}`,
+    targets.trades && `${targets.trades} piglin trades`].filter(Boolean).join(', ');
+  return {
+    name,
+    description: `Expedition kit given (portal materials, Protection IV diamond armour + gold helmet, Feather Falling boots, looting sword, fire resistance, golden apples,
+  ${GOLD} gold); start near ${near === 'both' ? 'a fortress and a bastion' : `a ${near}`} (not told to the bot); ${wants}; then come home.`,
+    serverProperties: {
+      'level-type': 'minecraft:flat', 'generator-settings': JSON.stringify(FLAT_GENERATOR),
+      'level-seed': 20261023, difficulty: 'easy', 'allow-nether': true,
+    },
+    defaultDifficulty: 'easy',
+    timeoutMs,
+    ...(experimental ? { experimental: true } : {}),
+    async prepare({ username, run, rng, difficulty = 'easy', server }) {
+      const pick = await pickExpeditionStart(server, rng, run, near);
+      const x = pick.nether.x * 8;
+      const z = pick.nether.z * 8;
+      return {
+        commands: [
+          `difficulty ${difficulty}`,
+          'gamerule doDaylightCycle false', 'gamerule doWeatherCycle false', 'gamerule doMobSpawning true',
+          'gamerule doImmediateRespawn true', 'gamerule keepInventory false', 'gamerule spawnRadius 0',
+          'time set noon', 'weather clear',
+          `execute in minecraft:overworld run tp ${username} ${x + 0.5} ${GROUND} ${z + 0.5}`,
+          `execute in minecraft:overworld run setworldspawn ${x} ${GROUND} ${z + 10}`,
+          `clear ${username}`, `effect clear ${username}`, `gamemode survival ${username}`,
+          `effect give ${username} minecraft:instant_health 1 5`, `effect give ${username} minecraft:saturation 1 20`,
+          ...EXPEDITION_KIT.map(([item, count]) => `give ${username} ${item} ${count}`),
+          `scoreboard objectives add ${WITHER_KILLS} minecraft.killed:minecraft.wither_skeleton`,
+          `scoreboard players set ${username} ${WITHER_KILLS} 0`,
+        ],
+        details: { start: { x, z }, netherStart: pick.nether, fortress: pick.fortress || null, bastion: pick.bastion || null },
+      };
+    },
+    start: (companion) => companion.netherExpedition(targets),
+    async verify({ server, username, goal }) {
+      const rods = await countOnPlayer(server, username, 'blaze_rod');
+      const skulls = await countOnPlayer(server, username, 'wither_skeleton_skull');
+      const gold = await countOnPlayer(server, username, 'gold_ingot');
+      const dimension = await playerDimension(server, username);
+      const m = goal?.memory || {};
+      const at = (p) => (p ? `${p.x},${p.y},${p.z}` : null);
+      const trades = m.trades || 0;
+      const witherKills = await killsOnServer(server, username);
+      // The skull is luck: a fortress hunt that killed skullTries wither
+      // skeletons with the looting sword and rolled none still did its job.
+      const skullsOk = skulls >= targets.witherSkulls || (targets.skullTries > 0 && witherKills >= targets.skullTries);
+      return {
+        pass: rods >= targets.blazeRods && skullsOk && trades >= targets.trades
+          && gold <= GOLD - targets.trades && dimension === 'overworld',
+        details: { rodsOnServer: rods, skullsOnServer: skulls, witherKillsOnServer: witherKills, goldOnServer: gold, trades, barter: m.barter, kills: m.kills,
+          dimension, fortress: at(m.fortress), bastion: at(m.bastion), visited: m.visited, netherPortal: at(m.netherPortal) },
+      };
+    },
+  };
+}
+
+// A wither skeleton drops its skull 5.5% of the time with Looting III: about 18
+// kills for one skull, and a fortress yields one every two or three minutes.
+// 45 minutes ended runs that played well but rolled no skull (13 kills, none).
+// Both still fail some runs on skull luck and kill rate: a fortress mostly
+// below the lava sea's cliffs (seed 3) keeps the bot on the low ground under
+// its decks, and runs there killed 18 to 21 in two and a half hours.
+// Three hours for the full chain: two runs had every rod, skull and trade at
+// 99 minutes, and a fortress at the lava sea's edge alone can take 80.
+const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION,
+  timeoutMs: 180 * 60 * 1000 });
+const netherFortressGiven = expeditionScenario({ name: 'nether-fortress-given', near: 'fortress',
+  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, skullTries: EXPEDITION.skullTries, trades: 0 }, timeoutMs: 90 * 60 * 1000 });
+const netherBastionGiven = expeditionScenario({ name: 'nether-bastion-given', near: 'bastion',
+  targets: { blazeRods: 0, witherSkulls: 0, skullTries: 0, trades: EXPEDITION.trades }, timeoutMs: 30 * 60 * 1000 });
+
+module.exports = { netherQuartzGiven, netherStructuresGiven, netherFortressGiven, netherBastionGiven };
