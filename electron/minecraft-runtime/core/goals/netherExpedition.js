@@ -12,6 +12,7 @@
 // Every run() decides from where the bot is and what it holds, like the
 // quartz goal: a death in the nether sends it back through the portal.
 
+const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
@@ -94,12 +95,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   const onFire = () => (Number(bot.entity?.metadata?.[0]) & 1) === 1;
 
   /** Drinks fire resistance before a blaze fight or when burning, if it has none active. */
-  async function fireProof(ctx, { danger }) {
+  async function fireProof(ctx, { danger, reserve = false }) {
     // The last three are kept for a fall in the lava: drunk ahead of every
     // blaze in sight, twelve lasted a run 110 minutes, and it then died in
     // the lava sea with none left.
     const left = bot.inventory.items().filter(structures.isFireResistancePotion).reduce((n, i) => n + i.count, 0);
-    if (!(danger && left > 3) && !onFire()) return { ok: true, skipped: true };
+    if (!(danger && (left > 3 || reserve)) && !onFire()) return { ok: true, skipped: true };
     if (structures.hasEffect(bot, 'FireResistance')) return { ok: true, skipped: true };
     const potion = bot.inventory.items().find(structures.isFireResistancePotion);
     if (!potion) {
@@ -433,6 +434,68 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return giveUp('off_deck', step.ok ? fail('tower_off_deck') : step);
   }
 
+  // Fallen from a deck onto an island in the lava sea: every shore round it
+  // is a cliff, and the pathfinder, which prices each cell over lava at a
+  // thousand, finds no way off. One run stood there fifty minutes with sixty
+  // cobblestone in hand and mined its own island away. Lay a straight
+  // causeway towards the nearest tower spot, then pillar up the shore cliff.
+  // Tried from that island: 21 blocks of causeway, a tower, and onto the deck.
+  // Four failed steps in place are enough here: waiting for eight cost a
+  // trial run twelve minutes on the island.
+  const marooned = () => trail.length >= 4 && trail.slice(-4).every((p) => p.distanceTo(trail.at(-1)) <= 4)
+    && bot.entity.position.y <= 36 && nether.lavaNear(bot, 3);
+  const HORIZONTAL = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
+  const open = (p) => { const b = bot.blockAt(p); return Boolean(b) && b.boundingBox === 'empty' && b.name !== 'lava'; };
+  const solid = (p) => bot.blockAt(p)?.boundingBox === 'block';
+
+  async function causeway(ctx) {
+    const here = bot.entity.position;
+    const flat = (p) => Math.hypot(p.x - here.x, p.z - here.z);
+    const target = structures.towerSpots(bot, deckFloor(memory.fortress, 96, 4096), here)
+      .map((s) => s.stand)
+      .filter((p) => !bySea(p.offset(0, -1, 0)) && !blacklist.has(`causeway:${posKey(p)}`) && flat(p) <= 48)
+      .sort((a, b) => flat(a) - flat(b))[0];
+    if (!target) return fail('no_causeway_target');
+    blacklist.add(`causeway:${posKey(target)}`, 'tried');
+    await fireProof(ctx, { danger: true, reserve: true });
+    ctx.record('causeway', { to: posKey(target), blocks: towerBlocks() });
+    const start = here.clone();
+    let wall = false;
+    for (let steps = 0; steps < 48; steps += 1) {
+      const feet = bot.entity.position.floored();
+      if (Math.hypot(target.x - feet.x, target.z - feet.z) < 2) break;
+      const step = await end.bridgeStep(bot, ctx, target, { blocks: TOWER, keepWalls: true });
+      if (!step.ok) {
+        wall = step.reason === 'bridge_wall';
+        break;
+      }
+    }
+    if (wall) await scaleCliff(ctx, target);
+    const moved = bot.entity.position.distanceTo(start);
+    ctx.record('causeway_end', { at: posKey(bot.entity.position.floored()), moved: Math.round(moved), blocks: towerBlocks() });
+    return moved >= 3 ? { ok: true, moved: Math.round(moved) } : fail('causeway_blocked');
+  }
+
+  /** Pillars up beside the cliff in the way to `target` and steps onto its top. */
+  async function scaleCliff(ctx, target) {
+    for (let i = 0; i < 16; i += 1) {
+      const feet = bot.entity.position.floored();
+      const dx = target.x - (feet.x + 0.5);
+      const dz = target.z - (feet.z + 0.5);
+      const dir = HORIZONTAL.find((d) => (Math.abs(dx) >= Math.abs(dz) ? d.x === (Math.sign(dx) || 1) : d.z === (Math.sign(dz) || 1)));
+      const ahead = feet.plus(dir);
+      if (open(ahead) && open(ahead.offset(0, 1, 0)) && solid(ahead.offset(0, -1, 0))) {
+        const step = await actions.goTo(bot, ctx, new goals.GoalBlock(ahead.x, ahead.y, ahead.z), { timeoutMs: 8000 });
+        return step.ok ? { ok: true } : step;
+      }
+      if (!open(feet.offset(0, 2, 0))) return fail('cliff_overhang');
+      actions.haltBody(bot);
+      await end.pillarUp(bot, ctx, feet.y + 1, { maxSteps: 3, blocks: TOWER, stop: () => Boolean(bot.entity?.isInLava) || bot.health < 8 });
+      if (bot.entity.position.y < feet.y + 0.5) return fail('cliff_pillar_short');
+    }
+    return fail('cliff_too_high');
+  }
+
   // ---- fortress -------------------------------------------------------------
 
   // The pillar feet standing in the lava sea are fortress bricks with open
@@ -521,6 +584,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return result;
     }
     if (!inFortress()) {
+      if (marooned()) {
+        const crossed = await causeway(ctx);
+        if (crossed.ok) return crossed;
+      }
       let floor = deckFloor(memory.fortress, 48, 32);
       // The first brick seen can be a buried pillar foot: look for floor anywhere in sight.
       if (!floor.length) floor = deckFloor(here, 96, 32);
