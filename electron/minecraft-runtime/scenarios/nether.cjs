@@ -196,16 +196,15 @@ function expeditionScenario({ name, near, targets, timeoutMs, experimental = fal
 // A wither skeleton drops its skull 5.5% of the time with Looting III: about 18
 // kills for one skull, and a fortress yields one every two or three minutes.
 // 45 minutes ended runs that played well but rolled no skull (13 kills, none).
-// Experimental (left out of the full regression run): both still pass only some
-// runs. The fortress hunt passed 3 of the last 5 (skull luck, wither skeleton
-// knockback off bridges); the full chain has not passed yet on seed 3.
+// Both still fail some runs on skull luck and kill rate: a fortress mostly
+// below the lava sea's cliffs (seed 3) keeps the bot on the low ground under
+// its decks, and runs there killed 18 to 21 in two and a half hours.
 // Three hours for the full chain: two runs had every rod, skull and trade at
 // 99 minutes, and a fortress at the lava sea's edge alone can take 80.
 const netherStructuresGiven = expeditionScenario({ name: 'nether-structures-given', near: 'both', targets: EXPEDITION,
-  timeoutMs: 180 * 60 * 1000, experimental: true });
+  timeoutMs: 180 * 60 * 1000 });
 const netherFortressGiven = expeditionScenario({ name: 'nether-fortress-given', near: 'fortress',
-  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, skullTries: EXPEDITION.skullTries, trades: 0 }, timeoutMs: 90 * 60 * 1000,
-  experimental: true });
+  targets: { blazeRods: EXPEDITION.blazeRods, witherSkulls: EXPEDITION.witherSkulls, skullTries: EXPEDITION.skullTries, trades: 0 }, timeoutMs: 90 * 60 * 1000 });
 const netherBastionGiven = expeditionScenario({ name: 'nether-bastion-given', near: 'bastion',
   targets: { blazeRods: 0, witherSkulls: 0, skullTries: 0, trades: EXPEDITION.trades }, timeoutMs: 30 * 60 * 1000 });
 
