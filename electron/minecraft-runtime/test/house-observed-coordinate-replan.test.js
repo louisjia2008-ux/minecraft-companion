@@ -41,15 +41,25 @@ test('after real direct camp return a new batch directly rejoins the same observ
  const next=await f.graph.next();assert.equal(next.moved,false);assert.deepEqual(f.moves,[anchor,resume]);assert.equal(f.state().current,key(resume));assert.equal(f.state().visits,original.visits);assert.deepEqual(f.state().order,original.order);assert.equal(hasGroundedBodySupport(f.bot),true);
 });
 test('original native generator partial yields can settle success within the same finite logical probe',t=>{
- const f=fixture(t),goal=new (require('mineflayer-pathfinder').goals.GoalBlock)(16,2,16);
- // A single explicit slow read during original AStar.compute guarantees a
- // partial slice independently of JIT/machine speed. It is a test-only
- // planning counterexample, not evidence about a historical server delay.
- const original=f.bot.blockAt;let reads=0;
- f.bot.blockAt=p=>{if(++reads===2){const until=Date.now()+42;while(Date.now()<until){ /* deliberate single native read delay */ }}return original(p);};
- const observed=runSurfaceGraphNativeProbe(f.bot,f.graph.movements,goal,{assertActive:()=>{},isOwnerCurrent:()=>true});
+ const f=fixture(t),goal=new (require('mineflayer-pathfinder').goals.GoalBlock)(1,2,8),before=f.bot.entity.position.clone();
+ // Isolate continuation, not long-route throughput in the remaining budget.
+ // The adjacent loaded goal still requires a real original AStar expansion;
+ // its second block read forces a partial before the next slice can finish.
+ const original=f.bot.blockAt,nativeGenerator=f.bot.pathfinder.getPathFromTo;
+ let reads=0,delayFired=0,generatorCalls=0,observed;const contexts=[],results=[];
+ f.bot.blockAt=p=>{if(++reads===2){delayFired++;const until=Date.now()+42;while(Date.now()<until){ /* deliberate single native read delay */ }}return original(p);};
+ f.bot.pathfinder.getPathFromTo=function(...args){
+  generatorCalls++;const iterator=nativeGenerator.apply(this,args);
+  return(function*(){for(const entry of iterator){contexts.push(entry.astarContext);results.push(entry.result);yield entry;}})();
+ };
+ try{observed=runSurfaceGraphNativeProbe(f.bot,f.graph.movements,goal,{assertActive:()=>{},isOwnerCurrent:()=>true});}
+ finally{f.bot.blockAt=original;f.bot.pathfinder.getPathFromTo=nativeGenerator;}
+ assert.equal(delayFired,1);assert.equal(generatorCalls,1);assert.ok(contexts.length>1);assert.ok(contexts[0]&&typeof contexts[0]==='object');
+ assert.ok(contexts.every(context=>context===contexts[0]),'Every actual native yield continues the same AStar context');
+ assert.equal(results.length,observed.facts.slices);assert.deepEqual(results.map(result=>result.status),observed.facts.yieldStatuses);assert.equal(observed.result,results.at(-1));
  assert.equal(observed.result.status,'success');assert.ok(observed.facts.yieldStatuses.includes('partial'));assert.ok(observed.facts.slices>1&&observed.facts.slices<=16);assert.equal(observed.facts.conclusive,true);assert.equal(f.moves.length,0);
- assert.ok(observed.facts.elapsedMs<=100);
+ assert.ok(observed.facts.elapsedMs<=100);assert.deepEqual(observed.facts.target,{x:1,y:2,z:8});
+ assert.deepEqual(f.bot.entity.position,before);assert.equal(f.bot.pathfinder.goal,null);
 });
 
 test('a native terminal success arriving after the original budget remains inconclusive and sends no movement',t=>{

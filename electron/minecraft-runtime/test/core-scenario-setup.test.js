@@ -324,3 +324,73 @@ test('a rejected finishWhen still drains delayed inventory readback before termi
   assert.ok(events.some((event) => event.type === 'server_inventory'));
   assert.equal(events.at(-1).type, 'result');
 });
+
+async function queryProcess(t) {
+  const f = serverProcess(t, { responds: false });
+  f.child.stdin.removeAllListeners('data');
+  f.child.stdin.on('data', (chunk) => {
+    const command = chunk.toString().trim(); f.commands.push(command);
+    if (command === 'stop') {
+      f.child.stdout.write('Stopping server\nAll dimensions are saved\n'); f.close();
+    }
+  });
+  const server = await startVanillaServer({ ...f.options, stopTimeoutMs: 100 });
+  t.after(() => server.stop());
+  return { ...f, server, reply: (text) => f.child.stdout.write(`${text}\n`) };
+}
+const queryTurn = () => new Promise((resolve) => setImmediate(resolve));
+
+test('queued read abort or elapsed deadline skips dispatch without canceling another command', async (t) => {
+  const f = await queryProcess(t);
+  const first = f.server.query('first', /MATCH (\d+)/, 200);
+  await queryTurn();
+  const abort = new AbortController();
+  const pending = f.server.query('canceled', /MATCH (\d+)/, 200, { signal: abort.signal, deadline: Date.now() + 100 });
+  abort.abort('owned read canceled'); await assert.rejects(pending, /owned read canceled/);
+  await assert.rejects(f.server.query('expired', /MATCH/, 200, { deadline: Date.now() - 1 }), /deadline/);
+  assert.deepEqual(f.commands, ['first']);
+  f.reply('MATCH 1'); assert.equal((await first)[1], '1'); await queryTurn();
+  assert.deepEqual(f.commands, ['first']);
+});
+
+test('in-flight caller abort retains drain ownership so a late identical reply cannot satisfy next query', async (t) => {
+  const f = await queryProcess(t); const abort = new AbortController();
+  const first = f.server.query('first', /MATCH (\d+)/, 200, { signal: abort.signal });
+  await queryTurn(); abort.abort('caller canceled'); await assert.rejects(first, /caller canceled/);
+  let settled = false;
+  const second = f.server.query('second', /MATCH (\d+)/, 200).then((value) => { settled = true; return value; });
+  await queryTurn(); assert.deepEqual(f.commands, ['first']);
+  f.reply('MATCH 1'); await queryTurn();
+  assert.deepEqual(f.commands, ['first', 'second']); assert.equal(settled, false);
+  f.reply('MATCH 2'); assert.equal((await second)[1], '2');
+});
+
+test('caller deadline includes queue and response time but does not poison a successfully drained channel', async (t) => {
+  const f = await queryProcess(t);
+  const first = f.server.query('first', /MATCH (\d+)/, 200, { deadline: Date.now() + 10 });
+  await assert.rejects(first, /deadline/);
+  const second = f.server.query('second', /MATCH (\d+)/, 200);
+  await queryTurn(); assert.deepEqual(f.commands, ['first']);
+  f.reply('MATCH 1'); await queryTurn(); f.reply('MATCH 2');
+  assert.equal((await second)[1], '2');
+});
+
+test('underlying reply timeout poisons pending and future queries and execute but leaves stop independent', async (t) => {
+  const f = await queryProcess(t);
+  const first = f.server.query('first', /MATCH (\d+)/, 10);
+  const second = f.server.query('second', /MATCH (\d+)/, 200);
+  const rejected = Promise.all([assert.rejects(first, /Timed out/), assert.rejects(second, /desynchronized/)]);
+  await rejected; f.reply('MATCH 1');
+  await assert.rejects(f.server.query('third', /MATCH/), /desynchronized/);
+  await assert.rejects(f.server.execute('must not execute'), /desynchronized/);
+  assert.deepEqual(f.commands, ['first']);
+  const receipt = await f.server.stop(); assert.equal(receipt.saveObserved, true);
+  assert.deepEqual(f.commands, ['first', 'stop']);
+});
+
+test('execute internal barrier timeout also poisons the query channel', async (t) => {
+  const f = await queryProcess(t);
+  await assert.rejects(f.server.execute('setup command', 10), /Timed out/);
+  await assert.rejects(f.server.query('later read', /anything/), /desynchronized/);
+  assert.deepEqual(f.commands, ['setup command', 'list']);
+});

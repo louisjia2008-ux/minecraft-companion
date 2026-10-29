@@ -100,7 +100,7 @@ async function startVanillaServer({ java, jar, dir, properties = {}, dataPacks =
         },
         fail(error) { finish(); reject(error); },
       };
-      const timer = setTimeout(() => waiter.fail(new Error(`Timed out waiting for ${pattern}`)), timeoutMs);
+      const timer = setTimeout(() => waiter.fail(Object.assign(new Error(`Timed out waiting for ${pattern}`), { code: 'server_read_timeout' })), timeoutMs);
       const onAbort = () => waiter.fail(Object.assign(new Error(String(signal.reason || 'interrupted')), { code: 'interrupted' }));
       function finish() { clearTimeout(timer); waiters.delete(waiter); signal?.removeEventListener('abort', onAbort); }
       waiters.add(waiter);
@@ -119,10 +119,20 @@ async function startVanillaServer({ java, jar, dir, properties = {}, dataPacks =
   }
 
   /** Sends a command and returns the first output line matching `pattern`. */
+  let queryFailure = null;
+  function assertQueryChannel() { if (queryFailure) throw queryFailure; }
   async function queryNow(text, pattern, timeoutMs = 5000) {
+    assertQueryChannel();
     const from = output.offset();
     command(text);
-    return waitFor(pattern, { from, timeoutMs });
+    try { return await waitFor(pattern, { from, timeoutMs }); }
+    catch (error) {
+      // A timed-out command may still reply later. Never let that response
+      // satisfy another command with an identical pattern. Stop bypasses this.
+      if (error.code === 'server_read_timeout') queryFailure = Object.assign(
+        new Error('Server query channel desynchronized after response timeout'), { cause: error });
+      throw error;
+    }
   }
 
   function queued(action) {
@@ -132,12 +142,41 @@ async function startVanillaServer({ java, jar, dir, properties = {}, dataPacks =
   }
 
   // Queries with the same reply pattern must never race (e.g. two block tests).
-  function query(text, pattern, timeoutMs = 5000) {
-    return queued(() => queryNow(text, pattern, timeoutMs));
+  function query(text, pattern, timeoutMs = 5000, { signal, deadline } = {}) {
+    if (queryFailure) return Promise.reject(queryFailure);
+    let abandoned = false;
+    return new Promise((resolve, reject) => {
+      let timer;
+      const finish = (fn, value) => {
+        clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fn(value);
+      };
+      const cancel = (error) => { abandoned = true; finish(reject, error); };
+      const onAbort = () => cancel(Object.assign(new Error(String(signal.reason || 'interrupted')), { code: 'interrupted' }));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) { onAbort(); return; }
+      if (Number.isFinite(deadline)) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) { cancel(new Error('Server query caller deadline exceeded')); return; }
+        timer = setTimeout(() => cancel(new Error('Server query caller deadline exceeded')), remaining);
+      }
+      // Cancellation skips a pending command, but never releases an active
+      // command's queue slot before its response drains (or poisons the channel).
+      const drain = queued(() => {
+        if (abandoned) return undefined;
+        if (signal?.aborted || (Number.isFinite(deadline) && Date.now() >= deadline)) {
+          cancel(new Error('Server query canceled before dispatch')); return undefined;
+        }
+        assertQueryChannel();
+        return queryNow(text, pattern, timeoutMs);
+      });
+      drain.then((value) => finish(resolve, value), (error) => finish(reject, error));
+    });
   }
 
   function execute(text, timeoutMs = 15000) {
+    if (queryFailure) return Promise.reject(queryFailure);
     return queued(async () => {
+      assertQueryChannel();
       const from = output.offset();
       command(text);
       // Console commands are processed in order. This barrier captures the

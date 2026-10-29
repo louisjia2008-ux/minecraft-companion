@@ -16,7 +16,7 @@ test('production disposal suppresses observation of a late native completion wit
   await ledger.dispose(); complete('native later');
   assert.equal(await mutation, 'native later'); assert.deepEqual(events, []);
 });
-function fixture({ smelter = false } = {}) {
+function fixture({ smelter = false, confirmationMs = 200, pollMs = 1 } = {}) {
   const output = { x: 1, y: 64, z: 0 }, hopper = { x: 0, y: 64, z: 0 }, furnace = { x: -1, y: 64, z: 0 };
   const item = smelter ? 'iron_ingot' : 'cobblestone';
   const spec = { kind: smelter ? 'smelter' : 'generator', item, output,
@@ -32,11 +32,16 @@ function fixture({ smelter = false } = {}) {
     openContainer(block) {
       assert.equal(this, bot);
       const window = {
+        close() { world.closed = true; bot.currentWindow = null; },
         withdraw(_type, _metadata, count) {
           assert.equal(this, window);
-          const bag = world.containers[key(block.position)];
-          const amount = Math.min(count, bag[item] || 0);
-          bag[item] -= amount; world.player[item] += amount;
+          const transfer = () => {
+            const bag = world.containers[key(block.position)];
+            const amount = Math.min(count, bag[item] || 0);
+            bag[item] -= amount; world.player[item] += amount;
+          };
+          if (world.deferTransfer) world.pendingTransfer = transfer;
+          else transfer();
           return Promise.resolve('native withdrew');
         },
         deposit(_type, _metadata, count) {
@@ -45,24 +50,27 @@ function fixture({ smelter = false } = {}) {
           return Promise.resolve('native deposited');
         },
       };
-      world.lastWindow = window;
+      world.lastWindow = window; bot.currentWindow = window;
       return Promise.resolve(window);
     } };
   const nativePlace = bot.placeBlock, nativeOpen = bot.openContainer;
   const server = { async query(command, pattern) {
     if (world.readsFail) throw new Error('server readback unavailable');
     let text;
-    if (command.startsWith('clear ')) text = `Found ${world.player[item]} matching items on player Test`;
-    else if (command.endsWith(' RecipesUsed')) text = `Block has the following block data: {"minecraft:iron_ingot_from_smelting_raw_iron": ${world.recipes}}`;
+    if (command.startsWith('clear ')) text = `Found ${world.player[item]} matching item(s) on player Test`;
+    else if (command.endsWith(' RecipesUsed')) text = `-1, 64, 0 has the following block data: {"minecraft:iron_ingot_from_smelting_raw_iron": ${world.recipes}}`;
     else {
       const [, , , x, y, z] = command.split(' ');
       const bag = world.containers[`${x},${y},${z}`];
-      text = bag ? `Block has the following block data: [${Object.entries(bag).filter(([, n]) => n > 0)
+      text = bag ? `${x}, ${y}, ${z} has the following block data: [${Object.entries(bag).filter(([, n]) => n > 0)
         .map(([id, count]) => `{count: ${count}, Slot: 0b, id: "minecraft:${id}"}`).join(', ')}]` : 'Target is not a block entity';
     }
+    // Test-only schedule: authoritative state can change after a console read
+    // was evaluated, before the observer issues its next sequential read.
+    if (world.afterQuery) await world.afterQuery(command);
     const match = text.match(pattern); assert.ok(match, command); return match;
   } };
-  const ledger = installProductionEvidence({ bot, server, username: 'Test', resolve: (p) =>
+  const ledger = installProductionEvidence({ bot, server, username: 'Test', confirmationMs, pollMs, resolve: (p) =>
     [output, furnace].some((q) => key(p) === key(q)) ? spec : null });
   const place = (p) => bot.placeBlock({ position: { x: p.x, y: p.y - 1, z: p.z } }, { x: 0, y: 1, z: 0 });
   return { bot, server, ledger, world, spec, item, output, furnace, place, nativePlace, nativeOpen };
@@ -155,4 +163,160 @@ test('transfer credit accounts for concurrent smelting and SNBT counts parse wit
   assert.equal(transferCredit({ player: 100, output: 8, recipes: 0 }, { player: 200, output: 8, recipes: 0 }), 0);
   assert.deepEqual(itemCounts('[{count: 4, Slot: 0b, id: "minecraft:iron_ingot"}, {count: 8, id: "minecraft:cobblestone"}]'),
     { iron_ingot: 4, cobblestone: 8 });
+});
+
+// Controlled mechanism reproduction, not a claim about the historical packet order.
+test('smelter confirms a torn first read against settled server state without losing the first of four products', async () => {
+  const f = fixture({ smelter: true });
+  await f.place(f.output); await f.place(f.furnace);
+  for (let n = 1; n <= 4; n += 1) {
+    f.world.recipes = n;
+    f.world.containers[key(f.output)][f.item] = 1;
+    const window = await f.bot.openContainer({ position: f.output });
+    if (n === 1) {
+      f.world.deferTransfer = true;
+      f.world.afterQuery = (command) => {
+        if (!f.world.pendingTransfer || command !== 'data get block 1 64 0 Items') return;
+        // The read above captured output=1. Apply the actual server transfer
+        // before the following player read, producing output=1/player=101.
+        f.world.pendingTransfer();
+        f.world.pendingTransfer = null; f.world.afterQuery = null;
+        f.world.deferTransfer = false;
+      };
+    }
+    assert.equal(await window.withdraw(1, null, 1), 'native withdrew');
+  }
+  const result = await f.ledger.verify(f.spec, 4, 4);
+  assert.equal(f.world.player[f.item], 104, 'all four actual server transfers occurred');
+  assert.equal(f.world.containers[key(f.output)][f.item], 0);
+  assert.equal(result.produced, 4);
+  assert.equal(result.collected, 4, 'first mixed snapshot must not permanently erase a real transfer');
+  assert.equal(result.pass, true);
+  await f.ledger.dispose();
+});
+
+async function readySmelter(options) {
+  const f = fixture({ smelter: true, ...options });
+  await f.place(f.output); await f.place(f.furnace);
+  f.world.recipes = 4; f.world.containers[key(f.output)][f.item] = 4;
+  const window = await f.bot.openContainer({ position: f.output });
+  return { ...f, window };
+}
+
+test('smelter native success without transfer or with external player deposit never earns credit', async () => {
+  for (const externalDeposit of [false, true]) {
+    const f = await readySmelter(); f.world.deferTransfer = true;
+    if (externalDeposit) f.world.player[f.item] += 4;
+    assert.equal(await f.window.withdraw(1, null, 4), 'native withdrew');
+    const result = await f.ledger.verify(f.spec, 4, 4);
+    assert.equal(result.pass, false); assert.equal(result.collected, 0);
+    assert.ok(result.evidence.errors.length, 'unconfirmed proof permanently invalidates entry');
+    f.world.pendingTransfer(); f.world.deferTransfer = false;
+    assert.equal((await f.ledger.verify(f.spec, 4, 4)).collected, 0, 'late actual transfer is not retroactively credited');
+    await f.ledger.dispose();
+  }
+});
+
+test('smelter accepts concurrent fresh production only with exact conservation', async () => {
+  const f = await readySmelter();
+  f.world.afterQuery = (command) => {
+    if (command !== 'data get block 1 64 0 Items') return;
+    f.world.afterQuery = null;
+    f.world.recipes += 1; f.world.containers[key(f.output)][f.item] += 1;
+  };
+  await f.window.withdraw(1, null, 4);
+  const result = await f.ledger.verify(f.spec, 4, 4);
+  assert.equal(result.pass, true); assert.equal(result.collected, 4);
+  assert.equal(result.evidence.latest.output, 1); await f.ledger.dispose();
+});
+
+test('wrong-item and retired-window mutations cannot earn smelter credit', async () => {
+  const wrong = await readySmelter();
+  await wrong.window.withdraw(999, null, 4);
+  assert.equal((await wrong.ledger.verify(wrong.spec, 4, 4)).collected, 0); await wrong.ledger.dispose();
+  const stale = await readySmelter();
+  await stale.bot.openContainer({ position: stale.output });
+  await stale.window.withdraw(1, null, 4);
+  const result = await stale.ledger.verify(stale.spec, 4, 4);
+  assert.equal(result.pass, false); assert.equal(result.collected, 0); await stale.ledger.dispose();
+});
+
+test('overlapping observed smelter mutations invalidate evidence rather than double credit', async () => {
+  const f = await readySmelter();
+  await Promise.all([f.window.withdraw(1, null, 2), f.window.withdraw(1, null, 2)]);
+  const result = await f.ledger.verify(f.spec, 4, 4);
+  assert.equal(result.pass, false); assert.equal(result.collected, 0); await f.ledger.dispose();
+});
+
+test('disposal cancels a blocked server read without waiting for abandoned query or committing credit', async () => {
+  const f = await readySmelter(); let release, reads = 0;
+  const query = f.server.query.bind(f.server);
+  f.server.query = async (...args) => { reads += 1; await new Promise((resolve) => { release = resolve; }); return query(...args); };
+  const withdrawing = f.window.withdraw(1, null, 4);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reads, 1); await f.ledger.dispose();
+  assert.equal(await withdrawing, 'native withdrew');
+  release(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reads, 1, 'no new query after disposal');
+});
+
+test('foreign-coordinate or foreign-player console replies cannot confirm this production', async () => {
+  for (const foreign of ['block', 'player']) {
+    const f = await readySmelter(); const query = f.server.query.bind(f.server);
+    f.server.query = async (command, pattern, ...args) => {
+      if ((foreign === 'block' && command.endsWith(' Items')) || (foreign === 'player' && command.startsWith('clear '))) {
+        const text = foreign === 'block' ? '99, 64, 0 has the following block data: []' : 'Found 104 matching item(s) on player Other';
+        const match = text.match(pattern);
+        assert.equal(match, null, 'foreign identity must not match the read request');
+        throw new Error('foreign reply rejected');
+      }
+      return query(command, pattern, ...args);
+    };
+    await f.window.withdraw(1, null, 4);
+    assert.equal((await f.ledger.verify(f.spec, 4, 4)).pass, false); await f.ledger.dispose();
+  }
+});
+
+test('closed smelter window cannot supply a later withdrawal proof', async () => {
+  const f = await readySmelter(); f.window.close();
+  await f.window.withdraw(1, null, 4);
+  const result = await f.ledger.verify(f.spec, 4, 4);
+  assert.equal(result.pass, false); assert.equal(result.collected, 0); await f.ledger.dispose();
+});
+
+test('two stable pre-ack zero-credit samples do not finish before authoritative transfer arrives', async () => {
+  const f = await readySmelter(); let outputReads = 0; f.world.deferTransfer = true;
+  f.world.afterQuery = (command) => {
+    if (command !== 'data get block 1 64 0 Items') return;
+    outputReads += 1;
+    if (outputReads !== 3) return;
+    f.world.pendingTransfer(); f.world.pendingTransfer = null; f.world.afterQuery = null;
+  };
+  await f.window.withdraw(1, null, 4);
+  const result = await f.ledger.verify(f.spec, 4, 4);
+  assert.equal(result.pass, true); assert.equal(result.collected, 4);
+  assert.ok(result.evidence.transfers[0].confirmations.length >= 5);
+  await f.ledger.dispose();
+});
+
+test('a single qualifying sample followed by contradictory stable state never commits credit', async () => {
+  const f = await readySmelter();
+  f.world.afterQuery = (command) => {
+    if (!command.startsWith('clear ')) return;
+    f.world.afterQuery = null;
+    // This query captured player104, completing one apparent qualifying sample.
+    // Subsequent authoritative reads disprove it; stable-pair confirmation must fail.
+    f.world.player[f.item] = 100; f.world.containers[key(f.output)][f.item] = 4;
+  };
+  await f.window.withdraw(1, null, 4);
+  const result = await f.ledger.verify(f.spec, 4, 4);
+  assert.equal(result.pass, false); assert.equal(result.collected, 0); await f.ledger.dispose();
+});
+
+test('server-forced current window loss during confirmation prevents credit', async () => {
+  const f = await readySmelter();
+  f.world.afterQuery = () => { f.world.afterQuery = null; f.bot.currentWindow = null; };
+  await f.window.withdraw(1, null, 4);
+  const result = await f.ledger.verify(f.spec, 4, 4);
+  assert.equal(result.pass, false); assert.equal(result.collected, 0); await f.ledger.dispose();
 });

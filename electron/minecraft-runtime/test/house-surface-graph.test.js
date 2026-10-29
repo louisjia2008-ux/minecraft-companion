@@ -386,22 +386,39 @@ test('a new batch at camp replays physically observed parents before expanding a
  assert.equal(resumed.getState().visits,Object.keys(resumed.getState().nodes).length);assert.equal(f.waterTicks.length,0);assert.deepEqual(second.via[0],anchor);assert.deepEqual(second.via.at(-1),second.actual);
  await assert.rejects(resumed.next({anchor:{...anchor,x:1}}),e=>e.code==='dry_graph_checkpoint_changed');
 });
+const departedHorizontally=(position,origin)=>Math.hypot(position.x-origin.x,position.z-origin.z)>1;
+test('movement fault injection observes actual departure in all eight horizontal directions',()=>{
+ const origin={x:.5,y:1,z:.5};
+ for(const [dx,dz] of [[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,1],[-1,-1],[1,-1]]){
+  assert.equal(departedHorizontally({x:origin.x+dx*.5,z:origin.z+dz*.5},origin),false);
+  assert.equal(departedHorizontally({x:origin.x+dx*2,z:origin.z+dz*2},origin),true);
+ }
+ assert.equal(departedHorizontally({x:1.5,z:.5},origin),false);
+ assert.equal(departedHorizontally({...origin,y:100},origin),false);
+});
 test('hazard introduced along an actual dry native leg is fatal and cannot become a branch failure',{timeout:5000},async t=>{
- let hazardCell;
- const f=fixture(t,{worldAt:p=>hazardCell&&p.equals(hazardCell)?'lava':p.y<1?'stone':'air'});
- f.bot.on('physicsTick',()=>{if(!hazardCell&&f.bot.entity.position.x>1.5)hazardCell=f.bot.entity.position.floored();});
+ let hazardCell,hazardInjections=0;
+ const f=fixture(t,{worldAt:p=>hazardCell&&p.equals(hazardCell)?'lava':p.y<1?'stone':'air'}),origin=f.bot.entity.position.clone();
+ f.bot.on('physicsTick',()=>{if(!hazardCell&&departedHorizontally(f.bot.entity.position,origin)){hazardInjections++;hazardCell=f.bot.entity.position.floored();}});
  const failures=[];f.deps.onFailure=e=>failures.push(e);
  const graph=createHouseSurfaceGraph(f.deps);
  await assert.rejects(graph.next({anchor:{x:0,y:1,z:0}}),e=>e.code==='dry_graph_hazard');
- assert.equal(failures.length,1);const diagnostic=failures[0].observedMovement;assert.equal(diagnostic.safetyFacts.feet.name,'lava');assert.ok(Number.isInteger(diagnostic.safetyFacts.feet.stateId));assert.equal(typeof diagnostic.isInWater,'boolean');assert.equal(typeof diagnostic.isInLava,'boolean');assert.ok(diagnostic.safetyFacts.body.cells.length<=12);assert.ok(diagnostic.safetyFacts.shore.supports.length<=12);
+ assert.ok(hazardCell,'Actual native departure must trigger the hazard');assert.equal(hazardInjections,1);assert.equal(failures.length,1);const diagnostic=failures[0].observedMovement;assert.equal(diagnostic.safetyFacts.feet.name,'lava');assert.ok(Number.isInteger(diagnostic.safetyFacts.feet.stateId));assert.equal(typeof diagnostic.isInWater,'boolean');assert.equal(typeof diagnostic.isInLava,'boolean');assert.ok(diagnostic.safetyFacts.body.cells.length<=12);assert.ok(diagnostic.safetyFacts.shore.supports.length<=12);
  const attempts=f.attempts.length;await sleep(100);assert.equal(f.attempts.length,attempts);assert.equal(graph.getState().visits,1);assert.equal(f.bot.pathfinder.goal,null);
 });
 test('superseded movement ownership preserves the replacement actor profile and goal',{timeout:5000},async t=>{
- const f=fixture(t);let owner=true,replacement,foreignGoal;
+ const f=fixture(t),origin=f.bot.entity.position.clone();let owner=true,replacement,foreignGoal,injections=0;
  f.deps.isMovementOwner=()=>owner;
- f.bot.on('physicsTick',()=>{if(owner&&f.bot.entity.position.x>1.5){owner=false;replacement=new Movements(f.bot);replacement.canDig=false;replacement.scafoldingBlocks=[];foreignGoal=new goals.GoalBlock(-3,1,0);f.bot.pathfinder.setMovements(replacement);f.bot.pathfinder.setGoal(foreignGoal);}});
+ f.bot.on('physicsTick',()=>{if(owner&&departedHorizontally(f.bot.entity.position,origin)){injections++;owner=false;replacement=new Movements(f.bot);replacement.canDig=false;replacement.scafoldingBlocks=[];foreignGoal=new goals.GoalBlock(-3,1,0);f.bot.pathfinder.setMovements(replacement);f.bot.pathfinder.setGoal(foreignGoal);}});
  const graph=createHouseSurfaceGraph(f.deps);
- await assert.rejects(graph.next({anchor:{x:0,y:1,z:0}}),e=>e.code==='dry_graph_movement_preempted');
+ try{await assert.rejects(graph.next({anchor:{x:0,y:1,z:0}}),e=>e.code==='dry_graph_movement_preempted');}
+ catch(error){
+  try{t.diagnostic(JSON.stringify({kind:'ownership_injection_failure_context',injections,owner,
+   actual:{x:f.bot.entity.position.x,y:f.bot.entity.position.y,z:f.bot.entity.position.z},
+   replacementInstalled:!!replacement,nativeAttemptTargets:f.attempts.slice(0,8)}));}catch{ /* Keep the original assertion failure. */ }
+  throw error;
+ }
+ assert.equal(injections,1,'Actual native departure must transfer ownership exactly once');assert.equal(owner,false);
  assert.equal(f.bot.pathfinder.movements,replacement);assert.equal(f.bot.pathfinder.goal,foreignGoal);assert.equal(graph.getState().visits,1);
 });
 
@@ -525,8 +542,19 @@ test('saved06 native shore steps and short jumps keep the full body dry while it
  const anchor={x:103,y:63,z:-181},target={x:83,y:64,z:-192},id='103,63,-181';
  const cp={schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,nodes:{[id]:{position:anchor,parent:null,expanded:true}},order:[id],frontier:[{parent:id,target,plannedSteps:34}],blockedEdges:[],current:id,resumeNode:id,visits:1,probes:0};
  const f=fixture(t,{worldAt:savedGraph06World(),checkpoint:cp,initialPosition:new Vec3(103.49964679661996,63,-180.11363996737234),initialVelocity:new Vec3(-1.046198014752242e-14,-0.0784000015258789,-0.09867499772596976)});
- const graph=createLoadedDryGraph(f.deps,{anchor}),planned=f.bot.pathfinder.getPathTo(graph.movements,new goals.GoalBlock(target.x,target.y,target.z),100);
- assert.equal(planned.status,'success');assert.ok(planned.path.every((p,n)=>!n||planned.path[n-1].y-p.y<=1));
+ const graph=createLoadedDryGraph(f.deps,{anchor});
+ // getPathTo exposes one slice, not a final verdict. Continue the same native
+ // search under its original100ms cap. Raw cells avoid partial post-processing
+ // mutating the pending AStar context, as in the saved05 regression above.
+ const iterator=f.bot.pathfinder.getPathFromTo(graph.movements,f.bot.entity.position,new goals.GoalBlock(target.x,target.y,target.z),{timeout:100,optimizePath:false});
+ const deadline=Date.now()+100;let planned,slices=0;
+ try{
+  while(slices<16&&Date.now()<deadline){
+   const entry=iterator.next();slices++;planned=entry.value?.result;
+   if(entry.done||planned?.status!=='partial')break;
+  }
+ }finally{iterator.return();}
+ assert.equal(planned?.status,'success',JSON.stringify({status:planned?.status,slices,budgetMs:100}));assert.ok(planned.path.every((p,n)=>!n||planned.path[n-1].y-p.y<=1));
  const oldHazards=[];f.bot.on('physicsTick',()=>{
   const foot=f.bot.entity.position.floored();if(f.bot.blockAt(foot.offset(0,-1,0))?.name==='water')oldHazards.push({position:f.bot.entity.position.clone(),onGround:f.bot.entity.onGround,inWater:f.bot.entity.isInWater,inLava:f.bot.entity.isInLava,bodyDry:inspectSurfaceBody(f.bot).dry});
  });
@@ -712,10 +740,27 @@ test('saved whole45 native stale intermediate ground continues to a genuinely su
 });
 
 
+// next() chooses any native-proven exploration direction, not necessarily +X.
+// Retain the original eastward two-block first drop and one-block terraces in
+// every direction so a valid plateau choice cannot bypass the descent scenario.
+const downhillHeight=(x,z)=>{const radius=Math.max(Math.abs(x),Math.abs(z));return radius===0?10:Math.max(1,9-radius);};
+test('downhill fixture has no plateau escape or oversized drop in any of eight directions',()=>{
+ const directions=[[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,1],[-1,-1],[1,-1]];
+ assert.equal(downhillHeight(0,0),10);
+ for(const [dx,dz] of directions)for(let distance=1;distance<=16;distance++){
+  const height=downhillHeight(dx*distance,dz*distance),previous=downhillHeight(dx*(distance-1),dz*(distance-1));
+  assert.equal(height,Math.max(1,9-distance));assert.ok(height<10);
+  assert.equal(previous-height,distance===1?2:distance<=8?1:0);
+ }
+ // Bound off-axis diagonal transitions too, not just the eight straight rays.
+ for(let x=-16;x<=16;x++)for(let z=-16;z<=16;z++)for(const [dx,dz] of directions)
+  assert.ok(Math.abs(downhillHeight(x,z)-downhillHeight(x+dx,z+dz))<=2);
+});
 test('original native movement can descend a long stepped hillside with bounded drops',{timeout:10000},async t=>{
- const f=fixture(t,{initialY:10,worldAt:p=>p.y<(p.x<=0?10:Math.max(1,9-p.x))?'stone':'air'});
+ const f=fixture(t,{initialY:10,worldAt:p=>p.y<downhillHeight(p.x,p.z)?'stone':'air'});
  const graph=createLoadedDryGraph(f.deps,{anchor:{x:0,y:10,z:0},terrainRecovery:true,adaptiveLocalFrontier:true,legTimeoutMs:8000});
  const result=await graph.next();assert.equal(result.moved,true);assert.equal(f.bot.entity.onGround,true);assert.ok(result.actual.y<10);
+ assert.ok(f.attempts.length>0);assert.ok(f.attempts.every(target=>target.y<10),'every native frontier must actually descend');
 });
 
 test('saved whole47 downhill witness checks the native Y contact before horizontal departure',t=>{
@@ -872,7 +917,29 @@ for(const siteMode of [true,false])test(`unreturnable old branch defers during $
   p.x< -2||p.x>40||p.z< -2||p.z>18?null:p.y<(p.x<=0?5:1)?'stone':'air'});
  f.deps.getObservedResourceTarget=()=>({kind:'native_loaded_block_observation',position:far,lastValidatedAt:Date.now()});
  const graph=createLoadedDryGraph(f.deps,{anchor:root,radius:64,nativeReachableHints:siteMode});
- const result=await graph.next();assert.equal(result.moved,true);assert.deepEqual(result.actual,local);
+ let result;
+ try{result=await graph.next();}catch(error){
+  // Failure-catch context only: the latest saved checkpoint and body snapshot
+  // are not the earlier live recovery-guard witness. Never re-run its policies.
+  try{
+   const scalar=value=>typeof value==='boolean'||value===null?value:typeof value==='number'&&Number.isFinite(value)?value:typeof value==='string'?value.slice(0,300):undefined;
+   const point=value=>value?{x:scalar(value.x),y:scalar(value.y),z:scalar(value.z)}:null;
+   const probe=value=>value?{status:scalar(value.status),conclusive:scalar(value.conclusive),from:point(value.from),target:point(value.target),
+    elapsedMs:scalar(value.elapsedMs),slices:scalar(value.slices),stopReason:scalar(value.stopReason),budgetMs:scalar(value.budgetMs),observedReturnRetry:scalar(value.observedReturnRetry)}:null;
+   const saved=f.checkpoint(),leg=error.observedDryLeg;
+   t.diagnostic(JSON.stringify({kind:'old_branch_failure_catch_context',siteMode,code:scalar(error.code),message:scalar(error.message),
+    probe:probe(error.observedProbe),initialProbe:probe(error.observedProbe?.initialProbe),
+    leg:leg?{fromNode:scalar(leg.fromNode),from:scalar(leg.from),target:point(leg.target),startedAt:scalar(leg.startedAt),deadline:scalar(leg.deadline)}:null,
+    actual:{position:point(f.bot.entity.position),velocity:point(f.bot.entity.velocity),onGround:scalar(f.bot.entity.onGround),
+     controls:Object.fromEntries(['forward','back','left','right','jump','sprint','sneak'].map(name=>[name,scalar(f.bot.controlState[name])])),goal:point(f.bot.pathfinder.goal)},
+    latestSavedCheckpoint:saved?{current:scalar(saved.current),resumeNode:scalar(saved.resumeNode),visits:scalar(saved.visits),probes:scalar(saved.probes),
+     pendingWater:!!saved.pendingWater,pendingDryTrail:!!saved.pendingDryTrail,currentPosition:point(saved.nodes?.[saved.current]?.position)}:null,
+    existingNativeTicks:f.points.length,nativeAttemptCount:f.attempts.length,nativeAttemptTargets:f.attempts.slice(0,8).map(point),
+    internalGuardPredicates:'not_captured; snapshot does not re-evaluate or prove them'}));
+  }catch{ /* Preserve the original failure even if diagnostic output fails. */ }
+  throw error;
+ }
+ assert.equal(result.moved,true);assert.deepEqual(result.actual,local);
  const deferred=graph.state().blockedEdges.find(e=>e.kind==='unconfirmed_site_parent_replay');
  assert.ok(deferred);assert.equal(deferred.actualMovementConfirmed,false);assert.equal(graph.state().visits,3);
  assert.equal(deferred.scope,'exploration_only');assert.ok(deferred.retryAfter>Date.now());
