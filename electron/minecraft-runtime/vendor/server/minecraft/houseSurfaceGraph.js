@@ -649,6 +649,10 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
   const bot = deps.getBot(), started = Date.now();
   const guardFailures = new WeakSet();
   const outboundBankDefense = new WeakMap(), recoveredOutboundWater = new WeakMap();
+  // Only this graph's live native leg can mint a post-defense policy refusal.
+  // No serialized checkpoint/error grants permission to adopt a displaced body.
+  const rangedTargetRefusals = new WeakMap();
+  let continuationDeadline = Infinity, continuationObservation = null;
   if (!anchor || !['x', 'y', 'z'].every(k => Number.isInteger(anchor[k])) || ![8, 16, 24].includes(step)
     || !Number.isInteger(radius) || radius < step || radius > 768 || !Number.isInteger(maxNodes) || maxNodes < 2 || maxNodes > 512
     || !Number.isInteger(maxEdges) || maxEdges < 1 || maxEdges > 8192 || typeof adaptiveLocalFrontier !== 'boolean'
@@ -702,7 +706,14 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
       throw fail('dry_graph_checkpoint_changed','Saved dry parent trail is not a bounded successful actual edge');
     }
   } else state = { schema: 2, kind: 'loaded_dry_waypoint_graph', anchor: { ...anchor }, radius, step, nodes: {}, order: [], frontier: [], blockedEdges: [], current: null, resumeNode: null, visits: 0, probes: 0 };
-  const active = () => { deps.assertActive(); if (deps.getBot() !== bot) throw fail('dry_graph_bot_changed', 'Bot changed'); if (Date.now() - started > timeoutMs) throw fail('dry_graph_timeout', 'Finite loaded graph search expired'); };
+  const active = () => { deps.assertActive(); if (deps.getBot() !== bot) throw fail('dry_graph_bot_changed', 'Bot changed'); if (Date.now() - started > timeoutMs) throw fail('dry_graph_timeout', 'Finite loaded graph search expired');
+    if (Number.isFinite(continuationDeadline) && Date.now() >= continuationDeadline) throw fail('dry_graph_leg_timeout', 'Post-defense continuation exhausted its original native leg deadline'); };
+  const ready = async () => {
+    const capped=Number.isFinite(continuationDeadline);
+    if (capped) active();
+    const defended=capped ? await deps.ready?.({ deadline: continuationDeadline }) : await deps.ready?.();
+    active();return defended;
+  };
   const save = () => { active(); (deps.saveCP || deps.setCheckpoint)?.(copy(state)); };
   let provisioningReturn=false;
   let survivalProvisioning=false;
@@ -791,7 +802,8 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
   function selectFrontier() {
     active(); observedResourceTarget = deps.getObservedResourceTarget?.() || null;
     let choices=state.frontier.map((edge,index)=>({edge,index}))
-      .filter(({edge})=>!state.nodes[edge.parent]?.terrainUnavailable&&!deferredSiteReplays.has(`${state.current}>${edge.parent}`)
+      .filter(({edge})=>(!Number.isFinite(continuationDeadline)||edge.parent===state.current&&!edge.transport)
+        &&!state.nodes[edge.parent]?.terrainUnavailable&&!deferredSiteReplays.has(`${state.current}>${edge.parent}`)
         &&!(edge.transport&&deps.isWaterRouteThreatened?.(edge.transport.route)===true));
     if(preferActualLocalFrontier){
       const local=choices.filter(({edge})=>edge.parent===state.current),p=observedResourceTarget?.position,current=state.nodes[state.current]?.position;
@@ -945,7 +957,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
   }
   async function nativeMove(target, { observedReturnRetry = false, observedSuffix = null, frontierWitness = null, sharedDeadlineMs = Infinity, captureTrail = true } = {}) {
     assertVitals(); if (!owner()) throw fail('dry_graph_movement_preempted', 'Graph no longer owns movement');
-    const legStartedAt=Date.now(),legDeadline=Math.min(legStartedAt+legTimeoutMs,sharedDeadlineMs),fromNode=state.current,fromId=key(bot.entity.position);
+    const legStartedAt=Date.now(),legDeadline=Math.min(legStartedAt+legTimeoutMs,sharedDeadlineMs,continuationDeadline),fromNode=state.current,fromId=key(bot.entity.position);
     if (!naturalWalkingFoot(bot, target) || excluded(target)) {
       const error=fail('dry_graph_route_changed','Known dry target changed', { observedRouteTarget: {
         target:plain(target),actual:plain(bot.entity.position),fromNode:state.current,excluded:excluded(target),
@@ -954,7 +966,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
       try { deps.onRouteUnavailable?.(error.observedRouteTarget); } catch { /* Diagnostics grant no movement. */ }
       throw error;
     }
-    const goal = new goals.GoalBlock(target.x, target.y, target.z); let guardError, timer, rejectGuard, physicsTick = 0, lastGrounded = null, guardFacts = null, gotoSettled = false, dropBraking = false, expectedDropStop = false, dropBrakes = 0;
+    const goal = new goals.GoalBlock(target.x, target.y, target.z); let guardError, timer, rejectGuard, physicsTick = 0, lastGrounded = null, guardFacts = null, gotoSettled = false, dropBraking = false, expectedDropStop = false, dropBrakes = 0, legClosed = false, mintedRefusal = false;
     // Native goto clears its goal at arrival before a final airborne body has
     // landed. A foreign goal still cannot borrow this captured leg's witness.
     const ownsJumpObservation = () => owner() && bot.pathfinder.movements === movements
@@ -1084,9 +1096,45 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
         lastProbeFacts?.status === 'noPath' ? 'No original pathfinder route to target' : 'Finite native probe did not establish whether this route is reachable',
         { observedProbe: copy(lastProbeFacts) });
       if (observedReturnRetry) assertProbeActive();
+      const canRevalidateRetreat = exploring && frontierWitness && frontierWitness.parent === fromNode
+        && key(frontierWitness.target) === key(target) && fromId === fromNode && typeof deps.isStepAllowed === 'function'
+        && deps.isStepAllowed(target) === true;
+      const onOwnedRangedRetreat = witness => {
+        try {
+        assertProbeActive();
+        if (!canRevalidateRetreat || legClosed || mintedRefusal || guardError || !owner()
+          || bot.pathfinder.movements !== movements || deps.isMovementSuspended?.() === true
+          || state.current !== fromNode || state.pendingWater || state.pendingDryTrail
+          || witness?.kind !== 'actual_owned_ranged_retreat' || witness.bot !== bot || witness.goal !== goal
+          || witness.movements !== movements || witness.deadline !== legDeadline
+          || !Number.isFinite(witness.observedAt) || Date.now() < witness.observedAt || Date.now() - witness.observedAt > 2000
+          || ![witness.from,witness.actual].every(p => p && ['x','y','z'].every(axis => Number.isFinite(p[axis])))
+          || !Number.isFinite(witness.maximumDisplacement) || witness.maximumDisplacement < 0 || witness.maximumDisplacement > 32
+          || !Number.isFinite(witness.maximumVerticalDisplacement) || witness.maximumVerticalDisplacement < 0 || witness.maximumVerticalDisplacement > 8
+          || vec(witness.actual).distanceTo(bot.entity.position) > 1e-7
+          || Math.hypot(bot.entity.position.x-witness.from.x,bot.entity.position.z-witness.from.z) > witness.maximumDisplacement+.05
+          || Math.abs(bot.entity.position.y-witness.from.y) > witness.maximumVerticalDisplacement+.05)
+          throw fail('dry_graph_ranged_return_invalid','Post-defense target revalidation lost its original live leg');
+        // Reuse the exact live safety policy already installed in native A*.
+        // A still-admissible goal keeps the original resume path and budgets.
+        if (deps.isStepAllowed(target) === true) { assertProbeActive(); return; }
+        assertProbeActive();
+        const actual={x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z};
+        const error=fail('dry_graph_post_defense_target_changed','Owned ranged retreat changed original target admission');
+        mintedRefusal=true;
+        rangedTargetRefusals.set(error,{goal,movements,target:plain(target),fromNode,fromId,deadline:legDeadline,
+          actual,observedAt:Date.now(),maximumDisplacement:witness.maximumDisplacement,
+          maximumVerticalDisplacement:witness.maximumVerticalDisplacement,defenseFrom:{...witness.from}});
+        throw error;
+        } catch (error) {
+          if (!rangedTargetRefusals.has(error)) guardFailures.add(error);
+          throw error;
+        }
+      };
       while(true) {
         try {
           const move = deps.actualnativegoto ? deps.actualnativegoto(goal, movements, { deadline: legDeadline,
+            ...(canRevalidateRetreat ? {onOwnedRangedRetreat} : {}),
             isExpectedNativeTimeout:()=>!guardError&&owner()&&bot.pathfinder.movements===movements
               &&bot.pathfinder.goal===goal&&nativePathFacts.status==='timeout'&&deps.isMovementSuspended?.()!==true,
             isExpectedNativeNoPath:()=>deferInconclusiveExplorationReplay&&exploring&&!guardError
@@ -1183,19 +1231,19 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
         }
       }
       stopOwn();const failure=guardError||error;failure.observedDryLeg={fromNode,from:fromId,target:plain(target),startedAt:legStartedAt,deadline:legDeadline};throw failure; } finally {
-      clearTimeout(timer); bot.removeListener('physicsTick', guard);
+      legClosed=true; clearTimeout(timer); bot.removeListener('physicsTick', guard);
       bot.removeListener('path_update', observePath); bot.removeListener('path_reset', observePathReset);
     }
   }
   async function observeResourceWorkOrigin({observedCurrent,sharedDeadlineMs=Infinity}={}) {
-    await deps.ready?.();active();assertVitals();if(!owner())throw fail('dry_graph_movement_preempted','Resource observation lost its captured movement owner');
+    await ready();assertVitals();if(!owner())throw fail('dry_graph_movement_preempted','Resource observation lost its captured movement owner');
     const from=state.current,origin=state.nodes[from]?.position;
     if(!origin||observedCurrent!==from||state.pendingWater||state.pendingDryTrail)return {confirmed:false,reason:'original_transport_or_cursor_changed'};
     const iceCoast=require('./houseCreeperEscape').actualFullCubeContacts(bot).some(c=>['ice','frosted_ice','packed_ice','blue_ice'].includes(c.name));
     const originalDeadline=Math.min(Date.now()+35000,sharedDeadlineMs);
     let deadline=Math.min(originalDeadline,Date.now()+(iceCoast?3000:1200));
     while(Date.now()<deadline){
-      const defended=await deps.ready?.();active();assertVitals();
+      const defended=await ready();assertVitals();
       if(defended===true)deadline=Math.min(originalDeadline,Date.now()+(iceCoast?3000:1200));
       if(Date.now()>=deadline)break;
       if(!owner())throw fail('dry_graph_movement_preempted','Resource observation lost its captured movement owner');
@@ -1256,7 +1304,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
         if (chosen) break;
       }
     }
-    if (waterEnabled) {
+    if (waterEnabled && !Number.isFinite(continuationDeadline)) {
       const candidates = deps.discoverWaterRoutes({ origin: copy(node.position), anchor: copy(anchor), excludeBounds: copy(exclusions), maxDistance: 16 });
       if (!Array.isArray(candidates) || candidates.length > 4) throw fail('dry_graph_transport_invalid', 'Native shallow-route discovery must return a finite synchronous batch');
       for (const candidate of candidates) {
@@ -1766,7 +1814,8 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
     return false;
   }
   async function readyExplorationBoundary(){
-    await deps.ready?.();active();
+    await ready();
+    if (Number.isFinite(continuationDeadline)) return;
     const receipt=deps.takeBoundaryDefenseRelocation?.();
     if(!receipt||!deferInconclusiveExplorationReplay||!state.current||key(bot.entity.position)===state.current)return;
     const actual=plain(bot.entity.position),from=state.current;
@@ -1792,6 +1841,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
   }
   async function next({ excludeBounds = exclusions, survivalProvisioning: requestedSurvivalProvisioning = false } = {}) {
     const previousProvisioning=survivalProvisioning;
+    const previousContinuationDeadline=continuationDeadline, previousContinuationObservation=continuationObservation;
     survivalProvisioning=requestedSurvivalProvisioning===true;
     try {
     await readyExplorationBoundary();active();exclusions = excludeBounds;await reconcilePendingDryTrail();await readyExplorationBoundary();refusePendingDryTrail(); const previous = bot.pathfinder.movements;
@@ -1839,15 +1889,18 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
         if(preferActualLocalFrontier&&adaptiveLocalFrontier&&!hasCurrentFrontier()){
           const node=state.nodes[state.current];
           if(!node.localFrontierExpanded||needsActualLocalRefinement(node))await expandLocalFrontier(state.current);
-          if(!hasCurrentFrontier())await recoverLocalPassage();
+          if(!hasCurrentFrontier()&&!Number.isFinite(continuationDeadline))await recoverLocalPassage();
         }
         if(state.current!==expansionOrigin)continue;
         let at = selectFrontier();
         if (at < 0 && adaptiveLocalFrontier && (!state.nodes[state.current].localFrontierExpanded||needsSiteLocalRefinement(state.nodes[state.current]))) {
           await expandLocalFrontier(state.current);if(state.current!==expansionOrigin)continue; at = selectFrontier();
         }
-        if (at < 0 && await recoverLocalPassage()) at=selectFrontier();
+        if (at < 0 && !Number.isFinite(continuationDeadline) && await recoverLocalPassage()) at=selectFrontier();
         if (at < 0) {
+          // A refused post-defense edge grants no permission to replay an old
+          // camp/branch. Only a fresh frontier from the actual landing may run.
+          if (Number.isFinite(continuationDeadline)) break;
           const unexpanded = state.order.find(id => !state.nodes[id].terrainUnavailable
             &&(!state.nodes[id].expanded||deferInconclusiveExplorationReplay&&adaptiveLocalFrontier
               &&(!state.nodes[id].localFrontierExpanded||needsSiteLocalRefinement(state.nodes[id])))
@@ -1885,18 +1938,61 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
             ...(edge.transport ? { transport: copy(edge.transport) } : {}) }; state.order.push(id);commitNativeTrail(edge.parent,id); state.current = id; state.resumeNode = id; state.visits++; state.pendingWater = null; save();
           if (resourceTarget) deps.onObservedResourceApproach?.({ target: resourceTarget, actual: copy(actual), nodeKey: id });
 
+          if (continuationObservation) deps.onPostDefenseContinuation?.({
+            ...copy(continuationObservation),target:copy(edge.target),actual:copy(actual),
+            originalDeadline:continuationDeadline,arrivalConfirmed:true,observedAt:Date.now() });
           deps.report?.(`沿已加载干燥地表探索：${state.visits}/${maxNodes} 个真实站位`);
           return { moved: true, actual, via: routeToAnchor().reverse(), scope: 'loaded reachable dry graph only', visits: state.visits };
         } catch (error) {
           // The failure callback already closed this exact pending move. Do
           // not replace its hazard/deadline reason with the resulting lease
           // change, or treat that failed capability as another frontier edge.
-          if (guardFailures.has(error)) throw error;
+          if (guardFailures.has(error) || error.code==='dry_graph_ranged_return_invalid') throw error;
+          if (rangedTargetRefusals.has(error) || error.code === 'dry_graph_post_defense_target_changed') {
+            const proof=rangedTargetRefusals.get(error);
+            rangedTargetRefusals.delete(error); // Consume once, even if validation refuses.
+            if (!proof || edge.transport || !exploring || !owner() || bot.pathfinder.movements!==proof.movements
+              || proof.movements!==movements || proof.fromNode!==state.current || proof.fromId!==state.current
+              || edge.parent!==proof.fromNode || key(edge.target)!==key(proof.target)
+              || proof.goal.x!==proof.target.x || proof.goal.y!==proof.target.y || proof.goal.z!==proof.target.z
+              || !Number.isFinite(proof.deadline) || Date.now()>=proof.deadline
+              || Date.now()<proof.observedAt || Date.now()-proof.observedAt>2000
+              || state.pendingWater || state.pendingDryTrail || key(bot.entity.position)===state.current
+              || vec(proof.actual).distanceTo(bot.entity.position)>1e-7
+              || bot.pathfinder.goal!==null || !['forward','back','left','right','jump','sprint','sneak'].every(k=>bot.controlState?.[k]===false)
+              || bot.entity.velocity.x!==0 || bot.entity.velocity.z!==0 || bot.entity.onGround!==true
+              || !hasGroundedBodySupport(bot) || !naturalWalkingFoot(bot,plain(bot.entity.position)) || !inspectSurfaceBody(bot).dry
+              || excluded(plain(bot.entity.position)) || deps.isStepAllowed?.(proof.target)===true)
+              throw fail('dry_graph_ranged_return_invalid','Post-defense refusal cannot adopt this actor or leg');
+            // All subsequent readiness, expansion, probes and physical legs in
+            // this invocation share the interrupted leg's absolute deadline.
+            continuationDeadline=Math.min(continuationDeadline,proof.deadline);
+            const landing=await observeResourceWorkOrigin({observedCurrent:proof.fromNode,sharedDeadlineMs:proof.deadline});
+            active();assertVitals();
+            if (!landing.confirmed || !owner() || bot.pathfinder.movements!==movements
+              || key(bot.entity.position)!==landing.current || vec(proof.actual).distanceTo(bot.entity.position)>1e-7)
+              throw fail('dry_graph_ranged_return_invalid','Owned ranged retreat did not yield an unchanged dry observation');
+            state.blockedEdges.push({...copy(edge),reason:'post_defense_target_policy_changed',actual:copy(landing.actual),
+              originalDeadline:proof.deadline,oldTargetReached:false,oldEdgeTraversalCredit:false,materialCredit:false});
+            const landed=state.nodes[landing.current];
+            if (landed.resourceWorkLanding?.fromNode===proof.fromNode) {
+              delete landed.resourceWorkLanding;
+              landed.survivalRelocation={kind:'actual_owned_ranged_retreat',fromNode:proof.fromNode,
+                abandonedTarget:copy(proof.target),oldEdgeTraversalCredit:false};
+            }
+            lastNativeTrail=null;
+            continuationObservation={fromNode:proof.fromNode,retreatActual:copy(landing.actual),abandonedTarget:copy(proof.target),
+              oldTargetReached:false,oldEdgeTraversalCredit:false,materialCredit:false};
+            save();
+            deps.onPostDefenseTargetChanged?.({fromNode:proof.fromNode,actual:copy(landing.actual),abandonedTarget:copy(proof.target),
+              originalDeadline:proof.deadline,oldTargetReached:false,oldEdgeTraversalCredit:false,materialCredit:false,visits:state.visits});
+            continue;
+          }
           // This leg already owns the exact native relocation receipt. Drain
           // remaining defense first, but do not let the boundary observer
           // commit the same body as a new graph origin before validating the
           // original leg's fromNode below.
-          if(error.code==='house_site_defense_relocated'){await deps.ready?.();active();}
+          if(error.code==='house_site_defense_relocated'){await ready();}
           else {await readyExplorationBoundary();active();}
           // A completed defense may restore the work lease before the next
           // physics tick. Recheck the current capability before any graph
@@ -1953,7 +2049,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
             &&naturalWalkingFoot(bot,bot.entity.position.floored())&&hasGroundedBodySupport(bot)){
             state.blockedEdges.push({...edge,reason:error.code,message:error.message,facts:copy(error.observedRouteTarget),actualMovementConfirmed:false});save();continue;
           }
-          if (edge.transport || ['dry_graph_hazard', 'dry_graph_airshaft', 'dry_graph_movement_preempted', 'dry_graph_survival_limit', 'dry_graph_route_changed', 'dry_graph_probe_limit', 'dry_graph_invalid_probe'].includes(error.code)) throw error;
+          if (edge.transport || ['dry_graph_hazard', 'dry_graph_airshaft', 'dry_graph_movement_preempted', 'dry_graph_survival_limit', 'dry_graph_route_changed', 'dry_graph_probe_limit', 'dry_graph_invalid_probe','dry_graph_ranged_return_invalid'].includes(error.code)) throw error;
           if (resourceTarget) deps.onObservedResourceTargetBlocked?.(resourceTarget, {
             reason: error.code || error.name, probeStatus: error.observedProbe?.status || null, probeConclusive: error.observedProbe?.conclusive===true,
             edge: { parent: edge.parent, target: copy(edge.target) } });
@@ -1969,7 +2065,7 @@ function createLoadedDryGraph(deps, { anchor, step = 16, radius = 384, maxNodes 
       }
       save(); return { moved: false, reason: state.frontier.length ? 'finite_attempt_batch_failed' : 'loaded_reachable_frontier_exhausted', via: routeToAnchor().reverse(), scope: 'not proof that a 384m disk was searched', diagnostics: { visits: state.visits, probes: state.probes, blockedEdges: copy(state.blockedEdges).slice(-16) } };
     } finally { exploring=false;survivalProvisioning=false;if (owner() && bot.pathfinder.movements === movements) {movements.maxDropDown=previousDropLimit;bot.pathfinder.setMovements(previous);} }
-    } finally { survivalProvisioning=previousProvisioning; }
+    } finally { survivalProvisioning=previousProvisioning;continuationDeadline=previousContinuationDeadline;continuationObservation=previousContinuationObservation; }
   }
   async function returnToAnchor({ excludeBounds = exclusions, via = [], rejoinInterruptedSuffix = false, rejoinMinimumY = null, returnToCurrentOnly = false, provisioningReturn: requestedProvisioningReturn = false, survivalProvisioning: requestedSurvivalProvisioning = false } = {}) {
     const previousProvisioning=survivalProvisioning;
