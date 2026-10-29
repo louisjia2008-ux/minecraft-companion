@@ -4083,6 +4083,21 @@ function createMinecraftTaskAgent(deps) {
               !inspectSurfaceBody(bot).dry || !hasGroundedBodySupport(bot) || (options.foodProvisioning?bot.health<=0:bot.health<6) || bot.food < (options.foodProvisioning?0:6)) {
             throw Object.assign(new Error("自卫后未确认原地干燥落稳，保留自采路线"), { code: "house_surface_defense_unconfirmed" });
           }
+          // A real out-of-range retreat can tighten the graph's existing step
+          // policy. Let only its captured leg revalidate the old endpoint before
+          // another native motor write; the host grants no landing/edge credit.
+          if (!defense && task?.materialSupply?.materialSource === 'self_gathered'
+              && interrupt.rangedEscape?.confirmed === true && interrupt.rangedEscape.reason === 'out_of_observed_range'
+              && interrupt.surfaceMove === move && interrupt.previousLease === lease && interrupt.finished && !interrupt.error
+              && interrupt.runGeneration === move.runGeneration && interrupt.workToken === move.token && task.cancellationToken === move.token
+              && isSurvivalOwnerCurrent(interrupt) && isMovementLeaseActive(lease) && task.movementLease === lease
+              && bot.pathfinder.movements === move.movements && typeof options.onOwnedRangedRetreat === 'function') {
+            assertOwner();
+            options.onOwnedRangedRetreat({kind:'actual_owned_ranged_retreat',bot,goal,movements:move.movements,
+              from:{...start},actual:{x:p.x,y:p.y,z:p.z},deadline:move.deadline,observedAt:Date.now(),
+              maximumDisplacement:rangedRecovery.maximumDisplacement,maximumVerticalDisplacement:rangedRecovery.maximumVerticalDisplacement});
+            assertOwner();
+          }
           if(options.actualOriginAlignment===true&&(rangedRecovery||interrupt.creeperEscape?.confirmed===true)
             &&naturalWalkingFoot(bot,p.floored())&&hasGroundedBodySupport(bot)&&inspectSurfaceBody(bot).dry){
             const relocated=Object.assign(Error('对齐期间自卫已落到新的真实干地，原对齐目标未到达'),{
@@ -10651,12 +10666,13 @@ function createMinecraftTaskAgent(deps) {
     return creeper || ((work.gatheringHouse&&melee.length>=2||bot.health<=10&&melee.length>=1)?melee[0]:unarmedClose||null);
   }
 
-  async function maybeHandleSurvivalCritical(reason = "survival") {
+  async function maybeHandleSurvivalCritical(reason = "survival", { admissionOnly = false } = {}) {
     if (!currentBot?.entity || survivalInterruptRunning) {
       return false;
     }
     const naturalHouseWork=require('./minecraft/houseAutomaticRecovery').selfGatheredHouseWork(currentTask);
-    const survivalState=currentTask?.materialSupply||(naturalHouseWork?(currentTask.startupWood||=( {schema:1,combatOnly:true} )):null);
+    const survivalState=currentTask?.materialSupply||(naturalHouseWork?(admissionOnly
+      ?currentTask.startupWood||{schema:1,combatOnly:true}:(currentTask.startupWood||=( {schema:1,combatOnly:true} ))):null);
     const automaticRecovery=currentTask?.status===TaskState.PAUSED&&currentTask.automaticSurvivalRecovery===true
       &&naturalHouseWork;
     if(currentTask&&currentTask.status!==TaskState.RUNNING&&!automaticRecovery)return false;
@@ -10717,6 +10733,7 @@ function createMinecraftTaskAgent(deps) {
     }
     const threatDistance = bot.entity.position.distanceTo(closeThreat.position);
     if (activeHouseSurfaceWater?.task === currentTask && activeHouseSurfaceWater.isPhysicalOwner()) {
+      if (admissionOnly) return true;
       const frame=activeHouseSurfaceWater;
       const threats=Object.values(bot.entities||{}).filter(e=>e!==bot.entity&&e.isValid!==false
         &&e.position&&isThreateningMobEntity(e,bot.registry)
@@ -10734,6 +10751,8 @@ function createMinecraftTaskAgent(deps) {
     if (!surfaceCreeper && !unarmedSiteMelee && !resourceEscapeThreat && !campCreeper && !houseRanged && !nearHouseMelee && !hostileEnderman && !recentSelfDamage && threatDistance > 4.5) {
       return false;
     }
+    // Select the same threat without granting a fresh action, lease or task write.
+    if (admissionOnly) return true;
     survivalInterruptRunning = true;
     lastSurvivalInterruptAt = Date.now();
     const previousLease = activeMovementLease;
@@ -13389,7 +13408,19 @@ function createMinecraftTaskAgent(deps) {
       checkTaskSignal();
     };
     let pendingBoundaryDefense=null,graphQueryState=null;
-    const readyHouseGraph=async()=>{
+    const readyHouseGraph=async({deadline}={})=>{
+      if (Number.isFinite(deadline)) {
+        const assertContinuation = () => {
+          assertActive();
+          if (Date.now() >= deadline || activeSurvivalInterrupt || survivalInterruptRunning)
+            throw createAbortError('house_surface_graph_continuation_preempted');
+        };
+        assertContinuation();
+        const required = await maybeHandleSurvivalCritical('house_graph_capped_admission',{admissionOnly:true});
+        assertContinuation();
+        if (required) throw createAbortError('house_surface_graph_continuation_preempted');
+        return false;
+      }
       let defended=false;
       for(let chain=0;chain<8;chain++){
       if(chain===0&&graphQueryState?.()?.current&&!activeSurvivalInterrupt&&ownerTask.materialSupply?.materialSource==='self_gathered'){
@@ -13548,6 +13579,8 @@ function createMinecraftTaskAgent(deps) {
           code: error.code, message: error.message, observedMovement: error.observedMovement });
       },
       onSiteDefenseRelocation:facts=>recordTaskDiagnostic(ownerTask,'house_site_defense_relocated',facts),
+      onPostDefenseTargetChanged:facts=>recordTaskDiagnostic(ownerTask,'house_surface_post_defense_target_changed',facts),
+      onPostDefenseContinuation:facts=>recordTaskDiagnostic(ownerTask,'house_surface_post_defense_continuation',facts),
       onWaterRecovery:facts=>recordTaskDiagnostic(ownerTask,'house_surface_water_recovery_rejoined',facts),
       onRouteUnavailable: facts => recordTaskDiagnostic(ownerTask, "house_surface_route_target_changed", { resource, ...facts }),
       onGroundedDropAlignment:facts=>recordTaskDiagnostic(ownerTask,'house_surface_drop_brake_aligned',{resource,...facts}),
@@ -19655,6 +19688,18 @@ function createMinecraftTaskAgent(deps) {
     __testClaimMovementLease: claimDevelopmentMovementLease,
     __testGetActiveMovementLease: () => activeMovementLease,
     __testHandleSurvivalCritical: settleSurvivalDefense,
+    __testObserveSurvivalAdmission: reason => maybeHandleSurvivalCritical(reason,{admissionOnly:true}),
+    __testGetHouseSurfaceDefenseCompletion: () => {
+      const frame=activeSurvivalInterrupt,move=activeHouseSurfaceNavigationMove;
+      if(!frame||frame.finished||!move||move.closed||frame.surfaceMove!==move
+        ||frame.bot!==currentBot||move.bot!==currentBot||frame.client!==currentBot?._client||move.client!==frame.client
+        ||frame.task!==currentTask||move.task!==currentTask||frame.runGeneration!==currentTask?.executionGeneration
+        ||move.runGeneration!==frame.runGeneration||frame.workToken!==currentTask?.cancellationToken||move.token!==frame.workToken
+        ||frame.previousLease!==move.lease||currentTask?.movementLease!==move.lease
+        ||currentTask.status!==TaskState.RUNNING||move.token?.cancelled||move.token?.pauseRequested
+        ||!isSurvivalOwnerCurrent(frame)||!isMovementLeaseActive(frame.lease))return null;
+      return frame.finishedPromise || null;
+    },
     __testReturnHouseConstruction:position=>returnToHouseConstruction(toVec3(position)),
     __testWithHouseResourceWork: (operation, budget) => {
       const task = currentTask,ownerId=String(task?.movementLease?.ownerId||"");

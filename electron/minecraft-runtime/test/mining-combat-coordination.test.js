@@ -74,7 +74,9 @@ function coordinationObservation(f, error, diagnostics) {
 // Offline coordination regression, not real-server acceptance. The installed
 // pathfinder and installed vanilla physics own all movement; there is no moveTo
 // injection, teleport, target-position assignment or movement implementation stub.
+let isolatedFixtureRetirementFailed = false;
 function fixture(t, options = {}) {
+  assert.equal(isolatedFixtureRetirementFailed, false, "A previous isolated fixture did not retire; do not admit another actor");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deskpet-mining-combat-'));
   const paths = { MC_AGENT_LEARNING_PATH: path.join(dir, 'learning.json'),
     MC_AGENT_DIAGNOSTICS_DIR: path.join(dir, 'diagnostics'),
@@ -219,18 +221,26 @@ function fixture(t, options = {}) {
     cells.set(point.floored().toString(), name);
     bot.emit('blockUpdate', previous, bot.blockAt(point));
   };
-  t.after(async () => {
+  t.after(async (cleanupOptions = {}) => {
     clearInterval(physicsTimer); clearTimeout(triggerTimer);
-    agent.__testSetReconnectTask(null); agent.detachBot('manual_disconnect'); agent.dispose();
-    if (interruption) await interruption.catch(() => {});
-    for (const key of Object.keys(paths)) {
-      if (previousEnvironment[key] === undefined) delete process.env[key];
-      else process.env[key] = previousEnvironment[key];
+    let joined = false;
+    try {
+      // Isolated fixture destruction, not a runtime recovery/foreign-owner proof.
+      agent.__testSetReconnectTask(null); agent.detachBot('manual_disconnect'); agent.dispose();
+      if (interruption) await interruption.catch(() => {});
+      await cleanupOptions.joinAfterDispose?.();
+      joined = true;
+    } finally {
+      for (const key of Object.keys(paths)) {
+        if (previousEnvironment[key] === undefined) delete process.env[key];
+        else process.env[key] = previousEnvironment[key];
+      }
+      if (joined && !cleanupOptions.preserveDirectory) fs.rmSync(dir, { recursive: true, force: true });
+      else if (!joined && cleanupOptions.joinAfterDispose) isolatedFixtureRetirementFailed = true;
     }
-    fs.rmSync(dir, { recursive: true, force: true });
   });
   return { bot, agent, task, navigator, attempts, attacks, goals, movementProfiles, messages, change,
-    ticks: () => ticks, interruption: () => interruption, interruptionError: () => interruptionError,
+    ticks: () => ticks, stopPhysics: () => clearInterval(physicsTimer), interruption: () => interruption, interruptionError: () => interruptionError,
     checkedInterruptions, joinInterruptions: () => Promise.allSettled(pendingInterruptions) };
 }
 
@@ -1007,18 +1017,131 @@ for(const armed of [false,true])test(`material exploration respects its ranged c
  assert.equal(f.attacks.length,0);
 });
 
+async function observeAndDisposeFixture(f, operations, fixtureCleanup, { observe=()=>{}, detach=()=>{}, record=()=>{} }={}) {
+  const errors=[];
+  try { observe(); } catch(error) { errors.push(error); }
+  try { detach(); } catch(error) { errors.push(error); }
+  f.stopPhysics(); const lastTick=f.ticks();
+  try {
+    await fixtureCleanup({preserveDirectory:errors.length>0,joinAfterDispose:async()=>{
+      let timer;
+      try {
+        const pending=operations();
+        await Promise.race([Promise.allSettled(pending.filter(Boolean)), new Promise((_resolve,reject)=>{
+          timer=hostTimeout(()=>reject(Error('Isolated fixture work did not retire within 500ms')),500);
+        })]);
+        assert.equal(f.ticks(),lastTick,'Disposal must not grant extra Physics');
+        record({isolatedDisposalJoined:true,physicsTicksAfterStop:0,runtimeRecoveryCredit:false});
+      } finally { clearHostTimeout(timer); }
+    }});
+  } catch(error) { errors.push(error); }
+  if(errors.length===1)throw errors[0];
+  if(errors.length)throw new AggregateError(errors,'Fixture observation or isolated disposal failed');
+}
+
+for(const threat of [false,true])test(`post-defense capped admission observes real threats without starting work: threat=${threat}`,{timeout:2000},async t=>{
+ let fixtureCleanup,admission,admissionOutcome;
+ const f=fixture({after:cleanup=>{fixtureCleanup=cleanup;}},{interrupt:false});f.stopPhysics();
+ // The control expects no work, but still joins any unexpectedly started
+ // operation before deleting evidence if that expectation or an assertion fails.
+ t.after(()=>observeAndDisposeFixture(f,()=>[admission],fixtureCleanup,{
+  observe:()=>t.diagnostic(JSON.stringify({postDefenseAdmission:true,threat,admissionOutcome,
+   startupWood:f.task.startupWood,ticks:f.ticks(),attempts:f.attempts.length,attacks:f.attacks.length,
+   activeLease:f.agent.__testGetActiveMovementLease()?.token})),
+  record:facts=>t.diagnostic(JSON.stringify({postDefenseAdmission:true,threat,...facts})),
+ }));
+ f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
+ f.task.plan={steps:[{skill:'build_furnished_house_phase',args:{schema:2,profile:'cottage',phase:'prepare_materials',materialSource:'self_gathered'}}]};
+ f.task.siteSearch={kind:'loaded_natural_house_site_search',ownerIdentity:{taskId:f.task.taskId}};
+ if(threat)f.bot.entities[4]={id:4,name:'creeper',type:'hostile',isValid:true,entityType:registry.entitiesByName.creeper.id,height:1.7,position:new Vec3(4.5,1,.5)};
+ const dir=path.dirname(process.env.MC_AGENT_DIAGNOSTICS_DIR),files=()=>fs.readdirSync(dir,{recursive:true}).sort().filter(name=>fs.statSync(path.join(dir,name)).isFile()).map(name=>({name,bytes:fs.readFileSync(path.join(dir,name)).toString('base64')}));
+ const before={task:JSON.stringify(f.task),token:f.task.cancellationToken,lease:f.agent.__testGetActiveMovementLease(),profile:f.bot.pathfinder.movements,
+  goal:f.bot.pathfinder.goal,controls:{...f.bot.controlState},position:f.bot.entity.position.clone(),velocity:f.bot.entity.velocity.clone(),
+  goals:f.goals.length,profiles:f.movementProfiles.length,messages:f.messages.length,files:files()};
+ assert.equal(f.task.materialSupply,undefined);assert.equal(f.task.startupWood,undefined);assert.equal(f.ticks(),0);
+ assert.equal(f.agent.__testGetHouseSurfaceDefenseCompletion(),null,'No frame lookup must not start defense');
+ admission=f.agent.__testObserveSurvivalAdmission('post_defense_admission_control');
+ admission.then(value=>{admissionOutcome={state:'resolved',value};},error=>{admissionOutcome={state:'rejected',code:error.code,message:error.message};});
+ assert.equal(await admission,threat);
+ assert.equal(JSON.stringify(f.task),before.task);assert.equal(f.task.startupWood,undefined);assert.equal(f.task.cancellationToken,before.token);
+ assert.equal(f.agent.__testGetActiveMovementLease(),before.lease);assert.equal(f.bot.pathfinder.movements,before.profile);assert.equal(f.bot.pathfinder.goal,before.goal);
+ assert.deepEqual(f.bot.controlState,before.controls);assert.deepEqual(f.bot.entity.position,before.position);assert.deepEqual(f.bot.entity.velocity,before.velocity);
+ assert.equal(f.goals.length,before.goals);assert.equal(f.movementProfiles.length,before.profiles);assert.equal(f.messages.length,before.messages);
+ assert.deepEqual(files(),before.files);assert.equal(f.attempts.length,0);assert.equal(f.attacks.length,0);assert.equal(f.ticks(),0);
+ t.diagnostic(JSON.stringify({postDefenseAdmission:true,threat,required:threat,physicsTicks:0,nativeAttempts:0,taskOrActionMutation:false,
+  qualification:'Existing internal perception/deferred-pursuit cache bookkeeping is not claimed immutable'}));
+});
+
 test('a real unarmed out-of-range retreat is accepted without resuming movement back into archer range',{timeout:30000},async t=>{
- const f=fixture(t,{interrupt:false});f.task.materialSupply={materialSource:'self_gathered'};
+ let fixtureCleanup,running,graphError,boundaryFailure,result,defenseCompletion;
+ const f=fixture({after:cleanup=>{fixtureCleanup=cleanup;}},{interrupt:false});
+ const diagnostics=captureHouseSurfaceDiagnostics(f),anchor={x:0,y:1,z:0},oldTarget={x:0,y:1,z:8},id='0,1,0';
+ const graphApi=require('../vendor/server/minecraft/houseSurfaceGraph'),GoalBlock=require('mineflayer-pathfinder').goals.GoalBlock;
+ f.task.materialSupply={materialSource:'self_gathered'};
  f.bot.inventory.items=()=>[];f.bot.heldItem=null;
  const enemy={id:2,name:'skeleton',type:'hostile',isValid:true,entityType:registry.entitiesByName.skeleton.id,height:1.99,position:new Vec3(20.5,1,.5)};
  f.bot.entities[2]=enemy;
- let hurt=false;const trigger=()=>{if(!hurt&&f.bot.pathfinder.goal){hurt=true;f.bot.emit('entityHurt',f.bot.entity);}};
- f.bot.on('physicsTick',trigger);t.after(()=>f.bot.removeListener('physicsTick',trigger));
- try { await f.agent.__testHouseSurfaceGraphNext({x:0,y:1,z:0}); }
- catch(error) { assert.ok(['house_surface_dry_graph_native_no_path','house_surface_dry_graph_probe_inconclusive'].includes(error.code),error.code); }
- assert.ok(f.bot.entity.position.distanceTo(enemy.position)>16);assert.equal(f.attacks.length,0);
- const trace=fs.readFileSync(f.task.diagnostics.tracePath,'utf8').trim().split('\n').map(JSON.parse);
- assert.ok(trace.some(d=>d.event==='house_surface_self_defense_resumed'));
+ let hurt=false,survivalLease;const nativeGoals=[];
+ const goalObserved=goal=>{if(goal)nativeGoals.push({at:Date.now(),goal:{x:goal.x,y:goal.y,z:goal.z},lease:f.agent.__testGetActiveMovementLease()?.token});};
+ const trigger=()=>{
+  const lease=f.agent.__testGetActiveMovementLease();if(lease?.kind==='survival-critical')survivalLease=lease;
+  if(!hurt&&f.bot.pathfinder.goal){
+   hurt=true;
+   try {
+    assert.deepEqual({x:f.bot.pathfinder.goal.x,y:f.bot.pathfinder.goal.y,z:f.bot.pathfinder.goal.z},oldTarget);
+    assert.equal(f.attempts.length,1);assert.equal(lease,f.task.movementLease);
+    f.bot.emit('entityHurt',f.bot.entity);
+    defenseCompletion=f.agent.__testGetHouseSurfaceDefenseCompletion();
+    assert.ok(defenseCompletion,'Capture the exact automatic defense already started by hurt');
+   } catch(error) {boundaryFailure=error;f.task.cancellationToken.cancel();}
+  }
+ };
+ f.bot.on('goal_updated',goalObserved);f.bot.on('physicsTick',trigger);
+ // Register before the first real planner/work operation. A failed assertion or
+ // deadline must join the actual graph and public defense after Physics stops.
+ t.after(()=>observeAndDisposeFixture(f,()=>{
+  if(hurt)assert.ok(defenseCompletion,'Automatic defense completion was not captured; retirement is unconfirmed');
+  return [running,defenseCompletion];
+ },fixtureCleanup,{
+  observe:()=>t.diagnostic(JSON.stringify({postDefenseTargetChanged:true,hurt,survivalLease:survivalLease?.token,
+   result,graphError:graphError&&{code:graphError.code,observedDryLeg:graphError.observedDryLeg,observedMovement:graphError.observedMovement},
+   nativeGoals,observations:diagnostics().filter(e=>/post_defense|defense_started|ranged_cover_observed/.test(e.event))})),
+  detach:()=>{f.bot.removeListener('goal_updated',goalObserved);f.bot.removeListener('physicsTick',trigger);},
+  record:facts=>t.diagnostic(JSON.stringify({postDefenseTargetChanged:true,...facts})),
+ }));
+ assert.equal(graphApi.hasGroundedBodySupport(f.bot),true);assert.equal(graphApi.naturalWalkingFoot(f.bot,new Vec3(0,1,0)),true);
+ // A real retained PLANNING frontier, not a path/result/arrival stub. Observe
+ // the short native route from this actual camp, save only target/length/count,
+ // then let the production graph independently re-probe under its own policy.
+ const planned=graphApi.runSurfaceGraphNativeProbe(f.bot,f.bot.pathfinder.movements,new GoalBlock(oldTarget.x,oldTarget.y,oldTarget.z),{
+  assertActive:()=>f.task.cancellationToken.throwIfRequested(),isOwnerCurrent:()=>f.agent.__testGetActiveMovementLease()===f.task.movementLease});
+ assert.equal(planned.facts.conclusive,true);assert.equal(planned.result?.status,'success');assert.ok(planned.result.path.length>0);
+ assert.ok(planned.result.path.every(p=>!p.toBreak?.length&&!p.toPlace?.length));assert.equal(f.attempts.length,0);
+ f.task.materialSupply.surfaceGraphs={any_log:{schema:2,kind:'loaded_dry_waypoint_graph',anchor,radius:384,step:16,
+  nodes:{[id]:{position:anchor,parent:null,expanded:true}},order:[id],current:id,resumeNode:id,visits:1,probes:1,
+  frontier:[{parent:id,target:oldTarget,plannedSteps:planned.result.path.length}],blockedEdges:[]}};
+ running=f.agent.__testHouseSurfaceGraphNext(anchor);running.catch(()=>{});
+ try {result=await running;} catch(error) {graphError=error;throw boundaryFailure||error;}
+ assert.equal(boundaryFailure,undefined);assert.equal(hurt,true);assert.ok(survivalLease);assert.equal(survivalLease.kind,'survival-critical');
+ assert.equal(result.moved,true);assert.ok(f.bot.entity.position.distanceTo(enemy.position)>16);assert.equal(f.attacks.length,0);
+ const trace=diagnostics(),changed=trace.filter(d=>d.event==='house_surface_post_defense_target_changed'),continued=trace.filter(d=>d.event==='house_surface_post_defense_continuation');
+ assert.equal(changed.length,1);assert.equal(continued.length,1);
+ const refusal=changed[0].details,arrival=continued[0].details,started=trace.find(d=>d.event==='house_surface_defense_started');
+ assert.ok(started);assert.deepEqual(refusal.abandonedTarget,oldTarget);
+ assert.equal(refusal.oldTargetReached,false);assert.equal(refusal.oldEdgeTraversalCredit,false);assert.equal(refusal.materialCredit,false);
+ assert.equal(refusal.originalDeadline,started.details.originalDeadline);assert.equal(arrival.originalDeadline,refusal.originalDeadline);
+ assert.equal(arrival.arrivalConfirmed,true);assert.ok(continued[0].at<refusal.originalDeadline);assert.ok(Date.now()<refusal.originalDeadline);
+ assert.deepEqual(arrival.actual,result.actual);assert.notDeepEqual(arrival.target,oldTarget);assert.notDeepEqual(arrival.actual,refusal.actual);
+ assert.equal(nativeGoals.filter(g=>g.goal.x===oldTarget.x&&g.goal.y===oldTarget.y&&g.goal.z===oldTarget.z).length,1,'Forbidden old goal is never replayed after the real retreat');
+ assert.ok(nativeGoals.some(g=>g.at>=changed[0].at&&g.lease===f.task.movementLease.token&&g.goal.x===arrival.target.x&&g.goal.y===arrival.target.y&&g.goal.z===arrival.target.z),'Same call issues an actual new safe native goal');
+ assert.ok(f.bot.entity.position.distanceTo(enemy.position)>=24);assert.equal(f.bot.entity.onGround,true);assert.equal(graphApi.hasGroundedBodySupport(f.bot),true);
+ assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
+ const cp=f.task.materialSupply.surfaceGraphs.any_log,key=p=>`${p.x},${p.y},${p.z}`,landing=cp.nodes[key(refusal.actual)],actual=cp.nodes[key(result.actual)];
+ assert.equal(cp.visits,3);assert.equal(cp.nodes[key(oldTarget)],undefined);assert.ok(landing);assert.ok(actual);
+ assert.equal(landing.survivalRelocation.oldEdgeTraversalCredit,false);assert.equal(landing.dryParentTrail,undefined);
+ assert.equal(actual.parent,key(refusal.actual));assert.equal(cp.current,key(result.actual));
+ assert.ok(cp.blockedEdges.some(e=>e.reason==='post_defense_target_policy_changed'&&key(e.target)===key(oldTarget)&&e.oldTargetReached===false&&e.oldEdgeTraversalCredit===false&&e.materialCredit===false));
+ assert.equal(trace.some(d=>d.event==='house_surface_self_defense_resumed'&&key(d.details.goal)===key(oldTarget)),false,'A refused old target cannot receive a misleading native-resume diagnostic');
  assert.equal(trace.some(d=>d.details?.code==='house_surface_defense_unconfirmed'),false);
 });
 
@@ -2012,25 +2135,68 @@ for(const mode of ['success','foreign','pause'])test(`formal30 same work drains 
 });
 
 for(const mode of ['relocate','pause','foreign'])test(`formal33 site escape hands off its real dry observation without replaying the threatened goal: ${mode}`,{timeout:10000},async t=>{
- const f=fixture(t,{interrupt:false,killAfter:100});f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
- f.task.siteSearch={kind:'loaded_natural_house_site_search',ownerIdentity:{taskId:f.task.taskId,generation:0}};
+ let fixtureCleanup,run,defense,spawnPromise,spawnFailure,boundaryFailure;
+ const f=fixture({after:cleanup=>{fixtureCleanup=cleanup;}},{interrupt:false,killAfter:100});
+ f.task.intent='build_furnished_house';f.task.currentStep='build_furnished_house_phase';
+ f.task.siteSearch={kind:'loaded_natural_house_site_search',ownerIdentity:{taskId:f.task.taskId,generation:f.task.executionGeneration}};
+ // A genuine pre-site self-gathered plan supplies the production identity.
+ f.task.plan.steps=[{skill:'build_furnished_house_phase',args:{schema:2,profile:'cottage',phase:'prepare_materials',materialSource:'self_gathered'}}];
  f.bot.inventory.items=()=>[];f.bot.inventory.count=()=>0;f.bot.heldItem=null;
- f.bot.entities[4]={id:4,name:'zombie',type:'mob',isValid:true,entityType:registry.entitiesByName.zombie.id,height:1.95,position:new Vec3(5.5,1,2.5)};
- let cp,changed=false,foreign,profile;const diagnostics=captureHouseSurfaceDiagnostics(f);
- const steer=()=>{if(changed||mode==='relocate'||f.agent.__testGetActiveMovementLease()?.kind!=='survival-critical')return;changed=true;
-  if(mode==='pause')f.task.cancellationToken.pause();else{foreign=f.agent.__testClaimMovementLease('task','foreign-site');profile=new(require('mineflayer-pathfinder').Movements)(f.bot);f.bot.pathfinder.setMovements(profile);}};
- f.bot.on('physicsTick',steer);t.after(()=>f.bot.removeListener('physicsTick',steer));
- const run=f.agent.__testHouseSurfaceGraphNext({x:0,y:1,z:0},{resource:'house_site_cottage',graphCheckpoint:{get:()=>cp,save:value=>{cp=value;}},assertGraphActive:()=>f.task.cancellationToken.throwIfRequested()});
+ let cp,changed=false,foreign,profile,spawn,survival;const diagnostics=captureHouseSurfaceDiagnostics(f);
+ const onGoal=goal=>{
+  if(!goal||spawnPromise)return;
+  // goal_updated fires inside installed goto before it registers listeners.
+  // Enter real defense only at its subsequent microtask boundary, with that
+  // same installed goal/task lease still current. No actor/path writes.
+  spawnPromise=Promise.resolve().then(()=>{
+   assert.equal(f.bot.pathfinder.goal,goal);assert.equal(f.attempts.length,1);
+   assert.equal(f.agent.__testGetActiveMovementLease(),f.task.movementLease);
+   const actual=f.bot.entity.position.clone(),position=actual.offset(3,0,2);
+   spawn={distance:actual.distanceTo(position),goal:{x:goal.x,y:goal.y,z:goal.z}};
+   f.bot.entities[4]={id:4,name:'zombie',type:'mob',isValid:true,entityType:registry.entitiesByName.zombie.id,height:1.95,position};
+   defense=f.agent.__testHandleSurvivalCritical('formal33_observed_native_threat');defense.catch(()=>{});
+  });
+  spawnPromise.catch(error=>{spawnFailure=error;f.task.cancellationToken.cancel();});
+ };
+ const steer=()=>{try{const lease=f.agent.__testGetActiveMovementLease();if(lease?.kind!=='survival-critical')return;
+  survival??=lease;
+  assert.ok(f.agent.__testGetHouseSurfaceDefenseCompletion(),'Only this captured active work defense may expose completion');
+  if(changed||mode==='relocate')return;changed=true;
+  if(mode==='pause')f.task.cancellationToken.pause();else{foreign=f.agent.__testClaimMovementLease('task','foreign-site');profile=new(require('mineflayer-pathfinder').Movements)(f.bot);f.bot.pathfinder.setMovements(profile);}
+  assert.equal(f.agent.__testGetHouseSurfaceDefenseCompletion(),null,'Paused or replacement ownership cannot borrow old completion');
+ }catch(error){boundaryFailure=error;const active=f.agent.__testGetActiveMovementLease();
+  if(active===f.task.movementLease||!changed&&active===survival)f.task.cancellationToken.cancel();
+ }};
+ f.bot.on('goal_updated',onGoal);f.bot.on('physicsTick',steer);
+ t.after(()=>observeAndDisposeFixture(f,()=>{
+  if(spawn)assert.ok(defense,'Explicit defense operation was not captured; retirement is unconfirmed');
+  return [run,spawnPromise,defense];
+ },fixtureCleanup,{
+  observe:()=>t.diagnostic(JSON.stringify({formal33:mode,spawn,survivalLease:survival?.token,changed,
+   checkpoint:cp&&{visits:cp.visits,current:cp.current},...coordinationObservation(f,null,diagnostics)})),
+  detach:()=>{f.bot.removeListener('goal_updated',onGoal);f.bot.removeListener('physicsTick',steer);},
+ }));
+ run=f.agent.__testHouseSurfaceGraphNext({x:0,y:1,z:0},{resource:'house_site_cottage',graphCheckpoint:{get:()=>cp,save:value=>{cp=value;}},assertGraphActive:()=>f.task.cancellationToken.throwIfRequested()});
+ run.catch(()=>{});
+ const assertRealDefense=()=>{
+  assert.equal(spawnFailure,undefined);assert.equal(boundaryFailure,undefined);assert.ok(spawn&&spawn.distance<=4.5);assert.ok(survival);
+  assert.notEqual(survival,f.task.movementLease);
+  const started=diagnostics().filter(e=>e.event==='house_surface_defense_started');assert.equal(started.length,1);
+  assert.equal(started[0].details.survivalLease,survival.token);assert.equal(f.attacks.length,0);
+  assert.equal(f.attempts.filter(g=>g.x===spawn.goal.x&&g.y===spawn.goal.y&&g.z===spawn.goal.z).length,1);
+ };
+
  if(mode!=='relocate'){
   try{await assert.rejects(run,e=>/paused|cancelled|movement_preempted/.test(e.code||''));}
   catch(error){t.diagnostic(JSON.stringify({mode,changed,checkpoint:cp&&{order:cp.order,visits:cp.visits,current:cp.current},...coordinationObservation(f,error,diagnostics)}));throw error;}
-  assert.equal(changed,true,'The requested interruption must actually occur during the survival lease');
+  assertRealDefense();assert.equal(changed,true,'The requested interruption must actually occur during the survival lease');
   assert.equal(cp.visits,1);assert.equal(cp.order.length,1);
   if(mode==='foreign'){assert.equal(f.agent.__testGetActiveMovementLease(),foreign);assert.equal(f.bot.pathfinder.movements,profile);}return;
  }
- const result=await run;assert.equal(result.moved,true);assert.equal(cp.visits,2);assert.equal(cp.order.length,2);
+ const result=await run;assertRealDefense();assert.equal(result.moved,true);assert.equal(cp.visits,2);assert.equal(cp.order.length,2);
  assert.equal(f.bot.entity.onGround,true);assert.equal(cp.current,`${Math.floor(f.bot.entity.position.x)},1,${Math.floor(f.bot.entity.position.z)}`);
- const receipt=diagnostics().find(e=>e.event==='house_site_defense_relocated').details;
+ const receipt=diagnostics().find(e=>e.event==='house_site_defense_relocated')?.details;
+ assert.ok(receipt,'Real defense must publish its relocation evidence');assert.deepEqual(receipt.abandonedTarget,spawn.goal);
  assert.equal(receipt.oldTargetReached,false);assert.equal(receipt.oldEdgeTraversalCredit,false);
  assert.notEqual(cp.current,`${receipt.abandonedTarget.x},${receipt.abandonedTarget.y},${receipt.abandonedTarget.z}`);
  const relocated=Object.values(cp.nodes).find(node=>node.survivalRelocation);

@@ -7,9 +7,16 @@ function fixture(t){const f=native.exports.fixture(t,{initialPosition:new Vec3(s
  if(p.x<b.minX||p.x>b.maxX||p.y<b.minY||p.y>b.maxY||p.z<b.minZ||p.z>b.maxZ)return null;
  return saved.palette[cells[(p.x-b.minX)*(b.maxZ-b.minZ+1)*(b.maxY-b.minY+1)+(p.z-b.minZ)*(b.maxY-b.minY+1)+p.y-b.minY]];
  }});const item={id:100,isValid:true,position:new Vec3(-204.6541235776861,74,39.65463823958733),getDroppedItem:()=>({name:'jungle_log'})};f.bot.entities[item.id]=item;return {...f,item};}
-test('formal45 saved log endpoint is NoPath under ordinary one-metre drop policy',async t=>{
+test('formal45 saved log endpoint is NoPath under ordinary two-metre drop policy',async t=>{
  const f=fixture(t),{Movements,goals}=require('mineflayer-pathfinder'),m=new Movements(f.bot);m.canDig=false;m.allowParkour=false;m.allowSprinting=false;m.allow1by1towers=false;m.scafoldingBlocks=[];m.maxDropDown=2;
- const result=f.bot.pathfinder.getPathTo(m,new goals.GoalBlock(-205,74,39),1000);assert.equal(result.status,'noPath');assert.equal(f.attempts.length,0);
+ // getPathTo returns only one native planning slice; partial is not a final
+ // reachability result. Continue the SAME context, preserving its1000ms budget.
+ const iterator=f.bot.pathfinder.getPathFromTo(m,f.bot.entity.position,new goals.GoalBlock(-205,74,39),{timeout:1000});
+ let result,slices=0;
+ do { const entry=iterator.next();assert.equal(entry.done,false);result=entry.value.result;slices++; }
+ while(result.status==='partial');
+ t.diagnostic(JSON.stringify({status:result.status,slices,nativeTimeMs:result.time,maximumDrop:m.maxDropDown}));
+ assert.equal(result.status,'noPath');assert.equal(f.attempts.length,0);
 });
 test('formal45 pickup physically reaches saved two-metre dry log endpoint without material receipt',{timeout:8000},async t=>{
  const f=fixture(t),records=[];const result=await pickupStartupDrop({...f.deps,onProbe:v=>t.diagnostic(JSON.stringify(v)),record:v=>records.push(v)},{entity:f.item,expectedName:'jungle_log',deadline:Date.now()+5000});
