@@ -230,6 +230,8 @@ test('maintenance waits out transient missing gear and gives survival/night/curr
   assert.equal(maintenance.want({ ...s.perceive(), hostiles: [{ distance: 7 }] }), 0);
   goal = 'homestead';
   assert.equal(maintenance.want(s.perceive()), 0);
+  goal = 'outfit';
+  assert.equal(maintenance.want(s.perceive()), 0);
 });
 
 test('new hunger interrupts a running home repair before its long action finishes', async () => {
