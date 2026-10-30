@@ -690,7 +690,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const breathe = {
     name: 'breathe',
     band: BAND.ESCAPE,
-    want: (state) => (state.inWater && Number.isFinite(state.oxygen) && state.oxygen < t.oxygen ? 1 : 0),
+    // Hurt and short of air: up now, before the air runs out.
+    want: (state) => (state.inWater && Number.isFinite(state.oxygen)
+      && (state.oxygen < t.oxygen || (state.oxygen < 20 && state.health < t.recoverHealth)) ? 1 : 0),
     async run(ctx) {
       bot.pathfinder?.setGoal(null);
       bot.setControlState('jump', true);
@@ -759,7 +761,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.MAINTENANCE,
     // Not in the sight of something that shoots: a blaze or ghast out of
     // melee reach still hits a bot standing still to heal.
-    want: (state) => (state.health < t.recoverHealth && state.food >= t.recoverFood
+    // Nor in water: standing still there sinks, and a bot hurt by drowning
+    // stood still on the sea floor to heal until it drowned.
+    want: (state) => (state.health < t.recoverHealth && state.food >= t.recoverFood && !state.inWater
       && !threats(state).some((h) => h.distance <= 8 || (SHOOTERS.has(h.name) && h.distance <= 24)) ? 0.3 : 0),
     async run(ctx) {
       actions.haltBody(bot);
