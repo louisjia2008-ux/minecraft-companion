@@ -32,7 +32,9 @@ const { createEndDragonGoal } = require('./goals/endDragon');
 const { createEnterEndGoal } = require('./goals/enterEnd');
 const { createEndCityGoal } = require('./goals/endCity');
 const { createEndJourneyGoal } = require('./goals/endJourney');
-const { createDefaultCards } = require('./goals/registry');
+const { createDefaultCards, homeOf } = require('./goals/registry');
+const { createOutfitGoal } = require('./goals/outfit');
+const { createHuntPearlsGoal } = require('./goals/huntPearls');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
@@ -110,7 +112,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   // homestead goal keeps handling its own nights while it builds.
   const nightRest = createNightRest({ bot, home: () => {
     const house = director?.memory.homestead?.memory?.house;
-    if (!house || brain?.status().goal?.name === 'homestead') return null;
+    // Building the house handles its own nights; pearls are hunted in the dark.
+    if (!house || ['homestead', 'hunt_pearls'].includes(brain?.status().goal?.name)) return null;
     const bed = house.furniture.bed.position;
     const block = bot.blockAt(new Vec3(bed.x, bed.y, bed.z));
     // Out of sight means far away (it digs in there); seen and gone means sleep without it.
@@ -256,6 +259,14 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     carpetDuper: goalMethod(createCarpetDuperGoal),
     railDuper: goalMethod(createRailDuperGoal),
     fishing: goalMethod(createFishingGoal),
+    /** Endermen at night until the bag holds `count` pearls (or the night ends). */
+    huntPearls: goalMethod(createHuntPearlsGoal),
+    /** Carry `items` ([{ key, count }]), gathered into the house chest first, and wear the armour among them. */
+    outfit(options = {}, metadata) {
+      const home = homeOf(director.memory);
+      if (!home) return Promise.reject(Object.assign(new Error('No finished house yet'), { code: 'no_home' }));
+      return startPlayerGoal(() => createOutfitGoal({ bot, ...options, home }), metadata ?? { taskId: options?.taskId });
+    },
   };
 
   function dispose() {
