@@ -1,30 +1,43 @@
 # Minecraft Companion
 
-面向 Minecraft Java Edition 的陪玩代理源码，包含一个独立开发中的决策 core、真实 vanilla 服务端场景工具，以及保留的 Electron 桌面宿主与旧任务引擎。
+> **正式发布门槛未通过；本轮未打包。`0.1.0` 仅为本轮目标版本，尚无本轮通过验证的发布包。**
 
-**v0.1.0-alpha.1 源码开发预览。** 已完成 **24场景32/32轮** 正式游戏验收；各冻结版本的完整离线检查与后续失败分别记录，最终发行版本的完整重验结果见随包 `RELEASE_ATTESTATION.json`。新 core 尚未接入 Electron 的命令与生命周期，现有 CLI 用于开发和场景验证，没有独立的普通玩家自由游玩启动入口。当前范围与已知局限见 [STATUS.md](STATUS.md)；完整命令、结果与修复记录见 [VALIDATION.md](VALIDATION.md) 和 [正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
+面向 Minecraft Java Edition 的陪玩代理，包含独立决策 core、真实 vanilla 服务端场景工具，以及 Electron 桌面宿主与 legacy 任务引擎。本轮版本目标为 **0.1.0**；验证、打包和发布状态以本页的实际结果为准。
 
-项目自有源码采用 **AGPL-3.0-only**。许可证、继承来源和第三方声明分别见 [LICENSE](LICENSE)、[LICENSING.md](LICENSING.md)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+新 core 已提供开发者 API 和结构化嵌入入口，**Electron 桌面界面仍默认使用 legacy 引擎**。打包脚本会将 core 源文件复制进桌面包；这不代表桌面命令、暂停、取消、重连等交互已完成新 core 集成验收。当前仍需区分场景验证、嵌入 API 与桌面使用。
 
-## 可以研究什么
+项目自有源码采用 **AGPL-3.0-only**。许可证、继承来源与第三方声明见 [LICENSE](LICENSE)、[LICENSING.md](LICENSING.md) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-`electron/minecraft-runtime/core/` 通过一个决策循环协调生存反应、补给、恢复和当前目标。目标包括采木、从空背包建家并取得铁装备、耕种、畜牧、材料采集、深层采矿、下界石英，以及刷石机、自动熔炉和其他装置。它们的当前实现和对应场景不等于任意自然种子上的可靠性保证。
+## 当前能力
 
-自主模式默认关闭。打开后，默认目标卡仅包含 **家园、食物储备、漏斗刷石机、自动熔炉**。种田、畜牧、下界、捕鱼、甘蔗/刷怪/铁农场和地毯/铁轨装置由独立的显式 API 或相应场景调用；它们没有全部加入默认自主调度。
+自主模式默认关闭。用 `createCompanion({ bot, autonomy: true })` 或 `companion.setAutonomy(true)` 启用后，默认只选择 **家园、食物储备、漏斗刷石机、自动熔炉** 四类目标。其余能力的入口如下。
 
-源码中的 `core/companion.js` 提供 `createCompanion({ bot, onEvent, autonomy })`，接收由调用方连接并准备好的 Mineflayer bot。它是开发者 API，涉及连接、取消、关停和世界生命周期；现成的复现入口是下面的场景 CLI。代码导航见 [ARCHITECTURE.md](ARCHITECTURE.md)，各目标说明见 [core/README.md](electron/minecraft-runtime/core/README.md)。其中较早版本的测试数字属于历史记录，当前冻结版本以 [VALIDATION.md](VALIDATION.md) 为准。
+| 能力 | 入口与范围 |
+|---|---|
+| 家园与默认机器 | 默认自主目标；从空背包建家、补齐家具和铁装备，再采集材料建漏斗刷石机与自动熔炉。也有显式 API 和独立场景。 |
+| 耕种与畜牧 | 显式 `farm()`、`ranch()` API / 结构化工具；开垦播种、收获小麦做面包，以及建围栏、引动物入栏和繁殖。未加入默认自主目标卡。 |
+| 材料采集 | 显式 `gatherMaterials()` API / 工具；按清单采集、合成、熔炼并存入指定箱子，支持深层铁、红石、钻石和下界石英。默认机器项目也复用采料链。 |
+| 下界石英 | 显式 `netherQuartz()` API / 工具，或由材料需求触发；支持造门、进下界采石英、返回主世界。材料采集链还可制作黑曜石和打火石。 |
+| 下界远征 | 显式低层 `companion.netherExpedition()` API / 专项场景；寻找下界要塞和猪灵堡垒、收集烈焰棒与凋零骷髅头、和猪灵交易后返程。当前结构化工具目录尚未暴露此 API。**种子 3 的低地要塞仍是已知难点**，不能保证任意地形成功。 |
+| 末地 | 显式 `enterEnd()`、`endDragon()`、`endCity()`、`endJourney()` API / 工具；定位要塞、进入末地、屠龙、穿折跃门找末地城。场景给定末影之眼或装备等前提，不代表空包完成全部原版通关资源链。 |
+| 刷铁机 | 显式 `ironFarm()` API / 工具；村民脚部埋深 18 格的地下版纳入正式 full。其场景提供材料、僵尸蛋和村民蛋。`villageIronFarm()` 的村庄村民与矿车运输版为**实验性低层 API / 场景**，未暴露为结构化工具，也不属于 full 发布门槛。 |
+| 其他装置 | 甘蔗农场、刷怪塔、捕鱼、刷地毯机与刷铁轨机均有显式 API / 专项场景；未全部加入默认自主选择。 |
+| 自动恢复 | 各目标共用卡住、掉坑、满背包与死亡后的恢复机制，含旧动作中止、局部退避、卡片冷却与重规划。实际仍可能连续死亡、反复寻路失败或长时间重建；恢复尝试和局部标记不等于任务完成。 |
+| 全流程 e2e | 场景专用验收：空包建家后自主建两台机器，并处理两次死亡、满背包和掉坑四项故障。最终同时核对家园、装备、机器产出、恢复与存活；不是下界加末地的完整通关场景。 |
 
-## 嵌入其他项目
+实现说明见 [core/README.md](electron/minecraft-runtime/core/README.md)，架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。嵌入其他宿主可用 `index.js --engine core --data-dir <独立绝对目录>` 或 `createCoreHost`；工具清单、任务终态、取消与重连合同见 [docs/EMBEDDING.md](docs/EMBEDDING.md)。低层 companion API 的接收成功不等于任务完成，调用方须观察真实终态。
 
-嵌入 DeskPet、LLM 工具调用或其他宿主时，可显式使用 `index.js --engine core --data-dir <独立绝对目录>`，或调用 `createCoreHost` 使用相同的结构化工具协议。新适配层提供任务 ID、真实终态、有限防重、显式替换、保留生存保护的暂停/取消和显式重连；默认旧 JSONL / Electron 链路不变。合同、示例和回归命令见 [嵌入接口](docs/EMBEDDING.md)。
+## 安装与离线检查
 
-## 安装源码与离线检查
-
-已验证 Node.js **22.22.0** 与 npm **10.9.4**。历史离线冻结 `1f3d03f` 的原样完整 runtime full13：**3338/3338 PASS，自然 exit0，0 fail/cancel/skip/todo**；七项原命令：**全部自然 exit0：runtime3338/3338、host74/74、security6/6、legacy25/25、setup18/18，lint/typecheck通过；874文件源码前后不变**。正式游戏验收与离线冻结分别记录在 [VALIDATION.md](VALIDATION.md)，最终发行源码、干净安装、隐私审计及 PR/main CI 结果由发行附件 `RELEASE_ATTESTATION.json` 绑定。其他 Node/npm 版本尚未验证。下载对应预发布的源码归档或检出对应标签后，在仓库根目录运行：
+本轮使用 Node.js **22.22.0**、npm **10.9.4** 和 Java **21**。从仓库根目录安装：
 
 ```sh
-npm ci --ignore-scripts --prefix electron
-npm ci --ignore-scripts --prefix electron/minecraft-runtime
+npm ci --prefix electron
+```
+
+`postinstall` 会安装 `electron/minecraft-runtime`。逐项执行离线检查：
+
+```sh
 npm run lint --prefix electron
 npm run typecheck --prefix electron
 npm test --prefix electron
@@ -32,78 +45,93 @@ npm run test:security --prefix electron
 npm run test:minecraft:acceptance --prefix electron
 npm run test:minecraft:setup --prefix electron
 npm test --prefix electron/minecraft-runtime
+npm run test:core --prefix electron/minecraft-runtime
 ```
 
-这里分别检查宿主、security、legacy acceptance、安装器专项测试和原样完整 runtime。`npm run test:core --prefix electron/minecraft-runtime` 可单独检查新 core 子集；它不能代替完整 runtime `npm test`。这些命令包含离线夹具与建模的服务端回包，不能代替真实 Java 服务端验收。资源记忆的原生运动测试还验证实际到达、地面支撑、朝资源的距离改善和未访问路点零信用；有限探测可选择其他改善方向，不要求固定沿某一坐标轴行进。此前固定坐标断言的两次完整失败保留在验证报告。树冠脱困正例使用只有原点叶柱的树冠并要求真实四格下降；UNKNOWN对照则禁止虚构下树信用。紧急跨水夹具还等待初生身体经真实Physics连续落稳，未落稳时必须拒绝移动；原低血量与回营要求保持。旧干路前缀的离线夹具则在明确加载的干燥条带中确认旧节点重接和真实新访问，UNKNOWN不能制造新节点信用；原时限与真实运动要求保持。`--ignore-scripts` 只跳过安装阶段的生命周期脚本。迁移单测对 Electron 文件选择对话框使用本文件内的替身，并禁止任何调用；其余迁移、文件系统、仓库与安全存储逻辑仍真实运行。因此这些单测不要求下载或启动 Electron 二进制。此前候选的延迟下载与最终一次下载失败均保留在验证报告；这项隔离修复和最终完整检查由发行验收单绑定。宿主单测不代表桌面 GUI/provider 验收。开发桌面 UI 时另在 `electron/` 正常 `npm ci`，其 postinstall 会安装 runtime。依赖由接收者按锁文件安装，源码归档不携带 `node_modules`。
+完整 runtime 测试与 core 子集分别记录，不能用子集代替完整测试。部分宿主原生物理计时用例会受负载影响：完整命令的原始失败应保留，失败文件单独以 `node --test <文件>` 复跑；复跑通过记为偶发，单独仍失败则作为真实失败处理。不得跳过或修改测试来获得通过。
 
-## 第一个真实服务器场景
+## 真实服务器测试
 
-本地服务端工具固定使用 Java 21 和 vanilla 1.21.8。macOS/Linux 的 arm64、x64 可使用现有安装工具；其他宿主需要自行准备兼容运行环境。安装工具从 Adoptium/Mojang 官方元数据下载并验证文件，默认写入仓库根的 `.minecraft-local-test/`，不替换系统 Java。
-
-每次下载的响应头等待和无有效数据进展各限 5 分钟，总下载限 15 分钟；安装器不自动重试，仍需通过官方大小与校验和验证。旧候选 0898 两次达到原 300 秒总期限的失败和修复边界见 [VALIDATION.md](VALIDATION.md)。安装器代码冻结 `8f324745527b7b13e6553b57c11af3309ebd9871` 已通过完整 runtime **3327/3327** 和安装器专项 **18/18**；最终发行文档提交、干净检出、归档安装及 CI 的实际结果由发行附件 `RELEASE_ATTESTATION.json` 绑定。游戏动作和正式场景预算保持不变。
-
-从仓库根目录运行安装工具：
+固定使用 Java 21 和 vanilla **1.21.8**。若仓库根 `.minecraft-local-test/` 没有对应服务端 JAR，先运行：
 
 ```sh
 node electron/scripts/setup-minecraft-local.mjs
 ```
 
-阅读并接受 [Minecraft EULA](https://aka.ms/MinecraftEULA) 后，运行一个采木场景：
+安装工具通过官方元数据和校验和验证下载，默认写入仓库根 `.minecraft-local-test/`。阅读并接受 [Minecraft EULA](https://aka.ms/MinecraftEULA) 后，在 `electron/minecraft-runtime/` 运行：
 
 ```sh
-cd electron/minecraft-runtime
-mc_validation_batch="local-logs-$(date -u +%Y%m%dT%H%M%S)-$$"
-npm run scenario -- --accept-eula --scenario collect-logs-flat --runs 1 --seed 101 --batch "$mc_validation_batch"
-```
-
-场景会启动仅绑定 `127.0.0.1` 的隔离离线测试服、设置受控条件、运行原生 Mineflayer 动作、查询服务端结果，然后保存停服。每个新 batch/scenario 目录建立一个新世界；同一场景的重复轮次默认在该世界中重新 setup 并复用 bot。`--seed` 控制 setup 的布局随机数，世界生成种子由场景本身定义。已有 batch/world/result 会被拒绝覆盖；重新验证请换一个 batch 名称。
-
-直接场景 CLI 收到 SIGINT/SIGTERM 会停止当前与后续轮，保留 `pass=false` 的中断 result，再通过 console 停服并确认保存/关闭；首次信号确定 exit 130/143。父调度器的停止还需转发给所属子 CLI，不能假定只停止父进程就已清理服务器。各轮保存收据与中断历史保留在验证报告中。
-
-查看全部场景或参数：
-
-```sh
-node tools/run-scenarios.cjs --help
-```
-
-此帮助命令按现有 usage 合同输出完整参数与场景列表，并返回退出码 **2**；它不启动服务器，也不是一次验收失败。真正运行场景仍须自然退出 **0** 并取得通过的原始结果。
-
-## 完整场景套件
-
-full 包含 **24 个场景、32 轮**，保留采木、夜间、耕种与畜牧的重复次数。所有 full 场景均要求每轮通过；任何超时、最终任务失败、读回/清理错误或服务端条件不足都会保留失败并使进程非零退出。
-
-```sh
+npm run e2e -- --accept-eula --sessions 3 --seed 1
 npm run regression -- --accept-eula --suite full --seed 101 --parallel 2
 ```
 
-这个命令使用统一的 setup base seed 101。本轮正式验证对 E2E 单独使用 seed 1，其余场景使用 101；准确参数、重复轮次、准备条件及实际逐轮结果表见 [VALIDATION.md](VALIDATION.md)。套件定义在 [scenarios/regression.cjs](electron/minecraft-runtime/scenarios/regression.cjs)。不要用 `--runs 1` 覆盖 full 的重复次数后仍称为 32 轮验证。
+当前登记 **35 个场景**；full 自动排除唯一实验性 `ironfarm-village-flat`，包含 **34 个场景、42 轮**，每轮都必须通过。采木两个场景各 3 轮；夜间床/地堡、耕种和畜牧各 2 轮；其余各 1 轮。不要用 `--runs 1` 覆盖 full 的重复次数。套件定义见 [scenarios/regression.cjs](electron/minecraft-runtime/scenarios/regression.cjs)。
 
-full 含 150 分钟的自然家园场景和 300 分钟的 E2E 上限，需为多个 Java 进程预留内存、CPU、磁盘与时间。`--parallel` 控制同时运行的场景数，默认 2；每个服务器默认最大堆 2 GB。较短的 quick 套件可以用于开发反馈，但不覆盖完整 full。
+e2e 默认运行 seeds 1–3，每个 session 是独立服务器与新世界。full 的下界要塞上限 90 分钟、综合下界远征 180 分钟、自然家园 150 分钟、e2e 300 分钟；需预留足够资源与时间。可因内存不足降低并发，但应保留所有要求的种子与轮次。多数场景的 `--seed` 控制 setup 布局；末地场景还通过自己的定义配置世界生成种子，不能统一当作任意自然世界种子覆盖。
 
-单独运行原 E2E：
+下界要塞场景允许“取得目标头颅，或达到规定的 30 次真实凋零骷髅击杀”满足头颅狩猎门槛；其他条件按各场景的 targets 配置执行。`nether-fortress-given` 不要求交易，综合远征另要求交易与相应黄金消耗，均需满足各自返程条件。失败须保留实际击杀数、死亡与卡住原因。
+
+实验性村庄矿车刷铁机可单独参考运行，不计入正式 full：
 
 ```sh
-npm run e2e -- --accept-eula --sessions 1 --seed 1
+npm run scenario -- --accept-eula --scenario ironfarm-village-flat --runs 1 --seed 101 --batch "experimental-$(date -u +%Y%m%dT%H%M%S)-$$"
 ```
 
-E2E 从空背包开始，在受控平地完成家园后由默认自主目标收集材料并建两台机器，保留两次死亡、背包塞满和掉坑四类故障。最终必须同时满足房屋与装备、家具使用、刷石机和熔炉产出、四项恢复及存活；早期 `goal_done` 或“还活着”不能替代终态验收。
+结果位于仓库根 `.minecraft-local-test/scenario-runs/`。e2e 保存 `e2e-<时间>/e2e.json`，full 保存 `regression-<时间>/regression.json`；各场景的 `summary.json` 和 `run-NN.jsonl` 保留终态与原始事件。判断以自然退出码、最终 `result` 和 summary 为准，heartbeat、步骤数、单项 `goal_done` 或局部服务端通过不能替代完整结果。已有批次禁止覆盖。
 
-默认结果目录是 `.minecraft-local-test/scenario-runs/<batch>/<scenario>/`。`summary.json` 保存逐轮结果和统计，`run-NN.jsonl` 保存原始事件；总套件另有 `regression.json` 或 `e2e.json`。长跑中的 heartbeat 和 steps 只用于诊断，完整结果必须等最终 `result` 与 summary。
+## 本轮实测
 
-## Electron 与旧运行时
+验证日期：**2026-10-31 05:17:50 +08:00**；游戏与离线代码基线：**`b1317e87e3d18c3a186535b1012bef5339ae7c44`**。以下来自本轮结构化报告快照；未完成项不计作通过，未沿用历史数字。本轮尚无包身份。
 
-桌面链仍为 `MinecraftPage → IPC → MinecraftService → JSONL bridge/runtime → vendor/server/minecraftTaskAgent.js`。把 `core/` 源文件复制进包不会自动接通新 core；桌面端的暂停、恢复、取消、重连、状态转换和真实 UI 操作仍需另行完成新 core 集成验收。
+| 命令（仓库根目录） | 通过／总数 | 其他原始计数 | 结果与退出码 | 耗时 |
+|---|---|---|---|---|
+| `npm run lint --prefix electron` | 静态检查 | — | PASS，自然 exit 0 | 0分05秒 |
+| `npm run typecheck --prefix electron` | 静态检查 | — | PASS，自然 exit 0 | 0分02秒 |
+| `npm test --prefix electron` | 74/74 | fail=0 | PASS，自然 exit 0 | 0分02秒 |
+| `npm run test:security --prefix electron` | 6/6 | fail=0 | PASS，自然 exit 0 | 0分01秒 |
+| `npm run test:minecraft:acceptance --prefix electron` | 25/25 | fail=0，cancelled=0，skipped=0，todo=0 | PASS，自然 exit 0 | 0分00秒 |
+| `npm run test:minecraft:setup --prefix electron` | 18/18 | fail=0，cancelled=0，skipped=0，todo=0 | PASS，自然 exit 0 | 0分00秒 |
+| `npm test --prefix electron/minecraft-runtime` | 3523/3523 | fail=0，cancelled=0，skipped=0，todo=0 | PASS，自然 exit 0 | 7分36秒 |
+| `npm run test:core --prefix electron/minecraft-runtime` | 515/515 | fail=0，cancelled=0，skipped=0，todo=0 | PASS，自然 exit 0 | 0分28秒 |
 
-开发现有宿主可在 `electron/` 安装依赖，并运行 `npm run typecheck`、`npm test`、`npm run test:security` 与 `npm start`。在 `electron/minecraft-runtime/` 执行 `npm start -- --data-dir <独立绝对目录>` 启动的是旧 JSONL helper，需要独立的绝对 `--data-dir`，协议见 [runtime/README.md](electron/minecraft-runtime/README.md)。它不是新 core 的自由游玩入口，也不会自动连接服务器。
+独立 e2e sessions：**3/3 终态通过**；父命令 **PASS，自然 exit 0**。这里的 seed 1–3 是独立 e2e 批次；full 内的 `e2e-flat` 使用自己的 seed101 运行，不能互相补通过。
 
-本版仅提供源码归档，不提供桌面安装包。macOS shell 构建/冒烟不证明新 core 已接入，也不代表 Developer ID 签名、公证、Windows/Linux、正版认证或真实 Provider 端到端验收。第三方 bundle 的许可变体和 notice 覆盖尚有待关闭，因此不分发该 bundle 的依赖字节。
+| e2e seed | 终态 | 耗时 | 死亡数 | 故障钩子恢复标记 | cleanup |
+|---|---|---|---|---|---|
+| 1 | PASS | 49分25秒 | 3 | 4/4 | 是 |
+| 2 | PASS | 50分57秒 | 2 | 4/4 | 是 |
+| 3 | PASS | 117分26秒 | 2 | 4/4 | 是 |
 
-## 源码归档范围
+正式 full 计划 **34 场景／42 轮**；当前终态场景 **34/34**，其中整场景通过 **27**、失败 **7**；轮次为 **通过 35、失败 7、未完成 0**。full 父命令：**FAIL，自然 exit 1**。未完成项不计作通过；当前正式失败：`nether-bastion-given`、`end-dragon-given`、`end-portal-natural`、`end-city-given`、`end-full-natural`、`e2e-flat`、`materials-quartz-flat`。
 
-源码归档范围包含项目源码、锁文件、构建配置、测试、必要的有限源码夹具、许可证和来源声明，以及最终脱敏验证摘要。项目级构建配置属于源码；本机安装配置和个人运行状态不包含在内。
+唯一实验性场景 `ironfarm-village-flat`：计划1轮，终态 **FAIL：timeout**；命令 **FAIL，自然 exit 1**。实验结果单列，不影响正式 full 的包门槛，也不能抵消正式失败。
 
-不包含依赖安装目录、JDK、Minecraft 服务端 JAR、游戏世界/存档、完整原生日志、账号或授权缓存、学习记忆、个人配置、环境文件、API 凭据、Live2D/Cubism 资产或桌面构建产物。`acceptance/`、`tools/local-validation/` 等保留的旧入口有各自的引擎、条件和本地数据依赖，不能拿其局部结果补足新 core 的正式 full。
+逐场景、逐轮、退出码、偶发复跑和失败说明见 [VALIDATION.md](VALIDATION.md)；当前限制见 [STATUS.md](STATUS.md)，变更见 [CHANGELOG.md](CHANGELOG.md)。较早冻结版本的结果保留其原日期与提交身份，不作为本轮通过证据。
 
-正式24场景32/32轮已通过；保留的失败、中断历史、源码身份和已观察局限见 [VALIDATION.md](VALIDATION.md)。E2E 中旧矿道前沿返程约11分37秒重试，随后自主弃矿、重新采到煤并完成任务；仍有站位验证与恢复效率的改进空间。本次结果不等于所有自然种子或长时自由游玩可靠性保证。
+## Electron 包与发布状态
 
-版本为 **v0.1.0-alpha.1**，仅源码开发预览。游戏测试 commit 与后续包含文档、CI、离线夹具和安装器修正的发行 commit 应分别记录；最终资产清单与 SHA256SUMS 在发行时绑定实际归档。
+开发现有桌面宿主可在 `electron/` 运行 `npm start`。独立的旧 JSONL helper 入口和数据目录要求见 [runtime/README.md](electron/minecraft-runtime/README.md)；新 core 的结构化入口另见上面的嵌入接口说明。
+
+所有离线门槛与非实验性真实场景通过后，在 `electron/` 运行：
+
+```sh
+npm run verify
+npm run make
+npm run smoke:minecraft-package
+```
+
+`verify` 包含检查、构建、包审计和冒烟；`make` 的当前平台产物位于 `electron/out/make/`。计划版本为 **0.1.0**；当前正式门槛未通过，尚未制作本轮平台包，实际状态如下。
+
+| 步骤／产物 | 本轮结果 |
+|---|---|
+| `npm run verify` | 受正式门槛阻止，未执行 |
+| `npm run make` | 受正式门槛阻止，未执行 |
+| `npm run smoke:minecraft-package` | 受正式门槛阻止，未执行 |
+| 发布包路径、大小、SHA-256 | 无本轮产物；均无可报告值 |
+| git tag／GitHub Release | 均未执行 |
+
+**本轮文档通过独立 release 分支与待审查 PR 审阅；未创建 tag 或 GitHub Release。** 正式场景失败按任务要求阻止 `verify`、`make` 与包冒烟；本轮没有发行包或产物 SHA-256。后续修复与重新验证需要单独记录，不得用旧冻结或实验场景结果补足本轮失败。
+
+本地打包与 runtime 冒烟只证明相应检查的结果，不代表新 core 已接入 Electron GUI，也不证明 Developer ID 签名、公证、Windows/Linux、正版认证或真实 Provider 端到端验收。tag 和 GitHub Release 需另行确认后执行。
+
+源码归档不包含 `node_modules`、JDK、服务端 JAR、世界/存档、完整原始日志、账号缓存、学习记忆、个人配置、环境文件、凭据或未获授权的 Live2D/Cubism 资产。第三方 bundle 的许可与 notice 状态须另行核查；当前包审计检查受限素材，不覆盖许可证完整性。
