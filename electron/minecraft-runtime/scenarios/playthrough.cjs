@@ -105,6 +105,8 @@ const playthroughNatural = {
   viewDistance: 12,
   defaultDifficulty: 'easy',
   autonomous: true,
+  // Many hours a run: run on its own, not as a regression round.
+  experimental: true,
   timeoutMs: 16 * 60 * MINUTE,
   setupTimeoutMs: 180000,
   setup({ username, difficulty = 'easy' }) {

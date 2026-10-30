@@ -33,9 +33,9 @@ function fixture() {
 
 test('full regression manifest covers every registered scenario, retains repeats, and requires all 42 rounds', () => {
   const full = SUITES.full;
-  assert.equal(Object.keys(SCENARIOS).length, 35);
+  assert.equal(Object.keys(SCENARIOS).length, 36);
   const experimental = Object.keys(SCENARIOS).filter((name) => SCENARIOS[name].experimental);
-  assert.deepEqual(experimental, ['ironfarm-village-flat']);
+  assert.deepEqual(experimental, ['ironfarm-village-flat', 'playthrough-natural']);
   assert.deepEqual(full.map((e) => e.scenario).sort(), Object.keys(SCENARIOS).filter((name) => !experimental.includes(name)).sort());
   assert.equal(full.reduce((n, e) => n + e.runs, 0), 42);
   for (const e of full) assert.equal(e.minPassRate, 1);
