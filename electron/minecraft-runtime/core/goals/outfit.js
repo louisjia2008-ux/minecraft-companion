@@ -6,8 +6,12 @@
 // The gathering is deviceProject.js's: whatever the bag lacks is gathered
 // into the home chest (gatherMaterials.js) and taken out again. The "device"
 // here builds nothing; once everything is carried it puts the armour on.
+// Food is the exception: put in the chest it is not there to eat, and a bot
+// gathering iron for an hour starved with its meat stored at home. It is
+// hunted last, straight into the bag (stockFood.js).
 
 const { createDeviceProjectGoal } = require('./deviceProject');
+const { createStockFoodGoal } = require('./stockFood');
 const { KNOWLEDGE, countKey } = require('../knowledge');
 
 const ARMOR_SLOTS = [['head', 5, /_helmet$/], ['torso', 6, /_chestplate$/], ['legs', 7, /_leggings$/], ['feet', 8, /_boots$/]];
@@ -31,11 +35,14 @@ function upgrades(bot) {
 
 function createKit({ bot, items, kb = KNOWLEDGE }) {
   const carried = (state, r) => Math.min(r.count, countKey(r.key, state.inventory, kb));
+  const food = items.find((r) => r.key === 'food');
+  const gathered = items.filter((r) => r !== food);
+  const hunt = food ? createStockFoodGoal({ bot, target: food.count, kb }) : null;
   return {
     name: 'kit',
     // A device with no site: deviceProject walks to a site only while this is unset.
     memory: { device: { kind: 'kit' } },
-    needs: () => items,
+    needs: () => gathered,
     isDone: (state) => items.every((r) => carried(state, r) >= r.count) && upgrades(bot).length === 0,
     progress: (state) => items.reduce((n, r) => n + carried(state, r), 0) + (upgrades(bot).length === 0 ? 1 : 0),
     async run(ctx) {
@@ -48,6 +55,7 @@ function createKit({ bot, items, kb = KNOWLEDGE }) {
           return { ok: false, reason: 'equip_failed', item: item.name };
         }
       }
+      if (hunt && !hunt.isDone(ctx.perceive())) return hunt.run(ctx);
       return { ok: true };
     },
   };
