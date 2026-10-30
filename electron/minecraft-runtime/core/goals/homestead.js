@@ -284,6 +284,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const work = siteWork((x, y, z) => bot.blockAt(new Vec3(x, y, z)), memory.house, (p, block) => expectedAt(p)(block.name));
     work.digs = work.digs.filter((d) => !blacklist.has(`site:${posKey(d.position)}`));
     work.fills = work.fills.filter((d) => !blacklist.has(`site:${posKey(d.position)}`));
+    // Down a cave (fallen in, or after its drops): every dig and fill on the
+    // site was a path up through the rock, and each one timed out. Climb first.
+    if (work.digs.length || work.fills.length) {
+      const up = await surfaceFirst(ctx);
+      if (up) return up;
+    }
     // A site that keeps needing digging was misjudged; pick another while nothing stands on it yet.
     if (!memory.established && work.digs.length && memory.siteDigs > 40 && nameAt(memory.house.furniture.crafting_table.position) !== 'crafting_table') {
       ctx.record('site_abandoned', { anchor: memory.house.anchor, digs: memory.siteDigs });
