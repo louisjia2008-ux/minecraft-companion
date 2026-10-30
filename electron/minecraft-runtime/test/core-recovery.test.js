@@ -272,6 +272,28 @@ test('too many deaths in an hour end the goal as a death loop instead of dying f
   await brain.dispose();
 });
 
+test('a goal asked again after a death loop is not failed by the deaths before it', async () => {
+  const bot = fakeBot();
+  let clock = 0;
+  const { brain, events } = wire({ bot, perceive: perceiveFor(bot), now: () => clock });
+  const goal = () => ({ name: 'g', isDone: () => false, progress: () => 0, run: (ctx) => sleep(5, ctx.signal).then(() => ({ ok: true })) });
+  brain.setGoal(goal());
+  for (let i = 0; i < 9; i += 1) {
+    bot.entity.position = new Vec3(i * 100, 64, 0);
+    bot.emit('death');
+    clock += 60000;
+  }
+  await sleep(5);
+  assert.equal(events.filter((e) => e.type === 'goal_failed').length, 1);
+  brain.setGoal(goal());
+  bot.entity.position = new Vec3(1000, 64, 0);
+  bot.emit('death');
+  await sleep(5);
+  assert.equal(events.filter((e) => e.type === 'goal_failed').length, 1);
+  assert.equal(brain.status().goal?.name ?? brain.status().goal, 'g');
+  await brain.dispose();
+});
+
 test('deaths spread over more than an hour do not end the goal', async () => {
   const bot = fakeBot();
   let clock = 0;

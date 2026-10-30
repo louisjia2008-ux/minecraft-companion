@@ -79,7 +79,7 @@ function createRecovery({
     ...thresholds,
   };
   let brain = null;
-  const goalTrack = { active: false, pathStreak: 0, failsSinceAnchor: 0, lastOkAt: -Infinity };
+  const goalTrack = { active: false, pathStreak: 0, failsSinceAnchor: 0, lastOkAt: -Infinity, since: -Infinity };
   let anchor = null; // { position, at }: where the bot last stood still since
   const deaths = []; // { position, at }
   let danger = null; // { center, until, left }
@@ -94,7 +94,7 @@ function createRecovery({
   function observe(event) {
     switch (event?.type) {
       case 'goal_set':
-        Object.assign(goalTrack, { active: true, pathStreak: 0, failsSinceAnchor: 0, lastOkAt: now() });
+        Object.assign(goalTrack, { active: true, pathStreak: 0, failsSinceAnchor: 0, lastOkAt: now(), since: now() });
         anchor = null;
         break;
       case 'goal_done':
@@ -212,7 +212,8 @@ function createRecovery({
       danger = { center, dimension, until: at + t.clusterMs, left: false, deaths: near.length };
       bot.companionDeathDanger = danger;
     }
-    if (deaths.length > t.maxDeaths && brain && goalTrack.active) {
+    // Only this goal's deaths count: one asked again after a death loop gets a fresh start.
+    if (deaths.filter((d) => d.at >= goalTrack.since).length > t.maxDeaths && brain && goalTrack.active) {
       brain.failGoal('death_loop').catch(() => {});
     }
   }
