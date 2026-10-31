@@ -139,3 +139,12 @@ test('hurt in water: no healing in place (it sinks), and up for air before the a
   assert.equal(s.behavior('breathe').want({ ...wet, oxygen: 20 }), 0);
   assert.ok(s.behavior('recover').want({ ...wet, inWater: false }) > 0);
 });
+
+test('a goal that brings its own food (the farm) keeps provisioning out of its way', () => {
+  let feeding = false;
+  const s = setup({ feeding: () => feeding });
+  const hungry = { ...s.state, health: 20, food: 4 };
+  assert.ok(s.behavior('provision').want(hungry) > 0);
+  feeding = true;
+  assert.equal(s.behavior('provision').want(hungry), 0);
+});

@@ -206,7 +206,8 @@ const PROJECTILES = new Set(['arrow', 'small_fireball', 'fireball', 'spectral_ar
 const wearsGold = (bot) => /^golden_/.test(bot.inventory?.slots?.[5]?.name || '');
 const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 
-function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false, thresholds = {} } = {}) {
+function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false,
+  feeding = () => false, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
@@ -725,6 +726,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const needsFood = state.food <= t.provisionFood
         || (state.health < t.recoverHealth && state.food < t.recoverFood);
       if (state.sheltered || !needsFood || hasSafeFood(state, desperateForFood(state))) return 0;
+      // The goal itself is getting food (bread from the farm): leave the body to it rather
+      // than wander off after animals long since hunted out around the house.
+      if (feeding()) return 0;
       // Nothing to hunt in the nether but hoglins; wandering off there to look for food kills.
       if (dimensionOf(bot) !== 'overworld') return 0;
       if (threats(state).some((h) => h.distance <= 8)) return 0;

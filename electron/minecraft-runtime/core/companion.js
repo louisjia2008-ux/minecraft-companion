@@ -44,6 +44,9 @@ const { installOpenDoorPassage, uninstallOpenDoorPassage } = require('./openDoor
 
 // How long a hunt for a night mob keeps night rest away after its last step.
 const NIGHT_HUNT_MS = 5 * 60 * 1000;
+// Goals that bring food themselves: hunger leaves the body to them.
+const FEEDING_GOALS = new Set(['farm', 'stock_food']);
+
 // Out after dark only with a sword in the bag and a chestplate on.
 function fitForNight(bot) {
   return Boolean(bot.inventory?.items?.().some((i) => i.name.endsWith('_sword')) && bot.inventory?.slots?.[6]);
@@ -133,7 +136,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   } });
   const homeMaintenance = createHomeMaintenance({ bot, home: () => director?.memory.homestead,
     activeGoal: () => brain?.status().goal?.name });
-  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors,
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity),
+    feeding: () => FEEDING_GOALS.has(brain?.status().goal?.name) }), ...recovery.behaviors,
     nightRest, homeMaintenance, ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];
   const usedGoals = new Set();
   function retireGoal(owner) {

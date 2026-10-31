@@ -8,13 +8,15 @@
 // its result is asked for again, as a model would; nothing is done for the bot.
 //
 //   1. build the starter house                        homestead
+//      and a wheat farm by it, for bread whenever     farm
+//      the animals around are hunted out
 //   2. iron armour, worn                              outfit
 //      then bow and arrows, buckets, obsidian         outfit (gathered into the house chest)
 //   3. blaze rods from a nether fortress             netherExpedition
 //   4. ender pearls from endermen, night after night huntPearls
 //   5. eyes of ender                                 outfit
 //   6. the End: find the stronghold, kill the dragon endJourney
-//   7. back home: a wheat farm, a cow pen, then the machines on its own
+//   7. back home: a cow pen, then the machines on its own
 //      (cobblestone generator with a hopper, hopper-fed furnace)
 //
 // Judged by the server: the kill_dragon advancement, the house, the farm, the
@@ -33,6 +35,8 @@ const EYES = 12;
 const BLAZE_RODS = Math.ceil(EYES / 2) + 1;
 // Asked again this many times before the run counts the bot as stuck.
 const RETRIES = 8;
+// Bread a trip to the farm brings back; asked for again whenever the bot goes hungry with nothing in the bag.
+const SNACK = 6;
 
 const GEAR = [
   { key: 'iron_helmet', count: 1 }, { key: 'iron_chestplate', count: 1 }, { key: 'iron_leggings', count: 1 },
@@ -57,6 +61,8 @@ const houseOf = (companion) => companion.director.memory.homestead?.memory?.hous
 const STEPS = [
   { id: 'house', task: 'homestead', args: () => ({}),
     done: ({ companion, bot }) => Boolean(companion.director.memory.homestead?.isDone(perceive(bot))) },
+  { id: 'farm', task: 'farm', args: ({ companion }) => ({ bread: SNACK, center: farmCenter(companion) }),
+    done: ({ state }) => state.goals.farm?.isDone?.(state.lastPerceive) },
   { id: 'armor', task: 'outfit', args: () => ({ items: ARMOR }), done: ({ bot, state }) => state.armorDone || kitDone(bot, ARMOR) },
   { id: 'gear', task: 'outfit', args: () => ({ items: GEAR }), done: ({ bot, state }) => state.gearDone || kitDone(bot, GEAR) },
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }),
@@ -67,8 +73,6 @@ const STEPS = [
   { id: 'eyes', task: 'outfit', args: () => ({ items: EYE_KIT }), done: ({ bot }) => have(bot, 'ender_eye') >= EYES },
   { id: 'end', task: 'endJourney', args: () => ({ withCity: false, home: true }),
     done: ({ state, bot }) => state.dragon === true && !bot.game?.dimension?.endsWith('the_end') },
-  { id: 'farm', task: 'farm', args: ({ companion }) => ({ bread: 3, center: farmCenter(companion) }),
-    done: ({ state }) => state.goals.farm?.isDone?.(state.lastPerceive) },
   { id: 'ranch', task: 'ranch', args: () => ({ kind: 'cow', target: 3 }), done: ({ state }) => state.goals.ranch?.isDone?.(state.lastPerceive) },
   { id: 'machines', autonomy: true, done: ({ companion, bot }) => machinesDone(companion, bot) },
 ];
@@ -78,6 +82,11 @@ function farmCenter(companion) {
   const house = houseOf(companion);
   if (!house) return undefined;
   return { x: house.anchor.x - 12, y: house.anchor.y, z: house.anchor.z + 3 };
+}
+
+// The bag has no food and the stomach is low, in the overworld (the farm is there).
+function hungry({ bot }) {
+  return bot.food <= 6 && have(bot, 'food') === 0 && Boolean(bot.game?.dimension?.endsWith('overworld'));
 }
 
 function machinesDone(companion, bot) {
@@ -151,6 +160,19 @@ const playthroughNatural = {
       if (step.id === 'armor') state.armorDone = true;
       write('model_step_done', { step: step.id, minute: entry.minute, asks: entry.asks });
       console.log(`    model: ${step.id} done at ${entry.minute}m`);
+      return;
+    }
+    // Hungry with nothing to eat and the animals around the house long since
+    // hunted: the model sends the bot to its farm for bread, then asks for
+    // the step again (the detour is not counted as one of its asks).
+    if (state.snack && !companion.status().goal) {
+      state.snack = false;
+      entry.asks = Math.max(0, entry.asks - 1);
+    } else if (!state.snack && hungry(context) && state.steps[1].doneAt && step.id !== 'farm') {
+      state.snack = true;
+      write('model_ask', { step: 'snack', task: 'farm', args: { bread: SNACK } });
+      console.log('    model: farm (hungry)');
+      await companion.submitTask('farm', { bread: SNACK, center: farmCenter(companion) });
       return;
     }
     // The model waits for the bot to finish (or give up) before asking again.
