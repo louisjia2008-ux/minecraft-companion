@@ -230,12 +230,18 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sn
   const target = v(position);
   const current = bot.blockAt(target);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
-  if (current && !AIR.has(current.name)) {
-    if (current.boundingBox !== 'empty' || current.name === 'water' || current.name === 'lava') return fail('occupied');
-    // Grass or flowers: break them first.
-    const reach = await actions.goToDig(bot, ctx, current, { timeoutMs: 20000 });
+  // Grass or flowers: break them first, also where a bed's head or a door's
+  // top half goes (a flower bed there makes the server refuse the bed).
+  for (const cell of [target, ...alsoClear.map(v)]) {
+    const block = bot.blockAt(cell);
+    if (!block || AIR.has(block.name) || (cell !== target && itemMatch(block.name))) continue;
+    if (block.boundingBox !== 'empty' || block.name === 'water' || block.name === 'lava') {
+      if (cell === target) return fail('occupied');
+      continue;
+    }
+    const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 20000 });
     if (!reach.ok) return reach;
-    const dug = await actions.digBlock(bot, ctx, current);
+    const dug = await actions.digBlock(bot, ctx, block);
     if (!dug.ok) return dug;
   }
   const item = bot.inventory.items().find((i) => itemMatch(i.name));
