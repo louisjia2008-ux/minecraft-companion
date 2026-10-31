@@ -32,13 +32,25 @@ const { createEndDragonGoal } = require('./goals/endDragon');
 const { createEnterEndGoal } = require('./goals/enterEnd');
 const { createEndCityGoal } = require('./goals/endCity');
 const { createEndJourneyGoal } = require('./goals/endJourney');
-const { createDefaultCards } = require('./goals/registry');
+const { createDefaultCards, homeOf } = require('./goals/registry');
+const { createOutfitGoal } = require('./goals/outfit');
+const { createHuntPearlsGoal } = require('./goals/huntPearls');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 const { installEdgeNudge } = require('./edgeNudge');
 const { trackReturnPositions } = require('./pathReturn');
 const { installOpenDoorPassage, uninstallOpenDoorPassage } = require('./openDoorPassage');
+
+// How long a hunt for a night mob keeps night rest away after its last step.
+const NIGHT_HUNT_MS = 5 * 60 * 1000;
+// Goals that bring food themselves: hunger leaves the body to them.
+const FEEDING_GOALS = new Set(['farm', 'stock_food']);
+
+// Out after dark only with a sword in the bag and a chestplate on.
+function fitForNight(bot) {
+  return Boolean(bot.inventory?.items?.().some((i) => i.name.endsWith('_sword')) && bot.inventory?.slots?.[6]);
+}
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
@@ -110,7 +122,13 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   // homestead goal keeps handling its own nights while it builds.
   const nightRest = createNightRest({ bot, home: () => {
     const house = director?.memory.homestead?.memory?.house;
-    if (!house || brain?.status().goal?.name === 'homestead') return null;
+    // Building the house handles its own nights; pearls are hunted in the dark.
+    if (!house || ['homestead', 'hunt_pearls'].includes(brain?.status().goal?.name)) return null;
+    // Nor while a goal hunts a mob that only comes out at night (spiders for a bow's string):
+    // sleeping skips the very night it waits for. Only armed and armoured, though: respawned
+    // empty-handed it went straight back out and died again and again.
+    const hunt = bot.companionNightHunt;
+    if (brain?.status().goal && hunt && Date.now() - hunt.at < NIGHT_HUNT_MS && fitForNight(bot)) return null;
     const bed = house.furniture.bed.position;
     const block = bot.blockAt(new Vec3(bed.x, bed.y, bed.z));
     // Out of sight means far away (it digs in there); seen and gone means sleep without it.
@@ -118,7 +136,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   } });
   const homeMaintenance = createHomeMaintenance({ bot, home: () => director?.memory.homestead,
     activeGoal: () => brain?.status().goal?.name });
-  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors,
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity),
+    feeding: () => FEEDING_GOALS.has(brain?.status().goal?.name) }), ...recovery.behaviors,
     nightRest, homeMaintenance, ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];
   const usedGoals = new Set();
   function retireGoal(owner) {
@@ -256,6 +275,14 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     carpetDuper: goalMethod(createCarpetDuperGoal),
     railDuper: goalMethod(createRailDuperGoal),
     fishing: goalMethod(createFishingGoal),
+    /** Endermen at night until the bag holds `count` pearls (or the night ends). */
+    huntPearls: goalMethod(createHuntPearlsGoal),
+    /** Carry `items` ([{ key, count }]), gathered into the house chest first, and wear the armour among them. */
+    outfit(options = {}, metadata) {
+      const home = homeOf(director.memory);
+      if (!home) return Promise.reject(Object.assign(new Error('No finished house yet'), { code: 'no_home' }));
+      return startPlayerGoal(() => createOutfitGoal({ bot, ...options, home }), metadata ?? { taskId: options?.taskId });
+    },
   };
 
   function dispose() {

@@ -30,6 +30,8 @@ const nether = require('../nether');
 const { createNetherQuartzGoal } = require('./netherQuartz');
 
 const DOWN = [new Vec3(0, -1, 0)];
+// Out on the surface only after dark: string waits for night, not for a cave.
+const NIGHT_MOBS = new Set(['spider', 'enderman']);
 // Main inventory slots (36): store what is owed before the bag overflows.
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
@@ -244,6 +246,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   async function runStep(ctx, step) {
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
+    // Night rest stays out of the way while a night mob is hunted (companion.js).
+    bot.companionNightHunt = step.kind === 'hunt' && (step.mobs || []).some((m) => NIGHT_MOBS.has(m))
+      ? { key: step.key, at: Date.now() } : null;
     // Ore that needs a mine is the only thing done down there; anything else
     // (a tree for sticks, a station, a craft) walks out along the tunnel first
     // rather than letting the pathfinder dig straight up to it.
