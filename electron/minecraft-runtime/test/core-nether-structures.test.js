@@ -764,3 +764,18 @@ test('a wither skeleton beside a zombified piglin is hit mid-jump, never with a 
   assert.equal(result.ok, true);
   assert.ok(events.includes('attack:air'), events.join(' '));
 });
+
+test('afloat under a low ceiling, the bot opens the headroom over and beside its head', async () => {
+  const { openHeadroom } = require('../core/actions');
+  // Feet at y=79: stone over the head (y=81) and beside it, except one wall that holds back water.
+  const cells = { '0,81,0': 'stone', '-1,80,0': 'stone', '0,80,-1': 'stone', '0,80,1': 'stone', '0,81,1': 'water' };
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 79.2, 0.5);
+  bot.entity.isInWater = true;
+  const dug = [];
+  Object.assign(bot, { canDigBlock: () => true, equip: async () => {},
+    dig: async (b) => { dug.push(b.position.toString()); delete cells[`${b.position.x},${b.position.y},${b.position.z}`]; bot.blockAt = world(cells).blockAt; } });
+  bot.blockAt = world(cells).blockAt;
+  assert.equal(await openHeadroom(bot, { record() {}, signal: new AbortController().signal }), true);
+  assert.deepEqual(dug.sort(), ['(-1, 80, 0)', '(0, 80, -1)', '(0, 81, 0)']);
+});

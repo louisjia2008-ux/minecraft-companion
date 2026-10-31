@@ -503,6 +503,10 @@ async function unstick(bot, ctx) {
     // Perched in a lattice of fences (a fortress balcony rail): the pathfinder
     // plans nothing from a fence top. An hour went by there. Break them away.
     if (await breakLattice(bot, ctx) && await walkOut()) return { ok: true, moved: 'broke_lattice' };
+    // Afloat in a one-block hole of water under a low ceiling: the bot cannot
+    // rise the step out, and nothing below is solid to dig. Half an hour went
+    // by there. Open the headroom and try again.
+    if (!nether && await openHeadroom(bot, ctx) && await walkOut()) return { ok: true, moved: 'opened_headroom' };
   } finally {
     movements.maxDropDown = saved;
   }
@@ -515,6 +519,22 @@ async function unstick(bot, ctx) {
     if (start.y - bot.entity.position.y >= 2) return { ok: true, moved: 'dug_down' };
   }
   return bot.entity.position.distanceTo(start) > 2 ? { ok: true, moved: 'partial' } : fail('stuck');
+}
+
+/** Digs the block over the bot's head and those beside its head. True if any went. */
+async function openHeadroom(bot, ctx) {
+  const head = bot.entity.position.floored().offset(0, 1, 0);
+  const cells = [head.offset(0, 1, 0), ...[[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => head.offset(dx, 0, dz))];
+  let dug = 0;
+  for (const cell of cells) {
+    const block = bot.blockAt(cell);
+    if (!block || block.boundingBox !== 'block' || !bot.canDigBlock(block)) continue;
+    // Never open a ceiling that holds back water or lava.
+    if (['water', 'lava'].includes(bot.blockAt(cell.offset(0, 1, 0))?.name)) continue;
+    const result = await digBlock(bot, ctx, block);
+    if (result.ok) dug += 1;
+  }
+  return dug > 0;
 }
 
 const LATTICE = /(_fence|_wall|iron_bars|_pane)$/;
@@ -725,6 +745,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, breakLattice, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, breakLattice, openHeadroom, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };
