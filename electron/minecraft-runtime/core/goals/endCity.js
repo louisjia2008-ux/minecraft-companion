@@ -21,6 +21,11 @@ const at = (p) => (p ? `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}
 // Further search rings (in view distances, points round each), walked only
 // once the near ones found nothing worth looting.
 const FAR_RINGS = [[2.25, 12], [3, 16], [4, 20], [5, 24]];
+// Bridge blocks: dug up to this on every island left behind (five stacks
+// cross about three view distances of void), and back to the last island
+// for more below the other.
+const STONE_STOCK = 320;
+const RESTOCK_AT = 48;
 const outer = (bot) => Math.hypot(bot.entity.position.x, bot.entity.position.z) > 400;
 
 function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills = defaultSkills } = {}) {
@@ -290,6 +295,19 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
   // One key per city: the base found from another spot is another block of it.
   const cityKeyOf = (p) => `city:${Math.round(p.x / 48)},${Math.round(p.z / 48)}`;
 
+  // Island ground, not a bridge of dug end stone (a line one block wide).
+  const endStoneId = () => bot.registry.blocksByName.end_stone?.id;
+  const onIsland = (p) => bot.findBlocks({ matching: endStoneId(), point: p, maxDistance: 3, count: 24 }).length >= 20;
+  /** Standing room on the nearest island level with `feet`, within `reach` blocks across. */
+  function nearestIsland(feet, reach) {
+    const found = bot.findBlocks({ matching: endStoneId(), maxDistance: reach + 4, count: 1024 })
+      .filter((p) => Math.abs(p.y + 1 - feet.y) <= 1 && Math.hypot(p.x - feet.x, p.z - feet.z) <= reach);
+    found.sort((a, b) => a.distanceTo(feet) - b.distanceTo(feet));
+    const top = found.find((p) => /air/.test(bot.blockAt(p.offset(0, 1, 0))?.name || '')
+      && /air/.test(bot.blockAt(p.offset(0, 2, 0))?.name || '') && onIsland(p));
+    return top ? top.offset(0, 1, 0) : null;
+  }
+
   const atEdge = () => {
     const feet = bot.entity.position.floored();
     return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([x, z]) => end.deepDrop(bot, feet.x + x, feet.y, feet.z + z));
@@ -315,17 +333,27 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       const hop = await pearlHop(ctx, memory.heading);
       if (hop) return hop;
     }
-    // Out of blocks on a bridge: back along it to the last island and dig
-    // there. One run ran dry on a bridge over the void and spent its last
-    // forty minutes standing on it.
-    if (bridgeBlocks() < 16 && memory.lastStone && bot.blockAt(feet.offset(0, -1, 0))?.name !== 'end_stone') {
+    // Running low on a bridge: back along it to the last island and dig
+    // there, while there are still blocks for a gap on the way. One run ran
+    // dry on a bridge over the void and spent its last forty minutes on it.
+    const here0 = bot.blockAt(feet.offset(0, -1, 0));
+    const low = bridgeBlocks() < RESTOCK_AT && !(here0?.name === 'end_stone' && onIsland(here0.position));
+    if (low && memory.lastStone) {
       ctx.record('restock_walk', { to: at(memory.lastStone), blocks: bridgeBlocks() });
       const back = await actions.goNear(bot, ctx, memory.lastStone, 1, { timeoutMs: 120000 });
-      if (!back.ok) { memory.lastStone = null; return back; }
-      const got = await gatherStone(ctx, 256);
-      // Nothing to dig there (an island's underside): don't walk back to it again.
-      if (!got.ok) memory.lastStone = null;
-      return got;
+      memory.lastStone = null;
+      if (!back.ok) return back;
+      return gatherStone(ctx, STONE_STOCK);
+    }
+    // No way back: bridge (never walk: one bot walked off into the void) to
+    // the nearest island level with the bridge that the blocks left reach.
+    const island = low && bridgeBlocks() >= 8 && nearestIsland(feet, bridgeBlocks() - 4);
+    if (island) {
+      ctx.record('restock_bridge', { to: at(island), blocks: bridgeBlocks() });
+      const bridged = await end.bridgeToward(bot, ctx, new Vec3(island.x, feet.y, island.z), { maxSteps: bridgeBlocks() });
+      memory.bridged += bridged.steps || 0;
+      if (!bridged.ok) return bridged;
+      return gatherStone(ctx, STONE_STOCK);
     }
     // Walked down an island's underside, far below where the islands lie:
     // climb back up before bridging on. Runs that bridged on at the bottom
@@ -408,7 +436,7 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       await end.wearArmor(bot);
       if (done()) return { ok: true };
       const ground = bot.entity.onGround && bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
-      if (ground?.name === 'end_stone' && outer(bot)) memory.lastStone = ground.position.offset(0, 1, 0);
+      if (ground?.name === 'end_stone' && outer(bot) && onIsland(ground.position)) memory.lastStone = ground.position.offset(0, 1, 0);
       // A pearl that hit the gateway's bedrock leaves the bot up on it.
       if (!outer(bot) && end.stranded(bot)) {
         const down = await end.descendSpiral(bot, ctx);
@@ -479,9 +507,10 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       // Bridging eats blocks: top up from an island's end stone before
       // leaving it (out on a bridge there is nothing to mine).
       const under = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0))?.name;
-      if (bridgeBlocks() < 160 && under === 'end_stone' && !memory.stoneTriedAt?.equals?.(bot.entity.position.floored())) {
+      const underBlock = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
+      if (bridgeBlocks() < STONE_STOCK - 64 && under === 'end_stone' && onIsland(underBlock.position) && !memory.stoneTriedAt?.equals?.(bot.entity.position.floored())) {
         memory.stoneTriedAt = bot.entity.position.floored();
-        const got = await gatherStone(ctx, 256);
+        const got = await gatherStone(ctx, STONE_STOCK);
         if (got.ok) return got;
       }
       return explore(ctx);
