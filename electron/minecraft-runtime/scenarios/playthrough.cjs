@@ -36,7 +36,7 @@ const BLAZE_RODS = Math.ceil(EYES / 2) + 1;
 // Asked again this many times before the run counts the bot as stuck.
 const RETRIES = 8;
 // Bread a trip to the farm brings back; asked for again whenever the bot goes hungry with nothing in the bag.
-const SNACK = 6;
+const SNACK = 3;
 
 const GEAR = [
   { key: 'iron_helmet', count: 1 }, { key: 'iron_chestplate', count: 1 }, { key: 'iron_leggings', count: 1 },
