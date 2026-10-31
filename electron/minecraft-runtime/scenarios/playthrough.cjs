@@ -8,7 +8,8 @@
 // its result is asked for again, as a model would; nothing is done for the bot.
 //
 //   1. build the starter house                        homestead
-//   2. iron armour, bow and arrows, buckets, obsidian outfit (gathered into the house chest)
+//   2. iron armour, worn                              outfit
+//      then bow and arrows, buckets, obsidian         outfit (gathered into the house chest)
 //   3. blaze rods from a nether fortress             netherExpedition
 //   4. ender pearls from endermen, night after night huntPearls
 //   5. eyes of ender                                 outfit
@@ -40,6 +41,10 @@ const GEAR = [
   { key: 'water_bucket', count: 1 }, { key: 'flint_and_steel', count: 1 }, { key: 'obsidian', count: 10 },
   { key: 'cobblestone', count: 64 }, { key: 'food', count: 24 },
 ];
+// Armour first, as a player would: worn, it keeps the bot alive through the
+// nights spent hunting spiders for the bow's string.
+const ARMOR = GEAR.filter((r) => /^iron_(helmet|chestplate|leggings|boots|sword)$/.test(r.key) || r.key === 'shield')
+  .concat([{ key: 'food', count: 12 }]);
 const EYE_KIT = [{ key: 'ender_eye', count: EYES }, { key: 'arrow', count: 48 }, { key: 'food', count: 24 },
   { key: 'cobblestone', count: 64 }, { key: 'water_bucket', count: 1 }];
 
@@ -52,6 +57,7 @@ const houseOf = (companion) => companion.director.memory.homestead?.memory?.hous
 const STEPS = [
   { id: 'house', task: 'homestead', args: () => ({}),
     done: ({ companion, bot }) => Boolean(companion.director.memory.homestead?.isDone(perceive(bot))) },
+  { id: 'armor', task: 'outfit', args: () => ({ items: ARMOR }), done: ({ bot, state }) => state.armorDone || kitDone(bot, ARMOR) },
   { id: 'gear', task: 'outfit', args: () => ({ items: GEAR }), done: ({ bot, state }) => state.gearDone || kitDone(bot, GEAR) },
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }),
     done: ({ bot }) => have(bot, 'blaze_rod') + have(bot, 'ender_eye') / 2 >= BLAZE_RODS && bot.game?.dimension?.endsWith('overworld') },
@@ -142,6 +148,7 @@ const playthroughNatural = {
       entry.doneAt = Date.now();
       entry.minute = Math.round(context.elapsedMs / MINUTE);
       if (step.id === 'gear') state.gearDone = true;
+      if (step.id === 'armor') state.armorDone = true;
       write('model_step_done', { step: step.id, minute: entry.minute, asks: entry.asks });
       console.log(`    model: ${step.id} done at ${entry.minute}m`);
       return;
