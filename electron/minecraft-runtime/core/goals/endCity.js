@@ -23,7 +23,7 @@ const outer = (bot) => Math.hypot(bot.entity.position.x, bot.entity.position.z) 
 function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills = defaultSkills } = {}) {
   const blacklist = createBlacklist({ ttlMs: 300000 });
   const memory = { looted: new Set(), taken: 0, gatewayUsed: false, pearls: 0, cityAt: null, heading: null,
-    explored: 0, elytra: false, bridged: 0, seenFrames: 0 };
+    explored: 0, elytra: false, bridged: 0, seenFrames: 0, emptyCities: [] };
   let restore = null;
   const enterMode = () => { if (!restore) restore = end.applyEndMovements(bot); };
   const hasElytra = () => actions.countItems(bot, (n) => n === 'elytra') > 0;
@@ -271,6 +271,9 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     return null;
   }
 
+  // One key per city: the base found from another spot is another block of it.
+  const cityKeyOf = (p) => `city:${Math.round(p.x / 48)},${Math.round(p.z / 48)}`;
+
   const atEdge = () => {
     const feet = bot.entity.position.floored();
     return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([x, z]) => end.deepDrop(bot, feet.x + x, feet.y, feet.z + z));
@@ -387,7 +390,9 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       const now = Date.now();
       const pos = bot.entity.position;
       if (!memory.scan || now - memory.scan.at > 20000 || pos.distanceTo(memory.scan.from) > 32) {
-        memory.scan = { at: now, from: pos.clone(), purpur: city.findCity(bot, 256) };
+        const seen = city.findCity(bot, 256, { skip: (p) => blacklist.has(cityKeyOf(p))
+          || memory.emptyCities.some((c) => Math.hypot(c.x - p.x, c.z - p.z) < 64) });
+        memory.scan = { at: now, from: pos.clone(), purpur: seen && city.cityBase(bot, seen) };
         if (memory.scan.purpur) {
           const all = bot.findBlocks({ matching: bot.registry.blocksByName.chest.id, maxDistance: 96, count: 32 });
           ctx.record('city_scan', { purpur: at(memory.scan.purpur), chests: all.length, loot: city.cityChests(bot, 96).length,
@@ -402,7 +407,18 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
         return lootChest(ctx, chestsLeft[0]);
       }
       const purpur = memory.scan.purpur;
-      if (purpur && bot.entity.position.distanceTo(purpur) > 12 && !blacklist.has(`city:${posKey(purpur)}`)) {
+      const cityKey = purpur && cityKeyOf(purpur);
+      // At the door with no chest or ship in sight: a small city with no
+      // loot. One run went back and forth under such a tower for the whole
+      // hour, the nearest purpur pulling it back after every search leg.
+      if (purpur && bot.entity.position.distanceTo(purpur) <= 16 && !blacklist.has(cityKey)) {
+        ctx.record('city_empty', { at: at(purpur) });
+        blacklist.add(cityKey, 'city_empty', 3600000);
+        memory.emptyCities.push(purpur);
+        memory.scan = null;
+        return explore(ctx);
+      }
+      if (purpur && bot.entity.position.distanceTo(purpur) > 12 && !blacklist.has(cityKey)) {
         if (!memory.cityAt) ctx.record('city_seen', { at: at(purpur) });
         memory.cityAt = purpur;
         const before = bot.entity.position.clone();
@@ -411,14 +427,14 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
           const bridged = await end.bridgeToward(bot, ctx, new Vec3(purpur.x, before.y, purpur.z), { maxSteps: 48 });
           memory.bridged += bridged.steps || 0;
           if ((bridged.steps || 0) > 0) return { ok: true };
-          blacklist.add(`city:${posKey(purpur)}`, 'unreachable', 120000);
+          blacklist.add(cityKey, 'unreachable', 120000);
           return fail(bridged.reason || 'city_blocked');
         }
         const moved = await actions.goNear(bot, ctx, purpur, 4, { timeoutMs: 90000 });
         if (moved.ok || bot.entity.position.distanceTo(before) > 8) return moved.ok ? moved : { ok: true };
         const bridged = await end.bridgeToward(bot, ctx, new Vec3(purpur.x, bot.entity.position.y, purpur.z), { maxSteps: 48 });
         memory.bridged += bridged.steps || 0;
-        if ((bridged.steps || 0) === 0) blacklist.add(`city:${posKey(purpur)}`, 'unreachable', 120000);
+        if ((bridged.steps || 0) === 0) blacklist.add(cityKey, 'unreachable', 120000);
         return bridged;
       }
       // Bridging eats blocks: top up from an island's end stone before

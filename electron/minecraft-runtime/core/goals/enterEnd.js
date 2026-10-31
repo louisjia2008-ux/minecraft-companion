@@ -14,12 +14,87 @@ const stronghold = require('../stronghold');
 const { dimension } = require('../nether');
 const end = require('../end');
 const { rememberPortal } = require('./endReturn');
+const defaultSkills = require('../skills');
+const { planNext } = require('../planner');
+const { KNOWLEDGE, countKey } = require('../knowledge');
+const { createBlacklist } = require('../blacklist');
+const { createPlannerRunner } = require('./common');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const at = (p) => (p ? `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}` : null);
 
-function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 } = {}) {
-  const memory = { sightings: [], estimate: null, ring: null, thrown: 0, broken: 0, walked: 0, entered: false, closest: Infinity };
+// Cheap enough to bridge instead: a walk across a lake.
+const UNDERWATER_COST = 120;
+const BRIDGE = ['cobblestone', 'cobbled_deepslate', 'dirt'];
+
+/**
+ * Runs a long overworld walk that keeps its head above water. The path
+ * planner walks a lake along its bottom; the walk to one stronghold went
+ * under a shore ledge there, and the bot drowned with all its eyes three
+ * runs in three. A cell with water at head height costs as much as a few
+ * blocks of bridge, so the planner bridges over (with the blocks carried)
+ * or goes round.
+ */
+async function dryWalk(bot, fn) {
+  const m = bot.pathfinder?.movements;
+  if (!m) return fn();
+  const scaffold = m.scafoldingBlocks;
+  const step = (block) => (block?.position && bot.blockAt(block.position.offset(0, 1, 0))?.name === 'water' ? UNDERWATER_COST : 0);
+  m.scafoldingBlocks = [...new Set([...(scaffold || []), ...BRIDGE.map((n) => bot.registry.itemsByName?.[n]?.id).filter(Number.isInteger)])];
+  m.exclusionAreasStep.push(step);
+  try {
+    return await fn();
+  } finally {
+    m.scafoldingBlocks = scaffold;
+    const i = m.exclusionAreasStep.indexOf(step);
+    if (i >= 0) m.exclusionAreasStep.splice(i, 1);
+  }
+}
+
+// Blocks a staircase digs per level down, and what a stone pickaxe lasts.
+const STAIR_BLOCKS = 3;
+const STONE_PICK_USES = 131;
+// Planner steps spent on spare pickaxes before going down with what there is.
+const TOOL_STEPS = 60;
+
+function createEnterEndGoal({ bot, actions = defaultActions, skills = defaultSkills, kb = KNOWLEDGE, rethrowEvery = 96 } = {}) {
+  const memory = { sightings: [], estimate: null, ring: null, thrown: 0, broken: 0, walked: 0, entered: false, closest: Infinity,
+    toolSteps: 0, toolsReady: false };
+  const toolMemory = { shortfall: {} };
+  const planner = createPlannerRunner({ bot, skills, kb, memory: toolMemory, blacklist: createBlacklist({ ttlMs: 60000 }) });
+  const pickaxeUses = () => bot.inventory.items().filter((i) => i.name.endsWith('_pickaxe')).reduce((n, i) => {
+    const max = i.maxDurability ?? bot.registry.itemsByName?.[i.name]?.maxDurability ?? 0;
+    return n + Math.max(0, max - (i.durabilityUsed ?? 0));
+  }, 0);
+
+  /**
+   * A staircase down to a portal room 120 blocks under a hilltop digs some
+   * 360 blocks; the iron pickaxe brought lasts 250. One run dug the last
+   * hundred levels by hand, 7.5 s a block, and ran out of time. Before going
+   * down (or on the way, once the pickaxe has worn): stone pickaxes for the
+   * difference, from a tree or two and the cobblestone carried. Null when
+   * there is nothing to do.
+   */
+  async function sparePickaxes(ctx, depth) {
+    if (memory.toolsReady) return null;
+    const need = depth * STAIR_BLOCKS + 24;
+    const have = pickaxeUses();
+    if (have >= need || memory.toolSteps >= TOOL_STEPS) {
+      memory.toolsReady = true;
+      return null;
+    }
+    const state = ctx.perceive();
+    const want = countKey('stone_pickaxe', state.inventory, kb) + Math.ceil((need - have) / STONE_PICK_USES);
+    const planned = planNext({ requirements: [{ key: 'stone_pickaxe', count: want }], inventory: planner.inventoryFor(state),
+      stations: { crafting_table: planner.tableHere() }, kb });
+    if (!planned || planned.kind === 'unplannable') {
+      memory.toolsReady = true;
+      return null;
+    }
+    memory.toolSteps += 1;
+    if (memory.toolSteps === 1) ctx.record('spare_pickaxes', { depth, uses: have, need, want });
+    return planner.step(ctx, { ...planned, for: 'stone_pickaxe' });
+  }
   const eyes = (state) => state.inventory.ender_eye || 0;
   const emptyFrames = () => (memory.ring ? memory.ring.frames.filter((f) => !stronghold.hasEye(bot.blockAt(f.position))).length : 12);
 
@@ -75,7 +150,7 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
     }
     ctx.record('stronghold_walk', { to: at(target), estimate: at(memory.estimate) });
     const before = here.clone();
-    const moved = await actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 4), { timeoutMs: 60000, arrived: () => true });
+    const moved = await dryWalk(bot, () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 4), { timeoutMs: 60000, arrived: () => true }));
     const gone = bot.entity.position.distanceTo(before);
     memory.walked += gone;
     return gone >= 6 ? { ok: true } : fail(moved.ok ? 'walk_blocked' : moved.reason);
@@ -92,7 +167,7 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
       const step = Math.min(64, flat) / flat;
       const to = from.offset((ring.center.x - from.x) * step, 0, (ring.center.z - from.z) * step);
       ctx.record('portal_room_return', { center: at(ring.center), distance: Math.round(flat) });
-      const moved = await actions.goTo(bot, ctx, new goals.GoalNearXZ(to.x, to.z, 3), { timeoutMs: 90000, arrived: () => true });
+      const moved = await dryWalk(bot, () => actions.goTo(bot, ctx, new goals.GoalNearXZ(to.x, to.z, 3), { timeoutMs: 90000, arrived: () => true }));
       return here0().distanceTo(from) >= 6 ? { ok: true } : fail(moved.reason || 'walk_blocked');
     }
     // Lit already: hop in.
@@ -134,6 +209,8 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
     }
     // Far above the room: the pathfinder will not plan that deep; dig a staircase down.
     if (here.y - frame.position.y > 8) {
+      const tools = await sparePickaxes(ctx, Math.ceil(here.y - frame.position.y));
+      if (tools) return tools;
       const down = await actions.digStairsDown(bot, ctx, frame.position.offset(0, 1, 0), { maxSteps: 16 });
       ctx.record('stairs_down', { steps: down, y: Math.floor(bot.entity.position.y), roomY: frame.position.y });
       if (down > 0) return { ok: true };
@@ -176,7 +253,7 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
       if (memory.ring) {
         const d = here.distanceTo(memory.ring.center);
         memory.closest = Math.min(memory.closest, d);
-        closeness = 2000 - Math.floor(memory.closest) + (12 - emptyFrames()) * 100;
+        closeness = 2000 - Math.floor(memory.closest) + (12 - emptyFrames()) * 100 + memory.toolSteps;
       } else {
         closeness = memory.sightings.length * 10 + Math.floor(memory.walked / 8);
       }
@@ -185,6 +262,11 @@ function createEnterEndGoal({ bot, actions = defaultActions, rethrowEvery = 96 }
     recover() { memory.estimate = null; memory.sightings = memory.sightings.slice(-1); },
     async run(ctx) {
       if (dimension(bot) !== 'overworld') return fail('not_in_overworld');
+      // The walk to a stronghold crosses whatever the overworld holds: the
+      // armor carried goes on (it stayed in the pack, and skeletons shot an
+      // unarmoured bot dead three times on one walk).
+      const worn = await end.wearArmor(bot);
+      if (worn.length) ctx.record('equip_armor', { worn });
       if (lookForRing(ctx)) return reachRing(ctx);
       if (eyes(ctx.perceive()) < 1) return fail('no_eyes');
       if (memory.sightings.length === 0) return sight(ctx);

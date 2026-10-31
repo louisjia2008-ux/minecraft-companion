@@ -687,6 +687,27 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
 
+  /** The nearest column (within three) whose water ends in open air, reachable at body height. */
+  const WET = /^(water|bubble_column|seagrass|tall_seagrass|kelp|kelp_plant)$/;
+  function airColumn() {
+    const feet = bot.entity.position.floored();
+    const passable = (p) => { const b = bot.blockAt(p); return Boolean(b) && b.boundingBox === 'empty'; };
+    let best = null;
+    for (let dx = -3; dx <= 3; dx += 1) {
+      for (let dz = -3; dz <= 3; dz += 1) {
+        const d = Math.hypot(dx, dz);
+        if (d > 3.2 || (best && d >= best.d)) continue;
+        const col = feet.offset(dx, 0, dz);
+        if (d > 0 && !(passable(col) && passable(col.offset(0, 1, 0)))) continue;
+        let y = 0;
+        while (y < 6 && WET.test(bot.blockAt(col.offset(0, y, 0))?.name || '')) y += 1;
+        const top = bot.blockAt(col.offset(0, y, 0));
+        if (top && top.boundingBox === 'empty' && !WET.test(top.name) && top.name !== 'lava') best = { x: col.x, z: col.z, d };
+      }
+    }
+    return best;
+  }
+
   const breathe = {
     name: 'breathe',
     band: BAND.ESCAPE,
@@ -696,16 +717,29 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       bot.setControlState('jump', true);
       try {
         for (let i = 0; i < 40 && bot.oxygenLevel < 20 && bot.entity.isInWater; i += 1) {
-          // Swimming up into a ceiling (a flooded pit or tunnel): dig it open.
+          // Under a ledge (the shore's rock reaching out over the water): swim
+          // sideways to open air. Rising alone pinned the head under the lip
+          // until the bot drowned, a third of a block from open water.
+          const air = airColumn();
+          if (air && (air.x !== Math.floor(bot.entity.position.x) || air.z !== Math.floor(bot.entity.position.z))) {
+            await bot.lookAt(new Vec3(air.x + 0.5, bot.entity.position.y + 1.6, air.z + 0.5), true);
+            bot.setControlState('forward', true);
+          } else {
+            bot.setControlState('forward', false);
+          }
+          // Swimming up into a ceiling with no air beside it (a flooded pit or
+          // tunnel): dig it open. Floating in water a block takes 25 times as
+          // long as on the ground: give it the time.
           const above = bot.blockAt(bot.entity.position.offset(0, 2, 0).floored());
-          if (above && above.boundingBox === 'block' && bot.canDigBlock(above)) {
-            await actions.digBlock(bot, ctx, above, { timeoutMs: 4000 });
+          if (!air && above && above.boundingBox === 'block' && bot.canDigBlock(above)) {
+            await actions.digBlock(bot, ctx, above, { timeoutMs: 15000 });
             bot.setControlState('jump', true);
           }
           await sleep(100, ctx.signal);
         }
       } finally {
         bot.setControlState('jump', false);
+        bot.setControlState('forward', false);
       }
       return { ok: bot.oxygenLevel >= t.oxygen, reason: 'still_underwater' };
     },

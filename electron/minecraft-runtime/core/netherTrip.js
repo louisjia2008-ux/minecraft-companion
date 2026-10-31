@@ -9,7 +9,9 @@
 
 const defaultActions = require('./actions');
 const { goals } = require('mineflayer-pathfinder');
+const { Vec3 } = require('vec3');
 const nether = require('./nether');
+const end = require('./end');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 
@@ -163,12 +165,170 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
         return nether.ignite(bot, ctx, nether.portalFrame(frame.base, frame.axis));
       }
     }
+    if ((memory.homeMisses || 0) >= 1 && await paveLavaFront(ctx, portal)) return { ok: true, paved: true };
     const result = await goThrough(ctx, portal);
     memory.homeMisses = result.ok ? 0 : (memory.homeMisses || 0) + 1;
     return result;
   }
 
-  return { memory, enterNetherMode, leaveNetherMode, framePlaced, portalProgress, wearGold, goThrough, toNether, toOverworld, netherPortal };
+  /**
+   * Lava run in over the cells in front of the portal (a hole dug beside it
+   * let a hidden pocket out): the pathfinder will not step there. Cover each
+   * such cell with a block. One run with every trade done stood six minutes
+   * two blocks from its portal, both faces of it lava. True if any went down.
+   */
+  async function paveLavaFront(ctx, portal) {
+    const isPortal = (p) => bot.blockAt(p)?.name === 'nether_portal';
+    let bottom = portal.clone();
+    while (isPortal(bottom.offset(0, -1, 0))) bottom = bottom.offset(0, -1, 0);
+    const alongX = isPortal(bottom.offset(1, 0, 0)) || isPortal(bottom.offset(-1, 0, 0));
+    const along = alongX ? [1, 0] : [0, 1];
+    const faces = alongX ? [[0, 1], [0, -1]] : [[1, 0], [-1, 0]];
+    const cells = [];
+    for (let u = -2; u <= 2; u += 1) {
+      for (const [fx, fz] of faces) {
+        for (let d = 1; d <= 2; d += 1) {
+          const p = bottom.offset(along[0] * u + fx * d, 0, along[1] * u + fz * d);
+          if (/^lava$/.test(bot.blockAt(p)?.name || '') && bot.blockAt(p.offset(0, -1, 0))?.boundingBox === 'block') cells.push(p);
+        }
+      }
+    }
+    if (!cells.length) return false;
+    const here = bot.entity.position;
+    cells.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
+    let paved = 0;
+    for (const cell of cells) {
+      const item = bot.inventory.items().find((i) => BRIDGE_BLOCKS.test(i.name) || nether.SCAFFOLD.includes(i.name));
+      if (!item) break;
+      if (!actions.withinReach(bot, cell.offset(0.5, 0.5, 0.5))) continue;
+      try {
+        await bot.equip(item, 'hand');
+        await bot.placeBlock(bot.blockAt(cell.offset(0, -1, 0)), new Vec3(0, 1, 0));
+      } catch (error) {
+        if (error?.code === 'aborted') throw error;
+      }
+      if (bot.blockAt(cell)?.boundingBox === 'block') paved += 1;
+    }
+    ctx.record('portal_paved', { lava: cells.length, paved });
+    return paved > 0;
+  }
+
+  // ---- the forced portal ledge ------------------------------------------
+
+  // With no room for a portal near the linked spot, the server forces one at
+  // y 70 on a 3x2 obsidian ledge, which can hang forty blocks over a lava sea.
+  // The pathfinder (three-block drops at most, lava priced out) finds no way
+  // off; a seed-101 run walked off it nine times. Bridge to the nearest land.
+  const BRIDGE_BLOCKS = /^(cobblestone|cobbled_deepslate|dirt|netherrack)$/;
+  const bridgeBlocks = () => bot.inventory.items().filter((i) => BRIDGE_BLOCKS.test(i.name)).reduce((n, i) => n + i.count, 0);
+  const cellKey = (p) => `${p.x},${p.y},${p.z}`;
+  const openCell = (p) => { const b = bot.blockAt(p); return Boolean(b) && b.boundingBox === 'empty' && !/lava|fire/.test(b.name); };
+  const standable = (p) => bot.blockAt(p.offset(0, -1, 0))?.boundingBox === 'block' && openCell(p) && openCell(p.offset(0, 1, 0));
+
+  // The ledge and a bridge laid from it: nothing the Nether makes itself.
+  const LAID = /^(obsidian|cobblestone|cobbled_deepslate|dirt)$/;
+  /**
+   * The cells walkable from the feet (steps of one up or down), or null once
+   * more than `limit` of them stand on the Nether's own ground (open ground).
+   */
+  function walkable(limit = 40) {
+    const start = bot.entity.position.floored();
+    if (!standable(start)) return null;
+    const seen = new Map([[cellKey(start), start]]);
+    const queue = [start];
+    let natural = 0;
+    while (queue.length) {
+      const c = queue.shift();
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        for (const dy of [0, 1, -1]) {
+          const n = c.offset(dx, dy, dz);
+          if (seen.has(cellKey(n)) || !standable(n)) continue;
+          seen.set(cellKey(n), n);
+          if (!LAID.test(bot.blockAt(n.offset(0, -1, 0))?.name || '')) natural += 1;
+          if (natural > limit || seen.size > 400) return null;
+          queue.push(n);
+          break;
+        }
+      }
+    }
+    return [...seen.values()];
+  }
+
+  /** On a few cells with a long drop off every side: the walkable cells, else null. */
+  function ledge() {
+    if (!nether.inNether(bot) || !bot.entity.onGround) return null;
+    const cells = walkable();
+    if (!cells) return null;
+    const keys = new Set(cells.map(cellKey));
+    let drops = 0;
+    for (const c of cells) {
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const n = c.offset(dx, 0, dz);
+        if (keys.has(cellKey(n)) || !openCell(n)) continue;
+        let depth = 0;
+        while (depth < 6 && openCell(n.offset(0, -1 - depth, 0))) depth += 1;
+        if (depth >= 6) drops += 1;
+      }
+    }
+    return drops >= 2 ? cells : null;
+  }
+
+  /** The nearest solid, lava-free ground off the ledge, about level with it. */
+  function landFrom(cells, radius = 48) {
+    const feet = bot.entity.position.floored();
+    const keys = new Set(cells.map(cellKey));
+    let best = null;
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      for (let dz = -radius; dz <= radius; dz += 1) {
+        const d = Math.hypot(dx, dz);
+        if (d < 3 || d > radius || (best && d >= best.d)) continue;
+        for (let dy = 1; dy >= -4; dy -= 1) {
+          const p = feet.offset(dx, dy, dz);
+          if (keys.has(cellKey(p.offset(0, 1, 0)))) continue;
+          if (memory.ledgeBlocked?.has(cellKey(p))) continue;
+          const b = bot.blockAt(p);
+          if (!b || b.boundingBox !== 'block' || /obsidian|bedrock|magma/.test(b.name)) continue;
+          if (/lava/.test(bot.blockAt(p.offset(0, 1, 0))?.name || '')) continue;
+          best = { p, d };
+          break;
+        }
+      }
+    }
+    return best?.p || null;
+  }
+
+  /**
+   * One step off a ledge: bridge toward land with the blocks carried. With
+   * too few blocks it reports `ledge_no_blocks`, and the caller goes home
+   * through the portal for some.
+   */
+  async function leaveLedge(ctx, cells) {
+    const target = landFrom(cells);
+    if (!target) return fail('ledge_no_land');
+    if (bridgeBlocks() < 4) return fail('ledge_no_blocks', { blocks: bridgeBlocks() });
+    ctx.record('ledge_bridge', { from: cellKey(bot.entity.position.floored()), to: cellKey(target), blocks: bridgeBlocks() });
+    const start = bot.entity.position.clone();
+    let stopped = null;
+    for (let steps = 0; steps < 48; steps += 1) {
+      const feet = bot.entity.position.floored();
+      if (Math.hypot(target.x - feet.x, target.z - feet.z) < 1.5) break;
+      // Over the Nether's own ground again: the pathfinder takes it from here.
+      const under = bot.blockAt(feet.offset(0, -1, 0));
+      if (steps > 0 && under?.boundingBox === 'block' && !LAID.test(under.name)) break;
+      const step = await end.bridgeStep(bot, ctx, target.offset(0.5, 0, 0.5), { avoidLiquids: true, blocks: BRIDGE_BLOCKS });
+      if (!step.ok) { stopped = step.reason; break; }
+    }
+    const moved = bot.entity.position.distanceTo(start);
+    ctx.record('ledge_bridge_end', { at: cellKey(bot.entity.position.floored()), moved: Math.round(moved), stopped, blocks: bridgeBlocks() });
+    if (stopped && moved < 1) {
+      memory.ledgeBlocked = memory.ledgeBlocked || new Set();
+      memory.ledgeBlocked.add(cellKey(target));
+    }
+    return moved >= 1 ? { ok: true, moved: Math.round(moved) } : fail(stopped || 'ledge_blocked');
+  }
+
+  return { memory, enterNetherMode, leaveNetherMode, framePlaced, portalProgress, wearGold, goThrough, toNether, toOverworld, netherPortal,
+    ledge, landFrom, leaveLedge, bridgeBlocks };
 }
 
 module.exports = { createPortalTrip };
