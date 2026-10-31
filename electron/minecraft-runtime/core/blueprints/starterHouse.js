@@ -72,6 +72,9 @@ function createStarterHouse(anchor) {
   }
   const foundation = [];
   for (let dx = 0; dx < SIZE; dx += 1) for (let dz = 0; dz < SIZE; dz += 1) foundation.push(at(dx, -1, dz));
+  // And under the doorstep: a pit there (a creeper crater, a cave) leaves the
+  // bot shut in the house with no path out.
+  foundation.push(at(door.dx, -1, -1));
 
   return {
     anchor: { ...anchor },

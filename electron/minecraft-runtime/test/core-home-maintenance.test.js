@@ -117,6 +117,30 @@ test('completed homes repair loaded shell/furniture damage and consumed gear whi
   } finally { await brain.dispose(); }
 });
 
+test('a pit dug under the doorstep is filled again so the bot is not shut in', async () => {
+  const s = fixture();
+  const step = s.house.foundation.find((p) => p.x === s.house.entrance.x && p.z === s.house.entrance.z && p.y === s.house.entrance.y - 1);
+  assert.ok(step, 'the doorstep is part of the foundation');
+  assert.equal(s.home.isDone(s.perceive()), true);
+  s.world.set(s.key(step), 'air');
+  assert.equal(s.home.isDone(s.perceive()), false);
+  let brain;
+  const events = [];
+  const maintenance = createHomeMaintenance({ bot: s.bot, home: () => s.home,
+    activeGoal: () => brain?.status().goal?.name, missingGearDelayMs: 0 });
+  brain = createBrain({ perceive: s.perceive, behaviors: [maintenance], goalRetryDelayMs: 0,
+    onEvent: (e) => events.push(e) });
+  let deviceSteps = 0;
+  brain.setGoal({ name: 'build_auto_smelter', isDone: () => deviceSteps >= 1,
+    progress: () => deviceSteps, async run() { deviceSteps += 1; return { ok: true }; } });
+  try {
+    await brain.tick();
+    for (let i = 0; i < 500 && !events.some((e) => e.type === 'goal_done'); i += 1) await sleep(1);
+    assert.equal(s.home.isDone(s.perceive()), true);
+    assert.equal(s.bot.blockAt(step).boundingBox, 'block');
+  } finally { await brain.dispose(); }
+});
+
 test('new damage interrupts an already running device step, and the same goal resumes after repair', async () => {
   const s = fixture();
   assert.equal(s.home.isDone(s.perceive()), true);
