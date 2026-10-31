@@ -191,6 +191,12 @@ async function lootOnPlayer(server, username) {
   return [...new Set(ids.filter((id) => !NOT_LOOT.has(id)))];
 }
 
+// The city world is fixed, not drawn from the setup seed: the only city
+// near the gateway of seed 101's world (202) has no chest or ship, and the
+// next is some 1300 blocks out, more than an hour of bridging. This world
+// (setup seed 33) has a city with loot in reach of its gateway.
+const CITY_WORLD_SEED = 134;
+
 const endCityGiven = {
   name: 'end-city-given',
   description: `Dragon already dead (killed by command), outer-End kit given (16 pearls, 512 cobblestone, iron gear);
@@ -199,7 +205,7 @@ const endCityGiven = {
     'level-type': 'minecraft:flat', 'generator-settings': JSON.stringify(FLAT_GENERATOR),
     difficulty: 'easy', 'view-distance': 16,
   },
-  serverPerRun: (run, seed) => ({ 'level-seed': seed + run * 101 }),
+  serverPerRun: (run) => ({ 'level-seed': CITY_WORLD_SEED + (run - 1) * 101 }),
   // Cities are found by what is in view: a player's usual 16 chunks.
   viewDistance: 16,
   defaultDifficulty: 'easy',

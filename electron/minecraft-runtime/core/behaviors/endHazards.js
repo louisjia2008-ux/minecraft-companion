@@ -101,6 +101,28 @@ function installVoidBrake(bot, onEvent = () => {}) {
 }
 
 /**
+ * Shulker bullets, struck down on the tick they come in reach. Swatting them
+ * as a behavior preempted the goal at every bullet: under a shulker out of
+ * arrow reach, one run restarted the same walk for fifty minutes and never
+ * got anywhere. An attack needs no look, so the goal keeps walking.
+ */
+function installBulletSwatter(bot, onEvent = () => {}) {
+  let last = 0;
+  const onTick = () => {
+    const here = bot.entity?.position;
+    if (!here || dimension(bot) !== 'the_end' || Date.now() - last < 200) return;
+    const bullet = Object.values(bot.entities).find((e) => e.name === 'shulker_bullet' && e.position
+      && e.position.distanceTo(here.offset(0, 1, 0)) <= 3.5);
+    if (!bullet) return;
+    last = Date.now();
+    bot.attack(bullet);
+    onEvent({ type: 'bullet_swatted', at: last });
+  };
+  bot.on('physicsTick', onTick);
+  return () => bot.removeListener('physicsTick', onTick);
+}
+
+/**
  * An enderman turns hostile when looked in the eyes. A carved pumpkin on the
  * head stops that; without one (lost on a death, on the way back for it) keep
  * the eyes on the ground while any enderman is about. Walking only needs yaw.
@@ -120,7 +142,8 @@ function installGazeGuard(bot) {
 }
 
 function createEndHazards({ bot, actions = defaultActions, skills = defaultSkills, onEvent } = {}) {
-  const removeGuards = [installFallGuard(bot, onEvent), installVoidBrake(bot, onEvent), installGazeGuard(bot)];
+  const removeGuards = [installFallGuard(bot, onEvent), installVoidBrake(bot, onEvent), installGazeGuard(bot),
+    installBulletSwatter(bot, onEvent)];
   const removeFallGuard = () => removeGuards.forEach((f) => f());
   const radiusIndex = bot.registry?.entitiesByName?.area_effect_cloud?.metadataKeys?.indexOf('radius') ?? -1;
   const cloudAt = () => {
@@ -211,26 +234,15 @@ function createEndHazards({ bot, actions = defaultActions, skills = defaultSkill
     band: BAND.DEFENSE,
     want: () => {
       if (dimension(bot) !== 'the_end') return 0;
-      if (near('shulker_bullet', 4).length) return 1;
+      // Bullets are the swatter's (on the tick, without stopping the goal).
       return shulkerTarget() ? 0.9 : 0;
     },
     async run(ctx) {
-      const bullet = near('shulker_bullet', 4)[0];
-      if (bullet) {
-        const sword = bot.inventory.items().find((i) => /_sword$/.test(i.name));
-        if (sword && bot.heldItem?.name !== sword.name) await bot.equip(sword, 'hand').catch(() => {});
-        await bot.lookAt(bullet.position, true).catch(() => {});
-        bot.attack(bullet);
-        ctx.record('bullet_swatted');
-        await sleep(250, ctx.signal);
-        return { ok: true };
-      }
       const shulker = shulkerTarget();
       if (!shulker) return { ok: true };
       ctx.record('shulker_target', { at: `${Math.floor(shulker.position.x)},${Math.floor(shulker.position.y)},${Math.floor(shulker.position.z)}` });
       const open = () => isOpen(shulker);
       for (let i = 0; i < 6 && bot.entities[shulker.id]; i += 1) {
-        if (near('shulker_bullet', 4).length) return { ok: true }; // swat first
         if (!open()) await end.waitUntil(open, { timeoutMs: 3000, signal: ctx.signal });
         const shot = await end.shootArrow(bot, ctx, shulker.position.offset(0, 0.5, 0), { drawMs: 1000 });
         if (!shot.ok) break;
