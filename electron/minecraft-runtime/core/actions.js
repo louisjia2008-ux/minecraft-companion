@@ -429,18 +429,37 @@ async function fleeFrom(bot, ctx, from, { distance = 16, timeoutMs = 8000 } = {}
  * walk out with a generous drop limit, then dig straight down. Restores the
  * movement settings afterwards.
  */
-/** Walks one block by hand toward any open neighbouring cell. */
-async function nudge(bot, ctx) {
+/**
+ * Walks one block by hand toward any open neighbouring cell, sneaking and
+ * stopping on its centre. A plain half-second walk carries the body about two
+ * blocks: from the 3x2 obsidian ledge of a portal the server forced over a
+ * Nether lava sea, that was one block past the ledge, nine times in one run.
+ */
+async function nudge(bot, ctx, { accept = () => true } = {}) {
   const start = bot.entity.position.clone();
   const feet = start.floored();
   const open = (b) => b && b.boundingBox === 'empty' && b.name !== 'water' && b.name !== 'lava';
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     const cell = feet.offset(dx, 0, dz);
-    if (!open(bot.blockAt(cell)) || !open(bot.blockAt(cell.offset(0, 1, 0)))) continue;
+    if (!accept(cell) || !open(bot.blockAt(cell)) || !open(bot.blockAt(cell.offset(0, 1, 0)))) continue;
     if (bot.blockAt(cell.offset(0, -1, 0))?.boundingBox !== 'block') continue;
-    await bot.lookAt(cell.offset(0.5, 1.6, 0.5), true);
-    bot.setControlState('forward', true);
-    try { await sleep(450, ctx.signal); } finally { bot.setControlState('forward', false); }
+    const centre = cell.offset(0.5, 0, 0.5);
+    try {
+      bot.setControlState('sprint', false);
+      bot.companionSneaking = true;
+      bot.setControlState('sneak', true);
+      for (let i = 0; i < 30; i += 1) {
+        const p = bot.entity.position;
+        if (Math.hypot(p.x - centre.x, p.z - centre.z) < 0.3) break;
+        await bot.lookAt(centre.offset(0, 1.6, 0), true);
+        bot.setControlState('forward', true);
+        await sleep(50, ctx.signal);
+      }
+    } finally {
+      bot.setControlState('forward', false);
+      bot.setControlState('sneak', false);
+      bot.companionSneaking = false;
+    }
     if (bot.entity.position.distanceTo(start) > 0.7) return true;
   }
   return false;
@@ -725,6 +744,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, breakLattice, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, nudge, breakLattice, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };

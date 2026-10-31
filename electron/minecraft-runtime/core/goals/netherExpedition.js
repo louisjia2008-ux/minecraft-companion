@@ -272,6 +272,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
   const unsafeDig = (p) => {
     if (bot.blockAt(p)?.name === 'nether_bricks' && p.y < Math.floor(bot.entity.position.y)) return true;
+    // Not round the way home: three blocks dug beside the arrival portal let
+    // a hidden lava pocket out over both its faces.
+    if (memory.netherPortal && p.distanceTo(memory.netherPortal) <= 6) return true;
     if (SIDES.some(([x, y, z]) => /^lava$/.test(bot.blockAt(p.offset(x, y, z))?.name || ''))) return true;
     const below = bot.blockAt(p.offset(0, -1, 0));
     return p.y <= Math.floor(bot.entity.position.y) && (!below || below.boundingBox === 'empty');

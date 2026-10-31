@@ -25,6 +25,10 @@ const FORTRESS_BERTH = 40;
 const RETREAT_HEALTH = 8;
 // Back in the overworld, fed: wait to heal this far before going through again.
 const READY_HEALTH = 16;
+// Blocks carried through when the far portal stands on a ledge: a bridge of up to 48.
+const LEDGE_BLOCKS = 56;
+const isStone = (n) => /^(stone|cobblestone|deepslate|cobbled_deepslate)$/.test(n);
+const isCobble = (n) => n === 'cobblestone' || n === 'cobbled_deepslate';
 
 function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
@@ -44,6 +48,11 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
       await sleep(5000, ctx.signal);
       return { ok: true, resting: true };
     }
+    // The far side is a ledge over a lava sea: bring blocks to bridge off it.
+    if (memory.ledgeSeen && trip.bridgeBlocks() < LEDGE_BLOCKS) {
+      ctx.record('stock_bridge', { have: trip.bridgeBlocks(), want: LEDGE_BLOCKS });
+      return skills.gatherOne(bot, ctx, { blocks: isStone, dropMatch: isCobble, blacklist });
+    }
     return trip.toNether(ctx, state);
   }
 
@@ -59,6 +68,14 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
       return trip.toOverworld(ctx);
     }
     const home = memory.netherPortal;
+    const cells = home && bot.entity.position.distanceTo(home) <= 8 ? trip.ledge() : null;
+    if (cells) {
+      memory.ledgeSeen = true;
+      const off = await trip.leaveLedge(ctx, cells);
+      if (off.ok || off.reason !== 'ledge_no_blocks') return off;
+      ctx.record('ledge_home', { blocks: trip.bridgeBlocks() });
+      return trip.toOverworld(ctx);
+    }
     if (!memory.fortress) {
       const found = findStructure(bot, 'fortress');
       if (found) {

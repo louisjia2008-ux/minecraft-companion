@@ -145,6 +145,8 @@ test('returning to the overworld restores the overworld movement settings', asyn
   const goal = createNetherQuartzGoal({ bot, count: 1 });
   const ctx = { signal: new AbortController().signal, record: () => {}, perceive: () => ({ inventory: { quartz: 1 } }) };
   bot.clearControlStates = () => {};
+  bot.setControlState = () => {};
+  bot.lookAt = async () => {};
   const result = await goal.run(ctx);
   assert.equal(result.ok, true);
   assert.equal(bot.game.dimension, 'overworld');
@@ -221,4 +223,36 @@ test('a zombified piglin the server flags as aggressive is fought, wither skelet
   assert.equal(defend.want(nearPiglin(bot)), 0);
   bot.entities[7].metadata = { 2: 4 };
   assert.equal(defend.want(nearPiglin(bot)), 1);
+});
+
+test('a forced portal ledge over a lava sea is found, and the bridge aims at level land', () => {
+  const { createPortalTrip } = require('../core/netherTrip');
+  // Air everywhere above y 31 (a lava sea), a 3x2 obsidian ledge at y 69
+  // under the bot, and a netherrack shore 20 blocks east at the same height.
+  const set = new Map();
+  for (let x = -1; x <= 1; x += 1) for (let z = 0; z <= 1; z += 1) set.set(`${x},69,${z}`, 'obsidian');
+  for (let x = 20; x <= 30; x += 1) for (let z = -5; z <= 5; z += 1) for (let y = 60; y <= 69; y += 1) set.set(`${x},${y},${z}`, 'netherrack');
+  const blockAt = (p) => {
+    const f = new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z));
+    const name = set.get(`${f.x},${f.y},${f.z}`) || (f.y <= 31 ? 'lava' : 'air');
+    return { name, position: f, boundingBox: /^(air|lava|fire|nether_portal)$/.test(name) ? 'empty' : 'block' };
+  };
+  const bot = { blockAt, game: { dimension: 'the_nether' }, entity: { position: new Vec3(0.5, 70, 0.5), onGround: true },
+    inventory: { items: () => [{ name: 'cobblestone', count: 40 }] } };
+  const trip = createPortalTrip({ bot, memory: {} });
+  const cells = trip.ledge();
+  assert.ok(cells, 'ledge found');
+  assert.equal(cells.length, 6);
+  assert.equal(trip.bridgeBlocks(), 40);
+  const land = trip.landFrom(cells);
+  assert.equal(land.x, 20);
+  assert.ok(land.y >= 66 && land.y <= 70, `land at y ${land.y}`);
+  // Off the ledge on open ground nothing is reported.
+  bot.entity.position = new Vec3(25.5, 70, 0.5);
+  assert.equal(trip.ledge(), null);
+  // The plain Nether floor (netherrack below y 64) is no ledge either.
+  const open = makeWorld();
+  open.entity.onGround = true;
+  open.inventory = { items: () => [] };
+  assert.equal(createPortalTrip({ bot: open, memory: {} }).ledge(), null);
 });

@@ -191,17 +191,68 @@ async function ignite(bot, ctx, frame) {
 async function travel(bot, ctx, portal, { timeoutMs = 20000 } = {}) {
   const from = dimension(bot);
   const p = new Vec3(portal.x, portal.y, portal.z);
-  if (!bot.entity.position.floored().equals(p)) {
+  const inPortal = () => bot.blockAt(bot.entity.position.floored())?.name === 'nether_portal';
+  const already = bot.entity.position.floored().equals(p);
+  const walkIn = async () => {
+    await cooled();
     const near = await actions.goNear(bot, ctx, p, 3, { timeoutMs: 60000 });
     if (!near.ok && bot.entity.position.distanceTo(p) > 6) return near;
     const inside = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), {
-      timeoutMs: 15000, arrived: () => bot.blockAt(bot.entity.position.floored())?.name === 'nether_portal' || dimension(bot) !== from,
+      timeoutMs: 15000, arrived: () => inPortal() || dimension(bot) !== from,
     });
     if (!inside.ok && dimension(bot) === from) return inside;
+    await centre();
+    return { ok: true };
+  };
+  // A portal sheet is a quarter block thick: a body at the edge of its cell
+  // never touches it. Onto the middle, in short presses (the frame stands
+  // either side, and a forced portal's ledge is only a block wider). Not
+  // sneaking: a crouched bot in the middle of a portal was never sent across.
+  const centre = async () => {
+    const mid = p.offset(0.5, 0, 0.5);
+    try {
+      for (let i = 0; i < 30 && dimension(bot) === from; i += 1) {
+        const at = bot.entity.position;
+        if (Math.hypot(at.x - mid.x, at.z - mid.z) < 0.15) break;
+        await bot.lookAt?.(mid.offset(0, 1.6, 0), true);
+        bot.setControlState?.('forward', true);
+        await sleep(50, ctx.signal);
+        bot.setControlState?.('forward', false);
+        await sleep(50, ctx.signal);
+      }
+    } finally {
+      bot.setControlState?.('forward', false);
+    }
+  };
+  // Back in too soon after stepping out, the portal's cooldown starts over.
+  const cooled = async () => {
+    const wait = (bot.companionLeftPortalAt || 0) + 1500 - Date.now();
+    if (wait > 0) await sleep(wait, ctx.signal);
+  };
+  if (!already) {
+    const walked = await walkIn();
+    if (!walked.ok) return walked;
+  } else {
+    await centre();
   }
   actions.haltBody(bot);
-  const moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs, signal: ctx.signal });
-  if (!moved) return fail('portal_no_transfer');
+  let moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs: already ? Math.min(timeoutMs, 8000) : timeoutMs, signal: ctx.signal });
+  // Still in the portal it came out of (a forced portal's ledge left no room
+  // to step off): no crossing until the body has left it once. Out and back in.
+  if (!moved && inPortal()) {
+    await leavePortal(bot, ctx);
+    ctx.record?.('portal_reenter', { out: !inPortal() });
+    const walked = await walkIn();
+    if (!walked.ok) return walked;
+    actions.haltBody(bot);
+    moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs, signal: ctx.signal });
+  }
+  if (!moved) {
+    const at = bot.entity.position;
+    const where = { at: `${at.x.toFixed(2)},${at.y.toFixed(2)},${at.z.toFixed(2)}`, inPortal: inPortal(), onGround: bot.entity.onGround };
+    ctx.record?.('portal_no_transfer', where);
+    return fail('portal_no_transfer', where);
+  }
   // New dimension: wait for the ground to load before anything plans a path.
   try {
     await runCancellable(() => bot.waitForChunksToLoad(), { signal: ctx.signal, timeoutMs: 20000, timeoutCode: 'chunks_timeout' });
@@ -217,8 +268,17 @@ async function leavePortal(bot, ctx) {
   const feet = bot.entity.position.floored();
   if (bot.blockAt(feet)?.name !== 'nether_portal') return { ok: true };
   const goal = new goals.GoalInvert(new goals.GoalNear(feet.x, feet.y, feet.z, 2));
-  return actions.goTo(bot, ctx, goal, { timeoutMs: 10000,
-    arrived: () => bot.blockAt(bot.entity.position.floored())?.name !== 'nether_portal' });
+  const out = () => bot.blockAt(bot.entity.position.floored())?.name !== 'nether_portal';
+  const result = await actions.goTo(bot, ctx, goal, { timeoutMs: 10000, arrived: out });
+  if (out()) {
+    bot.companionLeftPortalAt = Date.now();
+    return result;
+  }
+  // On the 3x2 ledge of a forced portal there is no cell two blocks off:
+  // one careful step beside the frame.
+  await actions.nudge?.(bot, ctx, { accept: (cell) => bot.blockAt(cell)?.name !== 'nether_portal' });
+  if (out()) bot.companionLeftPortalAt = Date.now();
+  return out() ? { ok: true } : result;
 }
 
 // ---- movement -------------------------------------------------------------

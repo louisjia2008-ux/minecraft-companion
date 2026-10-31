@@ -48,13 +48,30 @@ function pearlSpots(bot, gateway) {
 
 const CITY_BLOCKS = ['purpur_block', 'purpur_pillar', 'end_stone_bricks', 'purpur_stairs', 'purpur_slab'];
 
-/** Nearest purpur in the loaded chunks: an end city (or its ship). */
-function findCity(bot, maxDistance = 160) {
+/**
+ * Nearest purpur in the loaded chunks: an end city (or its ship). `skip`
+ * passes over cities already visited (one with no chests stays nearest).
+ */
+function findCity(bot, maxDistance = 160, { skip = () => false } = {}) {
   const ids = CITY_BLOCKS.map((n) => bot.registry.blocksByName[n]?.id).filter(Number.isInteger);
-  const found = bot.findBlocks({ matching: ids, maxDistance, count: 64 });
+  const found = bot.findBlocks({ matching: ids, maxDistance, count: 2048 }).filter((p) => !skip(p));
   if (found.length === 0) return null;
   const here = bot.entity.position.clone();
   found.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
+  return found[0];
+}
+
+/**
+ * The lowest city block near `p`: the door is at the bottom, and the first
+ * purpur in sight is often a tower top forty blocks up, which no path
+ * reaches (one run circled under a city for an hour).
+ */
+function cityBase(bot, p, radius = 48) {
+  const ids = CITY_BLOCKS.map((n) => bot.registry.blocksByName[n]?.id).filter(Number.isInteger);
+  const found = bot.findBlocks({ matching: ids, point: p, maxDistance: radius, count: 4096 });
+  if (found.length === 0) return p;
+  const flat = (q) => Math.hypot(q.x - p.x, q.z - p.z);
+  found.sort((a, b) => a.y - b.y || flat(a) - flat(b));
   return found[0];
 }
 
@@ -96,4 +113,4 @@ function outward(bot) {
 
 const isAir = (b) => !b || AIR.has(b.name);
 
-module.exports = { findGateway, pearlSpots, findCity, cityChests, elytraFrames, outward, isAir, CITY_BLOCKS };
+module.exports = { findGateway, pearlSpots, findCity, cityBase, cityChests, elytraFrames, outward, isAir, CITY_BLOCKS };
