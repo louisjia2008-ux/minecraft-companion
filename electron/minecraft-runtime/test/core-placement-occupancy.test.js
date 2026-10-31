@@ -61,3 +61,27 @@ test('placeAt preserves alsoClear protection for live mobs and players and permi
   });
  }finally{actions.goNear=original;}
 });
+test('placeAt breaks flowers where a bed head goes before placing',async()=>{
+ const head=target.offset(0,0,-1);
+ const blocks=new Map([[head.toString(),'wildflowers']]);
+ const dug=[];let placedAfter=null;
+ const bot={
+  entity:{position:new Vec3(-4.5,25,4.5)},entities:{},
+  inventory:{items:()=>[{name:'white_bed',count:1}]},
+  blockAt(p){
+   const name=blocks.get(p.toString())||(p.y===24?'air':'stone');
+   return {name,boundingBox:name==='stone'?'block':'empty',position:p};
+  },
+  equip:async()=>{},placeBlock:async()=>{placedAfter=[...dug];blocks.set(target.toString(),'white_bed');if(!blocks.has(head.toString()))blocks.set(head.toString(),'white_bed');},
+ };
+ const originals={goNear:actions.goNear,goToDig:actions.goToDig,digBlock:actions.digBlock};
+ actions.goNear=async()=>({ok:true});actions.goToDig=async()=>({ok:true});
+ actions.digBlock=async(b,c,block)=>{dug.push(block.position.toString());blocks.delete(block.position.toString());return {ok:true};};
+ try{
+  const result=await skills.placeAt(bot,{signal:new AbortController().signal,record(){}},target,n=>n.endsWith('_bed'),{
+   stand:{x:-6,y:24,z:6},alsoClear:[head],verify:()=>blocks.get(head.toString())==='white_bed',
+  });
+  assert.equal(result.ok,true);
+  assert.deepEqual(placedAfter,[head.toString()]);
+ }finally{Object.assign(actions,originals);}
+});

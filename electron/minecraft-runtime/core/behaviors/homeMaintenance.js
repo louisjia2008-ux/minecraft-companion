@@ -3,6 +3,9 @@
 // or device goal. Survival and night rest stay above this maintenance work.
 const { BAND } = require('../brain');
 
+// Goals that bring their own tools and gear.
+const OWN_GEAR = new Set(['homestead', 'outfit']);
+
 function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.now,
   missingGearDelayMs = 5000, noChangeLimit = 3, retryMs = 60000 } = {}) {
   if (!bot || typeof home !== 'function') throw new TypeError('bot and home are required');
@@ -53,7 +56,9 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
     band: BAND.MAINTENANCE - 1,
     want(state) {
       const goal = current();
-      if (!goal?.memory.established || typeof goal.maintenance !== 'function' || activeGoal() === 'homestead') return 0;
+      // The outfit gathers tools and gear itself: maintenance planning the same
+      // pickaxe took the body from it every few seconds and failed.
+      if (!goal?.memory.established || typeof goal.maintenance !== 'function' || OWN_GEAR.has(activeGoal())) return 0;
       const status = goal.maintenance(state);
       if (status.gear.length) gearMissingSince ??= now();
       else gearMissingSince = null;

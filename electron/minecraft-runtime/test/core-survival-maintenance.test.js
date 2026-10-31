@@ -129,3 +129,26 @@ test('a melee swing followed by damage retains enderman self-defense even before
   assert.ok(s.behavior('escape').want({ ...s.state, health: 2.5 }) > 0);
   assert.ok(s.behavior('defend').want({ ...s.state, sheltered: true }) > 0);
 });
+
+test('hurt in water: no healing in place (it sinks), and up for air before the air runs low', () => {
+  const s = setup();
+  const wet = { ...s.state, food: 18, inWater: true, oxygen: 15 };
+  assert.equal(s.behavior('recover').want(wet), 0);
+  assert.ok(s.behavior('breathe').want(wet) > 0);
+  assert.equal(s.behavior('breathe').want({ ...wet, health: 20 }), 0);
+  assert.equal(s.behavior('breathe').want({ ...wet, oxygen: 20 }), 0);
+  assert.ok(s.behavior('recover').want({ ...wet, inWater: false }) > 0);
+});
+
+test('a goal that brings its own food (the farm) keeps provisioning out of its way', () => {
+  let feeding = false;
+  const s = setup({ feeding: () => feeding });
+  const hungry = { ...s.state, health: 20, food: 4 };
+  assert.ok(s.behavior('provision').want(hungry) > 0);
+  feeding = true;
+  assert.equal(s.behavior('provision').want(hungry), 0);
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(10, 64, 0) } };
+  assert.ok(s.behavior('provision').want(hungry) > 0, 'a cow close by is still hunted');
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(80, 64, 0) } };
+  assert.equal(s.behavior('provision').want(hungry), 0);
+});

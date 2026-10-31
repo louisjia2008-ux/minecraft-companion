@@ -205,8 +205,11 @@ const OTHER_ATTACKERS = new Set(['wither_skeleton', 'skeleton', 'blaze', 'ghast'
 const PROJECTILES = new Set(['arrow', 'small_fireball', 'fireball', 'spectral_arrow']);
 const wearsGold = (bot) => /^golden_/.test(bot.inventory?.slots?.[5]?.name || '');
 const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
+// While a goal brings food itself, only animals this close are hunted.
+const FEEDING_RANGE = 32;
 
-function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false, thresholds = {} } = {}) {
+function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false,
+  feeding = () => false, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
@@ -711,7 +714,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const breathe = {
     name: 'breathe',
     band: BAND.ESCAPE,
-    want: (state) => (state.inWater && Number.isFinite(state.oxygen) && state.oxygen < t.oxygen ? 1 : 0),
+    // Hurt and short of air: up now, before the air runs out.
+    want: (state) => (state.inWater && Number.isFinite(state.oxygen)
+      && (state.oxygen < t.oxygen || (state.oxygen < 20 && state.health < t.recoverHealth)) ? 1 : 0),
     async run(ctx) {
       bot.pathfinder?.setGoal(null);
       bot.setControlState('jump', true);
@@ -746,6 +751,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
 
   // Hungry with nothing to eat: hunt the nearest food animal.
+  const animalNear = (state, range) => Object.values(bot.entities || {}).some((e) => FOOD_ANIMALS.includes(e?.name)
+    && e.position && !spare(e) && e.position.distanceTo(state.position) <= range);
   const provision = {
     name: 'provision',
     band: BAND.MAINTENANCE,
@@ -757,6 +764,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const needsFood = state.food <= t.provisionFood
         || (state.health < t.recoverHealth && state.food < t.recoverFood);
       if (state.sheltered || !needsFood || hasSafeFood(state, desperateForFood(state))) return 0;
+      // The goal itself is getting food (bread from the farm): an animal close by is
+      // still worth it, but no wandering off after ones long since hunted out.
+      if (feeding() && !animalNear(state, FEEDING_RANGE)) return 0;
       // Nothing to hunt in the nether but hoglins; wandering off there to look for food kills.
       if (dimensionOf(bot) !== 'overworld') return 0;
       if (threats(state).some((h) => h.distance <= 8)) return 0;
@@ -768,8 +778,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       // Animals are visible out to about 100 blocks; go for the nearest one seen.
-      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 96, blacklist: huntBlacklist,
-        accept: (e) => !spare(e) });
+      const near = feeding();
+      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck,
+        radius: near ? FEEDING_RANGE : 96, blacklist: huntBlacklist, accept: (e) => !spare(e) });
       // Nothing to hunt in sight: berries, else look further afield instead of waiting to starve.
       // Could not reach anything: the bot itself is probably stuck (tree top, ledge).
       if (['NoPath', 'Timeout', 'path_timeout', 'no_progress', 'not_arrived', 'chase_stuck'].includes(result.reason)) {
@@ -778,7 +789,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         return result;
       }
       stuckStreak = 0;
-      if (result.reason === 'no_mob_in_range') {
+      if (result.reason === 'no_mob_in_range' && !near) {
         const berries = await skills.pickBerries(bot, ctx, { blacklist: huntBlacklist });
         if (berries.ok || berries.reason !== 'no_berries') return berries;
         return skills.explore(bot, ctx, exploreMemory);
@@ -793,7 +804,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.MAINTENANCE,
     // Not in the sight of something that shoots: a blaze or ghast out of
     // melee reach still hits a bot standing still to heal.
-    want: (state) => (state.health < t.recoverHealth && state.food >= t.recoverFood
+    // Nor in water: standing still there sinks, and a bot hurt by drowning
+    // stood still on the sea floor to heal until it drowned.
+    want: (state) => (state.health < t.recoverHealth && state.food >= t.recoverFood && !state.inWater
       && !threats(state).some((h) => h.distance <= 8 || (SHOOTERS.has(h.name) && h.distance <= 24)) ? 0.3 : 0),
     async run(ctx) {
       actions.haltBody(bot);

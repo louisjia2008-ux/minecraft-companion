@@ -333,3 +333,15 @@ test('in the Nether the goal only runs the trip, never walks to the chest', asyn
   assert.ok(hurt.records.some((r) => r.type === 'retreat'));
   assert.equal(hurt.result.reason, 'nether_portal_lost');
 });
+
+test('hunting spiders for string marks a night hunt; other steps clear it', async () => {
+  const sim = simulate({ failRate: 0 });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'string', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  await runGoal(sim, goal, { limit: 3 });
+  assert.equal(sim.bot.companionNightHunt?.key, 'string');
+  const other = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'cobblestone', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  await runGoal(sim, other, { limit: 3 });
+  assert.equal(sim.bot.companionNightHunt, null);
+});
