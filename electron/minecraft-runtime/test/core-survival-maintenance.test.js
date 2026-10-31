@@ -147,4 +147,8 @@ test('a goal that brings its own food (the farm) keeps provisioning out of its w
   assert.ok(s.behavior('provision').want(hungry) > 0);
   feeding = true;
   assert.equal(s.behavior('provision').want(hungry), 0);
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(10, 64, 0) } };
+  assert.ok(s.behavior('provision').want(hungry) > 0, 'a cow close by is still hunted');
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(80, 64, 0) } };
+  assert.equal(s.behavior('provision').want(hungry), 0);
 });
