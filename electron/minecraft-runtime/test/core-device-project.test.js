@@ -139,6 +139,17 @@ test('night rest sleeps at home after dark and leaves underground work alone', a
   assert.deepEqual(calls, ['go', 'sleep']);
 });
 
+test('night rest a few blocks from the bed uses it straight away instead of walking near it again', async () => {
+  const bot = { entity: { position: new Vec3(9, 64, 1) }, game: { dimension: 'overworld' }, on() {}, removeListener() {} };
+  const calls = [];
+  const actions = { underground: () => false, goNear: async () => { calls.push('go'); return { ok: true }; } };
+  const skills = { useBed: async () => { calls.push('sleep'); return { ok: true, slept: true }; } };
+  const rest = createNightRest({ bot, home: () => ({ bed: { x: 5, y: 64, z: 1 }, centre: { x: 3, y: 64, z: 3 } }), actions, skills });
+  const night = { isDay: false, sheltered: false };
+  await rest.run({ signal: new AbortController().signal, record() {}, perceive: () => night });
+  assert.deepEqual(calls, ['sleep']);
+});
+
 test('night rest shelters in the house when the bed is gone', async () => {
   const bot = { entity: { position: new Vec3(40, 64, 0) }, game: { dimension: 'overworld' }, on() {}, removeListener() {} };
   const went = [];
