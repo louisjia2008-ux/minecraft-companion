@@ -1,3 +1,29 @@
+# 变更记录
+
+> **正式发布门槛未通过；本轮未打包。`0.1.0` 仅为本轮目标版本，尚无本轮通过验证的发布包。**
+
+## 2026-10-31 — 本文档 PR／0.1.0 目标版本
+
+观察快照：**2026-10-31 05:17:50 +08:00**；离线与游戏代码基线：`b1317e87e3d18c3a186535b1012bef5339ae7c44`。文档提交不改变这个游戏代码身份，后续提交的 CI 需分别记录。
+
+本 PR 只更新 README、STATUS、VALIDATION 与 CHANGELOG。没有修改游戏行为、场景预算、测试或版本配置。耕种、畜牧、材料采集、下界远征、末地和刷铁机等能力已经存在于本次基线 main；本轮只补充准确的入口和限制说明，不将它们列作本 PR 新实现。
+
+- 刷新离线八项原命令的实测结果（自然通过 8/8），按命令保留数值与退出码。
+- 记录独立 e2e sessions 终态 3/3，保留每个 seed 的耗时、死亡与故障钩子边界。
+- 按当前登记表记录正式 full 34 场景／42 轮；已有失败 7 项，未完成 0 轮。
+- 将实验性村庄矿车刷铁机单列；区分运行时交易计数、服务端读回和末地击杀成就，避免把累计 Health 下降写成净伤害。
+- 保留基线三文档的全部历史原文和负面记录，明确其不作为本轮证据。
+- 正式失败阻止打包；verify、make、包冒烟、tag 和 GitHub Release 本轮均未执行，无发布包 SHA-256。
+
+正式 full 计划 **34 场景／42 轮**；当前终态场景 **34/34**，其中整场景通过 **27**、失败 **7**；轮次为 **通过 35、失败 7、未完成 0**。full 父命令：**FAIL，自然 exit 1**。未完成项不计作通过；当前正式失败：`nether-bastion-given`、`end-dragon-given`、`end-portal-natural`、`end-city-given`、`end-full-natural`、`e2e-flat`、`materials-quartz-flat`。
+
+## 本轮前基线历史原文（b1317e8 原样保留，不作为本轮证据）
+
+<details>
+<summary>展开基线文档中的历史记录；其中旧 PASS、alpha 与发行措辞均只属于原冻结</summary>
+
+> 以下为 `b1317e87e3d18c3a186535b1012bef5339ae7c44` 中 `CHANGELOG.md` 的原文，保留所有旧失败、中断和负面记录。它不证明本轮通过，也不覆盖本页上方的当前失败与未完成项。
+
 # Changelog
 
 ## v0.1.0-alpha.1 — source developer preview
@@ -128,3 +154,5 @@ Preserved offline failures and interrupted campaigns are detailed in [VALIDATION
 This source preview includes only source: project code, lockfiles, tests/limited fixtures, build configuration, licenses/provenance and a sanitized validation summary. Dependencies, Java/server artifacts, worlds, logs, personal configuration and desktop binaries are excluded. No npm package publication is implied by the existing private package versions. The third-party desktop bundle is not distributed while license-variant/notice coverage remains unresolved.
 
 Final gameplay acceptance is24scenarios/32roundsPASS and the historical a22/full7 offline runtime3326/3326PASS. Final release offline and CI results are separately bound in RELEASE_ATTESTATION.json. E2E finishes after71m9.204s with finalhome95/95, requiredgear1each, generator8collected, smelter5produced/4collected, four recovery faults and only2planned deaths. It retains an observed11m37s floating-front retry cost before autonomous new-mine/coal recovery; standability and recovery coordination remain known improvement opportunities. Archive/install/checksum publication receipts remain separate. Historical README/core numbers retain their historical status.
+
+</details>
