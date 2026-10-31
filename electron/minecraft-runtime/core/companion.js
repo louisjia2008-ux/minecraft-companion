@@ -44,6 +44,10 @@ const { installOpenDoorPassage, uninstallOpenDoorPassage } = require('./openDoor
 
 // How long a hunt for a night mob keeps night rest away after its last step.
 const NIGHT_HUNT_MS = 5 * 60 * 1000;
+// Out after dark only with a sword in the bag and a chestplate on.
+function fitForNight(bot) {
+  return Boolean(bot.inventory?.items?.().some((i) => i.name.endsWith('_sword')) && bot.inventory?.slots?.[6]);
+}
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
@@ -118,9 +122,10 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     // Building the house handles its own nights; pearls are hunted in the dark.
     if (!house || ['homestead', 'hunt_pearls'].includes(brain?.status().goal?.name)) return null;
     // Nor while a goal hunts a mob that only comes out at night (spiders for a bow's string):
-    // sleeping skips the very night it waits for.
+    // sleeping skips the very night it waits for. Only armed and armoured, though: respawned
+    // empty-handed it went straight back out and died again and again.
     const hunt = bot.companionNightHunt;
-    if (brain?.status().goal && hunt && Date.now() - hunt.at < NIGHT_HUNT_MS) return null;
+    if (brain?.status().goal && hunt && Date.now() - hunt.at < NIGHT_HUNT_MS && fitForNight(bot)) return null;
     const bed = house.furniture.bed.position;
     const block = bot.blockAt(new Vec3(bed.x, bed.y, bed.z));
     // Out of sight means far away (it digs in there); seen and gone means sleep without it.
