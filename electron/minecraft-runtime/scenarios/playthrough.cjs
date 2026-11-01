@@ -38,6 +38,9 @@ const BLAZE_RODS = Math.ceil(EYES / 2) + 1;
 const RETRIES = 8;
 // Bread a trip to the farm brings back; asked for again whenever the bot goes hungry with nothing in the bag.
 const SNACK = 3;
+// A trip to the farm ends once the bag holds food again, or after this long
+// with nothing grown (the bot then hunts on its way); the next trip waits as long.
+const SNACK_MS = 20 * MINUTE;
 // Plots growing wheat for the farm to count as started.
 const SOWN = 8;
 
@@ -176,11 +179,17 @@ const playthroughNatural = {
     // Hungry with nothing to eat and the animals around the house long since
     // hunted: the model sends the bot to its farm for bread, then asks for
     // the step again (the detour is not counted as one of its asks).
-    if (state.snack && !companion.status().goal) {
+    const goal = companion.status().goal;
+    if (state.snack && (!goal || have(bot, 'food') > 0 || Date.now() - state.snackAt > SNACK_MS)) {
       state.snack = false;
+      state.snackEnd = Date.now();
+      // The farm may still be running: the step asked again replaces it.
+      state.replace = Boolean(goal);
       entry.asks = Math.max(0, entry.asks - 1);
-    } else if (!state.snack && hungry(context) && state.steps[1].doneAt && step.id !== 'farm') {
+    } else if (!state.snack && hungry(context) && state.steps[1].doneAt && step.id !== 'farm'
+      && Date.now() - (state.snackEnd || 0) > SNACK_MS) {
       state.snack = true;
+      state.snackAt = Date.now();
       write('model_ask', { step: 'snack', task: 'farm', args: { bread: SNACK } });
       console.log('    model: farm (hungry)');
       await companion.submitTask('farm', { bread: SNACK, center: farmCenter(companion) });
@@ -188,13 +197,14 @@ const playthroughNatural = {
     }
     // The model waits for the bot to finish (or give up) before asking again.
     // A step asked for the first time replaces what the last one left running (a farm left growing).
-    if (state.snack || (companion.status().goal && entry.asks > 0) || (step.autonomy && entry.asks > 0)) return;
+    if (state.snack || (goal && entry.asks > 0 && !state.replace) || (step.autonomy && entry.asks > 0)) return;
     if (step.when && !step.when(context)) return;
     // Pearls are a night's work each: a night that ends short is no failure.
     if (entry.asks >= RETRIES + (step.nightly ? 30 : 0)) {
       if (!entry.stuck) { entry.stuck = true; write('model_stuck', { step: step.id, asks: entry.asks }); console.log(`    model: STUCK at ${step.id}`); }
       return;
     }
+    state.replace = false;
     await dispatch(context, step, entry);
   },
   finishWhen: ({ state }) => state.steps?.every((e) => e.doneAt) || state.steps?.some((e) => e.stuck),
