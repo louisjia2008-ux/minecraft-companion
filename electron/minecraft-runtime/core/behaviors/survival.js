@@ -209,12 +209,12 @@ const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const FEEDING_RANGE = 32;
 
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false,
-  feeding = () => false, thresholds = {} } = {}) {
+  feeding = () => false, home = () => null, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
     eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, recoverFood: 18, oxygen: 8, dropsTtlMs: 270000,
-    walkSpeed: 4, dropsMaxDistance: 600, swimScale: 1,
+    walkSpeed: 4, dropsMaxDistance: 600, swimScale: 1, provisionRange: 160,
     ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
   const exploreMemory = {};
@@ -758,6 +758,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (result.reason === 'no_mob_in_range' && !near) {
         const berries = await skills.pickBerries(bot, ctx, { blacklist: huntBlacklist });
         if (berries.ok || berries.reason !== 'no_berries') return berries;
+        // Not out of reach of home: a search for food once ran 1000 blocks
+        // off, and the farm and the house were then out of reach.
+        const centre = home();
+        exploreMemory.around = centre ? { x: centre.x, z: centre.z, radius: t.provisionRange } : null;
         return skills.explore(bot, ctx, exploreMemory);
       }
       return result;

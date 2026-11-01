@@ -152,3 +152,27 @@ test('a goal that brings its own food (the farm) keeps provisioning out of its w
   s.bot.entities = { 1: { name: 'cow', position: new Vec3(80, 64, 0) } };
   assert.equal(s.behavior('provision').want(hungry), 0);
 });
+
+test('a search for food keeps within reach of home', async () => {
+  const seen = [];
+  const s = setup({ home: () => new Vec3(100, 64, -20), skills: {
+    huntOne: async () => ({ ok: false, reason: 'no_mob_in_range' }),
+    pickBerries: async () => ({ ok: false, reason: 'no_berries' }),
+    explore: async (_bot, _ctx, memory) => { seen.push(memory.around); return { ok: true }; } } });
+  await s.behavior('provision').run({ record() {}, perceive: () => s.state, signal: new AbortController().signal });
+  assert.deepEqual(seen, [{ x: 100, z: -20, radius: 160 }]);
+});
+
+test('explore past its radius heads back towards the centre', async () => {
+  const skills = require('../core/skills');
+  const actions = require('../core/actions');
+  const goTo = actions.goTo;
+  let target = null;
+  const bot = { entity: { position: new Vec3(400, 64, 0) } };
+  actions.goTo = async (_b, _c, goal) => { target = goal; bot.entity.position = new Vec3(370, 64, 0); return { ok: true }; };
+  try {
+    const memory = { heading: Math.PI / 2, around: { x: 0, z: 0, radius: 160 } };
+    assert.ok((await skills.explore(bot, { record() {} }, memory)).ok);
+    assert.ok(target.x < 400 && Math.abs(target.z) < 1, JSON.stringify(target));
+  } finally { actions.goTo = goTo; }
+});

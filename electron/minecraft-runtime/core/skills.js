@@ -628,7 +628,14 @@ async function explore(bot, ctx, memory) {
   const directions = Array.from({ length: 8 }, (_, i) => (i * Math.PI) / 4);
   // Keep one heading while it works: random legs wander in circles around the
   // same treeless hilltop. Turn only after a blocked leg.
-  if (memory.heading === undefined || memory.blocked) {
+  // `memory.around` ({ x, z, radius }): past the radius, head back towards
+  // the centre (the house) instead of on outwards.
+  const around = memory.around;
+  const off = around ? Math.hypot(here.x - around.x, here.z - around.z) : 0;
+  if (around && off > around.radius) {
+    memory.heading = Math.atan2(around.z - here.z, around.x - here.x);
+    memory.blocked = false;
+  } else if (memory.heading === undefined || memory.blocked) {
     const fresh = directions.filter((a) => !memory.tried.slice(-4).includes(a));
     memory.heading = (fresh.length ? fresh : directions)[Math.floor(Math.random() * (fresh.length || directions.length))];
     memory.blocked = false;

@@ -118,7 +118,7 @@ test('farm goal walks back when its plots are out of sight instead of waiting', 
     choosePlots: () => plots,
     findWater: () => [],
     plotState: () => (away ? 'unknown' : 'growing'),
-    returnTo: async (_b, _c, p) => { returns.push(p); away = false; return { ok: true }; },
+    returnTo: async (_b, _c, p) => { returns.push(p); away = false; bot.entity.position = new Vec3(p.x + 0.5, 1, p.z + 0.5); return { ok: true }; },
   };
   const bot = { entity: { position: new Vec3(190.5, 1, 190.5) }, blockAt: () => null };
   const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills: {}, waitMs: 0 });
@@ -130,4 +130,26 @@ test('farm goal walks back when its plots are out of sight instead of waiting', 
   const second = await goal.run(ctx);
   assert.equal(returns.length, 1);
   assert.ok(second.waited);
+});
+
+test('farm goal asked for from far off walks back before choosing plots', async () => {
+  const plots = Array.from({ length: 4 }, (_, i) => ({ x: i, y: 0, z: 3, hydrated: true }));
+  const bot = { entity: { position: new Vec3(900.5, 64, -700.5) }, blockAt: () => null };
+  const returns = [];
+  let explored = 0;
+  const farming = {
+    // Out of view, no ground reads as a plot.
+    choosePlots: () => (bot.entity.position.x > 100 ? [] : plots),
+    findWater: () => [],
+    plotState: () => 'growing',
+    returnTo: async (_b, _c, p) => { returns.push(p); bot.entity.position = new Vec3(p.x + 0.5, 64, p.z + 0.5); return { ok: true }; },
+  };
+  const skills = { explore: async () => { explored += 1; return { ok: true }; } };
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 64, 0), farming, skills, waitMs: 0 });
+  const ctx = { perceive: () => ({ inventory: {} }), record: () => {}, signal: new AbortController().signal };
+  assert.ok((await goal.run(ctx)).ok);
+  assert.equal(returns.length, 1);
+  // Back home the plots are seen, all growing: it waits, never explores.
+  assert.ok((await goal.run(ctx)).waited);
+  assert.equal(explored, 0);
 });
