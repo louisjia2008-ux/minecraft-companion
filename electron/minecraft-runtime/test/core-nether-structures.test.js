@@ -825,3 +825,20 @@ test('afloat out at sea, the bot swims for the nearest shore', async () => {
   bot.entity.position = new Vec3(25.5, 63, 0.5);
   assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }), false);
 });
+
+test('out at sea with no land in sight, the bot swims a stretch towards home', async () => {
+  const { swimAshore } = require('../core/actions');
+  const block = (p) => ({ name: p.y <= 62 ? 'water' : 'air', position: p.floored(), boundingBox: 'empty' });
+  const bot = {
+    entity: { position: new Vec3(500.5, 62.4, 0.5), onGround: false },
+    blockAt: (p) => block(new Vec3(p.x, p.y, p.z)),
+    findBlock: () => null,
+    companionHomeAt: () => new Vec3(0, 64, 0),
+    lookAt: async () => {},
+    setControlState: (c, on) => { if (c === 'jump' && on) bot.entity.position = bot.entity.position.offset(-1, 0, 0); },
+  };
+  assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }, { maxTicks: 40 }), true);
+  assert.ok(bot.entity.position.x < 470, String(bot.entity.position));
+  delete bot.companionHomeAt;
+  assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }), false);
+});

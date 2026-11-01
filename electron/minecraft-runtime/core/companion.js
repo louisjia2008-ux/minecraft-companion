@@ -197,6 +197,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   // Its goals go through useGoal too, so an autonomous ranch also spares its herd.
   const directorBrain = { status: () => brain.status(), setGoal: useGoal, clearGoal: (reason) => brain.clearGoal(reason) };
   director = createDirector({ brain: directorBrain, perceive: () => perceive(bot), cards, stageOf, onEvent });
+  // Where home is, for a bot lost at sea (actions.swimAshore).
+  bot.companionHomeAt = () => homeOf(director.memory)?.centre || null;
   if (autonomy) director.enable();
   const timer = setInterval(() => {
     if (disposed) return;

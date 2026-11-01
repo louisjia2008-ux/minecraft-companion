@@ -6,6 +6,7 @@
 //     observed (block gone, item counted, hunger restored), not when a call returns.
 // Recovery is not done here: the caller picks another target or gives up.
 
+const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { ownedItems } = require('./perception');
@@ -541,9 +542,16 @@ async function swimAshore(bot, ctx, { maxTicks = 1200 } = {}) {
   const shore = bot.findBlock({ maxDistance: 96, matching: (b) => b.boundingBox === 'block' && !SEA.has(b.name),
     useExtraInfo: (b) => b.position.y >= feet.y - 2 && b.position.y <= feet.y + 1
       && bot.blockAt(b.position.offset(0, 1, 0))?.boundingBox === 'empty' && !SEA.has(bot.blockAt(b.position.offset(0, 1, 0))?.name) });
-  if (!shore) return false;
-  const target = shore.position.offset(0.5, 1, 0.5);
-  ctx.record('swim_ashore', { to: shore.position, distance: Math.round(bot.entity.position.distanceTo(target)) });
+  // No land in sight: swim a stretch towards home, the way back to land.
+  const home = typeof bot.companionHomeAt === 'function' ? bot.companionHomeAt() : null;
+  if (!shore && !home) return false;
+  const start = bot.entity.position.clone();
+  const leg = home && Math.min(64, Math.hypot(home.x - start.x, home.z - start.z));
+  const heading = home && Math.atan2(home.z - start.z, home.x - start.x);
+  const target = shore ? shore.position.offset(0.5, 1, 0.5)
+    : new Vec3(start.x + Math.cos(heading) * leg, start.y, start.z + Math.sin(heading) * leg);
+  ctx.record('swim_ashore', { to: shore ? shore.position : target.floored(), home: !shore,
+    distance: Math.round(Math.hypot(target.x - start.x, target.z - start.z)) });
   try {
     for (let i = 0; i < maxTicks; i += 1) {
       const here = bot.entity.position;
@@ -557,8 +565,9 @@ async function swimAshore(bot, ctx, { maxTicks = 1200 } = {}) {
     bot.setControlState('forward', false);
     bot.setControlState('jump', false);
   }
-  // Out, or beside the shore with a step left for the planner.
+  // Out, or beside the shore with a step left for the planner; out at sea, a good stretch nearer home.
   const end = bot.entity.position;
+  if (!shore) return Math.hypot(end.x - start.x, end.z - start.z) > 16;
   return !wet(end.floored()) || Math.hypot(end.x - target.x, end.z - target.z) < 1.5;
 }
 
