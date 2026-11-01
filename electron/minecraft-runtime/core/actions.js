@@ -467,6 +467,10 @@ async function dropThroughLeaves(bot, ctx) {
 async function unstick(bot, ctx) {
   const under = bot.blockAt(bot.entity.position.offset(0, -1, 0));
   if (under && under.name.endsWith('_leaves') && await dropThroughLeaves(bot, ctx)) return { ok: true, moved: 'off_canopy' };
+  // Shut in by a closed door (shut for the night, never opened again by a
+  // goal that is not the house's): the planner passes open doors only. An
+  // hour of NoPath went by inside the house. Open it.
+  if (await openNearDoor(bot, ctx)) return { ok: true, moved: 'opened_door' };
   if (await nudge(bot, ctx)) return { ok: true, moved: 'nudged' };
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;
@@ -522,6 +526,18 @@ async function unstick(bot, ctx) {
 }
 
 /** Digs the block over the bot's head and those beside its head. True if any went. */
+const WOODEN_DOOR = /^(?!iron_).*_door$/;
+/** Opens the nearest closed wooden door within a few blocks. True if one opened. */
+async function openNearDoor(bot, ctx) {
+  const block = bot.findBlock({ maxDistance: 6, useExtraInfo: true, matching: (b) => WOODEN_DOOR.test(b.name)
+    && b.getProperties?.().half === 'lower' && b.getProperties().open === false });
+  if (!block) return false;
+  if (!withinReach(bot, block.position)) await goNear(bot, ctx, block.position, 2, { timeoutMs: 15000 });
+  if (!withinReach(bot, block.position)) return false;
+  try { await bot.activateBlock(bot.blockAt(block.position)); } catch { return false; }
+  return waitUntil(() => bot.blockAt(block.position)?.getProperties?.().open === true, { timeoutMs: 1500, signal: ctx.signal });
+}
+
 async function openHeadroom(bot, ctx) {
   const head = bot.entity.position.floored().offset(0, 1, 0);
   const cells = [head.offset(0, 1, 0), ...[[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => head.offset(dx, 0, dz))];
@@ -745,6 +761,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, breakLattice, openHeadroom, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, breakLattice, openHeadroom, openNearDoor, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };

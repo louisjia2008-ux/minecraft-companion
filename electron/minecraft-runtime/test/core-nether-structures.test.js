@@ -779,3 +779,22 @@ test('afloat under a low ceiling, the bot opens the headroom over and beside its
   assert.equal(await openHeadroom(bot, { record() {}, signal: new AbortController().signal }), true);
   assert.deepEqual(dug.sort(), ['(-1, 80, 0)', '(0, 80, -1)', '(0, 81, 0)']);
 });
+
+test('shut in the house, the bot opens the closed wooden door near it', async () => {
+  const { openNearDoor } = require('../core/actions');
+  const door = { name: 'oak_door', position: new Vec3(0, 65, 3), props: { half: 'lower', open: false } };
+  door.getProperties = () => door.props;
+  const iron = { name: 'iron_door', position: new Vec3(1, 65, 1), getProperties: () => ({ half: 'lower', open: false }) };
+  const blocks = [iron, door];
+  const opened = [];
+  const bot = {
+    entity: { position: new Vec3(0.5, 65, 0.5) },
+    findBlock: ({ matching }) => blocks.find((b) => matching(b)) || null,
+    blockAt: (p) => blocks.find((b) => b.position.equals(p)) || null,
+    activateBlock: async (b) => { opened.push(b.name); b.props = { ...b.props, open: true }; },
+  };
+  assert.equal(await openNearDoor(bot, { record() {}, signal: new AbortController().signal }), true);
+  assert.deepEqual(opened, ['oak_door']);
+  // Nothing closed is left: nothing to do.
+  assert.equal(await openNearDoor(bot, { record() {}, signal: new AbortController().signal }), false);
+});
