@@ -357,3 +357,28 @@ test('a carried requirement stays in the bag and counts there, never stored', as
   assert.ok(sim.inventory.stone_pickaxe >= 1);
   assert.ok(sim.chest.cobblestone >= 3);
 });
+
+test('a mine that comes to nothing is started again on another side of the house, farther out', async () => {
+  const mining = require('../core/mining');
+  const sim = simulate({ seed: 2, failRate: 0 });
+  Object.assign(sim.inventory, { stone_pickaxe: 9, stick: 9, chest: 1, crafting_table: 1, torch: 4 });
+  sim.chest.cobblestone = 1;
+  const targets = [];
+  sim.actions.goNear = async (_b, _c, p) => { targets.push(p.clone()); return { ok: true }; };
+  // No ore in the open: it has to be mined.
+  sim.skills.gatherOne = async () => ({ ok: false, reason: 'no_target_in_range' });
+  const mineStep = mining.mineStep;
+  // Sand everywhere: every staircase is blocked and the mine exhausted at once.
+  mining.mineStep = async (_bot, _ctx, memory) => { memory.mineDir = ((memory.mineDir ?? 0) + 1) % 4; return { ok: false, reason: 'mine_exhausted' }; };
+  try {
+    const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'raw_iron', count: 1 }],
+      stations: STATIONS, skills: sim.skills, actions: sim.actions });
+    const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+    for (let i = 0; i < 12 && targets.length < 3; i += 1) await goal.run(ctx);
+  } finally { mining.mineStep = mineStep; }
+  assert.ok(targets.length >= 3, JSON.stringify(targets));
+  const spots = targets.slice(0, 3).map((t) => `${t.x},${t.z}`);
+  assert.equal(new Set(spots).size, 3, spots.join(' '));
+  const reach = targets.slice(0, 3).map((t) => Math.hypot(t.x, t.z));
+  assert.ok(reach[2] > reach[0], reach.join(' '));
+});

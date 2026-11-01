@@ -128,7 +128,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     if (!memory.mine) {
       const at = bot.entity.position.floored();
       if (Math.hypot(at.x - chest.x, at.z - chest.z) < MINE_FROM_HOME) {
-        const away = new Vec3(chest.x + MINE_FROM_HOME + 2, chest.y, chest.z);
+        // Each new mine on another side of the house, and farther out after
+        // one that came to nothing: always the same spot, on sand, every
+        // staircase was blocked by gravel and sand and the goal failed.
+        const [sx, sz] = SIDES[(memory.mineDir ?? 0) % 4];
+        const reach = MINE_FROM_HOME + 2 + 8 * (memory.barrenMines || 0);
+        const away = new Vec3(chest.x + sx * reach, chest.y, chest.z + sz * reach);
         const moved = await actions.goNear(bot, ctx, away, 1, { timeoutMs: 30000 });
         if (!moved.ok) return moved;
       }
@@ -142,7 +147,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     }
     const m = memory.mine;
     if (m?.junction && !m.depot && m.y === step.mineY && step.mineY <= DEPOT_BELOW) return buildDepot(ctx);
-    return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions, skills });
+    const result = await mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions, skills });
+    if (result.reason === 'mine_exhausted') memory.barrenMines = (memory.barrenMines || 0) + 1;
+    return result;
   }
 
   const carrying = (name) => bot.inventory.items().filter((i) => i.name === name).reduce((n, i) => n + i.count, 0);
