@@ -77,7 +77,9 @@ const STEPS = [
     done: ({ companion, bot }) => Boolean(companion.director.memory.homestead?.isDone(perceive(bot))) },
   { id: 'farm', task: 'farm', args: ({ companion }) => ({ bread: SNACK, center: farmCenter(companion) }),
     // Sown is enough: the wheat grows while the gear is gathered, and the bread is fetched when hungry.
-    done: ({ state, bot }) => state.goals.farm?.isDone?.(state.lastPerceive) || sown(bot, state.goals.farm) >= SOWN },
+    // Fewer plots by the water than that: all of them sown.
+    done: ({ state, bot }) => state.goals.farm?.isDone?.(state.lastPerceive)
+      || sown(bot, state.goals.farm) >= Math.min(SOWN, Math.max(1, state.goals.farm?.memory?.plots?.length || 0)) },
   { id: 'armor', task: 'outfit', args: () => ({ items: ARMOR }), done: ({ bot, state }) => state.armorDone || kitDone(bot, ARMOR) },
   { id: 'gear', task: 'outfit', args: () => ({ items: TRIP }), done: ({ bot, state }) => state.gearDone || kitDone(bot, TRIP) },
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }),
