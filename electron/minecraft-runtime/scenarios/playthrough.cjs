@@ -27,6 +27,7 @@ const { advancement } = require('./end.cjs');
 const { verifyMachines, productionSpecs } = require('./e2e.cjs');
 const { installProductionEvidence } = require('./productionEvidence.cjs');
 const { installFurnitureEvidence } = require('./furnitureEvidence.cjs');
+const { Vec3 } = require('vec3');
 const { perceive } = require('../core/perception');
 const { countKey } = require('../core/knowledge');
 
@@ -37,6 +38,8 @@ const BLAZE_RODS = Math.ceil(EYES / 2) + 1;
 const RETRIES = 8;
 // Bread a trip to the farm brings back; asked for again whenever the bot goes hungry with nothing in the bag.
 const SNACK = 3;
+// Plots growing wheat for the farm to count as started.
+const SOWN = 8;
 
 const GEAR = [
   { key: 'iron_helmet', count: 1 }, { key: 'iron_chestplate', count: 1 }, { key: 'iron_leggings', count: 1 },
@@ -62,7 +65,8 @@ const STEPS = [
   { id: 'house', task: 'homestead', args: () => ({}),
     done: ({ companion, bot }) => Boolean(companion.director.memory.homestead?.isDone(perceive(bot))) },
   { id: 'farm', task: 'farm', args: ({ companion }) => ({ bread: SNACK, center: farmCenter(companion) }),
-    done: ({ state }) => state.goals.farm?.isDone?.(state.lastPerceive) },
+    // Sown is enough: the wheat grows while the gear is gathered, and the bread is fetched when hungry.
+    done: ({ state, bot }) => state.goals.farm?.isDone?.(state.lastPerceive) || sown(bot, state.goals.farm) >= SOWN },
   { id: 'armor', task: 'outfit', args: () => ({ items: ARMOR }), done: ({ bot, state }) => state.armorDone || kitDone(bot, ARMOR) },
   { id: 'gear', task: 'outfit', args: () => ({ items: GEAR }), done: ({ bot, state }) => state.gearDone || kitDone(bot, GEAR) },
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }),
@@ -82,6 +86,10 @@ function farmCenter(companion) {
   const house = houseOf(companion);
   if (!house) return undefined;
   return { x: house.anchor.x - 12, y: house.anchor.y, z: house.anchor.z + 3 };
+}
+
+function sown(bot, farm) {
+  return (farm?.memory?.plots || []).filter((p) => bot.blockAt(new Vec3(p.x, p.y + 1, p.z))?.name === 'wheat').length;
 }
 
 // The bag has no food and the stomach is low, in the overworld (the farm is there).
@@ -176,7 +184,8 @@ const playthroughNatural = {
       return;
     }
     // The model waits for the bot to finish (or give up) before asking again.
-    if (companion.status().goal || (step.autonomy && entry.asks > 0)) return;
+    // A step asked for the first time replaces what the last one left running (a farm left growing).
+    if (state.snack || (companion.status().goal && entry.asks > 0) || (step.autonomy && entry.asks > 0)) return;
     if (step.when && !step.when(context)) return;
     // Pearls are a night's work each: a night that ends short is no failure.
     if (entry.asks >= RETRIES + (step.nightly ? 30 : 0)) {

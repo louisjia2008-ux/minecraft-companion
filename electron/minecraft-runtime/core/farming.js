@@ -27,7 +27,9 @@ function choosePlots(blockAt, center, { count = 16, radius = 24, exclude = () =>
   const c = { x: Math.floor(center.x), y: Math.floor(center.y), z: Math.floor(center.z) };
   const usable = (p) => {
     const ground = blockAt(p);
-    return ground && TILLABLE.has(ground.name) && SOFT_ABOVE(blockAt({ ...p, y: p.y + 1 })) && !exclude(p);
+    // Farmland already tilled (a farm planted on an earlier trip) is the best plot of all.
+    return ground && (TILLABLE.has(ground.name) || ground.name === 'farmland') && SOFT_ABOVE(blockAt({ ...p, y: p.y + 1 }))
+      && !exclude(p);
   };
   const waters = (findWater ? findWater(c, radius) : []).filter((w) => w.y >= c.y - 6 && w.y <= c.y + 2);
   const plots = new Map();

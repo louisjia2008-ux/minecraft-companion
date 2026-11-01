@@ -32,6 +32,14 @@ test('without water, dry plots around the centre are used', () => {
   assert.ok(plots.every((p) => !p.hydrated && p.y === 0));
 });
 
+test('a farm asked for again picks its own sown farmland, not new ground', () => {
+  const first = choosePlots(voxels(), { x: 0, y: 1, z: 0 }, { count: 6, findWater: () => [] });
+  const extra = {};
+  for (const p of first) { extra[`${p.x},${p.y},${p.z}`] = 'farmland'; extra[`${p.x},${p.y + 1},${p.z}`] = 'short_grass'; }
+  const again = choosePlots(voxels(extra), { x: 0, y: 1, z: 0 }, { count: 6, findWater: () => [] });
+  assert.deepEqual(again.map((p) => `${p.x},${p.y},${p.z}`).sort(), first.map((p) => `${p.x},${p.y},${p.z}`).sort());
+});
+
 test('farm goal goes from an empty inventory to bread and leaves the plots sown', async () => {
   const blocks = new Map();
   const ages = new Map();
