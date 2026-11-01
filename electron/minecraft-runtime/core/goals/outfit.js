@@ -14,6 +14,10 @@ const { createDeviceProjectGoal } = require('./deviceProject');
 const { createStockFoodGoal } = require('./stockFood');
 const { KNOWLEDGE, countKey } = require('../knowledge');
 
+// Tools and weapons stay in the bag as they are made: stored, the bot spent
+// hours mining with stone picks and fighting bare-handed beside a chest
+// holding its iron sword and pickaxe.
+const CARRY = /(_sword|_pickaxe|_axe)$|^(shield|bow)$/;
 const ARMOR_SLOTS = [['head', 5, /_helmet$/], ['torso', 6, /_chestplate$/], ['legs', 7, /_leggings$/], ['feet', 8, /_boots$/]];
 const OFF_HAND = 45;
 const RANK = ['leather', 'golden', 'chainmail', 'iron', 'diamond', 'netherite'];
@@ -68,7 +72,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, ...rest } = {}) {
     if (!kb[r?.key] || !Number.isSafeInteger(r.count) || r.count < 1) throw new TypeError(`bad item ${JSON.stringify(r)}`);
   }
   const device = createKit({ bot, items, kb });
-  return createDeviceProjectGoal({ bot, name: 'outfit', device, home, kb, ...rest });
+  return createDeviceProjectGoal({ bot, name: 'outfit', device, home, kb, carry: (key) => CARRY.test(key), ...rest });
 }
 
 module.exports = { createOutfitGoal, upgrades };

@@ -57,7 +57,7 @@ const FRAME_OBSIDIAN = 10;
 const FRAME_CORNERS = 4;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
-  skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
+  skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20, carry = () => false } = {}) {
   if (!chest || ![chest.x, chest.y, chest.z].every(Number.isInteger)) throw new TypeError('chest must have integer x, y, z');
   if (!requirements === !blueprint) throw new TypeError('give either requirements or a blueprint');
   for (const r of requirements || []) {
@@ -81,8 +81,13 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   const wanted = () => requirements || materialsFor(blueprint.blocks, nameAt, kb);
   const stored = (key) => countKey(key, memory.chest || {}, kb);
+  // `carry(key)`: kept in the bag, never stored (a sword is no use in the
+  // chest while the bot fights its way through hours of mining); what the
+  // bag holds of it counts as delivered.
+  const bagged = (key, inventory) => (inventory && carry(key) ? countKey(key, inventory, kb) : 0);
   // What the chest still lacks, in the caller's order.
-  const owed = () => wanted().map((r) => ({ key: r.key, count: r.count - stored(r.key) })).filter((r) => r.count > 0);
+  const owed = (inventory) => wanted().map((r) => ({ key: r.key, count: r.count - stored(r.key) - bagged(r.key, inventory) }))
+    .filter((r) => r.count > 0);
 
   function plannerInventory(state) {
     const inventory = { ...state.inventory };
@@ -381,9 +386,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     // Lava in the mold, or the water still out: finish the cast before anything else.
     if (obsidian.pending(bot, memory.cast)) return obsidian.castStep(bot, ctx, memory, { skills, actions, avoid: nearHome });
     const state = ctx.perceive();
-    const debts = owed();
+    const debts = owed(state.inventory);
     // Everything owed that is already carried, up to what the chest lacks.
-    const carried = debts.map((r) => ({ key: r.key, count: Math.min(r.count, countKey(r.key, state.inventory, kb)) }))
+    const carried = debts.filter((r) => !carry(r.key)).map((r) => ({ key: r.key, count: Math.min(r.count, countKey(r.key, state.inventory, kb)) }))
       .filter((w) => w.count > 0);
     const inventory = plannerInventory(state);
     const reqs = [...debts];
@@ -440,7 +445,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     },
     memory,
     owed,
-    isDone: () => memory.chest !== null && owed().length === 0,
+    isDone: (state) => memory.chest !== null && owed(state?.inventory).length === 0,
     progress: () => memory.steps,
     async run(ctx) {
       if (memory.pathFailures >= 2) {

@@ -345,3 +345,15 @@ test('hunting spiders for string marks a night hunt; other steps clear it', asyn
   await runGoal(sim, other, { limit: 3 });
   assert.equal(sim.bot.companionNightHunt, null);
 });
+
+test('a carried requirement stays in the bag and counts there, never stored', async () => {
+  const sim = simulate({ seed: 4, failRate: 0 });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'stone_pickaxe', count: 1 }, { key: 'cobblestone', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions, carry: (key) => key === 'stone_pickaxe' });
+  const { events } = await runGoal(sim, goal);
+  assert.ok(events.some((e) => e.type === 'goal_done'), JSON.stringify(events.filter((e) => e.type === 'goal_failed')));
+  assert.ok(!sim.chest.stone_pickaxe, JSON.stringify(sim.chest));
+  assert.ok(sim.inventory.stone_pickaxe >= 1);
+  assert.ok(sim.chest.cobblestone >= 3);
+});
