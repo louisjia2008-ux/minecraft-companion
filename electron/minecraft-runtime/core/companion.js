@@ -256,6 +256,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
         const goal = Object.keys(options).length === 0 && director.memory.homestead
           ? director.memory.homestead : createHomesteadGoal({ bot, ...options });
         director.memory.homestead = goal;
+        // Asked again: the search for a site starts over.
+        if (goal.memory) goal.memory.exploreStreak = 0;
         return goal;
       }, metadata ?? { taskId: options?.taskId });
     },

@@ -196,3 +196,11 @@ test('the roof step is placed for the roof and removed once the roof is done', a
   assert.equal(placedStair.length, 1);
   for (const p of goal.memory.house.scaffold) assert.equal(sim.blockAt(p).name, 'air');
 });
+
+test('a recovery starts the search for a site over, so a later ask is not failed at once', () => {
+  const sim = simulate({ failRate: 0 });
+  const goal = createHomesteadGoal({ bot: sim.bot, skills: sim.skills, actions: sim.actions });
+  goal.memory.exploreStreak = 21;
+  goal.recover();
+  assert.equal(goal.memory.exploreStreak, 0);
+});

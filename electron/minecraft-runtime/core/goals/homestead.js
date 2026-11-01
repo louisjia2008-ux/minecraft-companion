@@ -588,6 +588,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       blacklist.clear();
       skipped.clear();
       memory.recovery = true;
+      // A fresh round of exploring for a site: the count is kept across asks
+      // (one house per run), and once past its limit every later ask of the
+      // house failed at once with exhausted:site.
+      memory.exploreStreak = 0;
     },
     memory,
     maintenance,
