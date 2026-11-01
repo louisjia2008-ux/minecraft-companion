@@ -53,8 +53,16 @@ const GEAR = [
 ];
 // Armour first, as a player would: worn, it keeps the bot alive through the
 // nights spent hunting spiders for the bow's string.
-const ARMOR = GEAR.filter((r) => /^iron_(helmet|chestplate|leggings|boots|sword)$/.test(r.key) || r.key === 'shield')
-  .concat([{ key: 'food', count: 12 }]);
+const ARMORY = (r) => /^iron_(helmet|chestplate|leggings|boots|sword)$/.test(r.key) || r.key === 'shield';
+const ARMOR = GEAR.filter(ARMORY).concat([{ key: 'food', count: 12 }]);
+// Then the rest for the trip, armour not asked again: worn through the hours
+// this takes, it broke piece by piece and the full list was never all carried
+// at once (a world spent eight hours re-making it). Arrows wait for the End.
+const TRIP = GEAR.filter((r) => !ARMORY(r)).map((r) => {
+  if (r.key === 'arrow') return { key: 'arrow', count: 16 };
+  if (r.key === 'food') return { key: 'food', count: 12 };
+  return r;
+});
 const EYE_KIT = [{ key: 'ender_eye', count: EYES }, { key: 'arrow', count: 48 }, { key: 'food', count: 24 },
   { key: 'cobblestone', count: 64 }, { key: 'water_bucket', count: 1 }];
 
@@ -71,7 +79,7 @@ const STEPS = [
     // Sown is enough: the wheat grows while the gear is gathered, and the bread is fetched when hungry.
     done: ({ state, bot }) => state.goals.farm?.isDone?.(state.lastPerceive) || sown(bot, state.goals.farm) >= SOWN },
   { id: 'armor', task: 'outfit', args: () => ({ items: ARMOR }), done: ({ bot, state }) => state.armorDone || kitDone(bot, ARMOR) },
-  { id: 'gear', task: 'outfit', args: () => ({ items: GEAR }), done: ({ bot, state }) => state.gearDone || kitDone(bot, GEAR) },
+  { id: 'gear', task: 'outfit', args: () => ({ items: TRIP }), done: ({ bot, state }) => state.gearDone || kitDone(bot, TRIP) },
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }),
     done: ({ bot }) => have(bot, 'blaze_rod') + have(bot, 'ender_eye') / 2 >= BLAZE_RODS && bot.game?.dimension?.endsWith('overworld') },
   { id: 'pearls', task: 'huntPearls', args: ({ bot }) => ({ count: Math.max(1, EYES - have(bot, 'ender_eye')) }),
