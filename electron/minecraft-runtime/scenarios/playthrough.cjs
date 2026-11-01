@@ -180,7 +180,7 @@ const playthroughNatural = {
     // hunted: the model sends the bot to its farm for bread, then asks for
     // the step again (the detour is not counted as one of its asks).
     const goal = companion.status().goal;
-    if (state.snack && (!goal || have(bot, 'food') > 0 || Date.now() - state.snackAt > SNACK_MS)) {
+    if (state.snack && (!goal || have(bot, 'food') > 0 || Date.now() - (state.snackAt || 0) > SNACK_MS)) {
       state.snack = false;
       state.snackEnd = Date.now();
       // The farm may still be running: the step asked again replaces it.
