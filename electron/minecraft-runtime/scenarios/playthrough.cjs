@@ -1,4 +1,4 @@
-/* global module, require */
+/* global module, require, process */
 'use strict';
 // The whole game from an empty inventory in a fresh natural world, the way a
 // player's requests reach the bot through the language model: one task at a
@@ -133,7 +133,10 @@ const playthroughNatural = {
   timeoutMs: 16 * 60 * MINUTE,
   setupTimeoutMs: 180000,
   setup({ username, difficulty = 'easy' }) {
-    return { commands: [...living(username, difficulty), `spreadplayers 0 0 0 24 false ${username}`], details: {} };
+    // PLAYTHROUGH_KEEP_INVENTORY=1: deaths keep the bag, to test the whole chain past the fights.
+    const keep = process.env.PLAYTHROUGH_KEEP_INVENTORY === '1' ? ['gamerule keepInventory true'] : [];
+    return { commands: [...living(username, difficulty), ...keep, `spreadplayers 0 0 0 24 false ${username}`],
+      details: { keepInventory: keep.length > 0 } };
   },
   async initialize(context) {
     const { state } = context;
