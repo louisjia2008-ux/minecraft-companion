@@ -176,3 +176,20 @@ test('explore past its radius heads back towards the centre', async () => {
     assert.ok(target.x < 400 && Math.abs(target.z) < 1, JSON.stringify(target));
   } finally { actions.goTo = goTo; }
 });
+
+test('right after a kill with more animals close by, provision hunts a few more for the bag', async () => {
+  const s = setup({ skills: { huntOne: async () => { s.state.inventory.beef = (s.state.inventory.beef || 0) + 1; return { ok: true }; } } });
+  const fed = () => ({ ...s.state, health: 20, food: 20 });
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(10, 64, 0) } };
+  // Not hungry, nothing hunted yet: no reason to.
+  assert.equal(s.behavior('provision').want(fed()), 0);
+  s.state.food = 4;
+  await s.behavior('provision').run({ record() {}, perceive: () => s.state, signal: new AbortController().signal });
+  assert.equal(s.state.inventory.beef, 1);
+  assert.ok(s.behavior('provision').want(fed()) > 0, 'one beef, a cow 10 blocks off');
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(60, 64, 0) } };
+  assert.equal(s.behavior('provision').want(fed()), 0, 'the next cow is far');
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(10, 64, 0) } };
+  s.state.inventory.beef = 6;
+  assert.equal(s.behavior('provision').want(fed()), 0, 'the bag is stocked');
+});

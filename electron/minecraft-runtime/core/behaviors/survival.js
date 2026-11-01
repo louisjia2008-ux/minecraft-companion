@@ -215,6 +215,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
     eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, recoverFood: 18, oxygen: 8, dropsTtlMs: 270000,
     walkSpeed: 4, dropsMaxDistance: 600, swimScale: 1, provisionRange: 160,
+    stockFood: 6, stockRange: 24, stockWindowMs: 60000,
     ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
   const exploreMemory = {};
@@ -719,6 +720,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Hungry with nothing to eat: hunt the nearest food animal.
   const animalNear = (state, range) => Object.values(bot.entities || {}).some((e) => FOOD_ANIMALS.includes(e?.name)
     && e.position && !spare(e) && e.position.distanceTo(state.position) <= range);
+  let lastHuntAt = 0;
+  const safeFoodCount = (state) => Object.entries(state.inventory)
+    .reduce((n, [name, count]) => n + (count > 0 && foodCheck(name) && !RISKY_FOODS.has(name) ? count : 0), 0);
+  const stockingUp = (state) => Date.now() - lastHuntAt < t.stockWindowMs && safeFoodCount(state) < t.stockFood
+    && dimensionOf(bot) === 'overworld' && state.isDay !== false && !threats(state).some((h) => h.distance <= 16)
+    && animalNear(state, t.stockRange);
   const provision = {
     name: 'provision',
     band: BAND.MAINTENANCE,
@@ -729,7 +736,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // first using exactly the eat behavior's risky-food policy.
       const needsFood = state.food <= t.provisionFood
         || (state.health < t.recoverHealth && state.food < t.recoverFood);
-      if (state.sheltered || !needsFood || hasSafeFood(state, desperateForFood(state))) return 0;
+      if (state.sheltered) return 0;
+      // Out hunting with animals still close by: a few more for the bag. One
+      // kill at a time, the bot was back out hunting every few minutes of
+      // mining, and spent a third of its hours on it.
+      if (stockingUp(state)) return 0.5;
+      if (!needsFood || hasSafeFood(state, desperateForFood(state))) return 0;
       // The goal itself is getting food (bread from the farm): an animal close by is
       // still worth it, but no wandering off after ones long since hunted out.
       if (feeding() && !animalNear(state, FEEDING_RANGE)) return 0;
@@ -745,8 +757,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     async run(ctx) {
       // Animals are visible out to about 100 blocks; go for the nearest one seen.
       const near = feeding();
+      const stocking = stockingUp(ctx.perceive());
       const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck,
-        radius: near ? FEEDING_RANGE : 96, blacklist: huntBlacklist, accept: (e) => !spare(e) });
+        radius: stocking ? t.stockRange : near ? FEEDING_RANGE : 96, blacklist: huntBlacklist, accept: (e) => !spare(e) });
+      if (result.ok) lastHuntAt = Date.now();
       // Nothing to hunt in sight: berries, else look further afield instead of waiting to starve.
       // Could not reach anything: the bot itself is probably stuck (tree top, ledge).
       if (['NoPath', 'Timeout', 'path_timeout', 'no_progress', 'not_arrived', 'chase_stuck'].includes(result.reason)) {
