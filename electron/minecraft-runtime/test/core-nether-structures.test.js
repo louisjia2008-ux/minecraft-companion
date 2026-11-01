@@ -798,3 +798,30 @@ test('shut in the house, the bot opens the closed wooden door near it', async ()
   // Nothing closed is left: nothing to do.
   assert.equal(await openNearDoor(bot, { record() {}, signal: new AbortController().signal }), false);
 });
+
+test('afloat out at sea, the bot swims for the nearest shore', async () => {
+  const { swimAshore } = require('../core/actions');
+  // Sea at y<=62 everywhere west of x=20; land (stone, top at y=62) from x=20 on.
+  const name = (p) => (p.x >= 20 ? (p.y <= 62 ? 'stone' : 'air') : (p.y <= 62 ? 'water' : 'air'));
+  const block = (p) => { const n = name(p); return { name: n, position: p.floored(), boundingBox: n === 'stone' ? 'block' : 'empty' }; };
+  const controls = {};
+  const bot = {
+    entity: { position: new Vec3(5.5, 62.4, 0.5), onGround: false },
+    blockAt: (p) => block(new Vec3(p.x, p.y, p.z)),
+    findBlock: ({ matching, useExtraInfo }) => {
+      for (let x = 6; x < 40; x += 1) { const b = block(new Vec3(x, 62, 0)); if (matching(b) && useExtraInfo(b)) return b; }
+      return null;
+    },
+    lookAt: async () => {},
+    setControlState: (c, on) => { controls[c] = on; if (c === 'jump' && on) {
+      const p = bot.entity.position; bot.entity.position = new Vec3(p.x + 0.5, p.x + 0.5 >= 20 ? 63 : 62.4, p.z);
+      bot.entity.onGround = bot.entity.position.x >= 20; } },
+  };
+  assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }), true);
+  // Beside the shore, a step left for the planner.
+  assert.ok(bot.entity.position.x >= 19, String(bot.entity.position));
+  assert.equal(controls.forward, false);
+  // On land: nothing to do.
+  bot.entity.position = new Vec3(25.5, 63, 0.5);
+  assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }), false);
+});

@@ -471,6 +471,9 @@ async function unstick(bot, ctx) {
   // goal that is not the house's): the planner passes open doors only. An
   // hour of NoPath went by inside the house. Open it.
   if (await openNearDoor(bot, ctx)) return { ok: true, moved: 'opened_door' };
+  // Afloat out at sea: the planner finds no path over open water. A bot sat
+  // in a kelp bed far from land for over an hour. Swim for the nearest shore.
+  if (await swimAshore(bot, ctx)) return { ok: true, moved: 'swam_ashore' };
   if (await nudge(bot, ctx)) return { ok: true, moved: 'nudged' };
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;
@@ -526,6 +529,39 @@ async function unstick(bot, ctx) {
 }
 
 /** Digs the block over the bot's head and those beside its head. True if any went. */
+const SEA = new Set(['water', 'kelp', 'kelp_plant', 'seagrass', 'tall_seagrass', 'bubble_column']);
+/** Out on open water, swims along the surface to the nearest land within sight. True once ashore. */
+async function swimAshore(bot, ctx, { maxTicks = 1200 } = {}) {
+  const feet = bot.entity.position.floored();
+  const wet = (p) => SEA.has(bot.blockAt(p)?.name);
+  if (!wet(feet) && !wet(feet.offset(0, -1, 0))) return false;
+  // Not a puddle: open water all round.
+  if (![[2, 0], [-2, 0], [0, 2], [0, -2]].every(([dx, dz]) => wet(feet.offset(dx, -1, dz)))) return false;
+  // Solid ground about the water's level with open air over it.
+  const shore = bot.findBlock({ maxDistance: 96, matching: (b) => b.boundingBox === 'block' && !SEA.has(b.name),
+    useExtraInfo: (b) => b.position.y >= feet.y - 2 && b.position.y <= feet.y + 1
+      && bot.blockAt(b.position.offset(0, 1, 0))?.boundingBox === 'empty' && !SEA.has(bot.blockAt(b.position.offset(0, 1, 0))?.name) });
+  if (!shore) return false;
+  const target = shore.position.offset(0.5, 1, 0.5);
+  ctx.record('swim_ashore', { to: shore.position, distance: Math.round(bot.entity.position.distanceTo(target)) });
+  try {
+    for (let i = 0; i < maxTicks; i += 1) {
+      const here = bot.entity.position;
+      if (Math.hypot(here.x - target.x, here.z - target.z) < 1.2 || (bot.entity.onGround && !wet(here.floored()))) break;
+      await bot.lookAt(target.offset(0, 0.6, 0), true);
+      bot.setControlState('forward', true);
+      bot.setControlState('jump', true);
+      await sleep(50, ctx.signal);
+    }
+  } finally {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+  }
+  // Out, or beside the shore with a step left for the planner.
+  const end = bot.entity.position;
+  return !wet(end.floored()) || Math.hypot(end.x - target.x, end.z - target.z) < 1.5;
+}
+
 const WOODEN_DOOR = /^(?!iron_).*_door$/;
 /** Opens the nearest closed wooden door within a few blocks. True if one opened. */
 async function openNearDoor(bot, ctx) {
@@ -761,6 +797,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, breakLattice, openHeadroom, openNearDoor, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, breakLattice, openHeadroom, openNearDoor, swimAshore, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };
