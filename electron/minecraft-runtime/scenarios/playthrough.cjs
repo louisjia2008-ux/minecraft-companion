@@ -82,7 +82,7 @@ const STEPS = [
       || sown(bot, state.goals.farm) >= Math.min(SOWN, Math.max(1, state.goals.farm?.memory?.plots?.length || 0)) },
   { id: 'armor', task: 'outfit', args: () => ({ items: ARMOR }), done: ({ bot, state }) => state.armorDone || kitDone(bot, ARMOR) },
   { id: 'gear', task: 'outfit', args: () => ({ items: TRIP }), done: ({ bot, state }) => state.gearDone || kitDone(bot, TRIP) },
-  { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }),
+  { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }), patient: true,
     done: ({ bot }) => have(bot, 'blaze_rod') + have(bot, 'ender_eye') / 2 >= BLAZE_RODS && bot.game?.dimension?.endsWith('overworld') },
   { id: 'pearls', task: 'huntPearls', args: ({ bot }) => ({ count: Math.max(1, EYES - have(bot, 'ender_eye')) }),
     when: ({ bot }) => bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000,
@@ -223,7 +223,8 @@ const playthroughNatural = {
     if (state.snack || (goal && entry.asks > 0 && !state.replace) || (step.autonomy && entry.asks > 0)) return;
     if (step.when && !step.when(context)) return;
     // Pearls are a night's work each: a night that ends short is no failure.
-    if (entry.asks >= RETRIES + (step.nightly ? 30 : 0)) {
+    // The nether search goes on ask after ask while it covers new ground.
+    if (entry.asks >= RETRIES + (step.nightly ? 30 : 0) + (step.patient ? 12 : 0)) {
       if (!entry.stuck) { entry.stuck = true; write('model_stuck', { step: step.id, asks: entry.asks }); console.log(`    model: STUCK at ${step.id}`); }
       return;
     }

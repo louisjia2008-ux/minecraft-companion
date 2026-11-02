@@ -44,6 +44,13 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     explore: {}, fortress: null, bastion: null, spawner: null, visited: { fortress: false, bastion: false },
     trades: 0, barter: {}, kills: {}, witherKills: 0, scannedAt: 0, scannedFrom: null, waitSince: 0, towerFails: {},
   };
+  // Asked again, the task starts where the last ask left off: the lookouts
+  // already walked and the structures already seen. Each new goal started
+  // the rings over and walked the first 300 blocks again before going on.
+  const KEPT = ['explore', 'fortress', 'bastion', 'spawner', 'visited'];
+  const saved = bot.companionNetherSearch;
+  if (saved) for (const key of KEPT) if (saved[key] != null) memory[key] = saved[key];
+  const keepSearch = () => { bot.companionNetherSearch = Object.fromEntries(KEPT.map((key) => [key, memory[key]])); };
   // A skull is luck (5.5% a kill with Looting III). With skullTries set, that
   // many wither skeletons killed without one ends the hunt for it.
   bot.on?.('entityDead', (e) => {
@@ -1006,6 +1013,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.waitSince = 0;
     },
     async run(ctx) {
+      keepSearch();
       // Set again by explore below; a death outside a lookout walk marks none.
       memory.heading = null;
       await wearArmour(ctx);

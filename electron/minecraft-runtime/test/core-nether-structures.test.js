@@ -875,3 +875,16 @@ test('a lookout the bot died walking to is skipped, by this goal and the next on
   again.dispose();
   assert.equal(bot.listenerCount('death'), 0);
 });
+
+test('asked again, the nether search goes on from the lookouts and structures the last ask reached', async () => {
+  const bot = { ...world({}), game: { dimension: 'overworld' }, inventory: { slots: [], items: () => [] }, equip: async () => {} };
+  const first = createNetherExpeditionGoal({ bot, blazeRods: 2, witherSkulls: 0, trades: 0 });
+  first.memory.explore.index = 17;
+  first.memory.bastion = new Vec3(235, 34, 64);
+  const ctx = { record() {}, perceive: () => ({ inventory: {} }), signal: new AbortController().signal };
+  await first.run(ctx);
+  const again = createNetherExpeditionGoal({ bot, blazeRods: 2, witherSkulls: 0, trades: 0 });
+  assert.equal(again.memory.explore.index, 17);
+  assert.deepEqual(again.memory.bastion, new Vec3(235, 34, 64));
+  assert.equal(again.memory.fortress, null);
+});
