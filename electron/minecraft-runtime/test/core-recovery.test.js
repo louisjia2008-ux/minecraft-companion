@@ -85,10 +85,12 @@ test('discardable lists junk first, then whatever exceeds one stack, never what 
   const list = discardable({ gravel: 5, cobblestone: 100, dirt: 30, oak_sapling: 12, stone_pickaxe: 1, flint: 2 },
     (name) => name === 'flint');
   assert.deepEqual(list, [{ name: 'gravel', count: 5 }, { name: 'cobblestone', count: 36 }, { name: 'oak_sapling', count: 4 }]);
-  assert.deepEqual(discardable({ stone_pickaxe: 1, bread: 3, dirt: 64 }), []);
+  assert.deepEqual(discardable({ stone_pickaxe: 1, bread: 3, cobblestone: 64 }), []);
   // Ground cover picked up on the way, and sticks past a stack.
   assert.deepEqual(discardable({ wildflowers: 37, leaf_litter: 20, stick: 208, bread: 3 }),
     [{ name: 'wildflowers', count: 37 }, { name: 'leaf_litter', count: 20 }, { name: 'stick', count: 144 }]);
+  // Nothing else to lose: the dirt goes, the whole stack.
+  assert.deepEqual(discardable({ dirt: 37, redstone: 50, iron_pickaxe: 1 }), [{ name: 'dirt', count: 37 }]);
   assert.deepEqual(discardable({ raw_copper: 41, coal: 127, feather: 20 }),
     [{ name: 'raw_copper', count: 41 }, { name: 'coal', count: 63 }]);
 });

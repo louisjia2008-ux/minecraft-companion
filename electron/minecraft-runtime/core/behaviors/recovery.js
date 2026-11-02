@@ -23,11 +23,15 @@ const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff
   'wildflowers', 'leaf_litter', 'pink_petals', 'short_grass', 'tall_grass', 'fern', 'big_dripleaf', 'small_dripleaf',
   'moss_carpet', 'hanging_roots', 'glow_lichen', 'vine', 'seagrass',
   // Mined on the way, wanted by no goal: a bag full of them failed every craft (no room for the output).
-  'raw_copper', 'copper_ingot', 'lapis_lazuli', 'mossy_cobblestone', 'moss_block', 'glow_ink_sac']);
+  'raw_copper', 'copper_ingot', 'lapis_lazuli', 'mossy_cobblestone', 'moss_block', 'glow_ink_sac',
+  'smooth_basalt', 'amethyst_block', 'amethyst_shard', 'budding_amethyst']);
 // Useful in moderation: one stack is kept, the rest goes.
 // A stack of netherrack is the nether's building block: bridges, steps out of lava.
 const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64, stick: 64, egg: 16,
-  coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16 };
+  coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16, redstone: 64 };
+// Still full with none of those: ground blocks dug anywhere go, whole stacks
+// (a part stack frees no slot). A full bag fails every craft.
+const CHEAP = new Set(['dirt', 'sand', 'cobbled_deepslate', 'netherrack', 'coarse_dirt']);
 const SAPLINGS_KEPT = 8;
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
@@ -42,7 +46,9 @@ function discardable(inventory, keep = () => false) {
     else if (SURPLUS[name] && count > SURPLUS[name]) surplus.push({ name, count: count - SURPLUS[name] });
     else if (name.endsWith('_sapling') && count > SAPLINGS_KEPT) surplus.push({ name, count: count - SAPLINGS_KEPT });
   }
-  return [...junk, ...surplus];
+  if (junk.length || surplus.length) return [...junk, ...surplus];
+  return Object.entries(inventory || {}).filter(([name, count]) => count > 0 && CHEAP.has(name) && !keep(name))
+    .map(([name, count]) => ({ name, count }));
 }
 
 /** What boxes the bot in, for the log: every non-air block within one cell of its body. */
