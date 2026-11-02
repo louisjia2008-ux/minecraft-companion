@@ -64,6 +64,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (memory.crumbs.length > 4000) memory.crumbs.shift();
   };
   bot.on?.('move', dropCrumb);
+  // A lookout the bot died on the way to (the lava sea at y 31, a ghast's
+  // knock-back into it) is not tried again, by this ask or the next: the walk
+  // there is the same, and a bot died five times running heading for one.
+  const deadly = (bot.companionDeadlyLookouts = bot.companionDeadlyLookouts || new Set());
+  const markDeadly = () => {
+    if (memory.heading) deadly.add(memory.heading);
+    memory.heading = null;
+  };
+  bot.on?.('death', markDeadly);
   const trip = createPortalTrip({ bot, memory, actions });
 
   const rods = (state) => state.inventory.blaze_rod || 0;
@@ -182,7 +191,13 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const away = Math.atan2(home.z - memory.bastion.z, home.x - memory.bastion.x);
       m.index = Math.round(((away % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 4)) % 8;
     }
-    const target = centre ? around(m.index, centre) : lookout(m.index, home);
+    const pick = () => (centre ? around(m.index, centre) : lookout(m.index, home));
+    let target = pick();
+    for (let skipped = 0; skipped < 32 && deadly.has(`${target.x},${target.z}`); skipped += 1) {
+      m.index += 1;
+      target = pick();
+    }
+    memory.heading = `${target.x},${target.z}`;
     ctx.record('explore', { lookout: m.index, x: target.x, z: target.z, ...(centre ? { around: posKey(centre) } : {}),
       want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
     const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8), { timeoutMs: 60000, arrived: () => true });
@@ -991,6 +1006,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.waitSince = 0;
     },
     async run(ctx) {
+      // Set again by explore below; a death outside a lookout walk marks none.
+      memory.heading = null;
       await wearArmour(ctx);
       const state = ctx.perceive();
       if (nether.inNether(bot)) {
@@ -1007,6 +1024,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     },
     dispose() {
       bot.removeListener?.('move', dropCrumb);
+      bot.removeListener?.('death', markDeadly);
       trip.leaveNetherMode();
     },
   };

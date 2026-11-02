@@ -842,3 +842,36 @@ test('out at sea with no land in sight, the bot swims a stretch towards home', a
   delete bot.companionHomeAt;
   assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }), false);
 });
+
+test('a lookout the bot died walking to is skipped, by this goal and the next one asked', async () => {
+  const items = [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }];
+  const make = () => {
+    const bot = Object.assign(new EventEmitter(), { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items },
+      entities: {}, registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} }, equip: async () => {} });
+    bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+    bot.entity.onGround = true;
+    bot.entity.isInLava = false;
+    return bot;
+  };
+  const bot = make();
+  const targets = [];
+  const ctx = { record: (type, e) => { if (type === 'explore') targets.push(`${e.x},${e.z}`); },
+    perceive: () => ({ inventory: { iron_sword: 1, netherrack: 64 } }), signal: new AbortController().signal };
+  // The walk ends in the lava sea: the bot dies on the way.
+  const actions = { goTo: async () => { bot.emit('death'); return { ok: false, reason: 'aborted' }; }, goNear: async () => ({ ok: false, reason: 'NoPath' }) };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) }, actions });
+  goal.memory.netherPortal = new Vec3(0, 64, 0);
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.equal(targets.length, 2, targets.join(' '));
+  assert.notEqual(targets[0], targets[1]);
+  goal.dispose();
+  // Asked again: a new goal starts its lookouts over, past both deadly ones.
+  const again = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) },
+    actions: { goTo: async () => ({ ok: true }), goNear: async () => ({ ok: true }) } });
+  again.memory.netherPortal = new Vec3(0, 64, 0);
+  await again.run(ctx);
+  assert.ok(!targets.slice(0, 2).includes(targets[2]), targets.join(' '));
+  again.dispose();
+  assert.equal(bot.listenerCount('death'), 0);
+});
