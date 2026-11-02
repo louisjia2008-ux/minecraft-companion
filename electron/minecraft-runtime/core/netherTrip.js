@@ -85,8 +85,12 @@ function createPortalTrip({ bot, memory, actions = defaultActions }) {
       memory.overworldPortal = portal;
       return goThrough(ctx, portal);
     }
+    // A frame begun by an earlier goal (the task asked again) is finished, not
+    // left with six obsidian in it while a new site needs ten the bag lacks.
+    if (!memory.site && bot.companionPortalSite) memory.site = bot.companionPortalSite;
     if (!memory.site || !siteStillUsable()) {
       memory.site = nether.findPortalSite(bot, 16);
+      bot.companionPortalSite = memory.site;
       if (!memory.site) return fail('no_portal_site');
       ctx.record('portal_site', { base: `${memory.site.base.x},${memory.site.base.y},${memory.site.base.z}`, axis: memory.site.axis });
     }
