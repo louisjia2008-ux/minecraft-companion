@@ -122,6 +122,23 @@ function knownOpen(mine, c) {
   return [0, 1, 2].some((dy) => posKey({ x: c.x, y: c.y - dy, z: c.z }) in mine.cells);
 }
 
+// Stone is dug with a stone pickaxe whoever digs it: the pathfinder and a bare
+// digBlock take the best tool, and a diamond pickaxe wore out on tunnel walks
+// before it reached the obsidian it was made for. Nothing cheap that harvests
+// the block (obsidian, or no stone pickaxe left): the best tool still does.
+function installCheapDigging(bot) {
+  const pf = bot.pathfinder;
+  if (typeof pf?.bestHarvestTool !== 'function' || pf.bestHarvestTool.cheap) return;
+  const best = pf.bestHarvestTool;
+  const cheap = (block) => {
+    const tool = best(block);
+    if (!tool || !block || !PICKS.includes(tool.name) || CHEAP_PICKS.includes(tool.name)) return tool;
+    return pickFor(bot, block) || tool;
+  };
+  cheap.cheap = true;
+  pf.bestHarvestTool = cheap;
+}
+
 const harvestable = (bot, block) => !block.harvestTools || Boolean(pickFor(bot, block));
 
 /** A block with an open, dry cell beside it: reachable without tunnelling to it. */
@@ -616,5 +633,5 @@ async function maybeTorch(bot, ctx, mine, cell) {
   } catch { /* a torch is a nicety, not progress */ }
 }
 
-module.exports = { inspectStep, turn, knownOpen, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
+module.exports = { installCheapDigging, inspectStep, turn, knownOpen, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
   LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH, cardinalRejoin };

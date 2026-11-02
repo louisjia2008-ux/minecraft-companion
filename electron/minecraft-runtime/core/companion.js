@@ -16,6 +16,7 @@ const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
 const { createRanchGoal } = require('./goals/ranch');
 const { installDigTimeFix } = require('./digTime');
+const { installCheapDigging } = require('./mining');
 const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
@@ -109,6 +110,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   installDigTimeFix(bot);
   const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
+  installCheapDigging(bot);
   const configuredMovements = configureMovements(bot);
 
   // Stuck bodies, full bags and death loops are recovered for every goal alike.

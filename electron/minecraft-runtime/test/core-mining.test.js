@@ -137,6 +137,20 @@ test('rock is dug with the cheapest pickaxe that harvests it; ore worth taking i
   assert.ok(isLoot('diamond') && isLoot('raw_iron') && !isLoot('cobblestone'));
 });
 
+test('the pathfinder digs rock with a stone pickaxe and keeps the diamond one for obsidian', () => {
+  const { installCheapDigging } = require('../core/mining');
+  const items = [{ name: 'diamond_pickaxe', type: 4 }, { name: 'stone_pickaxe', type: 2 }, { name: 'iron_axe', type: 5 }];
+  const bot = { inventory: { items: () => items }, pathfinder: { bestHarvestTool: (b) => items.find((i) => i.name === b.best) || null } };
+  installCheapDigging(bot);
+  installCheapDigging(bot);
+  const dig = bot.pathfinder.bestHarvestTool;
+  assert.equal(dig({ name: 'deepslate', best: 'diamond_pickaxe', harvestTools: { 2: true, 4: true } }).name, 'stone_pickaxe');
+  assert.equal(dig({ name: 'obsidian', best: 'diamond_pickaxe', harvestTools: { 4: true } }).name, 'diamond_pickaxe');
+  assert.equal(dig({ name: 'oak_log', best: 'iron_axe' }).name, 'iron_axe');
+  items.splice(1, 1);
+  assert.equal(dig({ name: 'deepslate', best: 'diamond_pickaxe', harvestTools: { 2: true, 4: true } }).name, 'diamond_pickaxe');
+});
+
 test('the tunnel may cut through its own earlier tunnels; only unknown openings are caves', () => {
   const solid = { name: 'stone', boundingBox: 'block', diggable: true };
   const air = { name: 'air', boundingBox: 'empty' };
