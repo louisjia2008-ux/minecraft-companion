@@ -888,3 +888,41 @@ test('asked again, the nether search goes on from the lookouts and structures th
   assert.deepEqual(again.memory.bastion, new Vec3(235, 34, 64));
   assert.equal(again.memory.fortress, null);
 });
+
+test('in a flooded pit with its rim two above the water, the bot cuts a step and climbs out', async () => {
+  const { stepOutOfPool } = require('../core/actions');
+  // A 4x4 pit of water from y 57 to 62 in stone; the ground is at y 63 (air from 64).
+  const dug = new Set();
+  const name = (p) => {
+    if (dug.has(`${p.x},${p.y},${p.z}`)) return 'air';
+    if (p.y >= 64) return 'air';
+    if (p.x >= 0 && p.x <= 3 && p.z >= 0 && p.z <= 3 && p.y >= 57) return p.y <= 62 ? 'water' : 'air';
+    return 'stone';
+  };
+  const block = (p) => { const n = name(p); return { name: n, position: p.floored(), boundingBox: n === 'stone' ? 'block' : 'empty', diggable: true }; };
+  const bot = {
+    entity: { position: new Vec3(1.5, 62.2, 1.5), onGround: false, isInWater: true },
+    blockAt: (p) => block(new Vec3(p.x, p.y, p.z).floored()),
+    canDigBlock: () => true, dig: async (b) => { dug.add(`${b.position.x},${b.position.y},${b.position.z}`); }, stopDigging() {},
+    lookAt: async (t) => { bot.target = t; },
+    setControlState: (c, on) => {
+      if (c !== 'forward' || !on || !bot.target) return;
+      // Swims straight at the target; onto a ledge only where the cell over it is open.
+      const p = bot.entity.position;
+      const step = (d) => Math.max(-0.5, Math.min(0.5, d));
+      const dx = step(bot.target.x - p.x);
+      const dz = step(bot.target.z - p.z);
+      const next = new Vec3(p.x + dx, p.y, p.z + dz);
+      const feet = new Vec3(Math.floor(next.x), 63, Math.floor(next.z));
+      if (name(feet.offset(0, -1, 0)) === 'stone' && name(feet) === 'air' && name(feet.offset(0, 1, 0)) === 'air') {
+        bot.entity.position = new Vec3(next.x, 63, next.z); bot.entity.onGround = true;
+      } else if (name(new Vec3(Math.floor(next.x), 62, Math.floor(next.z))) === 'water') bot.entity.position = next;
+    },
+  };
+  const ctx = { record() {}, signal: new AbortController().signal };
+  assert.equal(await stepOutOfPool(bot, ctx, { maxTicks: 40 }), true);
+  assert.equal(bot.entity.position.y, 63);
+  assert.ok(dug.size >= 1 && dug.size <= 2, [...dug].join(' '));
+  // On dry ground: nothing to do.
+  assert.equal(await stepOutOfPool(bot, ctx), false);
+});

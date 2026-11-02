@@ -475,6 +475,7 @@ async function unstick(bot, ctx) {
   // Afloat out at sea: the planner finds no path over open water. A bot sat
   // in a kelp bed far from land for over an hour. Swim for the nearest shore.
   if (await swimAshore(bot, ctx)) return { ok: true, moved: 'swam_ashore' };
+  if (await stepOutOfPool(bot, ctx)) return { ok: true, moved: 'out_of_pool' };
   if (await nudge(bot, ctx)) return { ok: true, moved: 'nudged' };
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;
@@ -569,6 +570,67 @@ async function swimAshore(bot, ctx, { maxTicks = 1200 } = {}) {
   const end = bot.entity.position;
   if (!shore) return Math.hypot(end.x - start.x, end.z - start.z) > 16;
   return !wet(end.floored()) || Math.hypot(end.x - target.x, end.z - target.z) < 1.5;
+}
+
+/**
+ * In a pool walled higher than a jump out of water (a flooded pit whose rim
+ * stands two over the surface): dig the rim down to a step one block over
+ * the water and climb out onto it. A bot swam in a 4x4 pit for an hour.
+ */
+async function stepOutOfPool(bot, ctx, { maxTicks = 200 } = {}) {
+  const feet = bot.entity.position.floored();
+  const wet = (p) => SEA.has(bot.blockAt(p)?.name);
+  if (!wet(feet) && !wet(feet.offset(0, -1, 0))) return false;
+  let top = wet(feet) ? feet : feet.offset(0, -1, 0);
+  while (wet(top.offset(0, 1, 0))) top = top.offset(0, 1, 0);
+  const here = bot.entity.position;
+  const ledges = [];
+  for (let dx = -4; dx <= 4; dx += 1) {
+    for (let dz = -4; dz <= 4; dz += 1) {
+      const from = top.offset(dx, 0, dz);
+      if (!wet(from) || bot.blockAt(from.offset(0, 1, 0))?.boundingBox !== 'empty') continue;
+      for (const [sx, sz] of SIDES) {
+        const ledge = from.offset(sx, 0, sz);
+        const b = bot.blockAt(ledge);
+        if (b?.boundingBox !== 'block' || wet(ledge)) continue;
+        ledges.push({ ledge, from, d: Math.hypot(ledge.x + 0.5 - here.x, ledge.z + 0.5 - here.z) });
+      }
+    }
+  }
+  ledges.sort((a, b) => a.d - b.d);
+  const swimTo = async (target, done) => {
+    try {
+      for (let i = 0; i < maxTicks && !done(); i += 1) {
+        await bot.lookAt(target, true);
+        bot.setControlState('forward', true);
+        bot.setControlState('jump', true);
+        await sleep(50, ctx.signal);
+      }
+    } finally {
+      bot.setControlState('forward', false);
+      bot.setControlState('jump', false);
+    }
+  };
+  for (const { ledge, from } of ledges.slice(0, 4)) {
+    const cells = [ledge.offset(0, 1, 0), ledge.offset(0, 2, 0)];
+    if (cells.some((c) => FLUID.test(bot.blockAt(c)?.name || '') || bot.blockAt(c)?.diggable === false)) continue;
+    // Swim up against the ledge, then cut the rim above it away.
+    const beside = from.offset(0.5, 0.5, 0.5);
+    await swimTo(beside, () => Math.hypot(bot.entity.position.x - beside.x, bot.entity.position.z - beside.z) < 0.8);
+    let open = true;
+    for (const c of cells) {
+      const b = bot.blockAt(c);
+      if (!b || b.boundingBox === 'empty') continue;
+      const dug = await digBlock(bot, ctx, b, { timeoutMs: Math.max(8000, (Number(bot.digTime?.(b)) || 0) + 3000) });
+      if (!dug.ok) { open = false; break; }
+    }
+    if (!open) continue;
+    const step = ledge.offset(0.5, 1, 0.5);
+    ctx.record('step_out_of_pool', { ledge: `${ledge.x},${ledge.y},${ledge.z}` });
+    await swimTo(step, () => bot.entity.onGround && !wet(bot.entity.position.floored()));
+    if (!wet(bot.entity.position.floored()) && bot.entity.position.y >= ledge.y + 0.9) return true;
+  }
+  return false;
 }
 
 const WOODEN_DOOR = /^(?!iron_).*_door$/;
@@ -808,6 +870,6 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, breakLattice, openHeadroom, openNearDoor, swimAshore, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, breakLattice, openHeadroom, openNearDoor, swimAshore, stepOutOfPool, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };
