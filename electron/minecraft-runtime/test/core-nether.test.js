@@ -226,3 +226,32 @@ test('a zombified piglin the server flags as aggressive is fought, wither skelet
   bot.entities[7].metadata = { 2: 4 };
   assert.equal(defend.want(nearPiglin(bot)), 1);
 });
+
+test('a portal that does not send the bot on is left and walked into again', async () => {
+  const actions = require('../core/actions');
+  const saved = { goTo: actions.goTo, haltBody: actions.haltBody };
+  const bot = makeWorld({ '0,64,0': 'nether_portal' });
+  bot.entity.position = new Vec3(0.5, 64, 0.5);
+  bot.waitForChunksToLoad = async () => {};
+  const moves = [];
+  actions.haltBody = () => {};
+  // Stepping out lands beside the portal; walking back in finds its cooldown gone.
+  actions.goTo = async (_b, _c, goal) => {
+    const out = goal.constructor.name === 'GoalInvert';
+    moves.push(out ? 'out' : 'in');
+    bot.entity.position = out ? new Vec3(2.5, 64, 0.5) : new Vec3(0.5, 64, 0.5);
+    if (!out) setTimeout(() => { bot.game.dimension = 'overworld'; }, 20);
+    return { ok: true };
+  };
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record: (k) => records.push(k) };
+  try {
+    const result = await nether.travel(bot, ctx, new Vec3(0, 64, 0), { settleMs: 30, cooldownMs: 10, timeoutMs: 500 });
+    assert.equal(result.ok, true);
+    assert.equal(result.dimension, 'overworld');
+    assert.deepEqual(moves, ['out', 'in']);
+    assert.ok(records.includes('portal_reenter'));
+  } finally {
+    Object.assign(actions, saved);
+  }
+});

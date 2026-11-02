@@ -190,19 +190,35 @@ async function ignite(bot, ctx, frame) {
  * Walks into the portal at `portal` (a bottom portal cell) and waits for the
  * server to move the bot to the other dimension. Confirmed by the dimension.
  */
-async function travel(bot, ctx, portal, { timeoutMs = 20000 } = {}) {
+async function travel(bot, ctx, portal, { timeoutMs = 20000, settleMs = 6000, cooldownMs = 2500, tries = 3 } = {}) {
   const from = dimension(bot);
   const p = new Vec3(portal.x, portal.y, portal.z);
-  if (!bot.entity.position.floored().equals(p)) {
-    const near = await actions.goNear(bot, ctx, p, 3, { timeoutMs: 60000 });
-    if (!near.ok && bot.entity.position.distanceTo(p) > 6) return near;
+  const enter = async () => {
     const inside = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), {
       timeoutMs: 15000, arrived: () => bot.blockAt(bot.entity.position.floored())?.name === 'nether_portal' || dimension(bot) !== from,
     });
-    if (!inside.ok && dimension(bot) === from) return inside;
+    return inside.ok || dimension(bot) !== from ? { ok: true } : inside;
+  };
+  if (!bot.entity.position.floored().equals(p)) {
+    const near = await actions.goNear(bot, ctx, p, 3, { timeoutMs: 60000 });
+    if (!near.ok && bot.entity.position.distanceTo(p) > 6) return near;
+    const inside = await enter();
+    if (!inside.ok) return inside;
   }
   actions.haltBody(bot);
-  const moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs, signal: ctx.signal });
+  let moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs: Math.min(settleMs, timeoutMs), signal: ctx.signal });
+  // Standing in a portal while its cooldown runs keeps the cooldown going (a fresh
+  // arrival, or a hop straight back): step out, let it lapse, then walk in again.
+  for (let i = 1; !moved && i < tries; i += 1) {
+    ctx.record?.('portal_reenter', { attempt: i });
+    await leavePortal(bot, ctx);
+    await sleep(cooldownMs, ctx.signal);
+    if (dimension(bot) !== from) { moved = true; break; }
+    const inside = await enter();
+    if (!inside.ok) return inside;
+    actions.haltBody(bot);
+    moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs, signal: ctx.signal });
+  }
   if (!moved) return fail('portal_no_transfer');
   // New dimension: wait for the ground to load before anything plans a path.
   try {
