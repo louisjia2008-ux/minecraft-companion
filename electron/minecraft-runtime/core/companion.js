@@ -54,13 +54,25 @@ function fitForNight(bot) {
 
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
+const SPRINT_FOOD = 18;
 function configureMovements(bot) {
   const movements = new Movements(bot);
   movements.canDig = true;
   movements.allow1by1towers = false;
   movements.scafoldingBlocks = [];
   movements.allowParkour = false;
-  movements.allowSprinting = true;
+  // Sprinting costs a food point every 40 blocks; walking costs nothing. A
+  // bot sprinting everywhere spent a third of its hours hunting for food.
+  // It sprints only on a full stomach (whoever else turns sprinting off, the
+  // nether and the End, still does).
+  let sprint = true;
+  Object.defineProperty(movements, 'allowSprinting', {
+    configurable: true, enumerable: true,
+    get: () => sprint && !(Number.isFinite(bot.food) && bot.food < SPRINT_FOOD),
+    set: (value) => { sprint = Boolean(value); },
+  });
+  // What was set, hunger aside: saved and restored around the nether and the End.
+  Object.defineProperty(movements, 'sprintSetting', { configurable: true, get: () => sprint });
   movements.maxDropDown = 4; // a 4-block drop costs one heart; 3 strands the bot on tree tops
   movements.infiniteLiquidDropdownDistance = false;
   movements.canOpenDoors = true;

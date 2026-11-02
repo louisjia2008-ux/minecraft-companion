@@ -214,7 +214,7 @@ function applyEndMovements(bot) {
   if (!m || m.companionEnd) return () => {};
   const saved = {
     maxDropDown: m.maxDropDown, towers: m.allow1by1towers, scaffold: m.scafoldingBlocks, placeCost: m.placeCost,
-    steps: m.exclusionAreasStep.length, cantBreak: new Set(m.blocksCantBreak), sprint: m.allowSprinting,
+    steps: m.exclusionAreasStep.length, cantBreak: new Set(m.blocksCantBreak), sprint: m.sprintSetting ?? m.allowSprinting,
     parkour: m.allowParkour,
   };
   m.companionEnd = true;

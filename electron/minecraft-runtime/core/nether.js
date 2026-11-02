@@ -256,7 +256,7 @@ function applyNetherMovements(bot) {
   const m = bot.pathfinder?.movements;
   if (!m || m.companionNether) return () => {};
   const saved = { maxDropDown: m.maxDropDown, digCost: m.digCost, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length,
-    scaffold: m.scafoldingBlocks, sprint: m.allowSprinting };
+    scaffold: m.scafoldingBlocks, sprint: m.sprintSetting ?? m.allowSprinting };
   m.companionNether = true;
   m.maxDropDown = 3;
   // Netherrack breaks in an instant, so plain paths tunnel straight through
