@@ -211,6 +211,7 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
     const finished = new Promise((resolve) => { resolveOutcome = resolve; });
     companion = companionFactory({ bot, onEvent(event) {
       write('brain', event);
+      try { scenario.onEvent?.(event, runState); } catch (error) { write('scenario_event_error', { reason: error.message }); }
       if (traceInventory && (event.type === 'plan_step' || event.type === 'behavior_finished')) trace(event.type);
       if (!signal?.aborted && traceInventory && event.reason === 'missing_ingredients' && Date.now() - readbackAt > 60000) {
         readbackAt = Date.now();

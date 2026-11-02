@@ -165,6 +165,19 @@ const playthroughNatural = {
     state.steps = STEPS.map((s) => ({ id: s.id, asks: 0, askedAt: null, doneAt: null }));
     return null;
   },
+  // The model reads why a task failed: a nether trip that could not build its
+  // portal for want of obsidian (or flint and steel) sends it back for the gear.
+  onEvent(event, state) {
+    if (event.type !== 'goal_failed' || event.goal !== 'nether_expedition' || !state.steps) return;
+    const reasons = event.reasons || [];
+    const short = reasons.filter((r) => r === 'missing_obsidian' || r === 'missing_flint_and_steel').length;
+    if (short * 2 < reasons.length) return;
+    const gear = state.steps.find((e) => e.id === 'gear');
+    if (!gear?.doneAt) return;
+    gear.doneAt = null;
+    gear.asks = 0;
+    state.gearDone = false;
+  },
   async onTick(context) {
     if (context.signal?.aborted) return;
     const { companion, bot, state, server, username, write } = context;
