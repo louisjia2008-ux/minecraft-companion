@@ -382,3 +382,19 @@ test('a mine that comes to nothing is started again on another side of the house
   const reach = targets.slice(0, 3).map((t) => Math.hypot(t.x, t.z));
   assert.ok(reach[2] > reach[0], reach.join(' '));
 });
+
+test('far below the chest, the walk home starts by going up', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.bot.entity.position = new Vec3(-17, -40, -37);
+  const calls = [];
+  sim.actions.surface = async () => { calls.push('surface'); sim.bot.entity.position = new Vec3(-17, 2, -37); return { ok: true, surfaced: true }; };
+  const storeInChest = sim.skills.storeInChest;
+  sim.skills.storeInChest = async (...args) => { calls.push('store'); return storeInChest(...args); };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'cobblestone', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.deepEqual(calls, ['surface']);
+  await goal.run(ctx);
+  assert.deepEqual(calls, ['surface', 'store']);
+});

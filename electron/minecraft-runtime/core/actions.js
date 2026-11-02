@@ -695,7 +695,9 @@ async function digStairsUp(bot, ctx, targetY, { maxSteps = 24 } = {}) {
     for (const p of [feet.offset(0, 2, 0), ahead.offset(0, 2, 0), ahead.offset(0, 1, 0)]) {
       const b = bot.blockAt(p);
       if (b && b.boundingBox !== 'empty') {
-        const dug = await digBlock(bot, ctx, b, { timeoutMs: 8000 });
+        // Deepslate by hand takes 15 seconds a block: the timeout follows the dig.
+        const digMs = typeof bot.digTime === 'function' ? bot.digTime(b) : 0;
+        const dug = await digBlock(bot, ctx, b, { timeoutMs: Math.max(8000, (Number(digMs) || 0) + 3000) });
         if (!dug.ok) return climbed;
       }
     }

@@ -36,6 +36,8 @@ const NIGHT_MOBS = new Set(['spider', 'enderman']);
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
 const MINE_FROM_HOME = 8;
+// Further below the chest than this, home is reached by going up first.
+const HOME_BELOW = 8;
 // Stone pickaxes taken down a mine: they wear out on the rock instead of the
 // iron one (a deep staircase digs a few hundred blocks; one lasts 131).
 const SPARE_PICKS = 5;
@@ -380,6 +382,13 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     if (nether.inNether(bot)) {
       const quartz = owed().find((r) => r.key === 'quartz')?.count || 0;
       return netherTrip(ctx, quartz - countKey('quartz', ctx.perceive().inventory, kb));
+    }
+    // Out of picks deep in a mine, a walk home dug by hand through deepslate
+    // timed out every 20 seconds for two hours: out of the mine first.
+    const homeward = nameAt(chest) === null || memory.chest === null;
+    if (homeward && bot.entity.position.y < chest.y - HOME_BELOW) {
+      const up = await climbOut(ctx);
+      if (up) return up;
     }
     if (nameAt(chest) === null) {
       ctx.record('return_home', {});
