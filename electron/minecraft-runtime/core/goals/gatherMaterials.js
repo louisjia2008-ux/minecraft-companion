@@ -394,7 +394,19 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       ctx.record('return_home', {});
       return actions.goNear(bot, ctx, new Vec3(chest.x, chest.y, chest.z), 3, { timeoutMs: 90000 });
     }
-    if (nameAt(chest) !== 'chest') return { ok: false, reason: 'chest_missing' };
+    // Blown up (a creeper by the house): make another and put it back where it stood.
+    if (nameAt(chest) !== 'chest') {
+      if (!['air', 'cave_air'].includes(nameAt(chest))) return { ok: false, reason: 'chest_missing' };
+      const state = ctx.perceive();
+      if (countKey('chest', state.inventory, kb) < 1) {
+        const step = planNext({ requirements: [{ key: 'chest', count: 1 }], inventory: plannerInventory(state), stations: placedStations(), kb });
+        return step ? runStep(ctx, step) : { ok: false, reason: 'chest_missing' };
+      }
+      ctx.record('chest_replaced', { position: posKey(chest) });
+      const placed = await skills.placeAt(bot, ctx, chest, (n) => n === 'chest', { faces: DOWN });
+      if (placed.ok) memory.chest = null;
+      return placed;
+    }
     if (memory.chest === null) {
       ctx.record('check_chest', {});
       return store(ctx, []);

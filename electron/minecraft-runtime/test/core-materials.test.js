@@ -398,3 +398,19 @@ test('far below the chest, the walk home starts by going up', async () => {
   await goal.run(ctx);
   assert.deepEqual(calls, ['surface', 'store']);
 });
+
+test('a chest blown up is made again and put back where it stood', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.world.set('0,0,0', 'air');
+  Object.assign(sim.inventory, { oak_planks: 8 });
+  sim.world.set('1,0,0', 'crafting_table');
+  const placed = [];
+  const placeAt = sim.skills.placeAt;
+  sim.skills.placeAt = async (b, c, spot, match, opts) => { placed.push(`${spot.x},${spot.y},${spot.z}`); return placeAt(b, c, spot, match, opts); };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'cobblestone', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  for (let i = 0; i < 4 && !placed.includes('0,0,0'); i += 1) await goal.run(ctx);
+  assert.ok(placed.includes('0,0,0'), placed.join(' '));
+  assert.equal(sim.world.get('0,0,0'), 'chest');
+});
