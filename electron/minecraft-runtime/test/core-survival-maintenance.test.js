@@ -193,3 +193,28 @@ test('right after a kill with more animals close by, provision hunts a few more 
   s.state.inventory.beef = 6;
   assert.equal(s.behavior('provision').want(fed()), 0, 'the bag is stocked');
 });
+
+test('drops are gone back for only when something dropped, and never into the lava that killed', () => {
+  const bot = Object.assign(new EventEmitter(), { entity: { position: new Vec3(0, 64, 0) }, game: { dimension: 'overworld' },
+    registry: { foodsByName: {} }, inventory: { slots: [], items: () => items }, blockAt: () => ({ name: feet }) });
+  let items = [];
+  let feet = 'air';
+  const recoverDrops = createSurvivalBehaviors({ bot }).find((b) => b.name === 'recover_drops');
+  const state = { alive: true, health: 20, food: 20, inventory: {}, hostiles: [], isDay: true, sheltered: false,
+    position: new Vec3(10, 64, 0) };
+  // Respawned with an empty bag: the drops lie where it died.
+  bot.emit('death');
+  bot.emit('spawn');
+  assert.ok(recoverDrops.want(state) > 0);
+  // keepInventory: back alive with everything, nothing to go back for.
+  items = [{ name: 'diamond_pickaxe' }];
+  bot.emit('death');
+  bot.emit('spawn');
+  assert.equal(recoverDrops.want(state), 0);
+  // Burnt in lava: nothing left there either.
+  items = [];
+  feet = 'lava';
+  bot.emit('death');
+  bot.emit('spawn');
+  assert.equal(recoverDrops.want(state), 0);
+});

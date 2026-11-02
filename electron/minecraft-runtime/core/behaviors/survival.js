@@ -802,13 +802,25 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Items dropped on death stay for five minutes: go back for them once it is safe.
   let lastDeath = null;
   const onDeathDrops = () => {
-    lastDeath = { position: bot.entity.position.clone(), dimension: dimensionOf(bot), at: Date.now(), tries: 0 };
+    // Died in lava: whatever dropped burnt up, and going back is the same swim.
+    const feet = bot.blockAt?.(bot.entity.position.floored());
+    const burnt = /lava/.test(feet?.name || '');
+    lastDeath = burnt ? null : { position: bot.entity.position.clone(), dimension: dimensionOf(bot), at: Date.now(), tries: 0 };
+  };
+  // Back alive with the bag still full (keepInventory): nothing was dropped.
+  // A bot went back for its "drops" into the lava that killed it, five deaths running.
+  const onSpawnDrops = () => {
+    if (lastDeath && !lastDeath.respawned) {
+      lastDeath.respawned = true;
+      if ((bot.inventory?.items?.() || []).length > 0) lastDeath = null;
+    }
   };
   bot.on?.('death', onDeathDrops);
+  bot.on?.('spawn', onSpawnDrops);
   const recoverDrops = {
     name: 'recover_drops',
     band: BAND.MAINTENANCE,
-    dispose: () => bot.removeListener?.('death', onDeathDrops),
+    dispose: () => { bot.removeListener?.('death', onDeathDrops); bot.removeListener?.('spawn', onSpawnDrops); },
     want(state) {
       if (state.sheltered || !lastDeath || Date.now() - lastDeath.at > t.dropsTtlMs || lastDeath.tries >= 3) return 0;
       if (state.health < 10 || threats(state).some((h) => h.distance <= 8)) return 0;
