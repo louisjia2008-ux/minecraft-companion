@@ -89,6 +89,8 @@ test('discardable lists junk first, then whatever exceeds one stack, never what 
   // Ground cover picked up on the way, and sticks past a stack.
   assert.deepEqual(discardable({ wildflowers: 37, leaf_litter: 20, stick: 208, bread: 3 }),
     [{ name: 'wildflowers', count: 37 }, { name: 'leaf_litter', count: 20 }, { name: 'stick', count: 144 }]);
+  assert.deepEqual(discardable({ raw_copper: 41, coal: 127, feather: 20 }),
+    [{ name: 'raw_copper', count: 41 }, { name: 'coal', count: 63 }]);
 });
 
 test('two path failures in a row unstick the body, for any goal', async () => {

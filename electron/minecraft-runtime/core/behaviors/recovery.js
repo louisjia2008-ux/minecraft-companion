@@ -21,10 +21,13 @@ const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff
   'pointed_dripstone', 'rotten_flesh', 'poisonous_potato', 'spider_eye', 'cobweb', 'dead_bush',
   // Ground cover broken on the way: a bag once held 37 wildflowers and 20 leaf litter.
   'wildflowers', 'leaf_litter', 'pink_petals', 'short_grass', 'tall_grass', 'fern', 'big_dripleaf', 'small_dripleaf',
-  'moss_carpet', 'hanging_roots', 'glow_lichen', 'vine', 'seagrass']);
+  'moss_carpet', 'hanging_roots', 'glow_lichen', 'vine', 'seagrass',
+  // Mined on the way, wanted by no goal: a bag full of them failed every craft (no room for the output).
+  'raw_copper', 'copper_ingot', 'lapis_lazuli', 'mossy_cobblestone', 'moss_block', 'glow_ink_sac']);
 // Useful in moderation: one stack is kept, the rest goes.
 // A stack of netherrack is the nether's building block: bridges, steps out of lava.
-const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64, stick: 64, egg: 16 };
+const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64, stick: 64, egg: 16,
+  coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16 };
 const SAPLINGS_KEPT = 8;
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
