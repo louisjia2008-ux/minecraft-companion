@@ -213,7 +213,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
-    eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, recoverFood: 18, oxygen: 8, dropsTtlMs: 270000,
+    eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, provisionInjured: 16, recoverFood: 18, oxygen: 8, dropsTtlMs: 270000,
     walkSpeed: 4, dropsMaxDistance: 600, swimScale: 1, provisionRange: 160,
     stockFood: 6, stockRange: 24, stockWindowMs: 60000,
     ...thresholds };
@@ -734,8 +734,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // injured bot cannot regenerate, even at food 16. Stop supplying at the
       // same threshold at which recovery can take over, and eat carried food
       // first using exactly the eat behavior's risky-food policy.
+      // Hurt to where eat would eat (below 16) and nothing to eat: food it is.
+      // Short of 14 health a bucket of lava is not fetched, and a bot at 11
+      // health and 16 food failed its obsidian forty times without ever healing.
       const needsFood = state.food <= t.provisionFood
-        || (state.health < t.recoverHealth && state.food < t.recoverFood);
+        || (state.health < t.provisionInjured && state.food < t.recoverFood);
       if (state.sheltered) return 0;
       // Out hunting with animals still close by: a few more for the bag. One
       // kill at a time, the bot was back out hunting every few minutes of

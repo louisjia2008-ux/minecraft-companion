@@ -218,3 +218,11 @@ test('drops are gone back for only when something dropped, and never into the la
   bot.emit('spawn');
   assert.equal(recoverDrops.want(state), 0);
 });
+
+test('hurt but not badly, with nothing to eat and too full to heal, the bot gets food', () => {
+  const s = setup();
+  const hurt = { ...s.state, health: 10.8, food: 16, inventory: { chicken: 5 } };
+  assert.ok(s.behavior('provision').want(hurt) > 0);
+  assert.equal(s.behavior('provision').want({ ...hurt, health: 17 }), 0);
+  assert.equal(s.behavior('provision').want({ ...hurt, food: 18 }), 0);
+});
