@@ -28,7 +28,9 @@ const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff
 // Useful in moderation: one stack is kept, the rest goes.
 // A stack of netherrack is the nether's building block: bridges, steps out of lava.
 const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64, stick: 64, egg: 16,
-  coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16, redstone: 64 };
+  coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16, redstone: 64, clay_ball: 16 };
+// Sheared or dropped wool of any other colour: a bed takes three of one colour, so a few are kept.
+const WOOL_KEPT = 3;
 // Still full with none of those: ground blocks dug anywhere go, whole stacks
 // (a part stack frees no slot). A full bag fails every craft.
 const CHEAP = new Set(['dirt', 'sand', 'cobbled_deepslate', 'netherrack', 'coarse_dirt']);
@@ -45,6 +47,7 @@ function discardable(inventory, keep = () => false) {
     if (JUNK.has(name)) junk.push({ name, count });
     else if (SURPLUS[name] && count > SURPLUS[name]) surplus.push({ name, count: count - SURPLUS[name] });
     else if (name.endsWith('_sapling') && count > SAPLINGS_KEPT) surplus.push({ name, count: count - SAPLINGS_KEPT });
+    else if (name.endsWith('_wool') && count > WOOL_KEPT) surplus.push({ name, count: count - WOOL_KEPT });
   }
   if (junk.length || surplus.length) return [...junk, ...surplus];
   return Object.entries(inventory || {}).filter(([name, count]) => count > 0 && CHEAP.has(name) && !keep(name))

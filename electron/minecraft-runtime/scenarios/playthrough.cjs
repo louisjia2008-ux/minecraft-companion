@@ -143,7 +143,7 @@ const playthroughNatural = {
   autonomous: true,
   // Many hours a run: run on its own, not as a regression round.
   experimental: true,
-  timeoutMs: 16 * 60 * MINUTE,
+  timeoutMs: (Number(process.env.PLAYTHROUGH_HOURS) || 16) * 60 * MINUTE,
   setupTimeoutMs: 180000,
   setup({ username, difficulty = 'easy' }) {
     // PLAYTHROUGH_KEEP_INVENTORY=1: deaths keep the bag, to test the whole chain past the fights.

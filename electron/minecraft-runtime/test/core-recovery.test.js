@@ -93,6 +93,9 @@ test('discardable lists junk first, then whatever exceeds one stack, never what 
   assert.deepEqual(discardable({ dirt: 37, redstone: 50, iron_pickaxe: 1 }), [{ name: 'dirt', count: 37 }]);
   assert.deepEqual(discardable({ raw_copper: 41, coal: 127, feather: 20 }),
     [{ name: 'raw_copper', count: 41 }, { name: 'coal', count: 63 }]);
+  // Wool of every colour from the sheep killed for food, and clay from a riverbed.
+  assert.deepEqual(discardable({ white_wool: 31, gray_wool: 3, black_wool: 6, clay_ball: 64 }),
+    [{ name: 'white_wool', count: 15 }, { name: 'black_wool', count: 3 }, { name: 'clay_ball', count: 48 }]);
 });
 
 test('two path failures in a row unstick the body, for any goal', async () => {
