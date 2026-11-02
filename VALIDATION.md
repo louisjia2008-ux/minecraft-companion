@@ -1,3 +1,169 @@
+# 本轮验证记录 — 2026-10-31
+
+> **正式发布门槛未通过；本轮未打包。`0.1.0` 仅为本轮目标版本，尚无本轮通过验证的发布包。**
+
+观察快照：**2026-10-31 05:17:50 +08:00**；离线与游戏代码基线：`b1317e87e3d18c3a186535b1012bef5339ae7c44`。文档提交不改变这个游戏代码身份，后续提交的 CI 需分别记录。
+
+输入摘要：`.ralph/artifacts/release-validation-final-56be4ace72bd3b1297650d40334ff829037ed9a0f1c710ef31bad8354c3ecfd5.json`，SHA-256 `56be4ace72bd3b1297650d40334ff829037ed9a0f1c710ef31bad8354c3ecfd5`。所有下列数字来自同一次读取的快照；本地证据目录不随文档 PR 上传。
+
+## 离线八项原命令
+
+| 命令（仓库根目录） | 通过／总数 | 其他原始计数 | 结果与退出码 | 耗时 |
+|---|---|---|---|---|
+| `npm run lint --prefix electron` | 静态检查 | — | PASS，自然 exit 0 | 0分05秒 |
+| `npm run typecheck --prefix electron` | 静态检查 | — | PASS，自然 exit 0 | 0分02秒 |
+| `npm test --prefix electron` | 74/74 | fail=0 | PASS，自然 exit 0 | 0分02秒 |
+| `npm run test:security --prefix electron` | 6/6 | fail=0 | PASS，自然 exit 0 | 0分01秒 |
+| `npm run test:minecraft:acceptance --prefix electron` | 25/25 | fail=0，cancelled=0，skipped=0，todo=0 | PASS，自然 exit 0 | 0分00秒 |
+| `npm run test:minecraft:setup --prefix electron` | 18/18 | fail=0，cancelled=0，skipped=0，todo=0 | PASS，自然 exit 0 | 0分00秒 |
+| `npm test --prefix electron/minecraft-runtime` | 3523/3523 | fail=0，cancelled=0，skipped=0，todo=0 | PASS，自然 exit 0 | 7分36秒 |
+| `npm run test:core --prefix electron/minecraft-runtime` | 515/515 | fail=0，cancelled=0，skipped=0，todo=0 | PASS，自然 exit 0 | 0分28秒 |
+
+core 是完整 runtime 的子集，两个数字不能相加当作独立总覆盖。自然退出、失败、cancel/skip/todo按原收据分别保留；缺失字段不推断为零。
+
+## 独立三 session e2e
+
+独立 e2e sessions：**3/3 终态通过**；父命令 **PASS，自然 exit 0**。这里的 seed 1–3 是独立 e2e 批次；full 内的 `e2e-flat` 使用自己的 seed101 运行，不能互相补通过。
+
+| e2e seed | 终态 | 耗时 | 死亡数 | 故障钩子恢复标记 | cleanup |
+|---|---|---|---|---|---|
+| 1 | PASS | 49分25秒 | 3 | 4/4 | 是 |
+| 2 | PASS | 50分57秒 | 2 | 4/4 | 是 |
+| 3 | PASS | 117分26秒 | 2 | 4/4 | 是 |
+
+e2e 的故障钩子恢复标记不是全部资源恢复耗时；特别是计划死亡后的20秒标记只观察存活且重新有目标，不能证明已取回掉落或工具。实际终态仍要求家园、装备、机器产出、故障恢复及存活同时成立。死亡数包含计划与额外死亡，均照实保留。有限受控场景通过不能证明任意自然种子或长期自由游玩可靠。
+
+## 正式 full：34 场景／42 轮
+
+正式 full 计划 **34 场景／42 轮**；当前终态场景 **34/34**，其中整场景通过 **27**、失败 **7**；轮次为 **通过 35、失败 7、未完成 0**。full 父命令：**FAIL，自然 exit 1**。未完成项不计作通过；当前正式失败：`nether-bastion-given`、`end-dragon-given`、`end-portal-natural`、`end-city-given`、`end-full-natural`、`e2e-flat`、`materials-quartz-flat`。
+
+命令：`npm run regression -- --accept-eula --suite full --seed 101 --parallel 2`。base seed101为setup随机化参数，并非所有场景的自然世界生成种子。重复轮次保持原套件定义；未用 `--runs 1` 覆盖。表中“通过轮”还要求清理与非中断门槛成立。失败场景的中位成功耗时可能为空，不能解释为耗时零。
+
+| 场景 | 计划轮 | 已终态轮 | 通过轮 | 场景结论 | 死亡总数 | 成功轮中位耗时 | cleanup |
+|---|---|---|---|---|---|---|---|
+| `collect-logs-flat` | 3 | 3 | 3 | PASS | 0 | 0分44秒 | 是 |
+| `collect-logs-natural` | 3 | 3 | 3 | PASS | 0 | 0分46秒 | 是 |
+| `homestead-flat` | 1 | 1 | 1 | PASS | 0 | 30分35秒 | 是 |
+| `homestead-natural` | 1 | 1 | 1 | PASS | 0 | 21分39秒 | 是 |
+| `night-bunker-flat` | 2 | 2 | 2 | PASS | 0 | 11分44秒 | 是 |
+| `night-bed-flat` | 2 | 2 | 2 | PASS | 0 | 3分15秒 | 是 |
+| `farm-flat` | 2 | 2 | 2 | PASS | 0 | 12分53秒 | 是 |
+| `ranch-flat` | 2 | 2 | 2 | PASS | 0 | 2分16秒 | 是 |
+| `nether-quartz-given` | 1 | 1 | 1 | PASS | 0 | 2分55秒 | 是 |
+| `nether-structures-given` | 1 | 1 | 1 | PASS | 0 | 40分32秒 | 是 |
+| `nether-fortress-given` | 1 | 1 | 1 | PASS | 0 | 20分13秒 | 是 |
+| `nether-bastion-given` | 1 | 1 | 0 | FAIL：timeout | 0 | — | 是 |
+| `end-dragon-given` | 1 | 1 | 0 | FAIL：timeout | 6 | — | 是 |
+| `end-dragon-death` | 1 | 1 | 1 | PASS | 2 | 37分13秒 | 是 |
+| `end-portal-natural` | 1 | 1 | 0 | FAIL：timeout | 0 | — | 是 |
+| `end-city-given` | 1 | 1 | 0 | FAIL：timeout | 0 | — | 是 |
+| `end-full-natural` | 1 | 1 | 0 | FAIL：goal_failed:no_eyes | 5 | — | 是 |
+| `end-water-landing` | 1 | 1 | 1 | PASS | 0 | 1分30秒 | 是 |
+| `cobblegen-flat` | 1 | 1 | 1 | PASS | 0 | 0分20秒 | 是 |
+| `cobblegen-hopper-flat` | 1 | 1 | 1 | PASS | 0 | 0分23秒 | 是 |
+| `smelter-flat` | 1 | 1 | 1 | PASS | 0 | 1分36秒 | 是 |
+| `materials-cobblegen-flat` | 1 | 1 | 1 | PASS | 0 | 6分10秒 | 是 |
+| `branch-mine-iron-flat` | 1 | 1 | 1 | PASS | 0 | 5分53秒 | 是 |
+| `canefarm-flat` | 1 | 1 | 1 | PASS | 0 | 2分13秒 | 是 |
+| `mobfarm-flat` | 1 | 1 | 1 | PASS | 0 | 7分09秒 | 是 |
+| `carpetdupe-flat` | 1 | 1 | 1 | PASS | 0 | 0分25秒 | 是 |
+| `fishing-flat` | 1 | 1 | 1 | PASS | 0 | 1分07秒 | 是 |
+| `raildupe-flat` | 1 | 1 | 1 | PASS | 0 | 1分07秒 | 是 |
+| `ironfarm-flat` | 1 | 1 | 1 | PASS | 0 | 2分35秒 | 是 |
+| `e2e-flat` | 1 | 1 | 0 | FAIL：timeout | 12 | — | 是 |
+| `machines-flat` | 1 | 1 | 1 | PASS | 0 | 32分25秒 | 是 |
+| `branch-mine-redstone-flat` | 1 | 1 | 1 | PASS | 0 | 12分37秒 | 是 |
+| `branch-mine-diamond-flat` | 1 | 1 | 1 | PASS | 0 | 14分00秒 | 是 |
+| `materials-quartz-flat` | 1 | 1 | 0 | FAIL：goal_failed:death_loop | 9 | — | 是 |
+
+### 已有终态的逐轮摘要
+
+| 场景 | 轮次 | 任务结果 | 耗时 | 死亡 | 条件摘要 |
+|---|---|---|---|---|---|
+| `collect-logs-flat` | 1 | PASS | 0分44秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `collect-logs-flat` | 2 | PASS | 0分53秒 | 0 | 轮2：按原场景终态与服务端条件判断 |
+| `collect-logs-flat` | 3 | PASS | 0分44秒 | 0 | 轮3：按原场景终态与服务端条件判断 |
+| `collect-logs-natural` | 1 | PASS | 0分46秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `collect-logs-natural` | 2 | PASS | 0分50秒 | 0 | 轮2：按原场景终态与服务端条件判断 |
+| `collect-logs-natural` | 3 | PASS | 0分43秒 | 0 | 轮3：按原场景终态与服务端条件判断 |
+| `homestead-flat` | 1 | PASS | 30分35秒 | 0 | 轮1：服务端家园结构 95/95；必需装备 {"iron_pickaxe": 1, "iron_sword": 1, "shield": 1} |
+| `homestead-natural` | 1 | PASS | 21分39秒 | 0 | 轮1：服务端家园结构 95/95；必需装备 {"iron_pickaxe": 1, "iron_sword": 1, "shield": 1} |
+| `night-bunker-flat` | 1 | PASS | 11分44秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `night-bunker-flat` | 2 | PASS | 11分44秒 | 0 | 轮2：按原场景终态与服务端条件判断 |
+| `night-bed-flat` | 1 | PASS | 3分15秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `night-bed-flat` | 2 | PASS | 2分58秒 | 0 | 轮2：按原场景终态与服务端条件判断 |
+| `farm-flat` | 1 | PASS | 11分07秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `farm-flat` | 2 | PASS | 12分53秒 | 0 | 轮2：按原场景终态与服务端条件判断 |
+| `ranch-flat` | 1 | PASS | 1分49秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `ranch-flat` | 2 | PASS | 2分16秒 | 0 | 轮2：按原场景终态与服务端条件判断 |
+| `nether-quartz-given` | 1 | PASS | 2分55秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `nether-structures-given` | 1 | PASS | 40分32秒 | 0 | 轮1：运行时交易计数 10；服务端金锭 8；维度 overworld；服务端烈焰棒 8／头颅 2／凋零骷髅击杀 15 |
+| `nether-fortress-given` | 1 | PASS | 20分13秒 | 0 | 轮1：运行时交易计数 0；服务端金锭 24；维度 overworld；服务端烈焰棒 48／头颅 1／凋零骷髅击杀 24 |
+| `nether-bastion-given` | 1 | FAIL | 30分00秒 | 0 | 轮1：运行时交易计数 10；服务端金锭 14；维度 the_nether；服务端烈焰棒 0／头颅 0／凋零骷髅击杀 0；原时限 timeout |
+| `end-dragon-given` | 1 | FAIL | 40分00秒 | 6 | 轮1：服务端杀龙成就 killed=false；运行时水晶计数 10；累计Health下降 298；原时限 timeout |
+| `end-dragon-death` | 1 | PASS | 37分13秒 | 2 | 轮1：服务端杀龙成就 killed=true；运行时水晶计数 18；累计Health下降 244 |
+| `end-portal-natural` | 1 | FAIL | 60分01秒 | 0 | 轮1：服务端维度 overworld；运行时定位门房 -1243,-28,1196；原时限 timeout |
+| `end-city-given` | 1 | FAIL | 60分00秒 | 0 | 轮1：服务端入城成就 false／服务端鞘翅成就 false；运行时looted 0；原时限 timeout |
+| `end-full-natural` | 1 | FAIL | 16分31秒 | 5 | 轮1：服务端杀龙成就 killed=false；服务端入城成就 false／服务端鞘翅成就 false；运行时looted 0；终态原因 goal_failed:no_eyes |
+| `end-water-landing` | 1 | PASS | 1分30秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `cobblegen-flat` | 1 | PASS | 0分20秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `cobblegen-hopper-flat` | 1 | PASS | 0分23秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `smelter-flat` | 1 | PASS | 1分36秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `materials-cobblegen-flat` | 1 | PASS | 6分10秒 | 0 | 轮1：服务端箱子物品 {"cobblestone": 10, "lava_bucket": 1, "water_bucket": 1}；维度 未知 |
+| `branch-mine-iron-flat` | 1 | PASS | 5分53秒 | 0 | 轮1：服务端箱子物品 {"raw_iron": 12}；维度 未知 |
+| `canefarm-flat` | 1 | PASS | 2分13秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `mobfarm-flat` | 1 | PASS | 7分09秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `carpetdupe-flat` | 1 | PASS | 0分25秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `fishing-flat` | 1 | PASS | 1分07秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `raildupe-flat` | 1 | PASS | 1分07秒 | 0 | 轮1：按原场景终态与服务端条件判断 |
+| `ironfarm-flat` | 1 | PASS | 2分35秒 | 0 | 轮1：服务端装置范围村民 3／僵尸 1；玩家铁锭 5 |
+| `e2e-flat` | 1 | FAIL | 300分00秒 | 12 | 轮1：刷石机验收 否；自动熔炉验收 否；服务端家园结构 95/95；必需装备 {"iron_pickaxe": 0, "iron_sword": 0, "shield": 0}；故障恢复标记 4/4；终态存活 是；原时限 timeout |
+| `machines-flat` | 1 | PASS | 32分25秒 | 0 | 轮1：刷石机验收 是；自动熔炉验收 是 |
+| `branch-mine-redstone-flat` | 1 | PASS | 12分37秒 | 0 | 轮1：服务端箱子物品 {"raw_iron": 5, "redstone": 18}；维度 未知 |
+| `branch-mine-diamond-flat` | 1 | PASS | 14分00秒 | 0 | 轮1：服务端箱子物品 {"diamond": 4, "raw_iron": 5, "redstone": 142}；维度 未知 |
+| `materials-quartz-flat` | 1 | FAIL | 12分57秒 | 9 | 轮1：服务端箱子物品 {}；维度 overworld；终态原因 goal_failed:death_loop |
+
+### 证据解释与正式失败
+
+下界的 `trades` 来自运行时目标 memory；`goldOnServer` 和 `dimension` 是服务端读回。交易计数达到目标不能证明已经回主世界；两者不能混写为同一种服务端证据。屠龙场景以服务端 `end/kill_dragon` 成就确认 `killed=true`；`damage` 是所观察龙 Health 下降量的累计，可能包含回血后的重复扣血，不是净伤害，也不能单独归因于机器人伤害或替代击杀成就。`end-full-natural` 还要求相应末地城与战利品条件，不能只凭屠龙阶段判完整通过。材料石英场景要求家中箱子至少8石英；死亡重生后的 overworld 维度不能当作携石英返程成功。
+
+- **`nether-bastion-given`：FAIL：timeout**。轮1：运行时交易计数 10；服务端金锭 14；维度 the_nether；服务端烈焰棒 0／头颅 0／凋零骷髅击杀 0；原时限 timeout；cleanup=是。
+- **`end-dragon-given`：FAIL：timeout**。轮1：服务端杀龙成就 killed=false；运行时水晶计数 10；累计Health下降 298；原时限 timeout；cleanup=是。
+- **`end-portal-natural`：FAIL：timeout**。轮1：服务端维度 overworld；运行时定位门房 -1243,-28,1196；原时限 timeout；cleanup=是。
+- **`end-city-given`：FAIL：timeout**。轮1：服务端入城成就 false／服务端鞘翅成就 false；运行时looted 0；原时限 timeout；cleanup=是。
+- **`end-full-natural`：FAIL：goal_failed:no_eyes**。轮1：服务端杀龙成就 killed=false；服务端入城成就 false／服务端鞘翅成就 false；运行时looted 0；终态原因 goal_failed:no_eyes；cleanup=是。
+- **`e2e-flat`：FAIL：timeout**。轮1：刷石机验收 否；自动熔炉验收 否；服务端家园结构 95/95；必需装备 {"iron_pickaxe": 0, "iron_sword": 0, "shield": 0}；故障恢复标记 4/4；终态存活 是；原时限 timeout；cleanup=是。
+- **`materials-quartz-flat`：FAIL：goal_failed:death_loop**。轮1：服务端箱子物品 {}；维度 overworld；终态原因 goal_failed:death_loop；cleanup=是。
+
+精确寻路／抢占首因若缺少相应遥测，保持 UNKNOWN；终态失败与局部条件满足分别记录。原始 JSONL、服务端日志与失败快照保留本地，不能通过改测试、改游戏行为或重跑抹去原失败。
+
+## 实验性参考
+
+唯一实验性场景 `ironfarm-village-flat`：计划1轮，终态 **FAIL：timeout**；命令 **FAIL，自然 exit 1**。实验结果单列，不影响正式 full 的包门槛，也不能抵消正式失败。
+
+轮1：服务端装置范围村民 2／僵尸 0；玩家铁锭 0；原时限 timeout
+
+## 包与后续发布
+
+| 步骤／产物 | 本轮结果 |
+|---|---|
+| `npm run verify` | 受正式门槛阻止，未执行 |
+| `npm run make` | 受正式门槛阻止，未执行 |
+| `npm run smoke:minecraft-package` | 受正式门槛阻止，未执行 |
+| 发布包路径、大小、SHA-256 | 无本轮产物；均无可报告值 |
+| git tag／GitHub Release | 均未执行 |
+
+**本轮文档通过独立 release 分支与待审查 PR 审阅；未创建 tag 或 GitHub Release。** 正式场景失败按任务要求阻止 `verify`、`make` 与包冒烟；本轮没有发行包或产物 SHA-256。后续修复与重新验证需要单独记录，不得用旧冻结或实验场景结果补足本轮失败。
+
+本地可核对证据：`.ralph/artifacts/` 中原命令收据、结构化报告和 `failure-<scenario>/manifest.json`；游戏场景摘要在 `.minecraft-local-test/scenario-runs/`。本页不嵌入原始日志、存档或本机绝对路径。
+
+## 本轮前基线历史原文（b1317e8 原样保留，不作为本轮证据）
+
+<details>
+<summary>展开基线文档中的历史记录；其中旧 PASS、alpha 与发行措辞均只属于原冻结</summary>
+
+> 以下为 `b1317e87e3d18c3a186535b1012bef5339ae7c44` 中 `VALIDATION.md` 的原文，保留所有旧失败、中断和负面记录。它不证明本轮通过，也不覆盖本页上方的当前失败与未完成项。
+
 # Core validation report — v0.1.0-alpha.1 / 2026-10-24
 
 **Frozen a22 offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
@@ -415,3 +581,5 @@ The formal driver and independent final importer additionally bind source/driver
 | Version/tag / publication | v0.1.0-alpha.1 / final asset+install+privacy release receipts recorded separately |
 
 Raw worlds, complete logs, accounts, personal configuration and local absolute paths are not part of the public asset. Final public evidence should contain the minimal sanitized per-round result and hashes needed to assess the claim, preserving failures and UNKNOWN/PENDING fields instead of replacing them with zeroes or assumed success.
+
+</details>

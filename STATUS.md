@@ -1,3 +1,57 @@
+# 当前状态 — 0.1.0 目标版本
+
+> **正式发布门槛未通过；本轮未打包。`0.1.0` 仅为本轮目标版本，尚无本轮通过验证的发布包。**
+
+观察快照：**2026-10-31 05:17:50 +08:00**；离线与游戏代码基线：`b1317e87e3d18c3a186535b1012bef5339ae7c44`。文档提交不改变这个游戏代码身份，后续提交的 CI 需分别记录。
+
+离线原命令 **8/8 自然通过**。独立 e2e sessions：**3/3 终态通过**；父命令 **PASS，自然 exit 0**。这里的 seed 1–3 是独立 e2e 批次；full 内的 `e2e-flat` 使用自己的 seed101 运行，不能互相补通过。
+
+正式 full 计划 **34 场景／42 轮**；当前终态场景 **34/34**，其中整场景通过 **27**、失败 **7**；轮次为 **通过 35、失败 7、未完成 0**。full 父命令：**FAIL，自然 exit 1**。未完成项不计作通过；当前正式失败：`nether-bastion-given`、`end-dragon-given`、`end-portal-natural`、`end-city-given`、`end-full-natural`、`e2e-flat`、`materials-quartz-flat`。
+
+## 当前正式失败
+
+- **`nether-bastion-given`：FAIL：timeout**。轮1：运行时交易计数 10；服务端金锭 14；维度 the_nether；服务端烈焰棒 0／头颅 0／凋零骷髅击杀 0；原时限 timeout；cleanup=是。
+- **`end-dragon-given`：FAIL：timeout**。轮1：服务端杀龙成就 killed=false；运行时水晶计数 10；累计Health下降 298；原时限 timeout；cleanup=是。
+- **`end-portal-natural`：FAIL：timeout**。轮1：服务端维度 overworld；运行时定位门房 -1243,-28,1196；原时限 timeout；cleanup=是。
+- **`end-city-given`：FAIL：timeout**。轮1：服务端入城成就 false／服务端鞘翅成就 false；运行时looted 0；原时限 timeout；cleanup=是。
+- **`end-full-natural`：FAIL：goal_failed:no_eyes**。轮1：服务端杀龙成就 killed=false；服务端入城成就 false／服务端鞘翅成就 false；运行时looted 0；终态原因 goal_failed:no_eyes；cleanup=是。
+- **`e2e-flat`：FAIL：timeout**。轮1：刷石机验收 否；自动熔炉验收 否；服务端家园结构 95/95；必需装备 {"iron_pickaxe": 0, "iron_sword": 0, "shield": 0}；故障恢复标记 4/4；终态存活 是；原时限 timeout；cleanup=是。
+- **`materials-quartz-flat`：FAIL：goal_failed:death_loop**。轮1：服务端箱子物品 {}；维度 overworld；终态原因 goal_failed:death_loop；cleanup=是。
+
+下界的 `trades` 来自运行时目标 memory；`goldOnServer` 和 `dimension` 是服务端读回。交易计数达到目标不能证明已经回主世界；两者不能混写为同一种服务端证据。屠龙场景以服务端 `end/kill_dragon` 成就确认 `killed=true`；`damage` 是所观察龙 Health 下降量的累计，可能包含回血后的重复扣血，不是净伤害，也不能单独归因于机器人伤害或替代击杀成就。`end-full-natural` 还要求相应末地城与战利品条件，不能只凭屠龙阶段判完整通过。材料石英场景要求家中箱子至少8石英；死亡重生后的 overworld 维度不能当作携石英返程成功。
+
+## 功能与局限
+
+- 自主默认关闭；默认四类目标是家园、储粮、漏斗刷石机和自动熔炉。其他能力按显式 API／专项场景使用。
+- 下界远征和村庄矿车刷铁机尚未列入结构化工具目录；村庄矿车版是唯一实验性场景。
+- 新 core 的结构化嵌入入口已经存在，Electron 桌面仍默认 legacy；本轮没有新的桌面 GUI／Provider／签名公证验收。
+- 下界 seed3 低地要塞为已有已知难点；本轮 seed101 的结果不覆盖该地形。
+
+e2e 的故障钩子恢复标记不是全部资源恢复耗时；特别是计划死亡后的20秒标记只观察存活且重新有目标，不能证明已取回掉落或工具。实际终态仍要求家园、装备、机器产出、故障恢复及存活同时成立。死亡数包含计划与额外死亡，均照实保留。有限受控场景通过不能证明任意自然种子或长期自由游玩可靠。
+
+唯一实验性场景 `ironfarm-village-flat`：计划1轮，终态 **FAIL：timeout**；命令 **FAIL，自然 exit 1**。实验结果单列，不影响正式 full 的包门槛，也不能抵消正式失败。
+
+## 包与发布
+
+| 步骤／产物 | 本轮结果 |
+|---|---|
+| `npm run verify` | 受正式门槛阻止，未执行 |
+| `npm run make` | 受正式门槛阻止，未执行 |
+| `npm run smoke:minecraft-package` | 受正式门槛阻止，未执行 |
+| 发布包路径、大小、SHA-256 | 无本轮产物；均无可报告值 |
+| git tag／GitHub Release | 均未执行 |
+
+**本轮文档通过独立 release 分支与待审查 PR 审阅；未创建 tag 或 GitHub Release。** 正式场景失败按任务要求阻止 `verify`、`make` 与包冒烟；本轮没有发行包或产物 SHA-256。后续修复与重新验证需要单独记录，不得用旧冻结或实验场景结果补足本轮失败。
+
+完整本轮表见 [VALIDATION.md](VALIDATION.md)，能力入口见 [README.md](README.md)。
+
+## 本轮前基线历史原文（b1317e8 原样保留，不作为本轮证据）
+
+<details>
+<summary>展开基线文档中的历史记录；其中旧 PASS、alpha 与发行措辞均只属于原冻结</summary>
+
+> 以下为 `b1317e87e3d18c3a186535b1012bef5339ae7c44` 中 `STATUS.md` 的原文，保留所有旧失败、中断和负面记录。它不证明本轮通过，也不覆盖本页上方的当前失败与未完成项。
+
 # 当前状态 — v0.1.0-alpha.1 源码开发预览
 
 **正式游戏验收通过，离线检查按冻结快照记录。** 测试冻结 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，867 文件 sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`。原样完整 runtime full7 自然通过 3326/3326；正式 full03 于 2026-10-24 02:15:09.845—03:27:27.151 UTC 自然完成，24 场景、32/32 轮全部通过，原始结果、退出码与源码/driver 一致。 源码归档、干净安装与发布验证的最终收据随 release 单独提供，和本页的游戏验收快照分别绑定。[正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
@@ -93,3 +147,5 @@ E2E补煤途中旧前沿返程发生约11分37秒返矿/双计数脱困，原程
 完整失败/中断历史见 [VALIDATION.md](VALIDATION.md)：full6自然3324/3325失败保留，a22仅校正测试逻辑时钟且生产/5000ms/真实8s门槛不变；full01六个中断保存仍UNCONFIRMED；full02保留30轮通过/2轮中断及两世界保存确认。当前结果来自一批完整冻结运行，未拼接历史通过。
 
 第三方bundle的vec3许可变体/notice门槛未闭，因此不分发依赖字节；接收者按锁文件自行安装。源码许可与来源声明随源码保留。
+
+</details>
