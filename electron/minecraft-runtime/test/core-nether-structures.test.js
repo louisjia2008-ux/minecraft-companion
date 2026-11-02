@@ -927,3 +927,25 @@ test('in a flooded pit with its rim two above the water, the bot cuts a step and
   // On dry ground: nothing to do.
   assert.equal(await stepOutOfPool(bot, ctx), false);
 });
+
+test('hurt in the nether with nothing to eat, the bot heads home instead of waiting to heal', async () => {
+  const items = [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }];
+  const bot = Object.assign(new EventEmitter(), { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items },
+    entities: {}, registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} }, equip: async () => {} });
+  bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+  bot.entity.onGround = true;
+  bot.entity.isInLava = false;
+  const walks = [];
+  const actions = { pickFood: () => null, goNear: async (b, c, p) => { walks.push(p.toString()); bot.entity.position = p.offset(0.5, 0, 0.5); return { ok: true }; } };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 6, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) }, actions });
+  goal.memory.netherPortal = new Vec3(0, 64, 0);
+  goal.memory.fortress = new Vec3(60, 64, 0);
+  for (const x of [0, 8, 16, 24, 32, 40, 48, 56, 60]) { bot.entity.position = new Vec3(x + 0.5, 64, 0.5); bot.emit('move'); }
+  const records = [];
+  const ctx = { record: (type, e) => records.push(type), perceive: () => ({ health: 8, food: 17, hostiles: [], inventory: { iron_sword: 1, netherrack: 64 } }),
+    signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.ok(records.includes('retreat'), records.join(' '));
+  assert.ok(walks.length >= 1 && bot.entity.position.x < 60, walks.join(' '));
+  goal.dispose();
+});

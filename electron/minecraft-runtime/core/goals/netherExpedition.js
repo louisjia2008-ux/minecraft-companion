@@ -44,13 +44,6 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     explore: {}, fortress: null, bastion: null, spawner: null, visited: { fortress: false, bastion: false },
     trades: 0, barter: {}, kills: {}, witherKills: 0, scannedAt: 0, scannedFrom: null, waitSince: 0, towerFails: {},
   };
-  // Asked again, the task starts where the last ask left off: the lookouts
-  // already walked and the structures already seen. Each new goal started
-  // the rings over and walked the first 300 blocks again before going on.
-  const KEPT = ['explore', 'fortress', 'bastion', 'spawner', 'visited'];
-  const saved = bot.companionNetherSearch;
-  if (saved) for (const key of KEPT) if (saved[key] != null) memory[key] = saved[key];
-  const keepSearch = () => { bot.companionNetherSearch = Object.fromEntries(KEPT.map((key) => [key, memory[key]])); };
   // A skull is luck (5.5% a kill with Looting III). With skullTries set, that
   // many wither skeletons killed without one ends the hunt for it.
   bot.on?.('entityDead', (e) => {
@@ -71,6 +64,13 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (memory.crumbs.length > 4000) memory.crumbs.shift();
   };
   bot.on?.('move', dropCrumb);
+  // Asked again, the task starts where the last ask left off: the lookouts
+  // already walked, the structures already seen and the trail home. Each
+  // new goal started the rings over and walked the first 300 blocks again.
+  const KEPT = ['explore', 'fortress', 'bastion', 'spawner', 'visited', 'crumbs', 'netherPortal', 'overworldPortal'];
+  const saved = bot.companionNetherSearch;
+  if (saved) for (const key of KEPT) if (saved[key] != null) memory[key] = saved[key];
+  const keepSearch = () => { bot.companionNetherSearch = Object.fromEntries(KEPT.map((key) => [key, memory[key]])); };
   // A lookout the bot died on the way to (the lava sea at y 31, a ghast's
   // knock-back into it) is not tried again, by this ask or the next: the walk
   // there is the same, and a bot died five times running heading for one.
@@ -916,6 +916,35 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return null;
   }
 
+  /** Back through the portal, stocked to bridge and climb the whole way. */
+  async function headHome(ctx) {
+    // The walk home can cross a lava sea: a run with every rod, skull and
+    // trade bridged its 100 netherrack away and spent the last 20 minutes on
+    // its own bridge 40 blocks short; another bridged a stack and a half
+    // across 110 blocks of sea under a portal 40 blocks up. Fill up once,
+    // while there is something to dig, with enough to bridge and climb the
+    // whole way, and build with the cobblestone too. Again after a fall:
+    // one bot lost its footing digging the deck it stood on and landed in
+    // the lava sea 40 blocks under the portal with nothing to climb with.
+    const portal = memory.netherPortal;
+    const here = bot.entity.position;
+    const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
+    if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
+      && Date.now() - (memory.homeStockedAt || 0) > 60000) {
+      memory.homeStockedAt = Date.now();
+      await stockScaffolding(ctx, need, HOME_STOCK);
+    }
+    if (portal && here.distanceTo(portal) > 24) {
+      if (marooned()) {
+        const crossed = await causeway(ctx, { home: true });
+        if (crossed.ok) return crossed;
+      }
+      const leg = await retraceHome(ctx);
+      if (leg) return leg;
+    }
+    return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
+  }
+
   async function netherStep(ctx, state) {
     trip.enterNetherMode();
     trip.netherPortal();
@@ -932,32 +961,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.restockedAt = Date.now();
       await stockScaffolding(ctx, 16);
     }
-    if (allDone(state)) {
-      // The walk home can cross a lava sea: a run with every rod, skull and
-      // trade bridged its 100 netherrack away and spent the last 20 minutes on
-      // its own bridge 40 blocks short; another bridged a stack and a half
-      // across 110 blocks of sea under a portal 40 blocks up. Fill up once,
-      // while there is something to dig, with enough to bridge and climb the
-      // whole way, and build with the cobblestone too. Again after a fall:
-      // one bot lost its footing digging the deck it stood on and landed in
-      // the lava sea 40 blocks under the portal with nothing to climb with.
-      const portal = memory.netherPortal;
-      const here = bot.entity.position;
-      const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
-      if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
-        && Date.now() - (memory.homeStockedAt || 0) > 60000) {
-        memory.homeStockedAt = Date.now();
-        await stockScaffolding(ctx, need, HOME_STOCK);
-      }
-      if (portal && here.distanceTo(portal) > 24) {
-        if (marooned()) {
-          const crossed = await causeway(ctx, { home: true });
-          if (crossed.ok) return crossed;
-        }
-        const leg = await retraceHome(ctx);
-        if (leg) return leg;
-      }
-      return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
+    if (allDone(state)) return headHome(ctx);
+    // Hurt with nothing to eat: health does not come back short of 18 food,
+    // and a bot at 8 health stood 40 minutes by a fortress waiting for it.
+    // Home to eat (provision hunts there), then back.
+    if (state.health < HUNT_HEALTH && state.food < 18 && typeof actions.pickFood === 'function' && !actions.pickFood(bot)) {
+      if (Date.now() - (memory.hungryAt || 0) > 60000) ctx.record('retreat', { health: Math.round(state.health), food: state.food });
+      memory.hungryAt = Date.now();
+      return headHome(ctx);
     }
     const lost = lostKit(state);
     if (lost) return fail(lost);
