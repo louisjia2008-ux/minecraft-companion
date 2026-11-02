@@ -61,6 +61,8 @@ const ground = (b) => b && b.boundingBox === 'block' && !/lava|water|magma|_leav
 /** A site needing no digging: solid ground under the frame and in front, open air above. */
 function portalSiteOk(bot, base, axis) {
   const frame = portalFrame(base, axis);
+  const home = bot.companionHomeSite;
+  if (home && [...frame.cells.map((c) => c.pos), ...frame.interior].some((p) => home(p))) return false;
   for (let u = 0; u <= 3; u += 1) {
     const foot = axis === 'x' ? base.offset(u, 0, 0) : base.offset(0, 0, u);
     if (!ground(bot.blockAt(foot.offset(0, -1, 0)))) return false;

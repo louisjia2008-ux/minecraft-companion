@@ -275,6 +275,13 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     bot.companionSurfaceY = memory.house.anchor.y;
     if (!memory.protectBlock) memory.protectBlock = (block) => Boolean(block?.position && protects(block.position));
     bot.companionProtectBlock = memory.protectBlock;
+    // The house and the ground site work keeps clear: nothing else is built
+    // there (a nether portal in it was dug out again by home maintenance).
+    if (!memory.homeSite) {
+      const clear = new Set((memory.house.clearance || []).map(posKey));
+      memory.homeSite = (p) => insideHouse(p) || clear.has(posKey(p));
+    }
+    bot.companionHomeSite = memory.homeSite;
     if (!movements) return;
     if (!memory.protect) memory.protect = (block) => protects(block.position) ? 100 : insideHouse(block.position) ? 90 : 0;
     if (!movements.exclusionAreasBreak.includes(memory.protect)) movements.exclusionAreasBreak.push(memory.protect);

@@ -45,6 +45,10 @@ test('a flat open site is accepted, lava in front or blocks in the frame are not
   assert.ok(nether.portalSiteOk(makeWorld(), base, 'x'));
   assert.ok(!nether.portalSiteOk(makeWorld({ '1,63,1': 'lava' }), base, 'x'));
   assert.ok(!nether.portalSiteOk(makeWorld({ '2,66,0': 'netherrack' }), base, 'x'));
+  // Never on the house's site: home maintenance digs whatever stands there.
+  const homed = Object.assign(makeWorld(), { companionHomeSite: (p) => p.x === 3 && p.y === 66 });
+  assert.ok(!nether.portalSiteOk(homed, base, 'x'));
+  assert.ok(nether.portalSiteOk(Object.assign(makeWorld(), { companionHomeSite: () => false }), base, 'x'));
 });
 
 test('cells by lava cost more, standing in or over lava is effectively banned', () => {
