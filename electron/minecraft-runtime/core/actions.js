@@ -601,7 +601,9 @@ async function stepOutOfPool(bot, ctx, { maxTicks = 200 } = {}) {
   const swimTo = async (target, done) => {
     try {
       for (let i = 0; i < maxTicks && !done(); i += 1) {
-        await bot.lookAt(target, true);
+        // Eyes level or up: looking down at the water swims the bot under.
+        const p = bot.entity.position;
+        await bot.lookAt(new Vec3(target.x, Math.max(target.y, p.y + 1.62), target.z), true);
         bot.setControlState('forward', true);
         bot.setControlState('jump', true);
         await sleep(50, ctx.signal);
@@ -613,7 +615,7 @@ async function stepOutOfPool(bot, ctx, { maxTicks = 200 } = {}) {
   };
   for (const { ledge, from } of ledges.slice(0, 4)) {
     const cells = [ledge.offset(0, 1, 0), ledge.offset(0, 2, 0)];
-    if (cells.some((c) => FLUID.test(bot.blockAt(c)?.name || '') || bot.blockAt(c)?.diggable === false)) continue;
+    if (cells.some((c) => { const b = bot.blockAt(c); return FLUID.test(b?.name || '') || (b?.boundingBox !== 'empty' && b?.diggable === false); })) continue;
     // Swim up against the ledge, then cut the rim above it away.
     const beside = from.offset(0.5, 0.5, 0.5);
     await swimTo(beside, () => Math.hypot(bot.entity.position.x - beside.x, bot.entity.position.z - beside.z) < 0.8);

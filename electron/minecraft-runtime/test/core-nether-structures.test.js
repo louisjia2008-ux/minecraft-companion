@@ -899,7 +899,8 @@ test('in a flooded pit with its rim two above the water, the bot cuts a step and
     if (p.x >= 0 && p.x <= 3 && p.z >= 0 && p.z <= 3 && p.y >= 57) return p.y <= 62 ? 'water' : 'air';
     return 'stone';
   };
-  const block = (p) => { const n = name(p); return { name: n, position: p.floored(), boundingBox: n === 'stone' ? 'block' : 'empty', diggable: true }; };
+  // As in the game, air is not diggable.
+  const block = (p) => { const n = name(p); return { name: n, position: p.floored(), boundingBox: n === 'stone' ? 'block' : 'empty', diggable: n === 'stone' }; };
   const bot = {
     entity: { position: new Vec3(1.5, 62.2, 1.5), onGround: false, isInWater: true },
     blockAt: (p) => block(new Vec3(p.x, p.y, p.z).floored()),
