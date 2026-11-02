@@ -58,8 +58,11 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
       const goal = current();
       // The outfit gathers tools and gear itself: maintenance planning the same
       // pickaxe took the body from it every few seconds and failed.
-      if (!goal?.memory.established || typeof goal.maintenance !== 'function' || OWN_GEAR.has(activeGoal())) return 0;
+      if (!goal?.memory.established || typeof goal.maintenance !== 'function') return 0;
       const status = goal.maintenance(state);
+      // Except the chest it stores into: blown up by a creeper, the outfit
+      // failed chest_missing forty times an ask with maintenance held off.
+      if (OWN_GEAR.has(activeGoal()) && !(activeGoal() === 'outfit' && status.missing.includes('chest'))) return 0;
       if (status.gear.length) gearMissingSince ??= now();
       else gearMissingSince = null;
       if (now() < retryAt || state.alive === false || state.health < 10 || state.food <= 12
