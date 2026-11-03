@@ -192,6 +192,8 @@ const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled
 const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
 const SHOOTERS = new Set(['blaze', 'ghast']);
 const PEARL_HUNT_HEALTH = 12;
+// Air (of 20) below which a hurt bot in water goes up before anything else.
+const HURT_AIR = 16;
 const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull', 'ender_pearl']);
 const SKULL_DROPPERS = new Set(['wither_skeleton', 'blaze']);
 // Hoglins too: their charge tosses the bot, into lava as often as not.
@@ -695,9 +697,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const breathe = {
     name: 'breathe',
     band: BAND.ESCAPE,
-    // Hurt and short of air: up now, before the air runs out.
+    // Hurt and short of air: up now, before the air runs out. Not at the
+    // first bubble lost, though: eating in water costs a little air, and
+    // breathe cutting every meal short kept a hurt bot from ever eating
+    // (340 times over, half an hour in a flooded cave).
     want: (state) => (state.inWater && Number.isFinite(state.oxygen)
-      && (state.oxygen < t.oxygen || (state.oxygen < 20 && state.health < t.recoverHealth)) ? 1 : 0),
+      && (state.oxygen < t.oxygen || (state.oxygen < HURT_AIR && state.health < t.recoverHealth)) ? 1 : 0),
     async run(ctx) {
       bot.pathfinder?.setGoal(null);
       bot.setControlState('jump', true);

@@ -139,6 +139,8 @@ test('hurt in water: no healing in place (it sinks), and up for air before the a
   assert.ok(s.behavior('breathe').want(wet) > 0);
   assert.equal(s.behavior('breathe').want({ ...wet, health: 20 }), 0);
   assert.equal(s.behavior('breathe').want({ ...wet, oxygen: 20 }), 0);
+  // A bubble or two lost to a meal does not cut the meal short.
+  assert.equal(s.behavior('breathe').want({ ...wet, oxygen: 18 }), 0);
   assert.ok(s.behavior('recover').want({ ...wet, inWater: false }) > 0);
 });
 
