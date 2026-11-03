@@ -208,3 +208,31 @@ test('an old tunnel is known open at feet, head and stair height, not beyond', (
   assert.equal(knownOpen(mine, { x: 5, y: 9, z: 0 }), false);
   assert.equal(knownOpen(mine, { x: 9, y: 10, z: 9 }), true);
 });
+
+test('obsidian across the tunnel turns it while stone pickaxes are carried; none left fetches more', async () => {
+  const { mineStep } = require('../core/mining');
+  const { Vec3 } = require('vec3');
+  const put = { '3,8,0': 'obsidian', '3,9,0': 'obsidian' };
+  const look = grid(put);
+  const blockAt = (p) => {
+    const b = look(p.x, p.y, p.z);
+    if (!b) return null;
+    return { ...b, position: new Vec3(p.x, p.y, p.z), harvestTools: b.name === 'obsidian' ? { 3: true } : b.name === 'stone' ? { 1: true, 2: true, 3: true } : undefined };
+  };
+  const run = async (items) => {
+    const cells = { '0,10,0': null, '1,9,0': '0,10,0', '2,8,0': '1,9,0' };
+    const memory = { mine: { entrance: { x: 0, y: 10, z: 0 }, front: { x: 2, y: 8, z: 0 }, surfaceY: 10, dir: 0, phase: 'main',
+      mainSteps: 0, steps: 2, turns: 0, branch: null, cells, walkFailures: 0 } };
+    const bot = { entity: { position: new Vec3(2.5, 8, 0.5) }, blockAt, findBlocks: () => [], registry: { blocksByName: {} },
+      inventory: { items: () => items, emptySlotCount: () => 20 } };
+    const events = [];
+    const result = await mineStep(bot, { record: (type, data) => events.push({ type, ...data }) }, memory,
+      { blocks: () => false, dropMatch: () => false, y: 8, blacklist: { has: () => false, add() {} }, actions: { digBlock: async () => assert.fail('dug obsidian') } });
+    return { result, memory };
+  };
+  const turned = await run([{ name: 'stone_pickaxe', type: 1 }, { name: 'diamond_pickaxe', type: 3 }]);
+  assert.notEqual(turned.result.reason, 'no_spare_pickaxe');
+  assert.equal(turned.memory.mine.dir !== 0 || turned.memory.mine.tried['2,8,0:level:0'], true);
+  const fetch = await run([{ name: 'iron_pickaxe', type: 2 }]);
+  assert.equal(fetch.result.reason, 'no_spare_pickaxe');
+});

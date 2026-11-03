@@ -292,8 +292,15 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
     const block = bot.blockAt(new Vec3(cell.x, cell.y, cell.z));
     if (!block || block.boundingBox === 'empty') continue;
     const tool = pickFor(bot, block);
-    // Out of stone pickaxes: fetch more rather than wear out the iron one on rock.
-    if (!tool && block.harvestTools) return fail('no_spare_pickaxe');
+    if (!tool && block.harvestTools) {
+      // Rock a stone pickaxe cannot break (obsidian by a lava pool): tunnel
+      // another way. Failed as out of pickaxes with five in the bag, the
+      // outfit dug at it for half an hour and gave up.
+      const cheap = bot.inventory.items().some((i) => CHEAP_PICKS.includes(i.name));
+      if (cheap) return blocked(`too_hard:${block.name}`);
+      // Out of stone pickaxes: fetch more rather than wear out the iron one on rock.
+      return fail('no_spare_pickaxe');
+    }
     const dug = await actions.digBlock(bot, ctx, block, { tool });
     if (!dug.ok) return dug;
     mine.open ||= {};
