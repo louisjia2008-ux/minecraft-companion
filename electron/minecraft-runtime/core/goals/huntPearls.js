@@ -18,7 +18,7 @@ const HOME_RANGE = 24;
 // An enderman looked in the eyes turns on the player and teleports over.
 const STARE_NEAR = 6;
 const STARE_FAR = 48;
-const STARE_MS = 6000;
+const STARE_MS = 12000;
 const STARE_AGAIN_MS = 30000;
 const ENDERMAN_EYES = 2.55;
 
@@ -50,7 +50,9 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
       await sleep(100, ctx.signal);
     }
     const came = Boolean(bot.entities?.[e.id]) && e.position.distanceTo(bot.entity.position) <= STARE_NEAR;
-    ctx.record('enderman_stare_result', { came });
+    const creepy = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
+    ctx.record('enderman_stare_result', { came, angry: creepy >= 0 ? e.metadata?.[creepy] === true : null,
+      gone: !bot.entities?.[e.id], distance: Math.round(e.position.distanceTo(bot.entity.position)) });
     return { ok: true, progress: came };
   }
 
