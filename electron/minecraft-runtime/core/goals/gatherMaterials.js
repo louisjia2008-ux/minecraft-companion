@@ -59,7 +59,7 @@ const FRAME_OBSIDIAN = 10;
 const FRAME_CORNERS = 4;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
-  skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20, carry = () => false } = {}) {
+  skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20, carry = () => false, reserved = {} } = {}) {
   if (!chest || ![chest.x, chest.y, chest.z].every(Number.isInteger)) throw new TypeError('chest must have integer x, y, z');
   if (!requirements === !blueprint) throw new TypeError('give either requirements or a blueprint');
   for (const r of requirements || []) {
@@ -91,8 +91,18 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   const owed = (inventory) => wanted().map((r) => ({ key: r.key, count: r.count - stored(r.key) - bagged(r.key, inventory) }))
     .filter((r) => r.count > 0);
 
+  // `reserved`: { item: count } already in the bag and counted by the caller,
+  // who asks only for the rest. Left out of what the bag offers: stored as
+  // delivered, it was taken back out and the caller was short again, 150000
+  // times over for seven cobblestones.
+  function spareInventory(inventory) {
+    const out = { ...inventory };
+    for (const [name, n] of Object.entries(reserved)) if (out[name]) out[name] = Math.max(0, out[name] - n);
+    return out;
+  }
+
   function plannerInventory(state) {
-    const inventory = { ...state.inventory };
+    const inventory = spareInventory(state.inventory);
     // Items left in the furnace still count; otherwise they would be gathered twice.
     if (memory.furnace.item === 'raw_iron') {
       inventory.raw_iron = (inventory.raw_iron || 0) + memory.furnace.input;
@@ -416,7 +426,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     const state = ctx.perceive();
     const debts = owed(state.inventory);
     // Everything owed that is already carried, up to what the chest lacks.
-    const carried = debts.filter((r) => !carry(r.key)).map((r) => ({ key: r.key, count: Math.min(r.count, countKey(r.key, state.inventory, kb)) }))
+    const spare = spareInventory(state.inventory);
+    const carried = debts.filter((r) => !carry(r.key)).map((r) => ({ key: r.key, count: Math.min(r.count, countKey(r.key, spare, kb)) }))
       .filter((w) => w.count > 0);
     const inventory = plannerInventory(state);
     const reqs = [...debts];

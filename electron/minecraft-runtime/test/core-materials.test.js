@@ -414,3 +414,15 @@ test('a chest blown up is made again and put back where it stood', async () => {
   assert.ok(placed.includes('0,0,0'), placed.join(' '));
   assert.equal(sim.world.get('0,0,0'), 'chest');
 });
+
+test('what the caller already counted in the bag is not stored as delivered', async () => {
+  const sim = simulate({ seed: 5, failRate: 0 });
+  sim.inventory.cobblestone = 57;
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'cobblestone', count: 7 }], reserved: { cobblestone: 57 },
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  const { events } = await runGoal(sim, goal);
+  assert.ok(events.some((e) => e.type === 'goal_done'), JSON.stringify(events.filter((e) => e.type === 'goal_failed')));
+  assert.ok(sim.chest.cobblestone >= 7);
+  assert.ok(sim.inventory.cobblestone + sim.chest.cobblestone >= 64, 'seven more were gathered, not seven moved');
+});
