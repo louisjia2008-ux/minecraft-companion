@@ -15,13 +15,13 @@ test('a nether trip short of obsidian for its portal sends the model back for th
   assert.equal(state.gearDone, false);
 });
 
-function modelContext({ armour = [], step = 'pearls', goal = null } = {}) {
+function modelContext({ armour = [], step = 'pearls', goal = null, pick = false } = {}) {
   const { Vec3 } = require('vec3');
   const slots = [];
   armour.forEach((name, i) => { slots[5 + i] = { name, count: 1 }; });
   const asked = [];
   const bot = { entity: { position: new Vec3(0, 64, 0) }, health: 20, food: 20, entities: {}, game: { dimension: 'minecraft:overworld' },
-    time: { timeOfDay: 14000 }, inventory: { slots, items: () => [], emptySlotCount: () => 20 } };
+    time: { timeOfDay: 14000 }, inventory: { slots, items: () => (pick ? [{ name: 'iron_pickaxe', count: 1 }] : []), emptySlotCount: () => 20 } };
   const steps = STEPS.map((s, i) => ({ id: s.id, asks: s.id === step ? 1 : 0, doneAt: i < STEPS.findIndex((x) => x.id === step) ? 1 : null }));
   const state = { steps, goals: {}, gearDone: true, armorDone: true, snackEnd: Date.now() };
   const companion = { status: () => ({ goal }), submitTask: async (task, args) => { asked.push({ task, args }); } };
@@ -42,8 +42,15 @@ test('armour worn through: the model asks for a new set before the next step, an
   assert.ok(asked.slice(1).every((a) => a.task !== 'outfit'), JSON.stringify(asked));
 });
 
-test('armour still on: no new set', async () => {
-  const { context, asked } = modelContext({ armour: ['iron_helmet', 'iron_chestplate', 'iron_leggings'] });
+test('armour still on and a pickaxe carried: no new set', async () => {
+  const { context, asked } = modelContext({ armour: ['iron_helmet', 'iron_chestplate', 'iron_leggings'], pick: true });
   await playthroughNatural.onTick(context);
   assert.ok(asked.every((a) => a.task !== 'outfit'));
+});
+
+test('every pickaxe worn out: the new set comes with one', async () => {
+  const { context, asked } = modelContext({ armour: ['iron_helmet', 'iron_chestplate', 'iron_leggings'] });
+  await playthroughNatural.onTick(context);
+  assert.equal(asked[0]?.task, 'outfit');
+  assert.ok(asked[0].args.items.some((r) => r.key === 'iron_pickaxe'));
 });

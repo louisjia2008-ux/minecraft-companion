@@ -58,6 +58,10 @@ const ARMOR = GEAR.filter(ARMORY).concat([{ key: 'food', count: 12 }]);
 // Armour pieces worn now; a new set is asked for at most this often.
 const worn = (bot) => [5, 6, 7, 8].filter((i) => /_(helmet|chestplate|leggings|boots)$/.test(bot.inventory?.slots?.[i]?.name || '')).length;
 const REARM_MS = 60 * MINUTE;
+// Every pickaxe worn out too: a world was shut in a flooded cave hole with
+// none to dig its way out.
+const hasPick = (bot) => (bot.inventory?.items?.() || []).some((i) => /_pickaxe$/.test(i.name));
+const REARM = ARMOR.concat([{ key: 'iron_pickaxe', count: 1 }]);
 // Then the rest for the trip, armour not asked again: worn through the hours
 // this takes, it broke piece by piece and the full list was never all carried
 // at once (a world spent eight hours re-making it). Arrows wait for the End.
@@ -233,13 +237,13 @@ const playthroughNatural = {
       if (goal) return;
       state.rearm = false;
       state.replace = false;
-    } else if (index > STEPS.findIndex((s) => s.id === 'gear') && worn(bot) < 2 && (!goal || entry.asks > 0)
+    } else if (index > STEPS.findIndex((s) => s.id === 'gear') && (worn(bot) < 2 || !hasPick(bot)) && (!goal || entry.asks > 0)
       && bot.game?.dimension?.endsWith('overworld') && Date.now() - (state.rearmAt || 0) > REARM_MS) {
       state.rearm = true;
       state.rearmAt = Date.now();
-      write('model_ask', { step: 'rearm', task: 'outfit', args: { items: ARMOR } });
-      console.log('    model: outfit (armour worn out)');
-      await companion.submitTask('outfit', { items: ARMOR });
+      write('model_ask', { step: 'rearm', task: 'outfit', args: { items: REARM } });
+      console.log('    model: outfit (armour or pickaxe worn out)');
+      await companion.submitTask('outfit', { items: REARM });
       return;
     }
     // The model waits for the bot to finish (or give up) before asking again.
