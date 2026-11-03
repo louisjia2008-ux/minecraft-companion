@@ -430,3 +430,30 @@ test('in water under a ceiling, an empty bucket scoops the water away', async ()
   items[0] = { name: 'bucket', count: 1 };
   assert.equal(await drainPocket(bot, { signal: new AbortController().signal, record() {} }), false);
 });
+
+test('fed by water running in from aside, the inflow is walled off and the hole drains', async () => {
+  const { drainPocket } = require('../core/actions');
+  // Bot's cells 0,-5,0 and 0,-4,0 hold running water fed from -1,-4,0 and -1,-3,0; a lid at 0,-3,0.
+  const world = new Map([['0,-5,0', 'water'], ['0,-4,0', 'water'], ['-1,-4,0', 'water'], ['-1,-3,0', 'water'], ['0,-3,0', 'cobblestone'], ['-1,-2,0', 'air']]);
+  const nameAt = (x, y, z) => world.get(`${x},${y},${z}`) || 'deepslate';
+  const blockAt = (p) => {
+    const f = p.floored ? p.floored() : p;
+    const name = nameAt(f.x, f.y, f.z);
+    return { name, position: f, boundingBox: name === 'water' || name === 'air' ? 'empty' : 'block', getProperties: () => ({ level: 3 }) };
+  };
+  const placed = [];
+  const bot = { entity: { position: new Vec3(0.5, -4.8, 0.5), isInWater: true }, blockAt,
+    inventory: { items: () => [{ name: 'cobblestone', count: 20 }] }, equip: async () => {}, lookAt: async () => {},
+    placeBlock: async (ref, face) => {
+      const at = ref.position.plus(face);
+      placed.push(`${at.x},${at.y},${at.z}`);
+      world.set(`${at.x},${at.y},${at.z}`, 'cobblestone');
+      // Cut off from its feed, the bot's water runs away.
+      if (nameAt(-1, -4, 0) !== 'water') { world.set('0,-4,0', 'air'); world.set('0,-5,0', 'air'); }
+    } };
+  const records = [];
+  assert.equal(await drainPocket(bot, { signal: new AbortController().signal, record: (t) => records.push(t) }), true);
+  assert.ok(placed.includes('-1,-4,0'), placed.join(' '));
+  assert.ok(!placed.some((p) => p === '0,-5,0' || p === '0,-4,0'), 'never into its own cells');
+  assert.ok(records.includes('block_inflow'));
+});

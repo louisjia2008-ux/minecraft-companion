@@ -713,7 +713,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           // Swimming up into a ceiling (a flooded pit or tunnel): dig it open.
           const above = bot.blockAt(bot.entity.position.offset(0, 2, 0).floored());
           if (above && above.boundingBox === 'block' && bot.canDigBlock(above)) {
-            await actions.digBlock(bot, ctx, above, { timeoutMs: 4000 });
+            // Bare-handed (every pickaxe worn out) cobblestone takes ten
+            // seconds: a four-second limit never broke the lid of a flooded
+            // hole, and the bot surfaced under it for hours.
+            const digMs = typeof bot.digTime === 'function' ? bot.digTime(above) : 0;
+            await actions.digBlock(bot, ctx, above, { timeoutMs: Math.max(4000, digMs + 1500) });
             bot.setControlState('jump', true);
           }
           await sleep(100, ctx.signal);

@@ -477,7 +477,6 @@ async function drainPocket(bot, ctx) {
   const ceiling = bot.blockAt(feet.offset(0, 2, 0));
   if (!ceiling || ceiling.boundingBox !== 'block') return false;
   const bucket = bot.inventory.items().find((i) => i.name === 'bucket');
-  if (!bucket) return false;
   const sources = [];
   for (const base of [head, feet]) {
     for (const [dx, dy, dz] of [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
@@ -485,7 +484,7 @@ async function drainPocket(bot, ctx) {
       if (b?.name === 'water' && Number(b.getProperties?.().level) === 0) sources.push(b);
     }
   }
-  if (!sources.length) return false;
+  if (!bucket || !sources.length) return blockInflow(bot, ctx, feet);
   try { await bot.equip(bucket, 'hand'); } catch (error) { if (error?.code === 'aborted') throw error; return false; }
   let drained = 0;
   for (const target of sources) {
@@ -497,7 +496,49 @@ async function drainPocket(bot, ctx) {
       || Number(bot.blockAt(target.position)?.getProperties?.().level) !== 0, { timeoutMs: 1000, signal: ctx.signal })) drained += 1;
   }
   if (drained) ctx.record?.('drain_pocket', { drained, at: `${feet.x},${feet.y},${feet.z}` });
-  return drained > 0;
+  if (drained) return true;
+  return blockInflow(bot, ctx, feet);
+}
+
+const FILLERS = ['cobblestone', 'cobbled_deepslate', 'dirt', 'netherrack', 'stone'];
+/**
+ * No source to scoop (the hole is fed by water running in from aside): wall
+ * the inflow off with blocks, so the water drains away and the bot stands
+ * dry under the lid, free to dig. True once its head is out of water.
+ */
+async function blockInflow(bot, ctx, feet) {
+  const own = new Set([0, 1].map((dy) => `${feet.x},${feet.y + dy},${feet.z}`));
+  const inflow = [];
+  for (const dy of [1, 2]) {
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const b = bot.blockAt(feet.offset(dx, dy, dz));
+      if (b?.name === 'water') inflow.push(b);
+    }
+  }
+  if (!inflow.length || typeof bot.placeBlock !== 'function') return false;
+  const filler = bot.inventory.items().find((i) => FILLERS.includes(i.name));
+  if (!filler) return false;
+  try { await bot.equip(filler, 'hand'); } catch (error) { if (error?.code === 'aborted') throw error; return false; }
+  let walled = 0;
+  for (const cell of inflow) {
+    for (const [dx, dy, dz] of [[0, -1, 0], [0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+      const ref = bot.blockAt(cell.position.offset(dx, dy, dz));
+      if (!ref || ref.boundingBox !== 'block' || own.has(`${ref.position.x},${ref.position.y},${ref.position.z}`)) continue;
+      try {
+        await bot.lookAt(ref.position.offset(0.5 - dx * 0.5, 0.5 - dy * 0.5, 0.5 - dz * 0.5), true);
+        await bot.placeBlock(ref, new Vec3(-dx, -dy, -dz));
+        walled += 1;
+      } catch (error) {
+        if (error?.code === 'aborted') throw error;
+        continue;
+      }
+      break;
+    }
+  }
+  if (!walled) return false;
+  ctx.record?.('block_inflow', { walled, at: `${feet.x},${feet.y},${feet.z}` });
+  // Running water left behind drains in a few ticks.
+  return waitUntil(() => bot.blockAt(feet.offset(0, 1, 0))?.name !== 'water', { timeoutMs: 4000, signal: ctx.signal });
 }
 
 async function unstick(bot, ctx) {
