@@ -210,7 +210,7 @@ const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const FEEDING_RANGE = 32;
 
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false,
-  feeding = () => false, home = () => null, thresholds = {} } = {}) {
+  feeding = () => false, home = () => null, activeGoal = () => null, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
@@ -892,8 +892,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // Hunting pearls, the angry one is the quarry: struck in melee it stays
       // and fights (defend), where hiding from every enderman the hunt turned
       // let six nights pass without a pearl. Hurt, it is still hidden from.
-      const hunt = bot.companionPearlHunt;
-      if (hunt && Date.now() - hunt.at < 60000 && state.health >= PEARL_HUNT_HEALTH) return 0;
+      if (activeGoal() === 'hunt_pearls' && state.health >= PEARL_HUNT_HEALTH) return 0;
       return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
     },
     async run(ctx) {

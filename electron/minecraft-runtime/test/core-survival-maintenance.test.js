@@ -94,10 +94,12 @@ function endermanFixture(creepy) {
   const mob = { id: 9, name: 'enderman', position: new Vec3(1, 64, 0), metadata: { [index]: creepy } };
   bot.entities[mob.id] = mob;
   let attacks = 0;
-  const behaviors = createSurvivalBehaviors({ bot, actions: { attack: async () => { attacks += 1; return { ok: true }; } } });
+  let goal = null;
+  const behaviors = createSurvivalBehaviors({ bot, activeGoal: () => goal,
+    actions: { attack: async () => { attacks += 1; return { ok: true }; } } });
   const state = { alive: true, health: 20, food: 20, isDay: true, sheltered: false,
     inventory: { iron_sword: 1 }, position: bot.entity.position, hostiles: [{ ...mob, distance: 1 }] };
-  return { bot, mob, state, attacks: () => attacks, behavior: (name) => behaviors.find((b) => b.name === name) };
+  return { bot, mob, state, attacks: () => attacks, setGoal: (name) => { goal = name; }, behavior: (name) => behaviors.find((b) => b.name === name) };
 }
 
 test('a calm nearby enderman is never an attack target, including inside shelter and after unrelated damage', async () => {
@@ -229,10 +231,10 @@ test('hurt but not badly, with nothing to eat and too full to heal, the bot gets
 
 test('hunting pearls, an angry enderman is fought rather than hidden from unless hurt', () => {
   const s = endermanFixture(true);
-  s.bot.companionPearlHunt = { at: Date.now() };
+  s.setGoal('hunt_pearls');
   assert.equal(s.behavior('hide').want(s.state), 0);
   assert.ok(s.behavior('defend').want(s.state) > 0);
   assert.ok(s.behavior('hide').want({ ...s.state, health: 8 }) > 0, 'hurt: hide as before');
-  s.bot.companionPearlHunt = { at: Date.now() - 120000 };
-  assert.ok(s.behavior('hide').want(s.state) > 0, 'an old hunt does not count');
+  s.setGoal('outfit');
+  assert.ok(s.behavior('hide').want(s.state) > 0, 'other work hides as before');
 });

@@ -36,8 +36,6 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
         return { ok: true, waited: true };
       }
       if (!memory.sawNight) { memory.sawNight = true; memory.nights += 1; }
-      // Survival leaves an enderman this hunt angered to the fight (hide).
-      bot.companionPearlHunt = { at: Date.now() };
       const hunted = await skills.huntOne(bot, ctx, { mobs: MOBS, dropMatch: isPearl, blacklist, radius });
       if (hunted.ok) { memory.hunted += 1; return hunted; }
       if (hunted.reason !== 'no_mob_in_range') return hunted;
