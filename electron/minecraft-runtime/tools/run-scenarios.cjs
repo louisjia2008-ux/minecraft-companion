@@ -286,7 +286,22 @@ async function runOnce({ scenario, server, bot, username, run, seed, difficulty,
         if (await scenario.finishWhen?.(hookContext())) return false;
       }
     })().catch((error) => { if (error.name !== 'AbortError') throw error; return false; }) : null;
-    timedOut = await Promise.race([finished.then(() => false), interrupted,
+    // Kicked (a server's anti-fly check after a client/server mismatch), the
+    // bot's client kept its last state and the run went on for hours with
+    // nobody on the server. End the run with the reason instead.
+    let onEnd = null;
+    const disconnected = new Promise((resolve) => {
+      onEnd = (reason) => {
+        harnessFailures.push(`bot_disconnected:${reason}`);
+        write('bot_disconnected', { reason: String(reason) });
+        resolve(false);
+      };
+      bot.once?.('end', onEnd);
+    });
+    const onKicked = (reason) => write('bot_kicked', { reason: typeof reason === 'string' ? reason : JSON.stringify(reason) });
+    bot.on?.('kicked', onKicked);
+    cleanup.push(() => { bot.removeListener?.('end', onEnd); bot.removeListener?.('kicked', onKicked); });
+    timedOut = await Promise.race([finished.then(() => false), interrupted, disconnected,
       ...(condition ? [condition] : []), delay(scenario.timeoutMs, null, { signal: deadline.signal }).then(() => true)]);
     stopScheduling();
     await join();

@@ -139,7 +139,11 @@ const playthroughNatural = {
   description: 'Empty inventory, easy, day/night and mobs on, a fresh natural world. Tasks come one at a time as from'
     + ' the language model: house, iron gear, blaze rods, ender pearls, eyes of ender, the dragon, then farm, pen and'
     + ' the machines. No help from the harness; a task that ends unfinished is asked for again.',
-  serverProperties: { 'level-type': 'minecraft:normal', difficulty: 'easy', 'view-distance': 12 },
+  // A client/server mismatch on a Nether causeway got the bot kicked for
+  // flying seven hours into a forty-hour run (the run now ends on a kick).
+  // In the app a kick fails the task and the player reconnects; here it
+  // would end the whole playthrough.
+  serverProperties: { 'level-type': 'minecraft:normal', difficulty: 'easy', 'view-distance': 12, 'allow-flight': true },
   serverPerRun: (run, seed) => ({ 'level-seed': seed + run * 101 }),
   viewDistance: 12,
   defaultDifficulty: 'easy',
