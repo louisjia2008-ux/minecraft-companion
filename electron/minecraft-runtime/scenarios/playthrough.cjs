@@ -55,6 +55,9 @@ const GEAR = [
 // nights spent hunting spiders for the bow's string.
 const ARMORY = (r) => /^iron_(helmet|chestplate|leggings|boots|sword)$/.test(r.key) || r.key === 'shield';
 const ARMOR = GEAR.filter(ARMORY).concat([{ key: 'food', count: 12 }]);
+// Armour pieces worn now; a new set is asked for at most this often.
+const worn = (bot) => [5, 6, 7, 8].filter((i) => /_(helmet|chestplate|leggings|boots)$/.test(bot.inventory?.slots?.[i]?.name || '')).length;
+const REARM_MS = 60 * MINUTE;
 // Then the rest for the trip, armour not asked again: worn through the hours
 // this takes, it broke piece by piece and the full list was never all carried
 // at once (a world spent eight hours re-making it). Arrows wait for the End.
@@ -216,6 +219,23 @@ const playthroughNatural = {
       write('model_ask', { step: 'snack', task: 'farm', args: { bread: SNACK } });
       console.log('    model: farm (hungry)');
       await companion.submitTask('farm', { bread: SNACK, center: farmCenter(companion) });
+      return;
+    }
+    // Armour worn through (it breaks piece by piece over the nights): before
+    // the next step out there, the model asks for a new set. Not counted as
+    // one of the step's asks. A world hunted pearls twelve nights without a
+    // piece on, died seventeen times and hid from every enderman it angered.
+    if (state.rearm) {
+      if (goal) return;
+      state.rearm = false;
+      state.replace = false;
+    } else if (index > STEPS.findIndex((s) => s.id === 'gear') && worn(bot) < 2 && (!goal || entry.asks > 0)
+      && bot.game?.dimension?.endsWith('overworld') && Date.now() - (state.rearmAt || 0) > REARM_MS) {
+      state.rearm = true;
+      state.rearmAt = Date.now();
+      write('model_ask', { step: 'rearm', task: 'outfit', args: { items: ARMOR } });
+      console.log('    model: outfit (armour worn out)');
+      await companion.submitTask('outfit', { items: ARMOR });
       return;
     }
     // The model waits for the bot to finish (or give up) before asking again.
