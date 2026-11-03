@@ -33,3 +33,25 @@ test('already at home, it simply waits', async () => {
   await goal.run({ ...s.ctx, signal: ac.signal }).catch(() => {});
   assert.equal(s.walks.length, 0);
 });
+
+test('at night an enderman far off is stared at until it comes, not chased', async () => {
+  const position = new Vec3(0, 64, 0);
+  const man = { id: 7, name: 'enderman', position: new Vec3(30, 64, 0) };
+  let looks = 0;
+  const bot = { entity: { position }, entities: { 7: man },
+    lookAt: async (p) => { looks += 1; assert.ok(p.y > 66, 'at its head'); if (looks === 3) man.position = new Vec3(2, 64, 0); } };
+  let chased = 0;
+  const skills = { huntOne: async () => { chased += 1; return { ok: false, reason: 'no_mob_in_range' } }, explore: async () => ({ ok: true }) };
+  const records = [];
+  const goal = createHuntPearlsGoal({ bot, count: 12, skills, actions: { haltBody() {} } });
+  const ctx = { signal: new AbortController().signal, record: (t, d) => records.push({ t, ...d }),
+    perceive: () => ({ isDay: false, position, inventory: {} }) };
+  const result = await goal.run(ctx);
+  assert.equal(result.ok, true);
+  assert.equal(chased, 0);
+  assert.ok(records.some((r) => r.t === 'enderman_stare_result' && r.came));
+  // The same one is not stared at again straight away: the hunt goes on.
+  man.position = new Vec3(30, 64, 0);
+  await goal.run(ctx);
+  assert.equal(chased, 1);
+});
