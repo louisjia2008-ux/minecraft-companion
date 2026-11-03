@@ -464,3 +464,16 @@ test('bounded failed home maintenance yields the body to the existing mining goa
     assert.equal(events.filter((event) => event.type === 'goal_set').length, 1);
   } finally { await brain.dispose(); }
 });
+
+test('failed walks home pause maintenance though the body moved, longer each time', async () => {
+  const s = stalledMaintenance();
+  let x = 40;
+  const walkPart = { ok: false, reason: 'path_timeout' };
+  s.home.run = async () => { x -= 7; s.bot.entity.position = new Vec3(x + 0.5, 64, 3.5); return walkPart; };
+  for (let i = 0; i < 3; i += 1) await s.maintenance.run(s.ctx);
+  assert.equal(s.maintenance.want(s.perceive()), 0, 'paused after three path timeouts');
+  assert.equal(s.records.at(-1).retryAt, 60000);
+  s.setTime(60000);
+  for (let i = 0; i < 3; i += 1) await s.maintenance.run(s.ctx);
+  assert.equal(s.records.at(-1).retryAt, 60000 + 120000, 'the second pause in a row is twice as long');
+});

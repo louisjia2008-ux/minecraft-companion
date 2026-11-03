@@ -12,6 +12,7 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
   let gearMissingSince = null;
   let noChange = 0;
   let retryAt = 0;
+  let pauses = 0;
   let lastHome = null;
 
   function current() {
@@ -21,30 +22,37 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
       gearMissingSince = null;
       noChange = 0;
       retryAt = 0;
+      pauses = 0;
     }
     return goal;
   }
 
-  function observed(goal, state) {
+  function observed(goal, state, { moved = true } = {}) {
     const status = goal.maintenance(state);
     // steps is an action counter, not evidence of changed inventory or world.
     return JSON.stringify({ ...status,
       inventory: Object.entries(state.inventory).filter(([, n]) => n > 0).sort(([a], [b]) => a.localeCompare(b)),
-      position: state.position && [state.position.x, state.position.y, state.position.z].map((n) => Math.floor(n)),
+      position: moved && state.position && [state.position.x, state.position.y, state.position.z].map((n) => Math.floor(n)),
       furnace: goal.memory.furnace });
   }
 
   function accountAttempt(ctx, goal, before, result) {
     // Waiting and survival preemption neither spend nor refill this budget.
     if (ctx.signal?.aborted || result?.waited || result?.reason === 'aborted') return;
-    const after = observed(goal, ctx.perceive());
     // A failed path can monopolize maintenance just as a no-op success can.
-    // Only observed inventory/world/body progress resets the streak.
-    if (before === after) noChange += 1;
-    else noChange = 0;
+    // Only observed inventory/world/body progress resets the streak. A failed
+    // walk always moves the body, so after a failure only the house and the
+    // bag count: a crafting table out of reach took the body from a Nether
+    // trip every thirty seconds, walking half way home and timing out.
+    const failed = result?.ok === false;
+    const after = observed(goal, ctx.perceive(), { moved: !failed });
+    if ((failed ? before.still : before.key) === after) noChange += 1;
+    else { noChange = 0; pauses = 0; }
     if (noChange >= noChangeLimit) {
       noChange = 0;
-      retryAt = now() + retryMs;
+      // Each pause in a row waits twice as long, up to sixteen times.
+      retryAt = now() + retryMs * 2 ** Math.min(pauses, 4);
+      pauses += 1;
       ctx.record('home_maintenance_paused', { reason: 'no_observed_change', retryAt });
     }
   }
@@ -75,7 +83,8 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
     async run(ctx) {
       const goal = current();
       if (!goal?.memory.established) return { ok: true };
-      const before = observed(goal, ctx.perceive());
+      const start = ctx.perceive();
+      const before = { key: observed(goal, start), still: observed(goal, start, { moved: false }) };
       let result;
       try {
         result = await goal.run(ctx);
