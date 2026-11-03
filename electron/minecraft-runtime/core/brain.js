@@ -17,6 +17,7 @@ function createBrain({
   failureCooldownMs = 2000,
   maxCooldownMs = 30000,
   goalRetryDelayMs = 250,
+  abandonMs = 20000,
 } = {}) {
   if (typeof perceive !== 'function') throw new TypeError('perceive is required');
   const permanent = behaviors.map(validateBehavior);
@@ -229,7 +230,17 @@ function createBrain({
     if (!entry) return;
     entry.preempted = true;
     entry.controller.abort(reason);
-    await entry.promise;
+    // A run that ignores its abort must not hold the body (and every later
+    // decision) forever: a maintenance walk carried through a portal hung
+    // for four hours with the brain waiting on it.
+    let timer = null;
+    const settled = await Promise.race([entry.promise.then(() => true),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), abandonMs); })]);
+    clearTimeout(timer);
+    if (!settled) {
+      emit('behavior_abandoned', { behavior: entry.behavior.name, reason: String(reason), ...correlation(entry.behavior.goalEntry) });
+      if (running === entry) running = null;
+    }
   }
 
   function safePerceive() {

@@ -7,7 +7,7 @@ const { BAND } = require('../brain');
 const OWN_GEAR = new Set(['homestead', 'outfit']);
 
 function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.now,
-  missingGearDelayMs = 5000, noChangeLimit = 3, retryMs = 60000 } = {}) {
+  missingGearDelayMs = 5000, noChangeLimit = 3, retryMs = 60000, stepLimitMs = 10 * 60000, watchMs = 1000 } = {}) {
   if (!bot || typeof home !== 'function') throw new TypeError('bot and home are required');
   let gearMissingSince = null;
   let noChange = 0;
@@ -57,6 +57,40 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
     }
   }
 
+  const overworld = () => String(bot.game?.dimension || 'overworld').replace(/^minecraft:/, '') === 'overworld';
+  // House work belongs to the overworld and to a few minutes at a time.
+  // Carried through the portal beside the house, a repair walk hung in the
+  // Nether for four hours: stop it once the bot is out of the overworld or
+  // the step runs long, whether or not the step heeds its abort.
+  async function watched(ctx, step) {
+    const inner = new AbortController();
+    const onAbort = () => inner.abort(ctx.signal.reason);
+    ctx.signal?.addEventListener?.('abort', onAbort, { once: true });
+    const started = now();
+    let timer = null;
+    const watchdog = new Promise((resolve) => {
+      const check = () => {
+        if (ctx.signal?.aborted) return resolve({ ok: false, reason: 'aborted' });
+        if (!overworld()) return resolve({ ok: false, reason: 'left_overworld' });
+        if (now() - started > stepLimitMs) return resolve({ ok: false, reason: 'maintenance_timeout' });
+        timer = setTimeout(check, watchMs);
+      };
+      check();
+    });
+    try {
+      const run = Promise.resolve().then(() => step({ ...ctx, signal: inner.signal }));
+      const result = await Promise.race([run, watchdog]);
+      if (!inner.signal.aborted && result && (result.reason === 'left_overworld' || result.reason === 'maintenance_timeout')) {
+        inner.abort(result.reason);
+        run.catch(() => {});
+      }
+      return result;
+    } finally {
+      clearTimeout(timer);
+      ctx.signal?.removeEventListener?.('abort', onAbort);
+    }
+  }
+
   return {
     name: 'home_maintenance',
     // A smaller want cannot preempt work in the same band. Keep house work
@@ -87,7 +121,7 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
       const before = { key: observed(goal, start), still: observed(goal, start, { moved: false }) };
       let result;
       try {
-        result = await goal.run(ctx);
+        result = await watched(ctx, (inner) => goal.run(inner));
       } catch (error) {
         if (error?.code !== 'aborted' && error?.code !== 'ABORT_ERR' && error?.name !== 'AbortError') {
           try { accountAttempt(ctx, goal, before); } catch { /* Preserve the original repair exception. */ }

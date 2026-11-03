@@ -477,3 +477,15 @@ test('failed walks home pause maintenance though the body moved, longer each tim
   for (let i = 0; i < 3; i += 1) await s.maintenance.run(s.ctx);
   assert.equal(s.records.at(-1).retryAt, 60000 + 120000, 'the second pause in a row is twice as long');
 });
+
+test('a repair carried out of the overworld is stopped even when it ignores its abort', async () => {
+  const s = stalledMaintenance();
+  s.bot.game = { dimension: 'overworld' };
+  let inner = null;
+  s.home.run = (ctx) => { inner = ctx.signal; return new Promise(() => {}); };
+  const maintenance = createHomeMaintenance({ bot: s.bot, home: () => s.home, watchMs: 5 });
+  setTimeout(() => { s.bot.game.dimension = 'minecraft:the_nether'; }, 20);
+  const result = await maintenance.run(s.ctx);
+  assert.equal(result.reason, 'left_overworld');
+  assert.equal(inner.aborted, true);
+});

@@ -222,3 +222,22 @@ for (const asynchronous of [false, true]) test(`${asynchronous ? 'rejected' : 't
   assert.equal(safetyRuns, 1);
   await brain.dispose();
 });
+
+test('a run that ignores its abort is abandoned so a more urgent behavior gets the body', async () => {
+  let hungry = false;
+  let ate = 0;
+  const events = [];
+  const stuck = { name: 'stuck', band: BAND.MAINTENANCE - 1, want: () => 0.2, run: () => new Promise(() => {}) };
+  const eat = { name: 'eat', band: BAND.MAINTENANCE, want: () => (hungry ? 1 : 0), run: async () => { ate += 1; hungry = false; return { ok: true }; } };
+  const brain = createBrain({ perceive: () => ({ alive: true }), behaviors: [stuck, eat], abandonMs: 30,
+    onEvent: (e) => events.push(e) });
+  try {
+    await brain.tick();
+    assert.equal(brain.status().running, 'stuck');
+    hungry = true;
+    await brain.tick();
+    for (let i = 0; i < 50 && !ate; i += 1) { await sleep(5); await brain.tick(); }
+    assert.equal(ate, 1);
+    assert.ok(events.some((e) => e.type === 'behavior_abandoned' && e.behavior === 'stuck'));
+  } finally { await brain.dispose(); }
+});
