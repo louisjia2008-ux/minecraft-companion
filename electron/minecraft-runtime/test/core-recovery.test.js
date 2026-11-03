@@ -386,3 +386,25 @@ test('brain.failGoal ends the goal with the given reason and stops its run', asy
   assert.deepEqual(events.find((e) => e.type === 'goal_failed').reasons, ['death_loop']);
   await brain.dispose();
 });
+
+test('spare bows, nether scaffolding and seeds beyond what is kept go from a full bag', () => {
+  const list = discardable({ bow: 3, basalt: 66, wheat_seeds: 29, flint_and_steel: 1, iron_sword: 1 });
+  assert.deepEqual(list, [{ name: 'bow', count: 2 }, { name: 'basalt', count: 34 }]);
+});
+
+test('armour left in the bag is put on while nothing is close', async () => {
+  const bot = fakeBot();
+  const items = [{ name: 'iron_helmet', count: 1 }, { name: 'iron_boots', count: 1 }, { name: 'shield', count: 1 }];
+  bot.inventory.items = () => items;
+  bot.inventory.slots = [];
+  const worn = [];
+  bot.equip = async (item, slot) => { worn.push(`${item.name}@${slot}`); bot.inventory.slots[{ head: 5, feet: 8, 'off-hand': 45 }[slot]] = item; };
+  const wear = createRecovery({ bot }).behaviors.find((b) => b.name === 'wear_armor');
+  const state = perceiveFor(bot)();
+  assert.equal(wear.want({ ...state, hostiles: [{ distance: 3 }] }), 0, 'not mid-fight');
+  assert.ok(wear.want(state) > 0);
+  const result = await wear.run({ perceive: () => state, record() {}, signal: new AbortController().signal });
+  assert.equal(result.ok, true);
+  assert.deepEqual(worn, ['iron_helmet@head', 'iron_boots@feet', 'shield@off-hand']);
+  assert.equal(wear.want(state), 0);
+});

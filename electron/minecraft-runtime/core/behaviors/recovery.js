@@ -14,6 +14,7 @@ const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
 const { sleep } = require('../confirm');
+const { upgrades } = require('../armor');
 
 const PATH_FAILURES = new Set(['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck', 'leg_blocked']);
 // Never wanted by any goal; thrown away first when the bag is full.
@@ -28,7 +29,11 @@ const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff
 // Useful in moderation: one stack is kept, the rest goes.
 // A stack of netherrack is the nether's building block: bridges, steps out of lava.
 const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64, stick: 64, egg: 16,
-  coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16, redstone: 64, clay_ball: 16 };
+  coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16, redstone: 64, clay_ball: 16,
+  // Nether scaffolding comes home by the stack; seeds pile up at every harvest.
+  basalt: 32, blackstone: 32, nether_bricks: 16, wheat_seeds: 32 };
+// A tool or weapon more than once is a slot each: one is kept.
+const SINGLE = new Set(['bow', 'crossbow', 'fishing_rod', 'flint_and_steel', 'shears']);
 // Sheared or dropped wool of any other colour: a bed takes three of one colour, so a few are kept.
 const WOOL_KEPT = 3;
 // Still full with none of those: ground blocks dug anywhere go, whole stacks
@@ -48,6 +53,7 @@ function discardable(inventory, keep = () => false) {
     else if (SURPLUS[name] && count > SURPLUS[name]) surplus.push({ name, count: count - SURPLUS[name] });
     else if (name.endsWith('_sapling') && count > SAPLINGS_KEPT) surplus.push({ name, count: count - SAPLINGS_KEPT });
     else if (name.endsWith('_wool') && count > WOOL_KEPT) surplus.push({ name, count: count - WOOL_KEPT });
+    else if (SINGLE.has(name) && count > 1) surplus.push({ name, count: count - 1 });
   }
   if (junk.length || surplus.length) return [...junk, ...surplus];
   return Object.entries(inventory || {}).filter(([name, count]) => count > 0 && CHEAP.has(name) && !keep(name))
@@ -318,8 +324,32 @@ function createRecovery({
     },
   };
 
+  // Armour made and left in the bag (an outfit cut short by hunger): put it
+  // on. A world hunted pearls with a full iron set in its bag, and the bag
+  // so full that nothing it dug could be picked up.
+  const wear = {
+    name: 'wear_armor',
+    band: BAND.MAINTENANCE,
+    want(state) {
+      if (typeof bot.equip !== 'function' || !calm(state, 6)) return 0;
+      return upgrades(bot).length ? 0.75 : 0;
+    },
+    async run(ctx) {
+      for (const [item, slot] of upgrades(bot)) {
+        try {
+          await bot.equip(item, slot);
+          ctx.record('equip', { item: item.name, slot });
+        } catch (error) {
+          if (error?.code === 'aborted') throw error;
+          return { ok: false, reason: 'equip_failed', item: item.name };
+        }
+      }
+      return { ok: true };
+    },
+  };
+
   return {
-    behaviors: [unstick, tidy, leaveDanger, nightBunker],
+    behaviors: [unstick, tidy, wear, leaveDanger, nightBunker],
     observe,
     attach(target) { brain = target; },
     status: () => ({ goal: { ...goalTrack }, deaths: deaths.length, danger: dangerActive() ? { ...danger } : null,
