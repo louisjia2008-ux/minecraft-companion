@@ -408,3 +408,25 @@ test('armour left in the bag is put on while nothing is close', async () => {
   assert.deepEqual(worn, ['iron_helmet@head', 'iron_boots@feet', 'shield@off-hand']);
   assert.equal(wear.want(state), 0);
 });
+
+test('in water under a ceiling, an empty bucket scoops the water away', async () => {
+  const { drainPocket } = require('../core/actions');
+  const world = new Map([['0,-5,0', 'water'], ['0,-4,0', 'water'], ['0,-3,0', 'deepslate']]);
+  const blockAt = (p) => {
+    const name = world.get(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`) || 'deepslate';
+    return { name, position: p.floored ? p.floored() : p, boundingBox: name === 'water' || name === 'air' ? 'empty' : 'block', getProperties: () => ({ level: 0 }) };
+  };
+  let aimed = null;
+  const items = [{ name: 'bucket', count: 1 }];
+  const bot = { entity: { position: new Vec3(0.5, -4.8, 0.5), isInWater: true }, blockAt,
+    inventory: { items: () => items }, equip: async () => {},
+    lookAt: async (p) => { aimed = p.floored(); },
+    activateItem: () => { world.delete(`${aimed.x},${aimed.y},${aimed.z}`); world.set(`${aimed.x},${aimed.y},${aimed.z}`, 'air'); items[0] = { name: 'water_bucket', count: 1 }; } };
+  const records = [];
+  assert.equal(await drainPocket(bot, { signal: new AbortController().signal, record: (t) => records.push(t) }), true);
+  assert.ok(records.includes('drain_pocket'));
+  // Open sky above: swimming up works, nothing is scooped.
+  world.set('0,-3,0', 'air');
+  items[0] = { name: 'bucket', count: 1 };
+  assert.equal(await drainPocket(bot, { signal: new AbortController().signal, record() {} }), false);
+});

@@ -707,6 +707,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       bot.pathfinder?.setGoal(null);
       bot.setControlState('jump', true);
       try {
+        // Under a ceiling no swim reaches air: take the water away instead.
+        if (typeof actions.drainPocket === 'function' && await actions.drainPocket(bot, ctx)) return { ok: true, drained: true };
         for (let i = 0; i < 40 && bot.oxygenLevel < 20 && bot.entity.isInWater; i += 1) {
           // Swimming up into a ceiling (a flooded pit or tunnel): dig it open.
           const above = bot.blockAt(bot.entity.position.offset(0, 2, 0).floored());

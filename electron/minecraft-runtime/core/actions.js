@@ -465,6 +465,41 @@ async function dropThroughLeaves(bot, ctx) {
   return start.y - bot.entity.position.y >= 1;
 }
 
+/**
+ * Shut in water under a ceiling (a flooded hole in a cave): scoop the water
+ * up with an empty bucket so the bot can breathe and dig its way out. A bot
+ * with no pickaxe spent hours in one, surfacing for air under the rock.
+ */
+async function drainPocket(bot, ctx) {
+  if (!bot.entity?.isInWater || typeof bot.blockAt !== 'function' || typeof bot.inventory?.items !== 'function') return false;
+  const feet = bot.entity.position.floored();
+  const head = feet.offset(0, 1, 0);
+  const ceiling = bot.blockAt(feet.offset(0, 2, 0));
+  if (!ceiling || ceiling.boundingBox !== 'block') return false;
+  const bucket = bot.inventory.items().find((i) => i.name === 'bucket');
+  if (!bucket) return false;
+  const sources = [];
+  for (const base of [head, feet]) {
+    for (const [dx, dy, dz] of [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+      const b = bot.blockAt(base.offset(dx, dy, dz));
+      if (b?.name === 'water' && Number(b.getProperties?.().level) === 0) sources.push(b);
+    }
+  }
+  if (!sources.length) return false;
+  try { await bot.equip(bucket, 'hand'); } catch (error) { if (error?.code === 'aborted') throw error; return false; }
+  let drained = 0;
+  for (const target of sources) {
+    if (!bot.inventory.items().some((i) => i.name === 'bucket')) break;
+    await bot.lookAt(target.position.offset(0.5, 0.5, 0.5), true);
+    await sleep(100, ctx.signal);
+    try { bot.activateItem(); } catch { /* checked below */ }
+    if (await waitUntil(() => bot.blockAt(target.position)?.name !== 'water'
+      || Number(bot.blockAt(target.position)?.getProperties?.().level) !== 0, { timeoutMs: 1000, signal: ctx.signal })) drained += 1;
+  }
+  if (drained) ctx.record?.('drain_pocket', { drained, at: `${feet.x},${feet.y},${feet.z}` });
+  return drained > 0;
+}
+
 async function unstick(bot, ctx) {
   const under = bot.blockAt(bot.entity.position.offset(0, -1, 0));
   if (under && under.name.endsWith('_leaves') && await dropThroughLeaves(bot, ctx)) return { ok: true, moved: 'off_canopy' };
@@ -476,6 +511,7 @@ async function unstick(bot, ctx) {
   // in a kelp bed far from land for over an hour. Swim for the nearest shore.
   if (await swimAshore(bot, ctx)) return { ok: true, moved: 'swam_ashore' };
   if (await stepOutOfPool(bot, ctx)) return { ok: true, moved: 'out_of_pool' };
+  if (await drainPocket(bot, ctx)) return { ok: true, moved: 'drained_pocket' };
   if (await nudge(bot, ctx)) return { ok: true, moved: 'nudged' };
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;
@@ -872,6 +908,7 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
+  drainPocket,
   recentre, surface, underground, unstick, breakLattice, openHeadroom, openNearDoor, swimAshore, stepOutOfPool, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };
