@@ -191,7 +191,8 @@ const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled
   'nether_bricks', 'polished_basalt', 'smooth_basalt', 'soul_sand', 'stone', 'end_stone']);
 const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
 const SHOOTERS = new Set(['blaze', 'ghast']);
-const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull']);
+const PEARL_HUNT_HEALTH = 12;
+const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull', 'ender_pearl']);
 const SKULL_DROPPERS = new Set(['wither_skeleton', 'blaze']);
 // Hoglins too: their charge tosses the bot, into lava as often as not.
 const CHARGERS = new Set(['piglin_brute', 'hoglin']);
@@ -888,6 +889,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // The End is full of them and the fight cannot wait: there an angry one
       // is fought (defend). A bunker dug mid-fight left the bot to the dragon.
       if (dimensionOf(bot) === 'the_end') return 0;
+      // Hunting pearls, the angry one is the quarry: struck in melee it stays
+      // and fights (defend), where hiding from every enderman the hunt turned
+      // let six nights pass without a pearl. Hurt, it is still hidden from.
+      const hunt = bot.companionPearlHunt;
+      if (hunt && Date.now() - hunt.at < 60000 && state.health >= PEARL_HUNT_HEALTH) return 0;
       return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
     },
     async run(ctx) {

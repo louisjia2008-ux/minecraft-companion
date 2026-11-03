@@ -226,3 +226,13 @@ test('hurt but not badly, with nothing to eat and too full to heal, the bot gets
   assert.equal(s.behavior('provision').want({ ...hurt, health: 17 }), 0);
   assert.equal(s.behavior('provision').want({ ...hurt, food: 18 }), 0);
 });
+
+test('hunting pearls, an angry enderman is fought rather than hidden from unless hurt', () => {
+  const s = endermanFixture(true);
+  s.bot.companionPearlHunt = { at: Date.now() };
+  assert.equal(s.behavior('hide').want(s.state), 0);
+  assert.ok(s.behavior('defend').want(s.state) > 0);
+  assert.ok(s.behavior('hide').want({ ...s.state, health: 8 }) > 0, 'hurt: hide as before');
+  s.bot.companionPearlHunt = { at: Date.now() - 120000 };
+  assert.ok(s.behavior('hide').want(s.state) > 0, 'an old hunt does not count');
+});
