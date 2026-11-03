@@ -10,11 +10,12 @@ const { endDragonGiven, endDragonDeath, endPortalNatural, endCityGiven, endFullN
 const { cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat, ironFarmFlat, ironFarmVillageFlat } = require('./devices.cjs');
 const { e2eFlat, machinesFlat } = require('./e2e.cjs');
 const { playthroughNatural } = require('./playthrough.cjs');
+const { pearlsFlat } = require('./pearls.cjs');
 
 const SCENARIOS = Object.fromEntries([collectLogsFlat, collectLogsNatural, homesteadFlat, homesteadNatural, nightBunkerFlat, nightBedFlat,
   farmFlat, ranchFlat, netherQuartzGiven, netherStructuresGiven, netherFortressGiven, netherBastionGiven, endDragonGiven, endDragonDeath, endPortalNatural, endCityGiven, endFullNatural, endWaterLanding, cobbleGeneratorFlat, cobbleGeneratorHopperFlat, autoSmelterFlat,
   materialsCobblegenFlat, branchMineIronFlat, caneFarmFlat, mobFarmFlat, carpetDuperFlat, fishingFlat, railDuperFlat, ironFarmFlat, ironFarmVillageFlat, e2eFlat, machinesFlat,
-  branchMineRedstoneFlat, branchMineDiamondFlat, materialsQuartzFlat, playthroughNatural]
+  branchMineRedstoneFlat, branchMineDiamondFlat, materialsQuartzFlat, playthroughNatural, pearlsFlat]
   .map((s) => [s.name, s]));
 
 module.exports = { SCENARIOS };

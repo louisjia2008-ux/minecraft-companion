@@ -15,6 +15,7 @@ const QUICK = [
   { scenario: 'night-bunker-flat', runs: 2, minPassRate: 0.5 },
   { scenario: 'farm-flat', runs: 2, minPassRate: 1 },
   { scenario: 'ranch-flat', runs: 2, minPassRate: 1 },
+  { scenario: 'pearls-flat', runs: 1, minPassRate: 1 },
 ];
 
 const SUITES = {

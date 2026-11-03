@@ -82,6 +82,7 @@ function createRecovery({
   skills = defaultSkills,
   now = Date.now,
   thresholds = {},
+  activeGoal = () => null,
 } = {}) {
   if (!bot) throw new TypeError('bot is required');
   const t = {
@@ -300,6 +301,9 @@ function createRecovery({
       if (bunker) return 1;
       // Nights only matter in the overworld.
       if (!dangerActive() || state.isDay !== false || state.sheltered || dimensionOf(bot) !== 'overworld') return 0;
+      // Pearls are hunted in the dark, and the deaths are the hunt's own:
+      // shut in, a bot sat out whole nights of the hunt it was set.
+      if (activeGoal() === 'hunt_pearls') return 0;
       // Already far from the deaths: the goal's own night handling is enough.
       return state.position && distance(state.position, danger.center) < t.leaveDistance * 2 ? 1 : 0;
     },

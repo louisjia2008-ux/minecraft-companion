@@ -191,7 +191,6 @@ const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled
   'nether_bricks', 'polished_basalt', 'smooth_basalt', 'soul_sand', 'stone', 'end_stone']);
 const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
 const SHOOTERS = new Set(['blaze', 'ghast']);
-const PEARL_HUNT_HEALTH = 12;
 // Air (of 20) below which a hurt bot in water goes up before anything else.
 const HURT_AIR = 16;
 const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull', 'ender_pearl']);
@@ -902,8 +901,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (dimensionOf(bot) === 'the_end') return 0;
       // Hunting pearls, the angry one is the quarry: struck in melee it stays
       // and fights (defend), where hiding from every enderman the hunt turned
-      // let six nights pass without a pearl. Hurt, it is still hidden from.
-      if (activeGoal() === 'hunt_pearls' && state.health >= PEARL_HUNT_HEALTH) return 0;
+      // let six nights pass without a pearl. Hurt, too: a hole dug mid-fight
+      // took five seconds of free hits and the bot died in it every time.
+      if (activeGoal() === 'hunt_pearls') return 0;
       return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
     },
     async run(ctx) {

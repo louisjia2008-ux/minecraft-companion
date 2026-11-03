@@ -457,3 +457,17 @@ test('fed by water running in from aside, the inflow is walled off and the hole 
   assert.ok(!placed.some((p) => p === '0,-5,0' || p === '0,-4,0'), 'never into its own cells');
   assert.ok(records.includes('block_inflow'));
 });
+
+test('a deadly place at night is bunkered in, but not while hunting pearls in that night', () => {
+  const bot = fakeBot();
+  bot.game = { dimension: 'minecraft:overworld' };
+  let clock = 0;
+  let goal = 'outfit';
+  const recovery = createRecovery({ bot, now: () => clock, activeGoal: () => goal });
+  for (let i = 0; i < 3; i += 1) { bot.emit('death'); clock += 1000; }
+  const bunker = recovery.behaviors.find((b) => b.name === 'danger_bunker');
+  const night = { ...perceiveFor(bot)(), isDay: false };
+  assert.equal(bunker.want(night), 1);
+  goal = 'hunt_pearls';
+  assert.equal(bunker.want(night), 0);
+});

@@ -231,12 +231,12 @@ test('hurt but not badly, with nothing to eat and too full to heal, the bot gets
   assert.equal(s.behavior('provision').want({ ...hurt, food: 18 }), 0);
 });
 
-test('hunting pearls, an angry enderman is fought rather than hidden from unless hurt', () => {
+test('hunting pearls, an angry enderman is fought rather than hidden from, hurt or not', () => {
   const s = endermanFixture(true);
   s.setGoal('hunt_pearls');
   assert.equal(s.behavior('hide').want(s.state), 0);
   assert.ok(s.behavior('defend').want(s.state) > 0);
-  assert.ok(s.behavior('hide').want({ ...s.state, health: 8 }) > 0, 'hurt: hide as before');
+  assert.equal(s.behavior('hide').want({ ...s.state, health: 8 }), 0, 'a hole dug mid-fight is death');
   s.setGoal('outfit');
   assert.ok(s.behavior('hide').want(s.state) > 0, 'other work hides as before');
 });

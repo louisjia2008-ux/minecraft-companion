@@ -114,7 +114,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   const configuredMovements = configureMovements(bot);
 
   // Stuck bodies, full bags and death loops are recovered for every goal alike.
-  const recovery = createRecovery({ bot });
+  const recovery = createRecovery({ bot, activeGoal: () => brain?.status().goal?.name });
   // Animals the current goal keeps (a ranch's herd) are not hunted for food.
   let spare = () => false;
   let director = null;

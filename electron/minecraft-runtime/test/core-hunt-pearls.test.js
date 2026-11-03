@@ -39,7 +39,7 @@ test('at night an enderman far off is stared at until it comes, not chased', asy
   const man = { id: 7, name: 'enderman', position: new Vec3(30, 64, 0) };
   let looks = 0;
   const bot = { entity: { position }, entities: { 7: man },
-    lookAt: async (p) => { looks += 1; assert.ok(p.y > 66, 'at its head'); if (looks === 3) man.position = new Vec3(2, 64, 0); } };
+    look: async () => {}, lookAt: async (p) => { looks += 1; assert.ok(p.y > 66, 'at its head'); if (looks === 3) man.position = new Vec3(2, 64, 0); } };
   let chased = 0;
   const skills = { huntOne: async () => { chased += 1; return { ok: false, reason: 'no_mob_in_range' } }, explore: async () => ({ ok: true }) };
   const records = [];
@@ -54,4 +54,37 @@ test('at night an enderman far off is stared at until it comes, not chased', asy
   man.position = new Vec3(30, 64, 0);
   await goal.run(ctx);
   assert.equal(chased, 1);
+});
+
+test('once the stared enderman turns, the bot looks at the ground so it does not freeze', async () => {
+  const position = new Vec3(0, 64, 0);
+  const man = { id: 9, name: 'enderman', position: new Vec3(14, 64, 0), metadata: {} };
+  const views = [];
+  const bot = { entity: { position, yaw: 0 }, entities: { 9: man },
+    registry: { entitiesByName: { enderman: { metadataKeys: ['a', 'creepy'] } } },
+    lookAt: async () => { views.push('eyes'); if (views.length === 2) man.metadata[1] = true; },
+    look: async (_y, pitch) => { views.push(pitch < -1 ? 'ground' : 'other'); if (views.length === 5) man.position = new Vec3(3, 64, 0); } };
+  const records = [];
+  const goal = createHuntPearlsGoal({ bot, count: 12, skills: {}, actions: { haltBody() {} } });
+  const ctx = { signal: new AbortController().signal, record: (t, d) => records.push({ t, ...d }),
+    perceive: () => ({ isDay: false, position, inventory: {} }) };
+  await goal.run(ctx);
+  assert.deepEqual(views, ['eyes', 'eyes', 'ground', 'ground', 'ground']);
+  const result = records.find((r) => r.t === 'enderman_stare_result');
+  assert.equal(result.came, true);
+  assert.equal(result.angry, true);
+});
+
+test('with an angry enderman already at hand, no other one is stared at', async () => {
+  const position = new Vec3(0, 64, 0);
+  const near = { id: 1, name: 'enderman', position: new Vec3(3, 64, 0), metadata: { 1: true } };
+  const far = { id: 2, name: 'enderman', position: new Vec3(25, 64, 0), metadata: {} };
+  let stared = 0;
+  const bot = { entity: { position, yaw: 0 }, entities: { 1: near, 2: far },
+    registry: { entitiesByName: { enderman: { metadataKeys: ['a', 'creepy'] } } },
+    lookAt: async () => { stared += 1; }, look: async () => {} };
+  const skills = { huntOne: async () => ({ ok: true }) };
+  const goal = createHuntPearlsGoal({ bot, count: 12, skills, actions: { haltBody() {} } });
+  await goal.run({ signal: new AbortController().signal, record() {}, perceive: () => ({ isDay: false, position, inventory: {} }) });
+  assert.equal(stared, 0);
 });

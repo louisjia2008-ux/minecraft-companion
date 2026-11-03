@@ -31,27 +31,38 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   const memory = { explore: {}, nights: 0, hunted: 0, sawNight: false };
   const pearls = (state) => state.inventory.ender_pearl || 0;
 
+  const creepyIndex = () => bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
+  const angry = (e) => { const i = creepyIndex(); return i >= 0 && e.metadata?.[i] === true; };
+  const endermen = () => Object.values(bot.entities || {}).filter((e) => e?.name === 'enderman' && e.position);
+
+  // Stared at, an enderman turns on the player; but one that is angry and
+  // still looked at stands frozen (within 16 blocks it waits out the stare).
+  // So: look one in the eyes until it turns, then look at the ground and let
+  // it come. One at a time: two at once killed a bot in iron in ten seconds.
   async function stare(ctx) {
     const here = bot.entity.position;
-    const target = Object.values(bot.entities || {})
-      .filter((e) => e?.name === 'enderman' && e.position && !blacklist.has(`stare:${e.id}`))
-      .map((e) => ({ e, d: e.position.distanceTo(here) }))
-      .filter(({ d }) => d > STARE_NEAR && d <= STARE_FAR)
-      .sort((a, b) => a.d - b.d)[0];
+    // One already angry and close is the fight (defend): none turned meanwhile.
+    if (endermen().some((e) => angry(e) && e.position.distanceTo(here) <= STARE_NEAR)) return null;
+    const near = endermen().map((e) => ({ e, d: e.position.distanceTo(here) }))
+      .filter(({ d }) => d > STARE_NEAR && d <= STARE_FAR);
+    const turned = near.filter(({ e }) => angry(e)).sort((a, b) => a.d - b.d)[0];
+    const target = turned || near.filter(({ e }) => !blacklist.has(`stare:${e.id}`)).sort((a, b) => a.d - b.d)[0];
     if (!target) return null;
     const { e } = target;
     blacklist.add(`stare:${e.id}`, 'stared', STARE_AGAIN_MS);
-    ctx.record('enderman_stare', { distance: Math.round(target.d) });
+    ctx.record('enderman_stare', { distance: Math.round(target.d), angry: angry(e) });
     actions.haltBody?.(bot);
     const until = Date.now() + STARE_MS;
+    let turnedAt = angry(e) ? Date.now() : null;
     while (Date.now() < until && bot.entities?.[e.id]) {
       if (e.position.distanceTo(bot.entity.position) <= STARE_NEAR) break;
-      await bot.lookAt(e.position.offset(0, ENDERMAN_EYES, 0), true);
+      if (!turnedAt && angry(e)) turnedAt = Date.now();
+      if (turnedAt) await bot.look(bot.entity.yaw, -Math.PI / 2, true);
+      else await bot.lookAt(e.position.offset(0, ENDERMAN_EYES, 0), true);
       await sleep(100, ctx.signal);
     }
     const came = Boolean(bot.entities?.[e.id]) && e.position.distanceTo(bot.entity.position) <= STARE_NEAR;
-    const creepy = bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
-    ctx.record('enderman_stare_result', { came, angry: creepy >= 0 ? e.metadata?.[creepy] === true : null,
+    ctx.record('enderman_stare_result', { came, angry: angry(e), turnedMs: turnedAt ? turnedAt - (until - STARE_MS) : null,
       gone: !bot.entities?.[e.id], distance: Math.round(e.position.distanceTo(bot.entity.position)) });
     return { ok: true, progress: came };
   }
