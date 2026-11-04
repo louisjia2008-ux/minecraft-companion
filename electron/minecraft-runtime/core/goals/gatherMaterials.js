@@ -32,6 +32,8 @@ const { createNetherQuartzGoal } = require('./netherQuartz');
 const DOWN = [new Vec3(0, -1, 0)];
 // Out on the surface only after dark: string waits for night, not for a cave.
 const NIGHT_MOBS = new Set(['spider', 'enderman']);
+// Armour and off-hand slots of the player window.
+const WORN_SLOTS = [5, 6, 7, 8, 45];
 // Main inventory slots (36): store what is owed before the bag overflows.
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
@@ -87,8 +89,17 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   // chest while the bot fights its way through hours of mining); what the
   // bag holds of it counts as delivered.
   const bagged = (key, inventory) => (inventory && carry(key) ? countKey(key, inventory, kb) : 0);
+  // Armour put on as soon as it is made (wear_armor) is delivered too: it
+  // cannot be stored from the body, and a world tried 500 times over, each
+  // read as a full chest beside one holding a single block of dirt.
+  const worn = (key) => {
+    const slots = bot.inventory?.slots || [];
+    const on = {};
+    for (const i of WORN_SLOTS) if (slots[i]?.name) on[slots[i].name] = (on[slots[i].name] || 0) + 1;
+    return countKey(key, on, kb);
+  };
   // What the chest still lacks, in the caller's order.
-  const owed = (inventory) => wanted().map((r) => ({ key: r.key, count: r.count - stored(r.key) - bagged(r.key, inventory) }))
+  const owed = (inventory) => wanted().map((r) => ({ key: r.key, count: r.count - stored(r.key) - bagged(r.key, inventory) - worn(r.key) }))
     .filter((r) => r.count > 0);
 
   // `reserved`: { item: count } already in the bag and counted by the caller,

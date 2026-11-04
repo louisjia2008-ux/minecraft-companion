@@ -153,3 +153,35 @@ test('farm goal asked for from far off walks back before choosing plots', async 
   assert.ok((await goal.run(ctx)).waited);
   assert.equal(explored, 0);
 });
+
+test('no soil around the centre (desert sand): the farm moves to the nearest soil, away from raiders', async () => {
+  const { findGround } = require('../core/farming');
+  // Sand everywhere but a patch of grass at x 20..30, and a second one by a pillager outpost at x -20.
+  const world = (p) => {
+    const ground = p.y === 0 && ((p.x >= 20 && p.x <= 30) || (p.x <= -18 && p.x >= -22)) ? 'grass_block' : p.y <= 0 ? 'sand' : 'air';
+    return { name: ground, boundingBox: ground === 'air' ? 'empty' : 'block' };
+  };
+  const bot = {
+    entity: { position: new Vec3(0.5, 1, 0.5) },
+    registry: { blocksByName: { grass_block: { id: 1 }, dirt: { id: 2 } } },
+    blockAt: world,
+    companionDanger: [{ x: -20, z: 0 }],
+    findBlocks: ({ point, maxDistance }) => {
+      const out = [];
+      for (let x = -maxDistance; x <= maxDistance; x += 1) for (let z = -8; z <= 8; z += 1) {
+        if (world({ x, y: 0, z }).name === 'grass_block' && Math.hypot(x - point.x, z - point.z) <= maxDistance) out.push(new Vec3(x, 0, z));
+      }
+      return out;
+    },
+  };
+  assert.deepEqual(findGround(bot, { x: 0, y: 1, z: 0 }, 48), { x: 20, y: 1, z: 0 });
+  const returns = [];
+  const real = require('../core/farming');
+  const farming = { ...real, returnTo: async (_b, _c, p) => { returns.push(p); return { ok: true }; } };
+  let explored = 0;
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills: { explore: async () => { explored += 1; return { ok: true }; } }, waitMs: 0 });
+  await goal.run({ perceive: () => ({ inventory: {} }), record: () => {}, signal: new AbortController().signal });
+  assert.equal(explored, 0);
+  assert.deepEqual(returns, [{ x: 20, y: 1, z: 0 }]);
+  assert.deepEqual(goal.memory.center, { x: 20, y: 1, z: 0 });
+});

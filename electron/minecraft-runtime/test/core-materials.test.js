@@ -426,3 +426,19 @@ test('what the caller already counted in the bag is not stored as delivered', as
   assert.ok(sim.chest.cobblestone >= 7);
   assert.ok(sim.inventory.cobblestone + sim.chest.cobblestone >= 64, 'seven more were gathered, not seven moved');
 });
+
+test('armour already worn counts as delivered, not as something to store', async () => {
+  const sim = simulate({ seed: 6, failRate: 0 });
+  // Crafted, then put on at once by wear_armor: perception still lists it.
+  sim.inventory.iron_helmet = 1;
+  sim.bot.inventory.slots = [];
+  sim.bot.inventory.slots[5] = { name: 'iron_helmet', count: 1 };
+  const stores = [];
+  const storeInChest = sim.skills.storeInChest;
+  sim.skills.storeInChest = async (b, c, opts) => { stores.push(opts.wants.length); return storeInChest(b, c, opts); };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'iron_helmet', count: 1 }], stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  const { events } = await runGoal(sim, goal);
+  assert.ok(events.some((e) => e.type === 'goal_done'), JSON.stringify(events.filter((e) => e.type === 'goal_failed')));
+  assert.ok(stores.every((n) => n === 0), 'only the chest check, nothing stored');
+});

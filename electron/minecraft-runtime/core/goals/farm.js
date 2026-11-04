@@ -49,7 +49,18 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
       ctx.record('farm', { action: 'return', distance: Math.round(Math.hypot(at.x - c.x, at.z - c.z)) });
       return farming.returnTo(bot, ctx, c);
     }
-    const list = plots();
+    let list = plots();
+    if (!list.length && farming.findGround) {
+      // No soil around the centre (sand, stone): move the farm to the nearest soil.
+      const ground = farming.findGround(bot, memory.center, FAR_FROM_FARM);
+      if (ground) {
+        ctx.record('farm', { action: 'move', from: posKey(memory.center), to: posKey(ground) });
+        memory.center = ground;
+        memory.plots = null;
+        list = plots();
+        if (list.length) return farming.returnTo(bot, ctx, ground);
+      }
+    }
     if (!list.length) return skills.explore(bot, ctx, memory);
     // A seed search can wander out of view of the farm. Its plots then read
     // as unknown, never ripe or empty, and the goal would wait there forever.
