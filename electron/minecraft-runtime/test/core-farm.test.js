@@ -225,3 +225,19 @@ test('no soil within reach of the centre: it explores on, and farms the first so
   assert.equal(returns.length, 1);
   assert.ok(Math.abs(returns[0].x - 90) <= 6, JSON.stringify(returns[0]));
 });
+
+test('with no seeds in the bag, ground is not tilled to dry out: seeds are fetched first', async () => {
+  const plots = [{ x: 1, y: 0, z: 1, hydrated: false }];
+  const calls = [];
+  const farming = {
+    choosePlots: () => plots, findWater: () => [], plotState: () => 'untilled',
+    till: async () => { calls.push('till'); return { ok: true }; },
+    gatherSeeds: async () => { calls.push('seeds'); return { ok: true }; },
+    returnTo: async () => ({ ok: true }),
+  };
+  const bot = { entity: { position: new Vec3(0.5, 1, 0.5) }, blockAt: () => null, inventory: { items: () => [] } };
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills: {}, waitMs: 0 });
+  const ctx = { perceive: () => ({ inventory: { wooden_hoe: 1 } }), record: () => {}, signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.deepEqual(calls, ['seeds']);
+});

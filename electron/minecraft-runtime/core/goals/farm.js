@@ -105,8 +105,10 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
       if (!result.ok) blacklist.add(posKey(empty), result.reason, 15000);
       return result;
     }
+    // Tilled only with a seed to sow: bare farmland dries back to dirt, and a
+    // farm short of seeds in the desert tilled the same plots 400 times.
     const untilled = byState('untilled')[0];
-    if (untilled) {
+    if (untilled && (inventory.wheat_seeds || 0) > 0) {
       const hoeStep = planNext({ requirements: [{ key: 'hoe', count: 1 }], inventory, stations, kb });
       if (hoeStep) return step(ctx, { ...hoeStep, for: 'hoe' });
       ctx.record('farm', { action: 'till', plot: posKey(untilled) });
@@ -115,7 +117,7 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
       return result;
     }
     // Empty farmland and no seeds: break grass until some drop.
-    if (byState('empty').length && !(inventory.wheat_seeds > 0)) {
+    if ((byState('empty').length || untilled) && !(inventory.wheat_seeds > 0)) {
       ctx.record('farm', { action: 'seeds' });
       const result = await farming.gatherSeeds(bot, ctx, { blacklist, exclude: (p) => list.some((q) => q.x === p.x && q.z === p.z) });
       if (result.reason === 'no_grass') return skills.explore(bot, ctx, memory);
