@@ -21,7 +21,7 @@ const FAR_FROM_FARM = 48;
 function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = null,
   skills = defaultSkills, farming = defaultFarming, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000 } = {}) {
   const blacklist = createBlacklist({ ttlMs: 60000 });
-  const memory = { center: center || null, plots: null, table: home?.table || null, steps: 0, harvested: 0, shortfall: {} };
+  const memory = { center: center || null, barren: false, plots: null, table: home?.table || null, steps: 0, harvested: 0, shortfall: {} };
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
   // Never put the crafting table on a plot.
   const onPlot = (p) => (memory.plots || []).some((q) => q.x === p.x && q.z === p.z);
@@ -45,24 +45,33 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
     // instead of going back. Walk back to the farm first.
     const c = memory.center;
     const at = bot.entity.position;
+    const enough = Math.min(4, plotCount);
+    const fits = (p) => farming.choosePlots(blockAt, p, { count: plotCount, exclude: (q) => exclude(q),
+      findWater: (w, r) => farming.findWater(bot, w, r) }).length >= enough;
+    const moveTo = (ground) => {
+      ctx.record('farm', { action: 'move', from: posKey(memory.center), to: posKey(ground) });
+      memory.center = ground;
+      memory.plots = null;
+      memory.barren = false;
+      return farming.returnTo(bot, ctx, ground);
+    };
     if (c && Math.hypot(at.x - c.x, at.z - c.z) > FAR_FROM_FARM) {
+      // Out looking for soil, the old centre has none to go back to: the
+      // nearest soil here that holds a farm, or further on.
+      if (memory.barren && farming.findGround) {
+        const ground = farming.findGround(bot, at.floored(), FAR_FROM_FARM, { fits });
+        return ground ? moveTo(ground) : skills.explore(bot, ctx, memory);
+      }
       ctx.record('farm', { action: 'return', distance: Math.round(Math.hypot(at.x - c.x, at.z - c.z)) });
       return farming.returnTo(bot, ctx, c);
     }
     let list = plots();
-    const enough = Math.min(4, plotCount);
     if (list.length < enough && farming.findGround) {
       // No soil around the centre (sand, stone): move the farm to the nearest soil that holds one.
-      const fits = (p) => farming.choosePlots(blockAt, p, { count: plotCount, exclude: (q) => exclude(q),
-        findWater: (c, r) => farming.findWater(bot, c, r) }).length >= enough;
       const ground = farming.findGround(bot, memory.center, FAR_FROM_FARM, { fits });
-      if (ground) {
-        ctx.record('farm', { action: 'move', from: posKey(memory.center), to: posKey(ground) });
-        memory.center = ground;
-        memory.plots = null;
-        list = plots();
-        return farming.returnTo(bot, ctx, ground);
-      }
+      if (ground) return moveTo(ground);
+      memory.barren = true;
+      return skills.explore(bot, ctx, memory);
     }
     if (!list.length) return skills.explore(bot, ctx, memory);
     // A seed search can wander out of view of the farm. Its plots then read

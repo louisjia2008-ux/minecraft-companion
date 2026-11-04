@@ -186,3 +186,42 @@ test('no soil around the centre (desert sand): the farm moves to the nearest soi
   assert.deepEqual(returns, [{ x: 20, y: 1, z: 0 }]);
   assert.deepEqual(goal.memory.center, { x: 20, y: 1, z: 0 });
 });
+
+test('no soil within reach of the centre: it explores on, and farms the first soil it finds out there', async () => {
+  const real = require('../core/farming');
+  let soilAt = null; // nothing anywhere until the bot has wandered
+  const bot = {
+    entity: { position: new Vec3(0.5, 1, 0.5) },
+    registry: { blocksByName: { grass_block: { id: 1 } } },
+    blockAt: (p) => {
+      const grass = soilAt && p.y === 0 && Math.abs(p.x - soilAt.x) <= 6 && Math.abs(p.z - soilAt.z) <= 6;
+      const name = p.y <= 0 ? (grass ? 'grass_block' : 'sand') : 'air';
+      return { name, boundingBox: name === 'air' ? 'empty' : 'block' };
+    },
+    findBlocks: ({ point, maxDistance }) => {
+      if (!soilAt) return [];
+      const out = [];
+      for (let dx = -6; dx <= 6; dx += 1) for (let dz = -6; dz <= 6; dz += 1) {
+        const p = new Vec3(soilAt.x + dx, 0, soilAt.z + dz);
+        if (p.distanceTo(point) <= maxDistance) out.push(p);
+      }
+      return out;
+    },
+  };
+  const returns = [];
+  let explored = 0;
+  const farming = { ...real, returnTo: async (_b, _c, p) => { returns.push(p); return { ok: true }; } };
+  const skills = { explore: async () => { explored += 1; bot.entity.position = new Vec3(80.5, 1, 0.5); return { ok: true }; } };
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills, waitMs: 0 });
+  const ctx = { perceive: () => ({ inventory: {} }), record: () => {}, signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.equal(explored, 1);
+  // Now 80 blocks out, with no soil yet: on, not back.
+  await goal.run(ctx);
+  assert.equal(explored, 2);
+  assert.equal(returns.length, 0);
+  soilAt = { x: 90, z: 0 };
+  await goal.run(ctx);
+  assert.equal(returns.length, 1);
+  assert.ok(Math.abs(returns[0].x - 90) <= 6, JSON.stringify(returns[0]));
+});
