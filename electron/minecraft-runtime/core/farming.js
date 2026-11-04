@@ -80,7 +80,7 @@ function findWater(bot, center, radius) {
  * explored back and forth by a pillager outpost for two hours.
  */
 function findGround(bot, center, radius = 64, { fits = () => true } = {}) {
-  const ids = [...TILLABLE].map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id !== undefined);
+  const ids = [...TILLABLE, 'farmland'].map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id !== undefined);
   if (!ids.length || typeof bot.findBlocks !== 'function') return null;
   const danger = bot.companionDanger || [];
   const c = v(center);
