@@ -79,7 +79,7 @@ function findWater(bot, center, radius) {
  * built on desert sand had none in reach of its centre, and the farm
  * explored back and forth by a pillager outpost for two hours.
  */
-function findGround(bot, center, radius = 64) {
+function findGround(bot, center, radius = 64, { fits = () => true } = {}) {
   const ids = [...TILLABLE].map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id !== undefined);
   if (!ids.length || typeof bot.findBlocks !== 'function') return null;
   const danger = bot.companionDanger || [];
@@ -87,8 +87,11 @@ function findGround(bot, center, radius = 64) {
   const found = bot.findBlocks({ matching: ids, point: c, maxDistance: radius, count: 256 })
     .filter((p) => SOFT_ABOVE(bot.blockAt(p.offset(0, 1, 0))) && SOFT_ABOVE(bot.blockAt(p.offset(0, 2, 0))))
     .filter((p) => !danger.some((d) => Math.hypot(d.x - p.x, d.z - p.z) < 32))
-    .sort((a, b) => a.distanceTo(c) - b.distanceTo(c))[0];
-  return found ? { x: found.x, y: found.y + 1, z: found.z } : null;
+    .sort((a, b) => a.distanceTo(c) - b.distanceTo(c))
+    .map((p) => ({ x: p.x, y: p.y + 1, z: p.z }))
+    // A lone patch of grass in the sand holds no farm: the nearest that fits one.
+    .find((p) => fits(p));
+  return found || null;
 }
 
 /** What a plot needs next, read from the world. */

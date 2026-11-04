@@ -156,16 +156,17 @@ test('farm goal asked for from far off walks back before choosing plots', async 
 
 test('no soil around the centre (desert sand): the farm moves to the nearest soil, away from raiders', async () => {
   const { findGround } = require('../core/farming');
-  // Sand everywhere but a patch of grass at x 20..30, and a second one by a pillager outpost at x -20.
+  // Sand everywhere but a patch of grass at x 20..30, a second one by a pillager outpost at x -42,
+  // and a lone block of grass at x 8 that holds no farm.
   const world = (p) => {
-    const ground = p.y === 0 && ((p.x >= 20 && p.x <= 30) || (p.x <= -18 && p.x >= -22)) ? 'grass_block' : p.y <= 0 ? 'sand' : 'air';
+    const ground = p.y === 0 && ((p.x >= 20 && p.x <= 30) || (p.x <= -40 && p.x >= -44) || (p.x === 8 && p.z === 0)) ? 'grass_block' : p.y <= 0 ? 'sand' : 'air';
     return { name: ground, boundingBox: ground === 'air' ? 'empty' : 'block' };
   };
   const bot = {
     entity: { position: new Vec3(0.5, 1, 0.5) },
     registry: { blocksByName: { grass_block: { id: 1 }, dirt: { id: 2 } } },
     blockAt: world,
-    companionDanger: [{ x: -20, z: 0 }],
+    companionDanger: [{ x: -42, z: 0 }],
     findBlocks: ({ point, maxDistance }) => {
       const out = [];
       for (let x = -maxDistance; x <= maxDistance; x += 1) for (let z = -8; z <= 8; z += 1) {
@@ -174,7 +175,7 @@ test('no soil around the centre (desert sand): the farm moves to the nearest soi
       return out;
     },
   };
-  assert.deepEqual(findGround(bot, { x: 0, y: 1, z: 0 }, 48), { x: 20, y: 1, z: 0 });
+  assert.deepEqual(findGround(bot, { x: 0, y: 1, z: 0 }, 48), { x: 8, y: 1, z: 0 }, 'without a fit test, the nearest soil');
   const returns = [];
   const real = require('../core/farming');
   const farming = { ...real, returnTo: async (_b, _c, p) => { returns.push(p); return { ok: true }; } };

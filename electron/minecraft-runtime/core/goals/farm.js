@@ -50,15 +50,18 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
       return farming.returnTo(bot, ctx, c);
     }
     let list = plots();
-    if (!list.length && farming.findGround) {
-      // No soil around the centre (sand, stone): move the farm to the nearest soil.
-      const ground = farming.findGround(bot, memory.center, FAR_FROM_FARM);
+    const enough = Math.min(4, plotCount);
+    if (list.length < enough && farming.findGround) {
+      // No soil around the centre (sand, stone): move the farm to the nearest soil that holds one.
+      const fits = (p) => farming.choosePlots(blockAt, p, { count: plotCount, exclude: (q) => exclude(q),
+        findWater: (c, r) => farming.findWater(bot, c, r) }).length >= enough;
+      const ground = farming.findGround(bot, memory.center, FAR_FROM_FARM, { fits });
       if (ground) {
         ctx.record('farm', { action: 'move', from: posKey(memory.center), to: posKey(ground) });
         memory.center = ground;
         memory.plots = null;
         list = plots();
-        if (list.length) return farming.returnTo(bot, ctx, ground);
+        return farming.returnTo(bot, ctx, ground);
       }
     }
     if (!list.length) return skills.explore(bot, ctx, memory);
