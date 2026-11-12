@@ -11,6 +11,18 @@ MINECRAFT_E2E_INSTALLATION=/path/to/installation.json MINECRAFT_E2E_ACCEPT_EULA=
   npm run test:e2e --prefix electron -- minecraft-core-live.spec.ts
 ```
 
+Set `MINECRAFT_E2E_RECORDER_PROFILE` to a prepared Fabric 1.21.8 Recorder server profile to run the same test with recording. The test copies the launcher, libraries, mods and configuration into its own server directory. After shutdown it binds `companion-task-timeline.json` to the completed Recorder Play for the bot.
+
+On the machine that ran both the desktop and recorder, align the receipts and authoritative inventory changes to that Play. If the Recorder renderer has written `renders/result.json` and its frame index, the report includes video anchors:
+
+```sh
+python3 tools/local-validation/align-recorder-play.py \
+  --play /path/to/play --desktop /path/to/companion-task-timeline.json \
+  --output /path/to/aligned-timeline.json
+```
+
+The task receipts use intervals between Recorder player-state samples. Inventory and dimension changes use their captured server ticks.
+
 ## One contract, two transports
 
 Use the pinned Node 22.22.0 / npm 10.9.4 and existing lockfiles:
