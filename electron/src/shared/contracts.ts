@@ -235,6 +235,7 @@ export interface DeskPetApi {
     connect(config: MinecraftConnectionConfig): Promise<MinecraftSnapshot>;
     disconnect(): Promise<MinecraftSnapshot>;
     submit(command: string): Promise<MinecraftSnapshot>;
+    gatherLogs(count: number): Promise<MinecraftSnapshot>;
     control(action: MinecraftControlAction): Promise<MinecraftSnapshot>;
     sendChat(message: string): Promise<MinecraftSnapshot>;
     onChanged(listener: (state: MinecraftSnapshot) => void): Unsubscribe;

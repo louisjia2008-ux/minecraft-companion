@@ -6,7 +6,7 @@
 
 面向 Minecraft Java Edition 的陪玩代理源码，包含一个独立开发中的决策 core、真实 vanilla 服务端场景工具，以及保留的 Electron 桌面宿主与旧任务引擎。
 
-**历史记录：v0.1.0-alpha.1 源码开发预览。** 该历史冻结曾完成 **24场景32/32轮** 正式游戏验收，当前整合候选仍发布阻断；各冻结版本的完整离线检查与后续失败分别记录，最终发行版本的完整重验结果见随包 `RELEASE_ATTESTATION.json`。新 core 尚未接入 Electron 的命令与生命周期，现有 CLI 用于开发和场景验证，没有独立的普通玩家自由游玩启动入口。当前范围与已知局限见 [STATUS.md](STATUS.md)；完整命令、结果与修复记录见 [VALIDATION.md](VALIDATION.md) 和 [正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
+**历史记录：v0.1.0-alpha.1 源码开发预览。** 该历史冻结曾完成 **24场景32/32轮** 正式游戏验收，当前整合候选仍发布阻断；各冻结版本的完整离线检查与后续失败分别记录，最终发行版本的完整重验结果见随包 `RELEASE_ATTESTATION.json`。现有 CLI 用于开发和场景验证，桌面 Core 入口的范围见下文。历史命令、结果与修复记录见 [STATUS.md](STATUS.md)、[VALIDATION.md](VALIDATION.md) 和 [正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
 
 项目自有源码采用 **AGPL-3.0-only**。许可证、继承来源和第三方声明分别见 [LICENSE](LICENSE)、[LICENSING.md](LICENSING.md)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
@@ -94,13 +94,13 @@ E2E 从空背包开始，在受控平地完成家园后由默认自主目标收�
 
 默认结果目录是 `.minecraft-local-test/scenario-runs/<batch>/<scenario>/`。`summary.json` 保存逐轮结果和统计，`run-NN.jsonl` 保存原始事件；总套件另有 `regression.json` 或 `e2e.json`。长跑中的 heartbeat 和 steps 只用于诊断，完整结果必须等最终 `result` 与 summary。
 
-## Electron 与旧运行时
+## Electron 采木预览
 
-桌面链仍为 `MinecraftPage → IPC → MinecraftService → JSONL bridge/runtime → vendor/server/minecraftTaskAgent.js`。把 `core/` 源文件复制进包不会自动接通新 core；桌面端的暂停、恢复、取消、重连、状态转换和真实 UI 操作仍需另行完成新 core 集成验收。
+在桌面 Minecraft 页的任务执行方式中选择 **Core · 采集原木**，连接 Java 版服务器后，可提交 1–64 个新增原木的任务。库存中已有的原木不计入本次目标。界面接收 core 的任务状态，并提供暂停、恢复、取消及停止并断开连接。传统严格模式与 AI 陪玩仍使用旧运行时。
 
 开发现有宿主可在 `electron/` 安装依赖，并运行 `npm run typecheck`、`npm test`、`npm run test:security` 与 `npm start`。在 `electron/minecraft-runtime/` 执行 `npm start -- --data-dir <独立绝对目录>` 启动的是旧 JSONL helper，需要独立的绝对 `--data-dir`，协议见 [runtime/README.md](electron/minecraft-runtime/README.md)。它不是新 core 的自由游玩入口，也不会自动连接服务器。
 
-本版仅提供源码归档，不提供桌面安装包。macOS shell 构建/冒烟不证明新 core 已接入，也不代表 Developer ID 签名、公证、Windows/Linux、正版认证或真实 Provider 端到端验收。第三方 bundle 的许可变体和 notice 覆盖尚有待关闭，因此不分发该 bundle 的依赖字节。
+本版仅提供源码归档。桌面预览与正式全场景验收各有独立范围。第三方 bundle 的许可变体和 notice 覆盖尚有待关闭，因此不分发该 bundle 的依赖字节。
 
 ## 源码归档范围
 

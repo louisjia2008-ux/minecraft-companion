@@ -232,6 +232,7 @@ export class AppController {
     this.#ipc.register('minecraft:connect', consoleOnly, (config) => this.#minecraft.connect(config));
     this.#ipc.register('minecraft:disconnect', consoleOnly, () => this.#minecraft.disconnect());
     this.#ipc.register('minecraft:submit', consoleOnly, ({ command }) => this.#minecraft.submit(command));
+    this.#ipc.register('minecraft:gather-logs', consoleOnly, ({ count }) => this.#minecraft.gatherLogs(count));
     this.#ipc.register('minecraft:control', consoleOnly, ({ action }) => this.#minecraft.control(action));
     this.#ipc.register('minecraft:chat', consoleOnly, ({ message }) => this.#minecraft.sendChat(message));
     this.#ipc.register('app:get-state', both, () => this.#appState());

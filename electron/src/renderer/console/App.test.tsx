@@ -27,7 +27,7 @@ const on = () => () => undefined;
 const api = (locale: ResolvedLocale): DeskPetApi => ({
   minecraft: {
     getState: vi.fn(async (): Promise<MinecraftSnapshot> => ({ runtimeState: 'stopped', connectionState: 'idle', config: null, status: null, task: null, history: [], inventory: [], logs: [], auth: null, lastError: null })),
-    connect: vi.fn(), disconnect: vi.fn(), submit: vi.fn(), control: vi.fn(), sendChat: vi.fn(), onChanged: on,
+    connect: vi.fn(), disconnect: vi.fn(), submit: vi.fn(), gatherLogs: vi.fn(), control: vi.fn(), sendChat: vi.fn(), onChanged: on,
   },
   app: {
     getState: vi.fn(async () => appState(locale)), setLocale: vi.fn(), setTheme: vi.fn(), setHotkey: vi.fn(), setAutoLaunch: vi.fn(),

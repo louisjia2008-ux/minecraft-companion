@@ -49,7 +49,7 @@ const provider: ProviderConfig = {
 const services: MinecraftService[] = [];
 const directories: string[] = [];
 
-const fixture = async (options: { ready?: boolean; adapter?: ProviderAdapter; plannerTimeoutMs?: number; requestTimeoutMs?: number } = {}) => {
+const fixture = async (options: { ready?: boolean; engine?: 'core'; adapter?: ProviderAdapter; plannerTimeoutMs?: number; requestTimeoutMs?: number } = {}) => {
   const root = await mkdtemp(join(tmpdir(), 'deskpet-minecraft-'));
   directories.push(root);
   const workers: FakeWorker[] = [];
@@ -69,7 +69,7 @@ const fixture = async (options: { ready?: boolean; adapter?: ProviderAdapter; pl
     spawnRuntime: (executable, args, spawnOptions) => {
       captured.push({ executable, args, options: spawnOptions });
       const worker = new FakeWorker(); workers.push(worker);
-      if (options.ready !== false) void Promise.resolve().then(() => worker.send({ version: 1, type: 'ready' }));
+      if (options.ready !== false) void Promise.resolve().then(() => worker.send({ version: 1, type: 'ready', engine: options.engine }));
       return worker.asProcess();
     },
   });
@@ -87,6 +87,44 @@ afterEach(async () => {
 });
 
 describe('Minecraft companion host', () => {
+  it('uses the new core lifecycle and cancels only the identified desktop task', async () => {
+    const { service, workers, captured, adapter } = await fixture({ engine: 'core' });
+    const connecting = await service.connect({ ...config, executorMode: 'core' });
+    expect(connecting.connectionState).toBe('connecting');
+    expect(captured[0]?.args).toEqual([expect.stringContaining('index.js'), '--engine', 'core', '--data-dir', expect.stringContaining('/profile/core')]);
+    const worker = workers[0] as FakeWorker;
+    expect(worker.writes[0]?.config).toEqual({ host: config.host, port: config.port, username: config.username, auth: config.auth, version: config.version });
+    await expect(service.gatherLogs(3)).rejects.toThrow('尚未进入世界');
+
+    let logs = 0;
+    const task = (id: string, status: string) => worker.event({
+      type: 'task', taskId: id, task: { taskId: id, name: 'gatherLogs', status },
+    });
+    worker.bridge = (message) => {
+      if (message.type === 'shutdown') return;
+      if (message.name === 'gatherLogs') task(logs === 0 ? 'first' : 'second', 'running');
+      if (message.name === 'cancel') task('second', 'cancelled');
+      const result = message.name === 'getStatus'
+        ? { connection: { state: 'ready' }, observation: { health: 20, inventory: { oak_log: logs } } }
+        : { dispatchOnly: true };
+      worker.send({ version: 1, type: 'reply', id: message.id, ok: true, result });
+    };
+    worker.event({ type: 'connection', state: 'ready' });
+    await expect(service.gatherLogs(65)).rejects.toThrow('integer');
+    await expect(service.submit('gather logs')).rejects.toThrow('structured');
+    expect((await service.gatherLogs(3)).task).toMatchObject({ id: 'first', status: 'running' });
+    expect(worker.writes.at(-1)).toMatchObject({ type: 'tool', name: 'gatherLogs', arguments: { count: 3 } });
+    logs = 3;
+    task('first', 'completed');
+    await vi.waitFor(() => expect(service.getState().inventory).toEqual([{ name: 'oak_log', count: 3 }]));
+    expect((await service.gatherLogs(64)).task).toMatchObject({ id: 'second', status: 'running' });
+    expect((await service.control('cancel')).task).toMatchObject({ id: 'second', status: 'cancelled' });
+    expect(worker.writes).toContainEqual(expect.objectContaining({ type: 'tool', name: 'cancel', arguments: { taskId: 'second' } }));
+    expect(service.getState().history.map(({ status }) => status)).toEqual(['completed', 'cancelled']);
+    expect((await service.disconnect()).connectionState).toBe('disconnected');
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
   it('stays stopped until connect and starts a secret-free isolated helper', async () => {
     const { service, workers, captured } = await fixture();
     expect(service.getState().runtimeState).toBe('stopped');

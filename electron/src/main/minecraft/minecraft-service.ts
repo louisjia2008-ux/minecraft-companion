@@ -2,9 +2,10 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { MinecraftConnectionConfig, MinecraftControlAction, MinecraftSnapshot, MinecraftTask, ProviderConfig } from '../../shared';
+import { MINECRAFT_CORE_MAX_LOGS } from '../../shared/minecraft';
 import type { ProviderAdapter, ProviderChatMessage } from '../providers/types';
 import { boundedText, record, sanitizeAuth, sanitizeInventory, sanitizeStatus, sanitizeTask } from './sanitize';
 
@@ -33,7 +34,7 @@ export interface MinecraftServiceOptions {
 }
 
 interface PendingRequest {
-  resolve(): void;
+  resolve(result: unknown): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -57,6 +58,7 @@ export class MinecraftService {
   #plannerGeneration = 0;
   #disposed = false;
   #connecting = false;
+  #disconnecting = false;
   #readyResolve: (() => void) | null = null;
   #readyReject: ((error: Error) => void) | null = null;
   #readyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -73,6 +75,7 @@ export class MinecraftService {
   async connect(config: MinecraftConnectionConfig): Promise<MinecraftSnapshot> {
     if (this.#disposed) throw new Error('Minecraft service is closed.');
     if (this.#connecting) throw new Error('Minecraft is already connecting.');
+    if (this.#disconnecting) throw new Error('Minecraft is still disconnecting.');
     if (config.executorMode === 'hybrid') this.#selectedProvider(config);
     this.#connecting = true;
     this.#stopWorker();
@@ -85,9 +88,9 @@ export class MinecraftService {
       if (generation !== this.#generation || this.#disposed) throw new Error('Minecraft connection cancelled.');
       await this.#startWorker(generation);
       // The runtime acknowledges starting the connection; only world telemetry proves the bot spawned.
-      const { providerId: _providerId, ...workerConfig } = config;
-      void _providerId;
-      await this.#request({ type: 'connect', config: workerConfig });
+      const { host, port, username, auth, version, ownerName, executorMode } = config;
+      const connection = { host, port, username, auth, version };
+      await this.#request({ type: 'connect', config: executorMode === 'core' ? connection : { ...connection, ownerName, executorMode } });
       if (generation !== this.#generation || this.#disposed) throw new Error('Minecraft connection cancelled.');
       return this.getState();
     } catch (error) {
@@ -97,6 +100,7 @@ export class MinecraftService {
   }
 
   async disconnect(): Promise<MinecraftSnapshot> {
+    if (this.#usesCore()) return this.#disconnectCore();
     this.#state.connectionState = 'disconnecting';
     this.#publish();
     this.#stopWorker();
@@ -112,12 +116,34 @@ export class MinecraftService {
 
   async submit(command: string): Promise<MinecraftSnapshot> {
     this.#requireWorld();
+    if (this.#usesCore()) throw new Error('Use a structured task with the new Minecraft engine.');
     if (!command.trim() || command.length > 4_000) throw new Error('Minecraft task must contain 1–4000 characters.');
     await this.#request({ type: 'command', command: { type: 'mc_command_submit', command: command.trim(), context: { playerName: this.#state.config?.ownerName ?? '' }, source: 'deskpet' } });
     return this.getState();
   }
 
+  async gatherLogs(count: number): Promise<MinecraftSnapshot> {
+    this.#requireWorld();
+    if (!this.#usesCore()) throw new Error('Select the new Minecraft engine to gather logs.');
+    if (!Number.isInteger(count) || count < 1 || count > MINECRAFT_CORE_MAX_LOGS) {
+      throw new Error(`Log count must be an integer from 1 to ${MINECRAFT_CORE_MAX_LOGS}.`);
+    }
+    await this.#request({ type: 'tool', name: 'gatherLogs', arguments: { count } });
+    return this.getState();
+  }
+
   async control(action: MinecraftControlAction): Promise<MinecraftSnapshot> {
+    if (this.#usesCore()) {
+      if (action === 'stop') return this.#disconnectCore(true);
+      this.#requireWorld();
+      if (action === 'refresh') await this.#refreshCore();
+      else {
+        const task = this.#state.task;
+        if (task === null || TERMINAL_TASK_STATES.has(task.status)) throw new Error('No active Minecraft task.');
+        await this.#request({ type: 'tool', name: action, arguments: { taskId: task.id } });
+      }
+      return this.getState();
+    }
     const types: Record<MinecraftControlAction, string> = {
       pause: 'mc_command_pause', resume: 'mc_command_resume', cancel: 'mc_command_cancel', stop: 'mc_command_cancel', refresh: 'mc_command_query',
     };
@@ -130,6 +156,7 @@ export class MinecraftService {
 
   async sendChat(message: string): Promise<MinecraftSnapshot> {
     this.#requireWorld();
+    if (this.#usesCore()) throw new Error('In-game chat is available with the legacy Minecraft engine.');
     const content = message.trim();
     if (!content || content.length > 256 || content.startsWith('/') || /[\r\n]/.test(content)) {
       throw new Error('Minecraft chat must be a single message of up to 256 characters.');
@@ -148,7 +175,34 @@ export class MinecraftService {
   }
 
   #requireWorld(): void {
-    if (this.#state.status?.connected !== true || this.#worker === null) throw new Error('Minecraft 尚未进入世界。');
+    if (this.#state.status?.connected !== true || this.#worker === null || this.#disconnecting) throw new Error('Minecraft 尚未进入世界。');
+  }
+
+  #usesCore(): boolean { return this.#state.config?.executorMode === 'core'; }
+
+  async #disconnectCore(stopAll = false): Promise<MinecraftSnapshot> {
+    if (this.#disconnecting) throw new Error('Minecraft is still disconnecting.');
+    this.#disconnecting = true;
+    this.#state.connectionState = 'disconnecting';
+    this.#publish();
+    const generation = this.#generation;
+    try {
+      if (this.#worker !== null && this.#state.runtimeState === 'ready') {
+        await this.#request(stopAll ? { type: 'tool', name: 'stopAll' } : { type: 'disconnect' });
+      }
+      if (generation !== this.#generation || this.#disposed) throw new Error('Minecraft connection closed during disconnect.');
+      this.#stopWorker();
+      this.#state.runtimeState = 'stopped';
+      this.#state.connectionState = 'disconnected';
+      this.#worldUnavailable();
+      this.#publish();
+      return this.getState();
+    } catch (error) {
+      if (generation === this.#generation && !this.#disposed) {
+        this.#fail(error instanceof Error ? error.message : 'Minecraft could not disconnect.');
+      }
+      throw error;
+    } finally { this.#disconnecting = false; }
   }
 
   #selectedProvider(config: MinecraftConnectionConfig | null = this.#state.config): ProviderConfig {
@@ -165,9 +219,13 @@ export class MinecraftService {
       this.#readyTimer = setTimeout(() => this.#fail('Minecraft runtime startup timed out.'), this.#options.readyTimeoutMs ?? 15_000);
       try {
         const create = this.#options.spawnRuntime ?? ((executable, args, options) => spawn(executable, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] }));
+        const core = this.#usesCore();
+        const runtimeDirectory = dirname(this.#options.runtimePath);
+        const args = core
+          ? [join(runtimeDirectory, 'index.js'), '--engine', 'core', '--data-dir', join(this.#options.dataDirectory, 'core')]
+          : [this.#options.runtimePath, '--data-dir', this.#options.dataDirectory];
         const worker = create(this.#options.executablePath ?? process.execPath,
-          [this.#options.runtimePath, '--data-dir', this.#options.dataDirectory],
-          { cwd: dirname(this.#options.runtimePath), env: minecraftWorkerEnvironment(this.#options.environment ?? process.env), windowsHide: true });
+          args, { cwd: runtimeDirectory, env: minecraftWorkerEnvironment(this.#options.environment ?? process.env), windowsHide: true });
         this.#worker = worker;
         worker.stdout.on('data', (chunk: Buffer | string) => { if (generation === this.#generation) this.#ingest(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); });
         worker.stderr.on('data', (chunk: Buffer | string) => {
@@ -182,7 +240,7 @@ export class MinecraftService {
     });
   }
 
-  #request(message: Record<string, unknown>): Promise<void> {
+  #request(message: Record<string, unknown>): Promise<unknown> {
     if (this.#worker === null || this.#state.runtimeState !== 'ready') return Promise.reject(new Error('Minecraft runtime is not running.'));
     const id = randomUUID();
     return new Promise((resolve, reject) => {
@@ -219,6 +277,9 @@ export class MinecraftService {
       try { message = record(JSON.parse(line.toString('utf8'))); } catch { continue; }
       if (message === null || message.version !== 1) continue;
       if (message.type === 'ready') {
+        if (this.#usesCore() && message.engine !== 'core') {
+          this.#fail('Minecraft did not start the requested engine.'); return;
+        }
         this.#state.runtimeState = 'ready';
         if (this.#readyTimer !== null) clearTimeout(this.#readyTimer);
         this.#readyTimer = null;
@@ -228,19 +289,71 @@ export class MinecraftService {
         const pending = typeof message.id === 'string' ? this.#pending.get(message.id) : undefined;
         if (pending !== undefined) {
           clearTimeout(pending.timer); this.#pending.delete(message.id as string);
-          if (message.ok === true) pending.resolve();
-          else pending.reject(new Error(boundedText(message.error, 2_000) || 'Minecraft request failed.'));
+          if (message.ok === true) pending.resolve(message.result);
+          else pending.reject(new Error(boundedText(record(message.error)?.message ?? message.error) || 'Minecraft request failed.'));
         } else if (message.ok === false && this.#state.runtimeState === 'starting') {
-          this.#fail(boundedText(message.error, 2_000) || 'Minecraft runtime could not start.'); return;
+          this.#fail(boundedText(record(message.error)?.message ?? message.error) || 'Minecraft runtime could not start.'); return;
         }
       } else if (message.type === 'event') {
         const event = record(message.event);
-        if (event !== null) this.#receiveEvent(event);
-      } else if (message.type === 'planner_request') {
+        if (event !== null) {
+          if (this.#usesCore()) this.#receiveCoreEvent(event);
+          else this.#receiveEvent(event);
+        }
+      } else if (message.type === 'planner_request' && !this.#usesCore()) {
         void this.#plan(message, this.#generation, this.#plannerGeneration);
       }
     }
     if (this.#buffer.length > MAX_LINE_BYTES) this.#fail('Minecraft runtime emitted an oversized message.');
+  }
+
+  async #refreshCore(): Promise<void> {
+    const generation = this.#generation;
+    const result = record(await this.#request({ type: 'tool', name: 'getStatus' }));
+    if (generation !== this.#generation || this.#state.connectionState !== 'connected') return;
+    if (record(result?.connection)?.state !== 'ready') return;
+    const observation = record(result?.observation);
+    this.#state.status = sanitizeStatus({ ...observation, connected: true });
+    const items = record(observation?.inventory);
+    this.#state.inventory = sanitizeInventory(Object.entries(items ?? {}).map(([name, count]) => ({ name, count })));
+    this.#publish();
+  }
+
+  #receiveCoreEvent(event: Record<string, unknown>): void {
+    let refresh = false;
+    if (event.type === 'connection') {
+      if (event.state === 'ready' && !this.#disconnecting) {
+        this.#state.connectionState = 'connected';
+        this.#state.status = sanitizeStatus({ connected: true });
+        this.#state.lastError = null;
+        this.#state.auth = null;
+        refresh = true;
+      } else if (event.state === 'error' || event.state === 'disconnected' || event.state === 'disposed') {
+        if (!this.#disconnecting || event.state === 'error') {
+          this.#state.connectionState = event.state === 'error' ? 'error' : 'disconnected';
+        }
+        this.#worldUnavailable();
+        const error = boundedText(record(event.error)?.message);
+        if (error) {
+          this.#state.lastError = error;
+          this.#log('error', error);
+        }
+      } else return;
+    } else if (event.type === 'task') {
+      const raw = record(event.task);
+      if (raw === null || raw.taskId !== event.taskId || raw.name !== 'gatherLogs') return;
+      const task = sanitizeTask({ ...raw, goal: raw.name, status: raw.paused === true ? 'paused' : raw.status,
+        error: record(raw.error)?.message });
+      if (task === null) return;
+      this.#state.task = task;
+      if (TERMINAL_TASK_STATES.has(task.status)) {
+        this.#state.history = [...this.#state.history.filter(({ id }) => id !== task.id), task].slice(-30);
+        refresh = this.#state.connectionState === 'connected';
+      }
+    } else if (event.type === 'auth_device_code') this.#state.auth = sanitizeAuth(event);
+    else return;
+    this.#publish();
+    if (refresh) void this.#refreshCore().catch(() => { /* An explicit refresh can retry. */ });
   }
 
   #receiveEvent(event: Record<string, unknown>): void {
@@ -382,7 +495,7 @@ export class MinecraftService {
     try {
       worker.stdin.end(`${JSON.stringify({ version: 1, id: randomUUID(), type: 'shutdown' })}\n`);
       worker.kill('SIGTERM');
-      const killTimer = setTimeout(() => { try { worker.kill('SIGKILL'); } catch { /* Already exited. */ } }, 1_000);
+      const killTimer = setTimeout(() => { try { worker.kill('SIGKILL'); } catch { /* Already exited. */ } }, this.#usesCore() ? 6_000 : 1_000);
       killTimer.unref?.();
       worker.once('exit', () => clearTimeout(killTimer));
     } catch { try { worker.kill('SIGKILL'); } catch { /* Already exited. */ } }

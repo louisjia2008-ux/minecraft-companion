@@ -1,6 +1,15 @@
 # Embedding the new core
 
-Use Minecraft Companion as the bottom-level action engine for DeskPet, an LLM tool caller or another host. The host chooses data-only goals; the core owns movement and survival. No LLM/provider or Electron renderer is required. The legacy Electron bridge stays unchanged by default. This API does not imply that its UI is migrated or that every gameplay goal works on every seed.
+Use Minecraft Companion as the bottom-level action engine for DeskPet, an LLM tool caller or another host. The host chooses data-only goals; the core owns movement and survival. The core can run without an LLM or Electron. The desktop Minecraft page also offers the **Core · gather logs** preview.
+
+The desktop preview sends `gatherLogs` through the same JSONL host with a separate core data directory. It accepts an additional count from 1 to 64, displays task events, and sends pause, resume and cancel using the task ID. **Stop and disconnect** calls `stopAll`. The desktop preview currently offers gathering, while direct hosts can use the full structured tool catalogue.
+
+With an unpackaged Electron build and a local Minecraft 1.21.8 installation, the desktop acceptance test checks a completed gather and mid-task cancellation against a disposable vanilla server. After accepting the Minecraft EULA, point the test at the generated `installation.json`:
+
+```sh
+MINECRAFT_E2E_INSTALLATION=/path/to/installation.json MINECRAFT_E2E_ACCEPT_EULA=1 \
+  npm run test:e2e --prefix electron -- minecraft-core-live.spec.ts
+```
 
 ## One contract, two transports
 
