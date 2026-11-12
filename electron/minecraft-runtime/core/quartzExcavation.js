@@ -6,6 +6,7 @@
 const {CAPS,ROCK,DANGER,GRAVITY,DIRS,key,same,fail,full,empty,inspectExcavationGeometry}=require('./quartzExcavationGeometry');
 const {rankContinuations,cloneLedger}=require('./quartzExcavationContinuation');
 const {oreSafetyFailure}=require('./quartzExcavationTarget');
+const {projectedQuartzVisible}=require('./quartzVisibility');
 
 function createExcavation({ bot, memory, shore, portal, inspectStep, Vec3, actions, makeGoal,
   foodCount, threatened, neverBreak = [], allowDiamondFallback = false, diamondReserveUses = 40,
@@ -116,18 +117,19 @@ function createExcavation({ bot, memory, shore, portal, inspectStep, Vec3, actio
     return {cell:key(p),name:b?.name||null,stateId:b?.stateId??null,boundingBox:b?.boundingBox??null,shapes:b?.shapes??null,
       ownedSupport:Boolean(memory.ledgeSupports?.has(key(p))),recentlyPlaced:Boolean(bot.companionPlacedRecently?.(p)),protectedBlock:Boolean(b&&bot.companionProtectBlock?.(b))};
   }
-  function proposeDirections(ctx,{candidates,current=()=>true}={}) {
+  function proposeDirections(ctx,{candidates,target,current=()=>true}={}) {
     abort(ctx.signal);pendingProposal=null;
     if(inFlight||memory.quartzExcavationLease)return fail('edge_in_flight',{preferred:null,queryOnly:true});
     const unsafe=safety(ctx.signal);if(unsafe)return fail(unsafe,{preferred:null,queryOnly:true});
     const actual=memory.quartzExcavation,s=actual||initialLedger();
     if(!s||s.version!==2||s.shore!==key(shore)||s.anchorMode!==anchorMode||s.portal!==(portal?key(portal):null))return fail('query_shore_unconfirmed',{preferred:null,queryOnly:true});
     const from=s.route.at(-1);if(!actualAt(from))return fail('not_at_confirmed_front',{preferred:null,queryOnly:true});
-    const geometry={CAPS,Vec3,full,empty,oreSafety:oreSafetyFailure,source:{sha256:'shared_excavation_geometry_v1'},
+    const geometry={CAPS,Vec3,full,empty,oreSafety:oreSafetyFailure,targetVisible:projectedQuartzVisible,
+      source:{sha256:'shared_excavation_geometry_v1'},
       futureRockAllowed:b=>ROCK.has(b?.name)&&!banned.has(b?.name)&&b?.diggable!==false,
       query:({readBlock,ledger,from,direction,descend,ownedSupports,recentlyPlaced,protectedBlock})=>inspectExcavationGeometry({read:readBlock,ledger,from,dir:direction,descend,bounds,banned,inspectStep,Vec3,
         protectedCell:(state,p)=>state.protectedFloors.has(key(p))||ownedSupports.has(key(p))||protectedBlock(readBlock(p))||recentlyPlaced(p)})};
-    const result=rankContinuations({geometry,readBlock:read,ledger:cloneLedger(s),from,shore,portal,candidates,
+    const result=rankContinuations({geometry,readBlock:read,ledger:cloneLedger(s),from,shore,portal,candidates,target,
       ownedSupports:memory.ledgeSupports,recentlyPlaced:p=>Boolean(bot.companionPlacedRecently?.(p)),protectedBlock:b=>Boolean(bot.companionProtectBlock?.(b)),
       signal:ctx.signal,contextCurrent:current,maxMs:50});
     abort(ctx.signal);if(!current())return fail('query_context_changed',{preferred:null,queryOnly:true});

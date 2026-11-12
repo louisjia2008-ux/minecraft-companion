@@ -16,11 +16,11 @@ const { findStructure } = require('../netherStructures');
 const { sleep } = require('../confirm');
 const { KNOWLEDGE } = require('../knowledge');
 const { Vec3 } = require('vec3');
-const { RaycastIterator } = require('prismarine-world').iterators;
 const { abortError } = require('../confirm');
 const { inspectStep } = require('../mining');
 const { perceive } = require('../perception');
 const { chooseExcavationTarget, excavationDirections, oreSafetyFailure, shoreSafetyFailure } = require('../quartzExcavationTarget');
+const { quartzVisible } = require('../quartzVisibility');
 
 const isQuartz = (n) => n === 'quartz';
 const isQuartzOre = (n) => n === 'nether_quartz_ore';
@@ -57,24 +57,6 @@ function quartzFootFailure(bot, p) {
     for (let y = -2; y <= 1; y++) if (!bot.blockAt(p.offset(x, y, z))) return 'unknown_margin';
   }
   return nether.lavaRisk(bot, p) > 0 ? 'lava_margin' : null;
-}
-
-function quartzVisible(bot, feet, ore, actual = false) {
-  if (!bot.world?.raycast) return false;
-  const eyeHeight = actual ? bot.entity.eyeHeight ?? 1.62 : 1.62;
-  if (!Number.isFinite(eyeHeight) || eyeHeight <= 0 || eyeHeight > 2.5) return false;
-  const eye = actual ? feet.offset(0, eyeHeight, 0) : feet.offset(.5, eyeHeight, .5);
-  for (const [x, y, z] of [[0, .5, .5], [1, .5, .5], [.5, 0, .5], [.5, 1, .5], [.5, .5, 0], [.5, .5, 1]]) {
-    const point = ore.position.offset(x, y, z), delta = point.minus(eye), distance = delta.norm();
-    if (distance <= 0 || distance > 4.5) continue;
-    const direction = delta.scaled(1 / distance), cells = new RaycastIterator(eye, direction, distance);
-    let loaded = true;
-    for (let cell = eye; cell; cell = cells.next()) if (!bot.blockAt(new Vec3(cell.x, cell.y, cell.z))) { loaded = false; break; }
-    if (!loaded) continue;
-    const hit = bot.world.raycast(eye, direction, distance + .001);
-    if (hit?.position?.equals(ore.position)) return true;
-  }
-  return false;
 }
 
 function walkProfile(m) {
@@ -594,7 +576,8 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
     if (typeof engine.proposeDirections === 'function') {
       const proposalScope = `${activationEpoch}:${life()}:${scope}:${options.map(s => s.attemptKey).join(',')}`;
       if (!directionProposal || directionProposal.scope !== proposalScope) {
-        const query = engine.proposeDirections(ctx, { candidates: options, current: () => workCurrent(epoch) });
+        const query = engine.proposeDirections(ctx, { candidates: options, target: pending ? undefined : target,
+          current: () => workCurrent(epoch) });
         if (!workCurrent(epoch)) return fail('quartz_life_changed', { progress: false });
         const preferred = query.preferred || options[0];
         const proposed = options.find(s => s.direction === preferred.direction && s.descend === preferred.descend);
@@ -603,6 +586,7 @@ function createNetherQuartzGoal({ bot, count = 16, roam = 96, skills = defaultSk
         ctx.record('quartz_excavation_continuation', { queryOnly: true, progress: false, actualFrom: keyOf(bot.entity.position), target: keyOf(target),
           selectedDirection: proposed.direction, selectedDescend: proposed.descend, selectedAttemptKey: proposed.attemptKey,
           rankingUncertain: query.rankingUncertain ?? true, orderPolicy: query.orderPolicy || 'original_first_admitted_on_uncertainty',
+          ...(preferred.targetWitness ? { targetWitness: preferred.targetWitness } : {}),
           stopReason: query.stopReason || query.reason || null, counts: query.counts || null, fingerprint: query.fingerprint || null });
         return { ok: true, progress: false, queryOnly: true, reason: 'quartz_direction_proposed' };
       }
