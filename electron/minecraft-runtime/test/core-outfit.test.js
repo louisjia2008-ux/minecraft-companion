@@ -296,7 +296,9 @@ test('critical home arrival walks the saved ledge and crosses the door from the 
       return { name: 'oak_door', boundingBox: 'block', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
         open, facing: 'south', hinge: 'left' }) };
     }
-    const solid = floors.some((floor) => p.equals(floor));
+    const solid = floors.some((floor) => p.equals(floor))
+      || house.blocks.some(({ position }) => p.x === position.x && p.y === position.y && p.z === position.z)
+      || house.foundation.some((position) => p.x === position.x && p.y === position.y && p.z === position.z);
     return { name: solid ? 'grass_block' : 'air', boundingBox: solid ? 'block' : 'empty',
       shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
   };
@@ -320,6 +322,22 @@ test('critical home arrival walks the saved ledge and crosses the door from the 
   const events = [];
   const ctx = { perceive: () => perceive(bot), record: (type, detail) => events.push([type, detail]) };
   assert.equal(goal.ownsRouteRecovery(), true);
+  const expectBlocked = async (name, position) => {
+    bot.entities[22] = { id: 22, name, position };
+    const controller = new AbortController();
+    await assert.rejects(goal.run({ ...ctx, signal: controller.signal, record: (type, detail) => {
+      ctx.record(type, detail);
+      if (type === 'resupply_home_approach_wait') controller.abort();
+    } }), { code: 'aborted' });
+    assert.equal(events.at(-1)[1].reason, 'resupply_no_dry_home_route');
+    assert.equal(moves, 0);
+  };
+  await expectBlocked('zombie', new Vec3(-68.5, 71, -34.5));
+  await expectBlocked('creeper', new Vec3(-61.2256, 67, -37.502));
+  await expectBlocked('skeleton', new Vec3(-57.5, 72, -36.5));
+  // The preserved zombie started east/downhill. A six-block separation at
+  // the critical first leg must not preclude a physically separated route.
+  bot.entities[22] = { id: 22, name: 'zombie', position: new Vec3(-65.6271, 67, -35.9979) };
   for (let n = 0; n < 13; n += 1) assert.equal((await goal.run(ctx)).ok, true);
   assert.equal(moves, 10);
   assert.deepEqual(operations, ['open', 'close', 'chest']);

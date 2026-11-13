@@ -11,6 +11,7 @@ const { sleep, waitUntil, abortError } = require('../confirm');
 const { isFireResistancePotion, hasEffect } = require('../netherStructures');
 const { createBlacklist } = require('../blacklist');
 const { ownedItems } = require('../perception');
+const { meleeGeometry, meleeSight } = require('../entityGeometry');
 const { advanceCaveRetreat, evadeInCave, returnFromCave, skyOpen, standable } = require('../caveRetreat');
 const { goals } = require('mineflayer-pathfinder');
 const { recordObservedSelfAggressor } = require('../../vendor/server/minecraft/entitySemantics');
@@ -349,10 +350,20 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // pillagers are fought like skeletons; the rest of a raid is still avoided.
   const kitted = (state) => armed(state) && /^(diamond|netherite)_chestplate$/.test(bot.inventory?.slots?.[6]?.name || '');
   const avoided = (state, h) => AVOIDED.has(h.name) && !(h.name === 'pillager' && kitted(state) && state.health > t.rangedHealth);
-  const target = (state) => {
+  const dryOverworldCritical = (state) => dimensionOf(bot) === 'overworld' && !state.inWater
+    && !bot.entity?.isInLava && state.health <= t.escapeHealth;
+  const criticalHomeResupply = (state) => dryOverworldCritical(state) && resupplying();
+  const canStrikeFromHere = (h) => {
+    const entity = bot.entities?.[h.id];
+    if (!entity?.isValid) return false;
+    const geometry = meleeGeometry(bot.entity, entity, bot.registry);
+    return geometry && geometry.distance <= 3 && meleeSight(bot, geometry) === 'clear';
+  };
+  const target = (state, stationary = criticalHomeResupply(state)) => {
     // In shelter only something that got right next to the bot is fought.
-    if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;
+    if (state.sheltered) return threats(state).find((h) => h.distance <= 2 && (!stationary || canStrikeFromHere(h))) || null;
     return threats(state).find((h) => h.name !== 'creeper' && (!h.selfAggressor || armed(state))
+      && (!stationary || canStrikeFromHere(h))
       && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || ((RANGED.has(h.name) || (h.name === 'pillager' && !avoided(state, h))) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
@@ -361,8 +372,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
 
   let retreat = null;
-  const caveSituation = (state) => dimensionOf(bot) === 'overworld' && !state.sheltered && !state.inWater
-    && !bot.entity?.isInLava && state.health <= t.escapeHealth && typeof bot.blockAt === 'function'
+  const caveSituation = (state) => dryOverworldCritical(state) && !state.sheltered && typeof bot.blockAt === 'function'
     && typeof bot.pathfinder?.movements?.getNeighbors === 'function';
   const caveNeedsExit = (state) => {
     if (!caveSituation(state)) return false;
@@ -371,7 +381,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       && Math.hypot(state.position.x - centre.x, state.position.z - centre.z) <= 8) return false;
     return actions.underground?.(bot) === true;
   };
-  const surfaceResupplyEvasion = (state) => caveSituation(state) && bot.entity.onGround === true && resupplying();
+  const surfaceResupplyEvasion = (state) => caveSituation(state) && resupplying();
   const visibleThreat = (h, at) => clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, 1.6, 0))
     || clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, .5, 0));
   const caveRetreat = {
@@ -483,14 +493,19 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     async run(ctx) {
       const state = ctx.perceive();
       const threat = nearest(state);
+      if (criticalHomeResupply(state) && (!threat || state.sheltered)) return { ok: true };
       const caveEvasion = retreat || caveNeedsExit(state);
       const resupplyEvasion = !caveEvasion && surfaceResupplyEvasion(state);
       if (threat && (caveEvasion || resupplyEvasion)) {
         // Keep a critically hurt bot on its ledge while resupply approaches
         // home. Repeated one-block drops could otherwise take it back inside.
         if (resupplyEvasion) ctx.record('resupply_escape_guarded', {
-          at: bot.entity.position.floored(), mob: threat.name, id: threat.id,
+          at: bot.entity.position.floored(), mob: threat.name, id: threat.id, onGround: bot.entity.onGround === true,
         });
+        if (resupplyEvasion && bot.entity.onGround !== true && threat.name !== 'creeper') {
+          await sleep(50, ctx.signal);
+          return { ok: true, waited: true, reason: 'resupply_escape_wait_for_ground' };
+        }
         const result = await evadeInCave(bot, ctx, actions, threat, visibleThreat,
           (id) => threats(ctx.perceive()).find((h) => h.id === id), { allowDescend: !resupplyEvasion });
         if (threat.name !== 'creeper' || result.ok || result.reason !== 'cave_evasion_no_safe_step') return result;
@@ -511,14 +526,16 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.DEFENSE,
     want: (state) => (target(state) ? 1 : 0),
     async run(ctx) {
-      const threat = target(ctx.perceive());
+      const state = ctx.perceive();
+      const stationary = criticalHomeResupply(state);
+      const threat = target(state, stationary);
       if (!threat) return { ok: true };
-      ctx.record('defend_target', { mob: threat.name, distance: Math.round(threat.distance) });
+      ctx.record('defend_target', { mob: threat.name, distance: Math.round(threat.distance), ...(stationary ? { stationary } : {}) });
       let last = threat.position.clone();
       const tracker = setInterval(() => { const e = bot.entities?.[threat.id]; if (e) last = e.position.clone(); }, 100);
       let result;
       try {
-        result = await actions.attack(bot, ctx, threat.id);
+        result = await actions.attack(bot, ctx, threat.id, stationary ? { pursue: false } : undefined);
       } finally {
         clearInterval(tracker);
       }
@@ -530,7 +547,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       }
       // Spiders drop string (wool where there are no sheep); blazes and wither
       // skeletons fought off in a fortress drop what the expedition is there for.
-      if (result.ok && typeof actions.collectDrops === 'function') {
+      if (result.ok && !stationary && typeof actions.collectDrops === 'function') {
         await actions.collectDrops(bot, ctx, last, (n) => KEPT_DROPS.has(n), { radius: 6, timeoutMs: 4000 });
       }
       return result;

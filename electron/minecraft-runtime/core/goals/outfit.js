@@ -41,6 +41,7 @@ const LOCAL_FOOD_RADIUS = 24;
 const RANGED_HOSTILES = new Set(['skeleton', 'stray', 'bogged', 'pillager', 'witch']);
 const RANGED_RANGE = 16;
 const MELEE_RANGE = 8;
+const SHELTER_MELEE_RANGE = 5;
 const UNSAFE_ROUTE = 'unsafe_resupply_food_route';
 const APPROACH_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
@@ -230,7 +231,10 @@ function localFoodSafety(bot, home) {
   const centre = new Vec3(home.centre.x + .5, home.centre.y, home.centre.z + .5);
   const homeDistance = (position) => Math.hypot(position.x - centre.x, position.z - centre.z);
   const local = (position, radius = LOCAL_FOOD_RADIUS) => position.y >= centre.y - 7 && homeDistance(position) <= radius;
-  const threatRange = (hostile) => RANGED_HOSTILES.has(hostile.name) ? RANGED_RANGE : MELEE_RANGE;
+  const threatRange = (hostile, shelterRoute = false) => {
+    if (RANGED_HOSTILES.has(hostile.name)) return RANGED_RANGE;
+    return shelterRoute && hostile.name !== 'creeper' ? SHELTER_MELEE_RANGE : MELEE_RANGE;
+  };
   const exposed = (position, hostiles, critical = false) => hostiles.some((hostile) => {
     const range = hostile.position.distanceTo(position);
     if (range <= MELEE_RANGE) return true;
@@ -405,6 +409,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     // back away from a threat already beside the starting cell, but cannot
     // move closer to it or enter another shooter's range.
     let routeHome = false;
+    let shelterRoute = false;
     let deniedStep = false;
     const radius = returned ? Math.max(LOCAL_FOOD_RADIUS, safety.homeDistance(state.position) + 1) : Infinity;
     let scannedAt = 0;
@@ -425,16 +430,17 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       if (atResupplyHome({ position }, home) && cover(position, hostiles)) return true;
       const accepted = hostiles.every((hostile) => {
         const distance = position.distanceTo(hostile.position);
-        const range = safety.threatRange(hostile);
+        const range = safety.threatRange(hostile, shelterRoute);
         return distance > range || routeHome && from && from.distanceTo(hostile.position) <= range
           && distance > from.distanceTo(hostile.position) + .05;
       });
       deniedStep ||= !accepted;
       return accepted;
     };
-    const guarded = async (label, run, homebound = false) => {
+    const guarded = async (label, run, homebound = false, cardinalApproach = false) => {
       if (!critical) return run(ctx);
       routeHome = homebound;
+      shelterRoute = cardinalApproach;
       deniedStep = false;
       const origin = bot.entity.position.clone();
       const previous = new Map(activeThreats().map((threat) => [threat.id, origin.distanceTo(threat.position)]));
@@ -449,8 +455,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         const moving = here.distanceTo(last) > .15;
         for (const threat of hostiles) {
           const distance = here.distanceTo(threat.position);
-          if (distance <= safety.threatRange(threat) && (!homebound || !previous.has(threat.id)
-            || previous.get(threat.id) > safety.threatRange(threat)
+          const range = safety.threatRange(threat, shelterRoute);
+          if (distance <= range && (!homebound || !previous.has(threat.id)
+            || previous.get(threat.id) > range
             || moving && distance < last.distanceTo(threat.position) - .1)) {
             route.abort(UNSAFE_ROUTE);
             return;
@@ -513,8 +520,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     return onSurfacePath(bot, home, async () => {
       if (!returned || completeKit || holdShelter || foodTarget?.kind === 'bread') {
         if (!inside) {
-          const goHome = (action) => guarded(foodTarget?.kind === 'bread' ? 'return_for_bread' : 'return_home', action, true);
-          if (critical && nearShelter(state.position)) return goHome(approachShelter);
+          const goHome = (action, cardinal = false) => guarded(
+            foodTarget?.kind === 'bread' ? 'return_for_bread' : 'return_home', action, true, cardinal);
+          if (critical && nearShelter(state.position)) return goHome(approachShelter, true);
           if (shelter?.doorOpen() === false) {
             if (actions.withinReach(bot, shelter.position)) return goHome((scoped) => shelter.setDoor(scoped, true));
             return goHome((scoped) => actions.goNear(bot, scoped, doorstep, 1, { timeoutMs: 30000 }));

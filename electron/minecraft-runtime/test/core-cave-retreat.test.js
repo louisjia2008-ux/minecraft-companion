@@ -107,8 +107,9 @@ test('emergency evasion takes one supported step toward cover and ignores a deep
 });
 
 test('critical surface resupply evasion holds the ledge, with ordinary flee unchanged', async (t) => {
-  const check = async ({ resupplying = true, flat = false, mob = 'zombie', expected }) => {
+  const check = async ({ resupplying = true, flat = false, onGround = true, mob = 'zombie', expected }) => {
     const { bot, cells } = fixture();
+    bot.entity.onGround = onGround;
     for (let x = 1; x <= 3; x += 1) {
       cells.set(`${x},0,0`, air);
       cells.set(`${x},1,0`, air);
@@ -138,18 +139,56 @@ test('critical surface resupply evasion holds the ledge, with ordinary flee unch
     assert.equal(escape.want(state), 1);
     const result = await escape.run({ perceive: () => state, record: (...args) => records.push(args) });
     assert.deepEqual(paths, expected);
-    assert.equal(result.ok, expected.length > 0);
+    const waitsForGround = !onGround && resupplying && mob !== 'creeper';
+    assert.equal(result.ok, expected.length > 0 || waitsForGround);
+    if (waitsForGround) assert.equal(result.reason, 'resupply_escape_wait_for_ground');
     if (!result.ok) assert.equal(result.reason, 'cave_evasion_no_safe_step');
     assert.equal(records.some(([name]) => name === 'resupply_escape_guarded'), resupplying);
   };
   await t.test('takes a dry lateral step', () => check({ flat: true, expected: [['guarded', 0, 0, 1]] }));
   await t.test('holds a ledge where the only route away descends', () => check({ expected: [] }));
+  await t.test('holds while airborne after an approach abort', () => check({ flat: true, onGround: false, expected: [] }));
   await t.test('retains normal surface flight outside resupply', () => check({
     resupplying: false, expected: [['generic', 3.5, 0, .5]],
   }));
   await t.test('retains the close creeper fallback with no guarded step', () => check({
     mob: 'creeper', expected: [['generic', 3.5, 0, .5]],
   }));
+});
+
+test('critical home resupply defends within native strike reach without approaching or collecting drops', async () => {
+  const { bot } = fixture();
+  bot.world = { raycast: () => null };
+  const zombie = { id: 3, name: 'zombie', position: new Vec3(5.5, 0, .5), width: .6, height: 1.95, isValid: true };
+  bot.entities = { [zombie.id]: zombie };
+  const state = { health: 2, food: 0, position: bot.entity.position, inventory: {},
+    hostiles: [{ id: zombie.id, name: zombie.name, position: zombie.position, distance: 5 }] };
+  const calls = [];
+  const actions = {
+    async attack(_bot, _ctx, id, options) {
+      calls.push([id, options]);
+      return { ok: true };
+    },
+    async collectDrops() { calls.push('drops'); },
+  };
+  let resupplying = true;
+  const defend = createSurvivalBehaviors({ bot, actions, resupplying: () => resupplying })
+    .find((behavior) => behavior.name === 'defend');
+  const ctx = { perceive: () => state, record() {} };
+  assert.equal(defend.want(state), 0);
+  await defend.run(ctx);
+  assert.deepEqual(calls, []);
+  zombie.position.x = 2.5;
+  state.hostiles[0].distance = 2;
+  assert.equal(defend.want(state), 1);
+  await defend.run(ctx);
+  assert.deepEqual(calls, [[zombie.id, { pursue: false }]]);
+  zombie.position.x = 5.5;
+  state.hostiles[0].distance = 5;
+  resupplying = false;
+  assert.equal(defend.want(state), 1);
+  await defend.run(ctx);
+  assert.deepEqual(calls, [[zombie.id, { pursue: false }], [zombie.id, undefined], 'drops']);
 });
 
 test('home retreat accepts the plain saved house centre and confirms a grounded arrival', async () => {

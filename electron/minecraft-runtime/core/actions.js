@@ -393,7 +393,7 @@ const bystanderBeside = (bot, target) => Object.values(bot.entities).some((e) =>
   && e.position && e.position.distanceTo(target.position) <= 2.5 && e.position.distanceTo(bot.entity.position) <= 4.5);
 
 /** Fights one entity until it is gone, the timeout passes, or the signal aborts. */
-async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3 } = {}) {
+async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3, pursue = true } = {}) {
   const deadline = Date.now() + timeoutMs;
   try {
     if (ctx.signal?.aborted) throw abortError(ctx.signal);
@@ -403,16 +403,16 @@ async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3 } = {})
     const weaponSelectedAt = Date.now();
     // Chasing something up on the surface from a pit needs the same climbing allowance.
     const first = bot.entities[entityId];
-    if (first && first.position.y - bot.entity.position.y >= 1.5 && underground(bot)) {
-      return await withClimbing(bot, first.position.y + 4, () => attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt));
+    if (pursue && first && first.position.y - bot.entity.position.y >= 1.5 && underground(bot)) {
+      return await withClimbing(bot, first.position.y + 4, () => attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt, pursue));
     }
-    return await attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt);
+    return await attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt, pursue);
   } finally {
     haltBody(bot);
   }
 }
 
-async function attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt) {
+async function attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt, pursue) {
   // A chase that has not closed in for 8 s is not going to (cliff, water, canopy).
   let closest = Infinity;
   let closestAt = Date.now();
@@ -447,8 +447,9 @@ async function attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt)
         decisionKey = key;
         ctx.record?.('combat_geometry', { targetId: entityId, mob: target.name, size: geometry.size,
           width: geometry.width, height: geometry.height, feetDistance: geometry.feetDistance, reachDistance: distance,
-          sight, mode: canStrike ? 'strike' : 'approach', reach });
+          sight, mode: canStrike ? 'strike' : pursue ? 'approach' : 'hold', reach });
       }
+      if (!canStrike && !pursue) return fail('target_outside_stationary_reach');
       if (!canStrike && Date.now() - closestAt > 8000) {
         return fail(distance > reach ? 'chase_stuck' : sight === 'blocked' ? 'line_of_sight_blocked' : 'line_of_sight_unknown');
       }
@@ -471,9 +472,12 @@ async function attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt)
         // pack, which beat the bot down into the lava. Hit mid-jump there, as
         // it falls: a critical hit, which never sweeps.
         if (bot.entity.onGround && bystanderBeside(bot, target)) {
-          bot.setControlState('jump', true);
-          await waitUntil(() => !bot.entity.onGround && (bot.entity.velocity?.y ?? 0) < 0, { timeoutMs: 800, signal: ctx.signal }).catch(() => {});
-          bot.setControlState('jump', false);
+          if (!pursue && bot.heldItem?.name.endsWith('_sword')) return fail('stationary_sweep_bystander');
+          if (pursue) {
+            bot.setControlState('jump', true);
+            await waitUntil(() => !bot.entity.onGround && (bot.entity.velocity?.y ?? 0) < 0, { timeoutMs: 800, signal: ctx.signal }).catch(() => {});
+            bot.setControlState('jump', false);
+          }
         }
         if (ctx.signal?.aborted) throw abortError(ctx.signal);
         if (died) return { ok: true, died, hits };

@@ -75,6 +75,17 @@ test('abort during aiming and a target moving out of reach never send a stale at
   assert.equal(moved.counts.attacks, 0);
 });
 
+test('stationary melee attacks in reach and never follows a target that leaves reach during aim', async () => {
+  const reachable = actionFixture({ target: cube(2, 0, 1) });
+  assert.equal((await reachable.attack({ pursue: false })).died, true);
+  assert.equal(reachable.counts.attacks, 1);
+  assert.deepEqual(reachable.counts.goals, []);
+  const moved = actionFixture({ target: cube(2, 0, 1), moveOnLook: true });
+  assert.equal((await moved.attack({ pursue: false })).reason, 'target_outside_stationary_reach');
+  assert.equal(moved.counts.attacks, 0);
+  assert.deepEqual(moved.counts.goals, []);
+});
+
 test('confirmed death stops attacks while the corpse is still valid and tracked', async () => {
   const f = actionFixture();
   f.bot.attack = () => { f.counts.attacks += 1; f.bot.emit('entityDead', f.target); };
