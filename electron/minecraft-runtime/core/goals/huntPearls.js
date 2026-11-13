@@ -26,6 +26,8 @@ const STARE_MS = 12000;
 const STARE_TURN_MS = 2200;
 const STARE_AGAIN_MS = 30000;
 const ENDERMAN_EYES = 2.55;
+const ENGAGE_HEALTH = 14;
+const ENGAGE_FOOD = 15;
 const SCOUT_RADIUS = 48;
 const SCOUT_LEG = 10;
 const DOOR_DIRECTIONS = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
@@ -46,6 +48,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   const outdoors = (p) => standable(read, p) && skyOpen(bot, p);
   const restingAtHome = (p, centre) => centre && p.distanceTo(centre) <= 6;
   const flatDistance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+  const readyToHunt = (state) => state.health >= ENGAGE_HEALTH && state.food >= ENGAGE_FOOD
+    && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe'));
   const visible = (entity) => {
     const eye = bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
     const point = entity.position.offset(0, ENDERMAN_EYES, 0);
@@ -79,7 +83,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     while (Date.now() < until && bot.entities?.[e.id]) {
       if (e.position.distanceTo(bot.entity.position) <= STARE_NEAR) break;
       if (!turnedAt && angry(e)) turnedAt = Date.now();
-      if (!turnedAt && (Date.now() - started >= STARE_TURN_MS || !visible(e))) break;
+      if (!turnedAt && (Date.now() - started >= STARE_TURN_MS || !readyToHunt(ctx.perceive()) || !visible(e))) break;
       if (turnedAt) await bot.look(bot.entity.yaw, -Math.PI / 2, true);
       else await bot.lookAt(e.position.offset(0, ENDERMAN_EYES, 0), true);
       await sleep(100, ctx.signal);
@@ -203,6 +207,9 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
         return { ok: true, waited: true };
       }
       if (!memory.sawNight) { memory.sawNight = true; memory.nights += 1; }
+      // Let survival eat and heal before starting a new fight. An already
+      // angry Enderman in reach is still handled by defense.
+      if (!readyToHunt(state)) return wait(ctx, 'pearl_wait_for_combat_readiness');
       // One in sight but far: stare at its head and let it come. Chased,
       // it teleported off: fourteen nights of chasing brought one pearl.
       // Angry, it comes to the bot, where defend fights it and keeps the pearl.

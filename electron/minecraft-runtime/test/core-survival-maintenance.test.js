@@ -409,3 +409,29 @@ test('hunting pearls, an angry enderman is fought rather than hidden from, hurt 
   s.setGoal('outfit');
   assert.ok(s.behavior('hide').want(s.state) > 0, 'other work hides as before');
 });
+
+test('a confirmed native Enderman attacker in reach gets a stationary counter, with other threats preserved', async () => {
+  const registry = minecraftData('1.21.8');
+  const bot = Object.assign(new EventEmitter(), { entity: { position: new Vec3(0, 64, 0) }, registry,
+    game: { dimension: 'overworld' }, inventory: { slots: [] }, entities: {},
+    world: { raycast: () => null }, blockAt: () => ({ boundingBox: 'empty' }) });
+  const enderman = { id: 2, name: 'enderman', isValid: true, position: new Vec3(3.1, 64, 0) };
+  bot.entities[enderman.id] = enderman;
+  const seen = [];
+  const behaviors = createSurvivalBehaviors({ bot, activeGoal: () => 'hunt_pearls', actions: {
+    attack: async (_bot, _ctx, id, options) => { seen.push({ id, options }); return { ok: true }; },
+  } });
+  const behavior = (name) => behaviors.find((entry) => entry.name === name);
+  const target = { ...enderman, distance: 3.1 };
+  const state = { health: 5, inventory: { iron_sword: 1 }, hostiles: [target], position: bot.entity.position };
+  assert.equal(behavior('defend').want(state), 0, 'nearby neutral metadata is not aggression');
+  bot.emit('entityHurt', bot.entity, enderman);
+  assert.equal(behavior('escape').want(state), 0);
+  assert.ok(behavior('defend').want(state) > 0);
+  await behavior('defend').run({ perceive: () => state, record() {} });
+  assert.deepEqual(seen, [{ id: enderman.id, options: { pursue: false } }]);
+  assert.ok(behavior('escape').want({ ...state, inventory: {} }) > 0);
+  assert.ok(behavior('escape').want({ ...state, hostiles: [target, { name: 'creeper', distance: 3.5 }] }) > 0);
+  bot.world.raycast = () => ({ boundingBox: 'block' });
+  assert.ok(behavior('escape').want(state) > 0, 'cannot counter a mob behind cover');
+});

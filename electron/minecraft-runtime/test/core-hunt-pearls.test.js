@@ -6,6 +6,7 @@ const { createHuntPearlsGoal } = require('../core/goals/huntPearls');
 
 const AIR = { name: 'air', boundingBox: 'empty', shapes: [], skyLight: 15 };
 const STONE = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+const nightState = (position) => ({ isDay: false, position, health: 20, food: 20, inventory: { iron_sword: 1 } });
 const terrain = {
   blockAt: (p) => Math.floor(p.y) < 64 ? STONE : AIR,
   world: { raycast: () => null },
@@ -53,7 +54,7 @@ test('at night an enderman far off is stared at until it comes, not chased', asy
   const records = [];
   const goal = createHuntPearlsGoal({ bot, count: 12, skills, actions: { haltBody() {} } });
   const ctx = { signal: new AbortController().signal, record: (t, d) => records.push({ t, ...d }),
-    perceive: () => ({ isDay: false, position, inventory: {} }) };
+    perceive: () => nightState(position) };
   const result = await goal.run(ctx);
   assert.equal(result.ok, true);
   assert.equal(chased, 0);
@@ -78,12 +79,27 @@ test('once the stared enderman turns, the bot looks at the ground so it does not
   const records = [];
   const goal = createHuntPearlsGoal({ bot, count: 12, skills: {}, actions: { haltBody() {} } });
   const ctx = { signal: new AbortController().signal, record: (t, d) => records.push({ t, ...d }),
-    perceive: () => ({ isDay: false, position, inventory: {} }) };
+    perceive: () => nightState(position) };
   await goal.run(ctx);
   assert.deepEqual(views, ['eyes', 'eyes', 'ground', 'ground', 'ground']);
   const result = records.find((r) => r.t === 'enderman_stare_result');
   assert.equal(result.came, true);
   assert.equal(result.angry, true);
+});
+
+test('an injured or unarmed hunter does not aggro a visible Enderman', async () => {
+  const position = new Vec3(0, 64, 0);
+  const man = { id: 7, name: 'enderman', position: new Vec3(14, 64, 0) };
+  const bot = { ...terrain, entity: { position }, entities: { 7: man },
+    lookAt: async () => assert.fail('provoked Enderman while unfit') };
+  const goal = createHuntPearlsGoal({ bot, skills: { huntOne: async () => assert.fail('started melee while unfit') } });
+  const state = { ...nightState(position), health: 8.833 };
+  const ctx = { signal: new AbortController().signal, record() {}, perceive: () => state };
+  assert.equal((await goal.run(ctx)).reason, 'pearl_wait_for_combat_readiness');
+  state.health = 20;
+  state.inventory = {};
+  man.position = new Vec3(3, 64, 0);
+  assert.equal((await goal.run(ctx)).reason, 'pearl_wait_for_combat_readiness');
 });
 
 test('with an angry enderman already at hand, no other one is stared at', async () => {
@@ -96,7 +112,7 @@ test('with an angry enderman already at hand, no other one is stared at', async 
     lookAt: async () => { stared += 1; }, look: async () => {} };
   const skills = { huntOne: async () => ({ ok: true }) };
   const goal = createHuntPearlsGoal({ bot, count: 12, skills, actions: { haltBody() {} } });
-  await goal.run({ signal: new AbortController().signal, record() {}, perceive: () => ({ isDay: false, position, inventory: {} }) });
+  await goal.run({ signal: new AbortController().signal, record() {}, perceive: () => nightState(position) });
   assert.equal(stared, 0);
 });
 
@@ -125,7 +141,7 @@ test('scouting owns short dry surface legs and skips underground targets', async
   }, skills: { huntOne: async () => assert.fail('underground Enderman selected') } });
   const records = [];
   await goal.run({ signal: new AbortController().signal, record: (type) => records.push(type),
-    perceive: () => ({ isDay: false, position: player, inventory: {} }) });
+    perceive: () => nightState(player) });
   assert.deepEqual(records, ['pearl_surface_scout']);
   assert.equal(goal.ownsRouteRecovery(), true);
   assert.equal(movements.getNeighbors, neighbors);
@@ -140,7 +156,7 @@ test('an obstructed outdoor Enderman does not consume a stare or start a chase',
   const goal = createHuntPearlsGoal({ bot, skills: { huntOne: async () => assert.fail('chased through a wall') } });
   const records = [];
   await goal.run({ signal: new AbortController().signal, record: (type) => records.push(type),
-    perceive: () => ({ isDay: false, position: player, inventory: {} }) });
+    perceive: () => nightState(player) });
   assert.deepEqual(records, ['pearl_surface_scout']);
 });
 
@@ -167,7 +183,7 @@ test('a hunter starting inside the known house walks out through an observed doo
   const goal = createHuntPearlsGoal({ bot, actions });
   const records = [];
   await goal.run({ signal: new AbortController().signal, record: (type) => records.push(type),
-    perceive: () => ({ isDay: false, position: player, inventory: {} }) });
+    perceive: () => nightState(player) });
   assert.deepEqual(records, ['pearl_house_exit']);
 });
 
@@ -194,7 +210,7 @@ test('a grounded body straddling leaf litter and a supported lip regains just th
   const goal = createHuntPearlsGoal({ bot, actions });
   const records = [];
   await goal.run({ signal: new AbortController().signal, record: (type) => records.push(type),
-    perceive: () => ({ isDay: false, position: player, inventory: {} }) });
+    perceive: () => nightState(player) });
   assert.deepEqual(records, ['pearl_scout_regained_footing']);
   assert.equal(movements.getNeighbors, neighbors);
   assert.equal(movements.canDig, true);

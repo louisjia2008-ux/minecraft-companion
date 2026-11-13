@@ -312,9 +312,13 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const onHurt = (entity, source) => {
     if (entity !== bot.entity) return;
     recordObservedSelfAggressor(bot, entity, source);
+    if (source?.name === 'enderman' && bot.entities?.[source.id] === source) {
+      provoked.set(source.id, Date.now() + 60000);
+      return;
+    }
     const here = bot.entity.position;
     const culprit = Object.values(bot.entities || {})
-      .filter((e) => trackedNeutral(e) && e.position && e.position.distanceTo(here) <= 4
+      .filter((e) => trackedNeutral(e) && (!source || e.name !== 'enderman') && e.position && e.position.distanceTo(here) <= 4
         && Date.now() - (swings.get(e.id) || 0) <= 600)
       .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here))[0];
     if (!culprit) return;
@@ -362,13 +366,18 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     const geometry = meleeGeometry(bot.entity, entity, bot.registry);
     return geometry && geometry.distance <= 3 && meleeSight(bot, geometry) === 'clear';
   };
+  // Running lets a teleporting Enderman land free hits. At low health,
+  // hold only when this hunter is armed and can already land a native hit.
+  const huntEndermanInReach = (state, h) => h.name === 'enderman' && activeGoal() === 'hunt_pearls'
+    && dimensionOf(bot) === 'overworld' && !state.inWater && armed(state) && canStrikeFromHere(h);
+  const escapeThreat = (state) => threats(state).find((h) => !huntEndermanInReach(state, h)) || null;
   const target = (state, stationary = criticalHomeResupply(state)) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2 && (!stationary || canStrikeFromHere(h))) || null;
     return threats(state).find((h) => h.name !== 'creeper' && (!h.selfAggressor || armed(state))
       && (!stationary || canStrikeFromHere(h))
       && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
-      && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
+      && (huntEndermanInReach(state, h) || h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || ((RANGED.has(h.name) || (h.name === 'pillager' && !avoided(state, h))) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
           && state.health > t.rangedHealth && armed(state)
           && Math.abs(h.position.y - state.position.y) <= 4))) || null;
@@ -487,7 +496,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (state.sheltered) return 0;
       const caveEvasion = retreat || caveNeedsExit(state);
       if (!caveEvasion && surfaceResupplyEvasion(state)) return resupplyThreat(state) ? 1 : 0;
-      const threat = nearest(state);
+      const threat = caveEvasion ? nearest(state) : escapeThreat(state);
       if (!threat) return 0;
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
       // A brute or hoglin on the bot outruns it: running only takes the hits in the back.
@@ -508,7 +517,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const state = ctx.perceive();
       const caveEvasion = retreat || caveNeedsExit(state);
       const resupplyEvasion = !caveEvasion && surfaceResupplyEvasion(state);
-      const threat = resupplyEvasion ? resupplyThreat(state) : nearest(state);
+      const threat = resupplyEvasion ? resupplyThreat(state) : caveEvasion ? nearest(state) : escapeThreat(state);
       if (criticalHomeResupply(state) && (!threat || state.sheltered)) return { ok: true };
       if (threat && (caveEvasion || resupplyEvasion)) {
         // Keep a critically hurt bot on its ledge while resupply approaches
@@ -544,9 +553,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     want: (state) => (target(state) ? 1 : 0),
     async run(ctx) {
       const state = ctx.perceive();
-      const stationary = criticalHomeResupply(state);
-      const threat = target(state, stationary);
+      const homeDefense = criticalHomeResupply(state);
+      const threat = target(state, homeDefense);
       if (!threat) return { ok: true };
+      const stationary = homeDefense || state.health <= t.escapeHealth && huntEndermanInReach(state, threat);
       ctx.record('defend_target', { mob: threat.name, distance: Math.round(threat.distance), ...(stationary ? { stationary } : {}) });
       let last = threat.position.clone();
       const tracker = setInterval(() => { const e = bot.entities?.[threat.id]; if (e) last = e.position.clone(); }, 100);
@@ -564,7 +574,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       }
       // Spiders drop string (wool where there are no sheep); blazes and wither
       // skeletons fought off in a fortress drop what the expedition is there for.
-      if (result.ok && !stationary && typeof actions.collectDrops === 'function') {
+      if (result.ok && !homeDefense && typeof actions.collectDrops === 'function') {
         await actions.collectDrops(bot, ctx, last, (n) => KEPT_DROPS.has(n), { radius: 6, timeoutMs: 4000 });
       }
       return result;
