@@ -45,19 +45,22 @@ test('a hungry farm return surfaces, follows a walk-only route and uses only the
   const table = new Vec3(-104, 64, -179);
   const plot = new Vec3(-113, 62, -180);
   const movements = { canDig: true };
-  const bot = { entity: { position: new Vec3(-187.5, 57, -260.5) }, pathfinder: { movements } };
+  const bot = { entity: { position: new Vec3(-187.5, 64, -260.5), onGround: true }, pathfinder: { movements },
+    blockAt: (p) => ({ name: p.y <= 63 ? 'stone' : 'air', boundingBox: p.y <= 63 ? 'block' : 'empty',
+      shapes: p.y <= 63 ? [[0, 0, 0, 1, 1, 1]] : [] }) };
   const inventory = { chicken: 5, wheat: 2 };
   const calls = [];
   const state = { food: 11, health: 16, inventory, hostiles: [] };
   let stage = 'unknown';
   const actions = {
-    underground: () => bot.entity.position.y < center.y,
-    surface: async () => { calls.push('surface'); bot.entity.position = bot.entity.position.offset(0, 7, 0); return { ok: true }; },
-    goNear: async (_bot, _ctx, where) => {
+    underground: () => false,
+    goTo: async (_bot, _ctx, goal) => {
       calls.push('return');
       assert.equal(movements.canDig, false);
-      assert.ok(where.equals(center));
-      bot.entity.position = center.offset(.5, 0, .5);
+      const actualFeet = new Vec3(-112, 64, -177);
+      assert.ok(actualFeet.distanceTo(center) > 5);
+      assert.equal(goal.isEnd(actualFeet), true);
+      bot.entity.position = actualFeet.offset(.5, 0, .5);
       stage = 'ripe';
       return { ok: true };
     },
@@ -95,10 +98,61 @@ test('a hungry farm return surfaces, follows a walk-only route and uses only the
   const goal = createFarmGoal({ bot, center, home: { table }, snackPlots: [plot], bread: 2, actions, skills, farming });
   const ctx = { perceive: () => state, record() {}, signal: new AbortController().signal };
   assert.equal(goal.farmSnack, true);
-  for (let i = 0; i < 6; i += 1) assert.equal((await goal.run(ctx)).ok, true);
-  assert.deepEqual(calls, ['surface', 'return', 'harvest', 'replant', 'bread', 'eat']);
+  for (let i = 0; i < 5; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(calls, ['return', 'harvest', 'replant', 'bread', 'eat']);
   assert.equal(goal.isDone(state), false);
   assert.equal((await goal.run(ctx)).reason, 'farm_snack_no_ripe_wheat');
+  assert.equal(movements.canDig, true);
+});
+
+test('farm snack eats carried bread first and ascends a verified local cave after remote NoPath', async () => {
+  const center = new Vec3(-117, 64, -179);
+  const table = new Vec3(-104, 64, -177);
+  const plot = new Vec3(-113, 62, -180);
+  const start = new Vec3(-191, 61, -262);
+  const open = new Set([start.toString(), start.offset(0, 1, 0).toString(), start.offset(0, 2, 0).toString()]);
+  const inventory = { bread: 1 };
+  const movements = { canDig: true, getNeighbors: () => [] };
+  const bot = {
+    entity: { position: start.offset(.5, 0, .5), onGround: true },
+    pathfinder: { movements },
+    canDigBlock: () => true,
+    blockAt(p) {
+      const empty = open.has(p.toString());
+      return { name: empty ? 'air' : 'stone', position: p, diggable: !empty, boundingBox: empty ? 'empty' : 'block',
+        shapes: empty ? [] : [[0, 0, 0, 1, 1, 1]] };
+    },
+  };
+  const calls = [];
+  let atHome = false;
+  const actions = {
+    underground: () => true,
+    eat: async () => { calls.push('eat'); delete inventory.bread; return { ok: true, ate: 'bread' }; },
+    goTo: async () => { calls.push('return'); assert.equal(movements.canDig, false); return { ok: false, reason: 'NoPath' }; },
+    surface: () => assert.fail('generic surfacing can dig or pillar through unsafe terrain'),
+    digBlock: async (_bot, _ctx, block) => {
+      assert.equal(block.name, 'stone');
+      assert.ok(block.position.distanceTo(start) <= 3);
+      calls.push('guarded_cut');
+      open.add(block.position.toString());
+      return { ok: true };
+    },
+  };
+  const goal = createFarmGoal({ bot, center, home: { table }, snackPlots: [plot], bread: 2, actions,
+    farming: { plotState: () => atHome ? 'ripe' : 'unknown', harvest: async () => { calls.push('harvest'); return { ok: true, gained: 1 }; } } });
+  const events = [];
+  const ctx = { perceive: () => ({ food: 8, health: 14, inventory, hostiles: [] }),
+    record: (_type, data) => events.push(data), signal: new AbortController().signal };
+  assert.ok((await goal.run(ctx)).ok);
+  assert.ok((await goal.run(ctx)).waited);
+  assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(calls, ['eat', 'return', 'guarded_cut']);
+  assert.ok(events.some((event) => event.action === 'snack_return_cave_blocked'));
+  assert.ok(events.some((event) => event.action === 'snack_ascent'));
+  atHome = true;
+  bot.entity.position = table.offset(.5, 0, .5);
+  assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(calls, ['eat', 'return', 'guarded_cut', 'harvest']);
   assert.equal(movements.canDig, true);
 });
 

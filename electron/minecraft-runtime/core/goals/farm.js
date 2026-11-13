@@ -16,9 +16,13 @@ const { createBlacklist, posKey } = require('../blacklist');
 const { sleep } = require('../confirm');
 const { createPlannerRunner } = require('./common');
 const { applyWalkOnlyMovements } = require('../nether');
+const { advanceCaveRetreat, skyOpen, standable } = require('../caveRetreat');
+const { goals } = require('mineflayer-pathfinder');
 
 // Farther than this from the centre, the farm's ground may be out of view.
 const FAR_FROM_FARM = 48;
+const SNACK_FARM_APPROACH = 24;
+const SNACK_PATH_FAILURE = new Set(['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'leg_blocked']);
 
 function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = null, snackPlots = null,
   skills = defaultSkills, farming = defaultFarming, actions = defaultActions, kb = KNOWLEDGE,
@@ -31,6 +35,10 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
   }
   const memory = { center: center || null, barren: false, plots: snack ? snackPlots.map((p) => new Vec3(p.x, p.y, p.z)) : null,
     table: home?.table || null, steps: 0, harvested: 0, shortfall: {} };
+  const retreatVisited = new Set();
+  const returnVisited = new Set();
+  const returnBlacklist = createBlacklist({ ttlMs: 30000 });
+  let needAscent = false;
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
   // Never put the crafting table on a plot.
   const onPlot = (p) => (memory.plots || []).some((q) => q.x === p.x && q.z === p.z);
@@ -50,33 +58,87 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
   async function runSnack(ctx) {
     const state = ctx.perceive();
     if (state.food >= 18) return { ok: true };
-    if (bot.entity.position.y < (bot.companionSurfaceY ?? center.y) - 3 && actions.underground(bot)) {
-      if (state.health <= 6) {
-        await sleep(waitMs, ctx.signal);
-        return { ok: true, waited: true };
-      }
-      return (await actions.surface(bot, ctx)) || { ok: false, reason: 'farm_snack_still_underground' };
+    if (countKey('bread', state.inventory, kb) > 0 && !(state.hostiles || []).some((h) => h.distance <= 4)) {
+      const ate = await actions.eat(bot, ctx);
+      if (ate.ok) ctx.record('farm', { action: 'snack_eat', item: ate.ate, foodBefore: state.food, foodAfter: ctx.perceive().food });
+      return ate;
     }
     const here = bot.entity.position;
     const homeward = new Vec3(center.x, center.y, center.z);
-    const restore = applyWalkOnlyMovements(bot);
-    try {
-      if (state.food < 18 && countKey('bread', state.inventory, kb) > 0
-        && !(state.hostiles || []).some((h) => h.distance <= 4)) {
-        const ate = await actions.eat(bot, ctx);
-        if (ate.ok) ctx.record('farm', { action: 'snack_eat', item: ate.ate, foodBefore: state.food, foodAfter: ctx.perceive().food });
-        return ate;
+    const table = new Vec3(memory.table.x, memory.table.y, memory.table.z);
+    const distance = Math.hypot(here.x - center.x, here.z - center.z);
+    const local = distance <= SNACK_FARM_APPROACH && Math.abs(here.y - center.y) <= 5
+      || Math.hypot(here.x - table.x, here.z - table.z) <= 8 && Math.abs(here.y - table.y) <= 3;
+    const feet = here.floored();
+    const underground = !local && (needAscent ? !skyOpen(bot, feet) : actions.underground?.(bot) === true);
+    if (!underground) {
+      retreatVisited.clear();
+      needAscent = false;
+    } else if (needAscent || here.y < (bot.companionSurfaceY ?? center.y) - 3) {
+      if (state.health <= 6 || state.inWater) {
+        await sleep(waitMs, ctx.signal);
+        return { ok: true, waited: true };
       }
+      needAscent = true;
+      const from = here.floored();
+      let hostiles = state.hostiles || [];
+      let refresh = 0;
+      const avoid = (p) => {
+        if (Date.now() >= refresh) {
+          refresh = Date.now() + 100;
+          hostiles = ctx.perceive().hostiles || [];
+        }
+        return Math.abs(p.x - table.x) <= 8 && Math.abs(p.z - table.z) <= 8
+          || hostiles.some((h) => h.position?.distanceTo(p) <= 6);
+      };
+      const result = await advanceCaveRetreat(bot, ctx, actions, homeward, { avoid, visited: retreatVisited });
+      ctx.record('farm', { action: 'snack_ascent', from, ok: result.ok, reason: result.reason });
+      if (result.ok && !result.dug) {
+        retreatVisited.add(posKey(from));
+        if (retreatVisited.size > 64) retreatVisited.delete(retreatVisited.values().next().value);
+      }
+      return result;
+    }
+    const restore = applyWalkOnlyMovements(bot);
+    const movements = bot.pathfinder?.movements;
+    const neighbors = movements?.getNeighbors;
+    const dry = (p) => [-1, 0, 1].every((dy) => {
+      const block = blockAt(p.offset(0, dy, 0));
+      return block && !/water|lava|fire|magma|campfire|cactus|powder_snow|bubble_column/.test(block.name)
+        && block.getProperties?.()?.waterlogged !== true;
+    });
+    if (typeof neighbors === 'function') movements.getNeighbors = function (node, ...args) {
+      return neighbors.call(this, node, ...args).filter((move) => dry(new Vec3(move.x, move.y, move.z)));
+    };
+    try {
       const nearest = memory.plots.slice().sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
       const byState = (want) => nearest.find((p) => farming.plotState(bot, p) === want && !blacklist.has(posKey(p)));
       const unknown = byState('unknown');
-      const distance = Math.hypot(here.x - center.x, here.z - center.z);
       if (distance > FAR_FROM_FARM || unknown && distance > 20) {
-        ctx.record('farm', { action: 'snack_return', plot: posKey(unknown || nearest[0]) });
+        const plot = unknown || nearest[0];
+        ctx.record('farm', { action: 'snack_return', plot: posKey(plot) });
+        const destination = plot.offset(.5, 1, .5);
+        const goal = new goals.GoalCompositeAny(nearest.map((p) => {
+          const around = new goals.GoalNear(p.x, p.y + 1, p.z, 5);
+          const insideRange = around.isEnd.bind(around);
+          around.isEnd = (at) => insideRange(at) && standable(blockAt, new Vec3(at.x, at.y, at.z));
+          return around;
+        }));
         const from = here.clone();
-        const returned = await actions.goNear(bot, ctx, homeward, 4, { timeoutMs: 60000, retryNoProgress: false });
-        const closer = from.distanceTo(homeward) - bot.entity.position.distanceTo(homeward) > 4;
-        return returned.ok || closer ? { ok: true } : returned;
+        const returned = await actions.goTo(bot, ctx, goal, { timeoutMs: 20000, retryNoProgress: false });
+        if (returned.ok && bot.entity.onGround && goal.isEnd(bot.entity.position.floored())
+          || from.distanceTo(destination) - bot.entity.position.distanceTo(destination) > 4) {
+          returnVisited.clear();
+          return { ok: true };
+        }
+        const failure = returned.ok ? { ok: false, reason: 'not_arrived' } : returned;
+        if (!SNACK_PATH_FAILURE.has(failure.reason)) return failure;
+        if (underground) {
+          needAscent = true;
+          ctx.record('farm', { action: 'snack_return_cave_blocked', from: from.floored(), reason: failure.reason });
+          return { ok: true, waited: true };
+        }
+        return alternateFarmLeg(ctx, destination, failure);
       }
       const planted = state.inventory.wheat_seeds > 0 && byState('empty');
       if (planted) {
@@ -103,8 +165,38 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
       ctx.record('farm', { action: 'snack_unavailable' });
       return { ok: false, reason: 'farm_snack_no_ripe_wheat' };
     } finally {
+      if (typeof neighbors === 'function') movements.getNeighbors = neighbors;
       restore();
     }
+  }
+
+  async function alternateFarmLeg(ctx, destination, failure) {
+    if (typeof actions.goTo !== 'function') return failure;
+    const from = bot.entity.position.floored();
+    const here = from.distanceTo(destination);
+    const angle = Math.atan2(destination.z - from.z, destination.x - from.x);
+    for (const offset of [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2]) {
+      const aim = angle + offset;
+      const target = from.offset(Math.round(12 * Math.cos(aim)), 0, Math.round(12 * Math.sin(aim)));
+      const key = `${posKey(from)}>${posKey(target)}`;
+      if (returnBlacklist.has(key)) continue;
+      returnBlacklist.add(key, 'farm_snack_return_attempt');
+      const goal = new goals.GoalNearXZ(target.x, target.z, 3);
+      const close = goal.isEnd.bind(goal);
+      goal.isEnd = (p) => close(p) && standable(blockAt, new Vec3(p.x, p.y, p.z))
+        && new Vec3(p.x, p.y, p.z).distanceTo(destination) <= here + 8
+        && !returnVisited.has(`${p.x},${p.z}`);
+      const moved = await actions.goTo(bot, ctx, goal, { timeoutMs: 15000, retryNoProgress: false });
+      const at = bot.entity.position.floored();
+      if (moved.ok && bot.entity.onGround && goal.isEnd(at) && at.distanceTo(from) >= 4) {
+        returnVisited.add(`${from.x},${from.z}`);
+        if (returnVisited.size > 64) returnVisited.delete(returnVisited.values().next().value);
+        ctx.record('farm', { action: 'snack_return_dry_leg', from, to: at });
+        return moved;
+      }
+      return { ok: true, waited: true };
+    }
+    return failure;
   }
 
   async function runOnce(ctx) {
