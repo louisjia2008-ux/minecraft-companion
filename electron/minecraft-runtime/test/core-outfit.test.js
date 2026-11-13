@@ -112,6 +112,134 @@ test('critically hurt home recovery closes the real door before nighttime provis
   assert.equal(bot.companionResupplySheltered, undefined);
 });
 
+test('a full-health unarmed respawn seals home and reads supplies before gathering after daylight', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const door = house.furniture.door.position;
+  const bot = Object.assign(fakeBot(), { health: 20, food: 20, game: { dimension: 'overworld' },
+    entity: { position: new Vec3(3.5, 64, 3.5), onGround: true }, entities: {}, time: { timeOfDay: 15000 } });
+  let open = true;
+  bot.blockAt = (p) => p.x === door.x && p.z === door.z && (p.y === door.y || p.y === door.y + 1)
+    ? { name: 'oak_door', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper', open, facing: 'north', hinge: 'left' }) }
+    : { name: 'cobblestone', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const events = [];
+  bot.activateBlock = async () => { open = !open; events.push(open ? 'open' : 'close'); };
+  const goal = createOutfitGoal({ bot, items: [{ key: 'stone_sword', count: 1 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: { withinReach: () => true },
+    skills: { takeItems: async () => { events.push('chest'); return { ok: false, reason: 'chest_empty' }; } },
+    createGather: () => {
+      events.push('gather');
+      return { isDone: () => false, progress: () => 0, run: async () => ({ ok: true }) };
+    } });
+  const ctx = { perceive: () => perceive(bot), record() {} };
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(events, ['close', 'chest']);
+  assert.equal(perceive(bot).sheltered, true);
+  const controller = new AbortController();
+  await assert.rejects(goal.run({ ...ctx, signal: controller.signal, record(type) {
+    if (type === 'resupply_shelter_wait') controller.abort();
+  } }), { code: 'aborted' });
+  assert.deepEqual(events, ['close', 'chest']);
+  bot.time.timeOfDay = 4000;
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(events, ['close', 'chest', 'open', 'gather']);
+  assert.equal(perceive(bot).sheltered, false);
+  await goal.dispose();
+});
+
+test('a destroyed doorstep uses supported covered interior and refuses missing floor or visible shooter', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const door = new Vec3(3, 64, 0);
+  const start = new Vec3(1, 64, -1);
+  const wallBreach = new Vec3(1, 64, 0);
+  const inside = new Vec3(1, 64, 1);
+  const chamber = [...house.blocks.map(({ position }) => position), ...house.foundation];
+  const world = new Set(chamber.map(({ x, y, z }) => new Vec3(x, y, z).toString()));
+  for (const breach of [door.offset(0, -1, 0), door.offset(0, -1, -1), wallBreach, wallBreach.offset(0, 1, 0)]) {
+    world.delete(breach.toString());
+  }
+  world.add(start.offset(0, -1, 0).toString());
+  const items = [];
+  const bot = Object.assign(fakeBot(items), { health: 2.67, food: 20, game: { dimension: 'overworld' },
+    entity: { position: start.offset(.5, 0, .5), onGround: true }, entities: {}, time: { timeOfDay: 15000 } });
+  bot.blockAt = (p) => {
+    const solid = world.has(p.floored().toString());
+    return { name: solid ? 'cobblestone' : 'air', boundingBox: solid ? 'block' : 'empty',
+      shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const path = [];
+  let genericReturns = 0;
+  let spawnShooter = false;
+  const goal = createOutfitGoal({ bot, items: [{ key: 'stone_sword', count: 1 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: {
+      goNear: async (_bot, ctx, destination) => {
+        assert.equal(bot.health, 20);
+        assert.equal(bot.time.timeOfDay, 5000);
+        genericReturns += 1;
+        if (spawnShooter) {
+          bot.entities[7] = { id: 7, name: 'skeleton', position: start.offset(.5, 0, -4.5) };
+          await sleep(250, ctx.signal);
+          assert.fail('must stop when a hostile enters the return route');
+        }
+        bot.entity.position = destination;
+        return { ok: true };
+      },
+      digBlock: async () => assert.fail('must not excavate the damaged foundation'),
+      goTo: async (_bot, _ctx, destination) => {
+        const next = new Vec3(destination.x, destination.y, destination.z);
+        path.push(next);
+        bot.entity.position = next.offset(.5, 0, .5);
+        return { ok: true };
+      },
+    }, skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }) } });
+  const events = [];
+  const ctx = { perceive: () => perceive(bot), record(type, detail) { events.push([type, detail]); } };
+  const abortOn = async (type) => {
+    const controller = new AbortController();
+    await assert.rejects(goal.run({ ...ctx, signal: controller.signal, record(name, detail) {
+      ctx.record(name, detail);
+      if (name === type) controller.abort();
+    } }), { code: 'aborted' });
+  };
+  world.delete(wallBreach.offset(0, -1, 0).toString());
+  await abortOn('resupply_home_approach_wait');
+  assert.equal(events.at(-1)[1].reason, 'resupply_damaged_shelter_no_safe_route');
+  world.add(wallBreach.offset(0, -1, 0).toString());
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(path, [wallBreach, inside]);
+  await goal.run(ctx);
+  await abortOn('resupply_shelter_wait');
+  assert.equal(events.at(-1)[1].reason, 'covered_room_until_safe');
+  assert.equal(perceive(bot).sheltered, true);
+  bot.entities[7] = { id: 7, name: 'skeleton', position: start.offset(.5, 0, -4.5) };
+  await sleep(110);
+  assert.equal(perceive(bot).sheltered, false, 'an exposed line through the breach invalidates cover');
+  bot.entities[7].position = new Vec3(-4.5, 64, 2.5);
+  await sleep(110);
+  assert.equal(perceive(bot).sheltered, true, 'the intact side wall occludes the shooter');
+  bot.entity.position = wallBreach.offset(.5, 0, .5);
+  assert.equal(perceive(bot).sheltered, false, 'roof over a wall opening is insufficient');
+  bot.entity.position = start.offset(.5, 0, .5);
+  world.delete(wallBreach.offset(0, -1, 0).toString());
+  delete bot.entities[7];
+  items.push({ name: 'stone_sword', count: 1 });
+  bot.health = 20;
+  bot.time.timeOfDay = 5000;
+  spawnShooter = true;
+  assert.equal((await goal.run(ctx)).reason, 'unsafe_resupply_food_route');
+  assert.ok(bot.entity.position.floored().equals(start));
+  delete bot.entities[7];
+  spawnShooter = false;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(genericReturns, 2);
+  assert.equal(goal.isDone(perceive(bot)), true);
+  await goal.dispose();
+});
+
 test('critical resupply returns from spent wheat to closed shelter and leaves only for bounded, covered food', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const door = house.furniture.door.position;

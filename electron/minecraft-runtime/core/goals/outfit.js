@@ -50,6 +50,29 @@ const AIR = Object.freeze({ name: 'air', boundingBox: 'empty', shapes: [] });
 const noFailedSteps = new Set();
 const dryBlock = (block) => block && !APPROACH_HAZARD.test(block.name) && block.getProperties?.()?.waterlogged !== true;
 const clearBlock = (block) => dryBlock(block) && block.boundingBox === 'empty' && !block.shapes?.length;
+const FULL_CUBE = [0, 0, 0, 1, 1, 1];
+const fullBlock = (block) => dryBlock(block) && block.shapes?.some((shape) =>
+  shape.length === FULL_CUBE.length && shape.every((value, index) => value === FULL_CUBE[index]));
+
+// A damaged shell can still break a line of fire. Require full collision
+// blocks across several body rays; missing chunks and partial blocks are no cover.
+function blocksThreat(bot, hostile, position) {
+  const delta = position.minus(hostile.position);
+  const distance = delta.norm();
+  if (distance <= 2.5) return false;
+  const side = new Vec3(-delta.z, 0, delta.x).scaled(.3 / distance);
+  const eye = hostile.position.offset(0, 1.5, 0);
+  return [.35, 1.05, 1.65].every((height) => [-1, 1].every((edge) => {
+    const ray = position.offset(0, height, 0).plus(side.scaled(edge)).minus(eye);
+    const samples = Math.ceil(ray.norm() * 5);
+    for (let index = 1; index < samples; index += 1) {
+      const block = bot.blockAt(eye.plus(ray.scaled(index / samples)).floored());
+      if (!block) return false;
+      if (fullBlock(block)) return true;
+    }
+    return false;
+  }));
+}
 
 function createKit({ bot, items, kb = KNOWLEDGE, resupplyFood }) {
   const carried = (state, r) => Math.min(r.count, countKey(r.key, state.inventory, kb));
@@ -108,9 +131,6 @@ function resupplyShelter(bot, home, actions, skills) {
       || lo.open !== hi.open || lo.facing !== hi.facing || lo.hinge !== hi.hinge) return null;
     return lo.open;
   };
-  const cube = [0, 0, 0, 1, 1, 1];
-  const full = (block) => block?.shapes?.some((shape) =>
-    shape.length === cube.length && shape.every((value, index) => value === cube[index]));
   const insideIntact = ({ position: at, hostiles = [] }) => bot.health > 0 && dimension(bot) === 'overworld'
     && atResupplyHome({ position: at }, home, { verticalSlack: 0 })
     && !hostiles.some((hostile) => atResupplyHome({ position: hostile.position }, home) || hostile.position.distanceTo(at) <= 2);
@@ -118,7 +138,7 @@ function resupplyShelter(bot, home, actions, skills) {
   // nodes in one tick, so reuse only a brief snapshot of static blocks there.
   let checkedUntil = 0;
   let intact = false;
-  const checkShell = () => shell.every((p) => full(bot.blockAt(p)));
+  const checkShell = () => shell.every((p) => fullBlock(bot.blockAt(p)));
   const hasIntactShell = () => {
     if (Date.now() >= checkedUntil) {
       checkedUntil = Date.now() + 100;
@@ -135,6 +155,26 @@ function resupplyShelter(bot, home, actions, skills) {
     return state.position.z >= a.z + 2 && Math.abs(state.position.x - position.x - .5) >= 2;
   };
   const sealed = (state) => doorOpen() === false && insideIntact(state) && checkShell();
+  const missingDoor = () => {
+    const [low, high] = blocks();
+    return Boolean(low && high && (!/_door$/.test(low.name) || !/_door$/.test(high.name)));
+  };
+  const refuge = (state) => {
+    const at = state.position;
+    const feet = at.floored();
+    if (feet.y !== home.anchor.y || !insideIntact(state) || !standable((p) => bot.blockAt(p), feet)
+      || !fullBlock(bot.blockAt(feet.offset(0, 2, 0)))) return false;
+    const wall = (dx, dz) => {
+      const a = home.anchor;
+      const x = dx < 0 ? a.x : dx > 0 ? a.x + house.size - 1 : feet.x;
+      const z = dz < 0 ? a.z : dz > 0 ? a.z + house.size - 1 : feet.z;
+      const face = new Vec3(x, feet.y, z);
+      return fullBlock(bot.blockAt(face)) && fullBlock(bot.blockAt(face.offset(0, 1, 0)));
+    };
+    return (wall(-1, 0) || wall(1, 0)) && (wall(0, -1) || wall(0, 1))
+      && !(state.hostiles || []).some((hostile) => hostile.position.distanceTo(at)
+        <= (RANGED_HOSTILES.has(hostile.name) ? RANGED_RANGE : MELEE_RANGE) && !blocksThreat(bot, hostile, at));
+  };
   const insideDoor = position.offset(0, 0, 1);
   const underRoof = (p, padding) => p.x - padding >= home.anchor.x && p.x + padding < home.anchor.x + house.size
     && p.z - padding >= home.anchor.z && p.z + padding < home.anchor.z + house.size;
@@ -154,11 +194,12 @@ function resupplyShelter(bot, home, actions, skills) {
   const waitInside = async (ctx, waitReason = 'sealed_until_daylight') => {
     const state = ctx.perceive();
     const isSealed = sealed(state);
-    const reason = isSealed ? waitReason : 'shelter_unconfirmed';
+    const coveredRoom = missingDoor() && refuge(state);
+    const reason = isSealed ? waitReason : coveredRoom ? 'covered_room_until_safe' : 'shelter_unconfirmed';
     if (lastWait !== reason) ctx.record('resupply_shelter_wait', { reason, position: state.position.floored() });
     lastWait = reason;
     const bed = home.bed && new Vec3(home.bed.x, home.bed.y, home.bed.z);
-    if (isSealed && state.isDay === false && Date.now() >= nextBed && bed
+    if ((isSealed || coveredRoom) && state.isDay === false && Date.now() >= nextBed && bed
       && /_bed$/.test(bot.blockAt(bed)?.name || '') && actions.withinReach(bot, bed)) {
       nextBed = Date.now() + 20000;
       const result = await skills.useBed(bot, ctx, { position: bed });
@@ -176,7 +217,7 @@ function resupplyShelter(bot, home, actions, skills) {
     ctx.record('resupply_door', { open, confirmed });
     return confirmed ? { ok: true } : fail('resupply_door_unchanged');
   };
-  return { position, doorOpen, covered, sealed, overheadPhantom, waitInside, setDoor };
+  return { position, doorOpen, covered, sealed, missingDoor, refuge, overheadPhantom, waitInside, setDoor };
 }
 
 // Base supplies use existing dry paths. Explicit harvesting still goes
@@ -230,7 +271,7 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
   const seen = new Set([posKey(from)]);
   for (let i = 0; i < queue.length && i < 1200; i += 1) {
     const { at, first, steps } = queue[i];
-    if (at.equals(target)) return first && { first, safeLeg, dry, steps };
+    if (first && (typeof target === 'function' ? target(at) : at.equals(target))) return { first, safeLeg, dry, steps };
     if (steps >= 28) continue;
     for (const [x, z] of APPROACH_SIDES) for (const y of [0, 1, -1]) {
       const next = at.offset(x, y, z);
@@ -386,12 +427,15 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   const goal = createDeviceProjectGoal({ bot, name: 'outfit', device, home, kb, actions, skills, carry: (key) => CARRY.test(key),
     createGather: recoverAtHome ? (options) => createGather({ ...options, surfaceOnly: true }) : createGather,
     ...rest, countWorn: true });
+  const ownsGatherRoute = () => goal.memory.gather?.ownsRouteRecovery?.() === true;
+  goal.ownsRouteRecovery = ownsGatherRoute;
   if (!recoverAtHome) return goal;
 
   goal.recoverAtHome = true;
   const runOutfit = goal.run;
   const shelter = resupplyShelter(bot, home, actions, skills);
-  const shelterWitness = (state) => shelter?.sealed(state) === true;
+  const shelterWitness = (state) => shelter?.sealed(state) === true || shelter?.missingDoor() === true
+    && shelter.refuge({ ...state, hostiles: safety.threats(state) });
   const clearShelter = () => {
     if (bot.companionResupplySheltered === shelterWitness) delete bot.companionResupplySheltered;
   };
@@ -400,14 +444,16 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   let lastFoodWait = null;
   let routeInterrupted = false;
   let routeDestination = null;
+  let ownsShelterRoute = false;
   let homeCut = null;
   const failedApproaches = createBlacklist({ ttlMs: 12000 });
   const nearShelter = (position) => Boolean(shelter && position && typeof actions.goTo === 'function'
     && position.y >= shelter.position.y - 5 && Math.hypot(position.x - shelter.position.x, position.z - shelter.position.z) <= 16);
-  goal.ownsRouteRecovery = () => goal.memory.gather?.ownsRouteRecovery?.() === true
+  goal.ownsRouteRecovery = () => ownsGatherRoute() || ownsShelterRoute
     || dimension(bot) === 'overworld' && bot.health > 0 && bot.health < HOME_HEALTH && nearShelter(bot.entity?.position);
   const resetRecovery = () => {
     returned = false; checkedChest = false; lastFoodWait = null; routeInterrupted = false; routeDestination = null;
+    ownsShelterRoute = false;
     homeCut = null;
     failedApproaches.clear();
     clearShelter();
@@ -424,6 +470,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   goal.run = async (ctx) => {
     if (ctx.signal?.aborted) throw abortError(ctx.signal);
     const state = ctx.perceive();
+    const read = (p) => bot.blockAt(p);
     if (dimension(bot) !== 'overworld') return fail('resupply_wrong_dimension');
     if (state.position.y < home.centre.y - 8 && defaultActions.underground(bot)) {
       // The high priority cave retreat owns the way out while critically hurt.
@@ -434,19 +481,28 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const completeKit = device.isDone(state);
     const critical = state.health < HOME_HEALTH;
     const nightStone = state.isDay === false && goal.memory.gather?.ownsRouteRecovery?.() === true;
+    const unarmed = countKey('stone_sword', state.inventory, kb) === 0;
     const needsProtection = critical || state.food < HOME_FOOD;
-    const inside = atResupplyHome(state, home, { verticalSlack: critical && shelter ? 0 : 1 });
+    const missingDoor = shelter?.missingDoor() === true;
+    const inside = atResupplyHome(state, home, { verticalSlack: (critical || missingDoor) && shelter ? 0 : 1 });
     const doorstep = shelter?.position.offset(.5, 0, -.5);
-    const nearbyHostiles = needsProtection ? safety.threats(state, true) : [];
+    const nearbyHostiles = needsProtection || unarmed ? safety.threats(state, true) : [];
+    const exposedUnarmed = unarmed && nearbyHostiles.some((hostile) => RANGED_HOSTILES.has(hostile.name)
+      && hostile.position.distanceTo(state.position) <= RANGED_RANGE);
+    const unarmedShelter = Boolean(shelter && unarmed && (state.isDay === false || exposedUnarmed));
     const threatened = needsProtection && (doorstep && safety.exposed(doorstep, nearbyHostiles, critical)
       || critical && !inside && safety.exposed(state.position, nearbyHostiles, true));
-    const waitForDay = nightStone || needsProtection && (state.isDay === false || threatened);
+    const waitForDay = nightStone || unarmedShelter || needsProtection && (state.isDay === false || threatened);
     const carriedFood = countKey('food', state.inventory, kb);
     const foodTarget = checkedChest && needsProtection && state.food < REGEN_FOOD && carriedFood === 0 && !waitForDay
       ? resupplyFood.plan(state, critical) : null;
     const waitForFood = foodTarget?.kind === 'wait';
     const waitForHealing = critical && state.food >= REGEN_FOOD;
     const holdShelter = waitForDay || waitForFood || waitForHealing || critical && routeInterrupted;
+    const guardRoute = critical || unarmedShelter;
+    ownsShelterRoute = missingDoor && nearShelter(state.position) && (!inside || holdShelter);
+    if (shelter && holdShelter) bot.companionResupplySheltered = shelterWitness;
+    else clearShelter();
     // All low-health local travel uses the same live checks. A return may
     // back away from a threat already beside the starting cell, but cannot
     // move closer to it or enter another shooter's range.
@@ -454,6 +510,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     let shelterRoute = false;
     let preparingStep = null;
     let inwardDoorStep = null;
+    let destinationStillSafe = null;
+    let relaxedReturn = null;
     let deniedStep = false;
     const radius = returned ? Math.max(LOCAL_FOOD_RADIUS, safety.homeDistance(state.position) + 1) : Infinity;
     let scannedAt = 0;
@@ -465,15 +523,17 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       }
       return observed;
     };
-    const cover = (position, hostiles) => shelter?.covered({ position, hostiles }) === true;
+    const refuge = (position, hostiles) => missingDoor && shelter.refuge({ position, hostiles });
+    const cover = (position, hostiles) => shelter?.covered({ position, hostiles }) === true || refuge(position, hostiles);
     const screenedByRoof = (hostile, from, to, livePosition) => shelterRoute
       && shelter?.overheadPhantom(hostile, from, to, livePosition) === true;
     const unsafeToDig = (at, step, hostiles) => hostiles.some((hostile) => {
       const range = safety.threatRange(hostile, true);
       return Math.min(at.distanceTo(hostile.position), step.distanceTo(hostile.position)) <= range;
     });
+    const screenedByWall = (hostile, position) => missingDoor && blocksThreat(bot, hostile, position);
     const safeStep = (position, from) => {
-      if (!critical) return true;
+      if (!guardRoute && !shelterRoute) return true;
       if (routeDestination && !position.floored().equals(routeDestination)) return false;
       if (safety.homeDistance(position) > radius) return false;
       const hostiles = activeThreats();
@@ -481,14 +541,15 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       const accepted = hostiles.every((hostile) => {
         const distance = position.distanceTo(hostile.position);
         const range = safety.threatRange(hostile, shelterRoute);
-        return distance > range || screenedByRoof(hostile, from, position) || routeHome && from && from.distanceTo(hostile.position) <= range
+        return distance > range || screenedByRoof(hostile, from, position) || screenedByWall(hostile, position)
+          || routeHome && from && from.distanceTo(hostile.position) <= range
           && distance > from.distanceTo(hostile.position) + .05;
       });
       deniedStep ||= !accepted;
       return accepted;
     };
     const guarded = async (label, run, homebound = false, cardinalApproach = false) => {
-      if (!critical) return run(ctx);
+      if (!guardRoute && !(missingDoor && cardinalApproach)) return run(ctx);
       routeHome = homebound;
       shelterRoute = cardinalApproach;
       deniedStep = false;
@@ -501,6 +562,10 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       const check = () => {
         const here = bot.entity.position;
         const hostiles = activeThreats();
+        if (shelterRoute && routeDestination && !destinationStillSafe?.() || relaxedReturn && !relaxedReturn()) {
+          route.abort(UNSAFE_ROUTE);
+          return;
+        }
         if (preparingStep && unsafeToDig(here, preparingStep, hostiles)) { route.abort(UNSAFE_ROUTE); return; }
         if (cover(here, hostiles)) { last = here.clone(); return; }
         const moving = here.distanceTo(last) > .15;
@@ -509,7 +574,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           const range = safety.threatRange(threat, shelterRoute);
           if (distance > range) continue;
           const doorPhantom = inwardDoorStep && threat.name === 'phantom';
-          if (doorPhantom && screenedByRoof(threat, inwardDoorStep.from, inwardDoorStep.to, here)) continue;
+          if (doorPhantom && screenedByRoof(threat, inwardDoorStep.from, inwardDoorStep.to, here)
+            || screenedByWall(threat, here)) continue;
           if (doorPhantom || !homebound || !previous.has(threat.id) || previous.get(threat.id) > range
             || moving && distance < last.distanceTo(threat.position) - .1) {
             route.abort(UNSAFE_ROUTE);
@@ -538,7 +604,6 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return { ok: true, waited: true, reason: UNSAFE_ROUTE };
     };
     const approachShelter = async (scoped) => {
-      const read = (p) => bot.blockAt(p);
       const feet = bot.entity.position.floored();
       const farmlandStart = farmlandFooting(read, bot.entity);
       // Pathfinder starts at the logical block above the observed farmland
@@ -551,6 +616,40 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         await sleep(500, scoped.signal);
         return { ok: true, waited: true, reason };
       };
+      if (missingDoor) {
+        const hostiles = activeThreats().filter((h) => h.position.distanceTo(state.position) <= RANGED_RANGE
+          || h.position.distanceTo(safety.centre) <= RANGED_RANGE);
+        const target = (p) => refuge(p.offset(.5, 0, .5), hostiles);
+        const path = shelterApproach(read, shelter, from, target, safeStep, failedApproaches, farmlandStart);
+        if (path) return followStep(scoped, path, from, feet, farmlandStart, false, null, wait);
+        if (hostiles.length) {
+          const screening = hostiles.filter((h) => h.position.distanceTo(state.position) <= safety.threatRange(h, true));
+          const safer = (p) => {
+            if (!screening.length) return false;
+            const next = p.offset(.5, 0, .5);
+            const fromDistance = Math.min(...screening.map((h) => h.position.distanceTo(state.position)));
+            const nextDistance = Math.min(...screening.map((h) => h.position.distanceTo(next)));
+            return nextDistance > fromDistance + .05 || screening.every((h) => blocksThreat(bot, h, next));
+          };
+          const retreat = shelterApproach(read, shelter, from, safer, safeStep, failedApproaches, farmlandStart);
+          if (retreat) return followStep(scoped, retreat, from, feet, farmlandStart, false, null, wait);
+        }
+        if (!hostiles.length && !needsProtection && !unarmed && completeKit && state.isDay === true) {
+          const stillQuiet = () => activeThreats().every((h) => h.position.distanceTo(bot.entity.position) > RANGED_RANGE
+            && h.position.distanceTo(safety.centre) > RANGED_RANGE);
+          relaxedReturn = stillQuiet;
+          try {
+            if (!stillQuiet()) return wait('resupply_damaged_shelter_no_safe_route');
+            scoped.record('resupply_damaged_shelter_daylight_return', { from: feet });
+            const result = await actions.goNear(bot, scoped, safety.centre, 1, { timeoutMs: 30000 });
+            return result.ok && atResupplyHome(ctx.perceive(), home, { verticalSlack: 0 }) && bot.entity.onGround
+              ? result : wait(result.reason || 'resupply_damaged_shelter_arrival_unconfirmed');
+          } finally {
+            relaxedReturn = null;
+          }
+        }
+        return wait('resupply_damaged_shelter_no_safe_route');
+      }
       if (open === null) return wait('resupply_door_unconfirmed');
       if (open === false && from.equals(entrance) && bot.entity.onGround) return shelter.setDoor(scoped, true);
       const target = open ? shelter.position.offset(0, 0, 1) : entrance;
@@ -571,6 +670,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         scoped.record('resupply_home_cut', { from, position: cut.position, block: cut.block.name, confirmed, reason: result.reason });
         return confirmed ? { ok: true } : wait(result.reason || 'resupply_home_cut_unconfirmed');
       }
+      return followStep(scoped, path, from, feet, farmlandStart, open, target, wait);
+    };
+    const followStep = async (scoped, path, from, feet, farmlandStart, open, target, wait) => {
       const { first, safeLeg, dry } = path;
       const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(first) && dry(first);
       const throughDoor = open === true && from.equals(shelter.position) && first.equals(target);
@@ -581,6 +683,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         inwardDoorStep = { from: actualOrigin.clone(), to: first.offset(.5, 0, .5) };
       }
       routeDestination = first;
+      destinationStillSafe = () => dry(first);
       let moved;
       try {
         moved = await actions.goTo(bot, scoped, new goals.GoalBlock(first.x, first.y, first.z),
@@ -588,6 +691,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         if (moved.ok) await waitUntil(arrived, { timeoutMs: 600, signal: scoped.signal });
       } finally {
         routeDestination = null;
+        destinationStillSafe = null;
       }
       if (!arrived()) {
         failedApproaches.add(`${posKey(from)}>${posKey(first)}`, moved.reason || 'resupply_home_step_unconfirmed');
@@ -597,7 +701,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return { ok: true };
     };
     return onSurfacePath(bot, home, async () => {
-      if (!inside && (needsProtection || nightStone)) {
+      if (!inside && (needsProtection || nightStone || unarmedShelter)) {
         const left = await guarded('leave_supply_quarry', (scoped) => goal.memory.gather?.leaveSurfaceQuarry?.(scoped), true);
         if (left) return left;
       }
@@ -605,7 +709,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         if (!inside) {
           const goHome = (action, cardinal = false) => guarded(
             foodTarget?.kind === 'bread' ? 'return_for_bread' : 'return_home', action, true, cardinal);
-          if (critical && nearShelter(state.position)) return goHome(approachShelter, true);
+          if ((guardRoute || missingDoor) && nearShelter(state.position)) return goHome(approachShelter, true);
           if (shelter?.doorOpen() === false) {
             if (actions.withinReach(bot, shelter.position)) return goHome((scoped) => shelter.setDoor(scoped, true));
             return goHome((scoped) => actions.goNear(bot, scoped, doorstep, 1, { timeoutMs: 30000 }));
@@ -618,14 +722,16 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         }
       }
       if (shelter && inside && holdShelter) {
-        if (shelter.doorOpen() === true) {
+        if (missingDoor && guardRoute && nearShelter(state.position) && !refuge(state.position, activeThreats())) {
+          return guarded('damaged_shelter', approachShelter, true, true);
+        }
+        if (!missingDoor && shelter.doorOpen() === true) {
           if (!actions.withinReach(bot, shelter.position)) {
             const insideDoor = shelter.position.offset(.5, 0, 1.5);
             return guarded('close_shelter', (scoped) => actions.goNear(bot, scoped, insideDoor, 1, { timeoutMs: 15000 }));
           }
           return shelter.setDoor(ctx, false);
         }
-        bot.companionResupplySheltered = shelterWitness;
       }
       if (!checkedChest) {
         const wanted = items.filter(({ key, count }) => countKey(key, state.inventory, kb) < count);
@@ -642,7 +748,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         checkedChest = true;
         return { ok: true };
       }
-      if (needsProtection || nightStone) {
+      if (needsProtection || nightStone || unarmedShelter) {
         if (needsProtection && state.food < REGEN_FOOD) {
           if (carriedFood > 0) return actions.eat(bot, ctx);
           if (home.stations?.crafting_table && countKey('wheat', state.inventory, kb) >= 3 && inside) {
@@ -674,7 +780,6 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         return guarded(kind, (scoped) => resupplyFood.run(scoped, foodTarget));
       }
       if (shelter?.doorOpen() === false && inside) {
-        clearShelter();
         return shelter.setDoor(ctx, true);
       }
       return runOutfit(ctx);
