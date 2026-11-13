@@ -439,3 +439,77 @@ test('critical bread return can leave the observed 15/16-height farmland for a d
   assert.equal(bot.pathfinder.movements.getNeighbors, nativeNeighbors);
   await goal.dispose();
 });
+
+test('critical resupply steps inward only while a continuous roof separates the doorway from a phantom', async () => {
+  const house = createStarterHouse({ x: -68, y: 72, z: -35 });
+  const door = new Vec3(-65, 72, -35);
+  const interior = door.offset(0, 0, 1);
+  const phantomRoof = new Vec3(-66, 74, -34);
+  const start = new Vec3(-64.49999780768488, 72, -34.240824418395114);
+  const phantom = { id: 638, name: 'phantom', position: new Vec3(-65.82064211533519, 75, -33.60018374945365), width: .9, height: .5 };
+  const bot = Object.assign(fakeBot(), { health: 2.67, food: 0, game: { dimension: 'overworld' },
+    entity: { position: start, onGround: true, width: .6 }, entities: { [phantom.id]: phantom }, time: { timeOfDay: 16900 } });
+  const building = new Set([...house.blocks.map((block) => block.position), ...house.foundation]
+    .map(({ x, y, z }) => new Vec3(x, y, z).toString()));
+  let open = true;
+  let roofBreach = false;
+  let movePhantomWhileWalking = false;
+  bot.blockAt = (p) => {
+    if (p.equals(door) || p.equals(door.offset(0, 1, 0))) {
+      return { name: 'oak_door', boundingBox: 'block', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
+        open, facing: 'south', hinge: 'left' }) };
+    }
+    const solid = building.has(p.toString()) && !(roofBreach && p.equals(phantomRoof));
+    return { name: solid ? 'oak_planks' : 'air', boundingBox: solid ? 'block' : 'empty', shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.activateBlock = async () => { open = !open; };
+  let attempts = 0;
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: { withinReach: () => true,
+      goTo: async (_bot, ctx, destination) => {
+        attempts++;
+        assert.ok(destination.isEnd(interior));
+        if (movePhantomWhileWalking) {
+          phantom.position = phantom.position.offset(0, -.1, 0);
+          await sleep(300, ctx.signal);
+          assert.fail('inward route continued after the roof no longer separated the phantom');
+        }
+        bot.entity.position = interior.offset(.5, 0, .5);
+        return { ok: true };
+      }, goNear: async () => assert.fail('unexpected generic movement') } });
+  const events = [];
+  const ctx = { perceive: () => perceive(bot), record: (type, detail) => events.push([type, detail]) };
+  const expectWait = async () => {
+    const controller = new AbortController();
+    await assert.rejects(goal.run({ ...ctx, signal: controller.signal, record: (type, detail) => {
+      ctx.record(type, detail);
+      if (type === 'resupply_home_approach_wait') controller.abort();
+    } }), { code: 'aborted' });
+    assert.equal(attempts, 0);
+  };
+  roofBreach = true;
+  await expectWait();
+  roofBreach = false;
+  await sleep(110);
+  const observed = phantom.position;
+  phantom.position = new Vec3(-65.82, 74.9, -33.60);
+  await expectWait();
+  phantom.position = new Vec3(-67.8, 75, -33.5);
+  await expectWait();
+  phantom.position = observed;
+  bot.entities[686] = { id: 686, name: 'skeleton', position: new Vec3(-64.5, 72, -28) };
+  await expectWait();
+  delete bot.entities[686];
+  movePhantomWhileWalking = true;
+  assert.equal((await goal.run(ctx)).reason, 'unsafe_resupply_food_route');
+  assert.ok(bot.entity.position.equals(start));
+  movePhantomWhileWalking = false;
+  phantom.position = observed;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(attempts, 2);
+  assert.ok(bot.entity.position.floored().equals(interior));
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(open, false);
+  await goal.dispose();
+});

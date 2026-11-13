@@ -24,6 +24,7 @@ const { sleep, waitUntil, abortError } = require('../confirm');
 const { KNOWLEDGE, countKey } = require('../knowledge');
 const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { upgrades } = require('../armor');
+const { entityDimensions } = require('../entityGeometry');
 const { isHostile } = require('../perception');
 const { standable } = require('../caveRetreat');
 const { createResupplyIrrigation } = require('./resupplyFarm');
@@ -118,13 +119,15 @@ function resupplyShelter(bot, home, actions, skills) {
   let checkedUntil = 0;
   let intact = false;
   const checkShell = () => shell.every((p) => full(bot.blockAt(p)));
-  const covered = (state) => {
-    if (!insideIntact(state)) return false;
+  const hasIntactShell = () => {
     if (Date.now() >= checkedUntil) {
       checkedUntil = Date.now() + 100;
       intact = checkShell();
     }
-    if (!intact) return false;
+    return intact;
+  };
+  const covered = (state) => {
+    if (!insideIntact(state) || !hasIntactShell()) return false;
     if (doorOpen() === false) return true;
     const a = home.anchor;
     // The starter door faces north. Two blocks deep and off its centreline,
@@ -132,6 +135,20 @@ function resupplyShelter(bot, home, actions, skills) {
     return state.position.z >= a.z + 2 && Math.abs(state.position.x - position.x - .5) >= 2;
   };
   const sealed = (state) => doorOpen() === false && insideIntact(state) && checkShell();
+  const insideDoor = position.offset(0, 0, 1);
+  const underRoof = (p, padding) => p.x - padding >= home.anchor.x && p.x + padding < home.anchor.x + house.size
+    && p.z - padding >= home.anchor.z && p.z + padding < home.anchor.z + house.size;
+  const onCoveredDoorway = (p) => p.y === position.y && underRoof(p, Math.max(.3, (bot.entity.width || .6) / 2) + .01)
+    && (p.floored().equals(position) || p.floored().equals(insideDoor));
+  // This edge stays beneath the verified continuous roof. A phantom with
+  // its entire body over that same roof cannot hit through it.
+  const overheadPhantom = (hostile, from, to, livePosition = from) => {
+    if (hostile.name !== 'phantom' || !from?.floored().equals(position) || !to.floored().equals(insideDoor)
+      || hostile.position.y < home.anchor.y + 3 || doorOpen() !== true
+      || ![from, to, livePosition].every(onCoveredDoorway)) return false;
+    const size = entityDimensions(bot.entities?.[hostile.id] || hostile, bot.registry);
+    return Boolean(size && underRoof(hostile.position, size.width / 2 + .1) && hasIntactShell());
+  };
   let lastWait = null;
   let nextBed = 0;
   const waitInside = async (ctx, waitReason = 'sealed_until_daylight') => {
@@ -159,7 +176,7 @@ function resupplyShelter(bot, home, actions, skills) {
     ctx.record('resupply_door', { open, confirmed });
     return confirmed ? { ok: true } : fail('resupply_door_unchanged');
   };
-  return { position, doorOpen, covered, sealed, waitInside, setDoor };
+  return { position, doorOpen, covered, sealed, overheadPhantom, waitInside, setDoor };
 }
 
 // Base supplies use existing dry paths. Explicit harvesting still goes
@@ -199,14 +216,14 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
   const isDoor = (p) => p.equals(door);
   const dry = (p) => standable(read, p) || isDoor(p) && shelter.doorOpen() === true
     && standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? AIR : read(cell), p);
-  const safeLeg = (a, b) => {
+  const safeLeg = (a, b, actualOrigin) => {
     const dy = b.y - a.y;
     const farmOrigin = farmlandStart && a.equals(from);
     if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(dy) > 1 || (!farmOrigin && !dry(a)) || !dry(b)) return false;
     if (farmOrigin && dy !== 0) return false;
     if ((isDoor(a) || isDoor(b)) && (a.x !== b.x || dy !== 0)) return false;
     return (dy === 0 || clearBlock(read((dy > 0 ? a : b).offset(0, 2, 0))))
-      && accept(b.offset(.5, 0, .5), farmOrigin ? farmlandStart : a.offset(.5, 0, .5));
+      && accept(b.offset(.5, 0, .5), actualOrigin || (farmOrigin ? farmlandStart : a.offset(.5, 0, .5)));
   };
   const floor = Math.max(door.y - 5, from.y - 1);
   const queue = [{ at: from, first: null, steps: 0 }];
@@ -447,6 +464,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     let routeHome = false;
     let shelterRoute = false;
     let preparingStep = null;
+    let inwardDoorStep = null;
     let deniedStep = false;
     const radius = returned ? Math.max(LOCAL_FOOD_RADIUS, safety.homeDistance(state.position) + 1) : Infinity;
     let scannedAt = 0;
@@ -459,6 +477,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return observed;
     };
     const cover = (position, hostiles) => shelter?.covered({ position, hostiles }) === true;
+    const screenedByRoof = (hostile, from, to, livePosition) => shelterRoute
+      && shelter?.overheadPhantom(hostile, from, to, livePosition) === true;
     const unsafeToDig = (at, step, hostiles) => hostiles.some((hostile) => {
       const range = safety.threatRange(hostile, true);
       return Math.min(at.distanceTo(hostile.position), step.distanceTo(hostile.position)) <= range;
@@ -472,7 +492,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       const accepted = hostiles.every((hostile) => {
         const distance = position.distanceTo(hostile.position);
         const range = safety.threatRange(hostile, shelterRoute);
-        return distance > range || routeHome && from && from.distanceTo(hostile.position) <= range
+        return distance > range || screenedByRoof(hostile, from, position) || routeHome && from && from.distanceTo(hostile.position) <= range
           && distance > from.distanceTo(hostile.position) + .05;
       });
       deniedStep ||= !accepted;
@@ -498,9 +518,11 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         for (const threat of hostiles) {
           const distance = here.distanceTo(threat.position);
           const range = safety.threatRange(threat, shelterRoute);
-          if (distance <= range && (!homebound || !previous.has(threat.id)
-            || previous.get(threat.id) > range
-            || moving && distance < last.distanceTo(threat.position) - .1)) {
+          if (distance > range) continue;
+          const doorPhantom = inwardDoorStep && threat.name === 'phantom';
+          if (doorPhantom && screenedByRoof(threat, inwardDoorStep.from, inwardDoorStep.to, here)) continue;
+          if (doorPhantom || !homebound || !previous.has(threat.id) || previous.get(threat.id) > range
+            || moving && distance < last.distanceTo(threat.position) - .1) {
             route.abort(UNSAFE_ROUTE);
             return;
           }
@@ -562,8 +584,13 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       }
       const { first, safeLeg, dry } = path;
       const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(first) && dry(first);
+      const throughDoor = open === true && from.equals(shelter.position) && first.equals(target);
+      const actualOrigin = throughDoor ? bot.entity.position : undefined;
       if (!bot.entity.onGround || (farmlandStart && !farmlandFooting(read, bot.entity))
-        || !safeLeg(from, first)) return wait('resupply_home_step_changed');
+        || !safeLeg(from, first, actualOrigin)) return wait('resupply_home_step_changed');
+      if (throughDoor) {
+        inwardDoorStep = { from: actualOrigin.clone(), to: first.offset(.5, 0, .5) };
+      }
       routeDestination = first;
       let moved;
       try {
