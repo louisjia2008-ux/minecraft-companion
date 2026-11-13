@@ -41,6 +41,7 @@ test('home recovery leaves normal gather idle until it physically returns and re
         assert.ok(itemMatch('stone_pickaxe'));
         assert.ok(itemMatch('oak_log'));
         assert.equal(itemMatch('arrow'), false);
+        assert.equal(itemMatch('water_bucket'), false);
         return { ok: false, reason: 'chest_empty' };
       },
     },
@@ -77,7 +78,11 @@ test('critically hurt home recovery closes the real door before nighttime provis
   const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
     home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
     actions: { withinReach: () => true },
-    skills: { takeItems: async () => { operations.push('chest'); return { ok: false, reason: 'chest_empty' }; },
+    skills: { takeItems: async (_bot, _ctx, { itemMatch }) => {
+      assert.equal(itemMatch('water_bucket'), true);
+      operations.push('chest');
+      return { ok: false, reason: 'chest_empty' };
+    },
       huntOne: async () => { operations.push('hunt'); return { ok: true }; } } });
   const controller = new AbortController();
   const ctx = { perceive: () => perceive(bot), signal: controller.signal, record: (type) => {
@@ -97,12 +102,80 @@ test('critically hurt home recovery closes the real door before nighttime provis
   assert.deepEqual(operations, ['close', 'chest'], 'nighttime hunger must not send the bot outside');
   bot.time.timeOfDay = 3000;
   delete ctx.signal;
+  bot.health = 10;
   await goal.run(ctx);
   assert.deepEqual(operations, ['close', 'chest', 'open']);
   await goal.run(ctx);
   assert.deepEqual(operations, ['close', 'chest', 'open', 'hunt']);
   await goal.dispose();
   assert.equal(bot.companionResupplySheltered, undefined);
+});
+
+test('critical resupply returns from spent wheat to closed shelter and leaves only for bounded, covered food', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const door = house.furniture.door.position;
+  const crop = new Vec3(-12, 63, 4);
+  const distantCrop = new Vec3(-24, 63, 4);
+  const inside = new Vec3(3.5, 64, 3.5);
+  const bot = Object.assign(fakeBot(), { health: 2.67, food: 10, game: { dimension: 'overworld' },
+    entity: { position: inside }, entities: {}, time: { timeOfDay: 3000 }, registry: { blocksByName: { wheat: { id: 1 } } } });
+  const operations = [];
+  const records = [];
+  let open = true;
+  let age = 1;
+  let blocked = false;
+  bot.world = { raycast: () => blocked ? { name: 'stone' } : null };
+  bot.findBlocks = () => [distantCrop, crop];
+  bot.blockAt = (p) => {
+    if (p.x === door.x && p.z === door.z && (p.y === door.y || p.y === door.y + 1)) {
+      return { name: 'oak_door', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
+        open, facing: 'north', hinge: 'left' }) };
+    }
+    if (p.equals(crop) || p.equals(distantCrop)) return { name: 'wheat', getProperties: () => ({ age: p.equals(crop) ? age : 7 }) };
+    if (p.equals(crop.offset(0, -1, 0)) || p.equals(distantCrop.offset(0, -1, 0))) return { name: 'farmland' };
+    return { name: 'cobblestone', shapes: [[0, 0, 0, 1, 1, 1]] };
+  };
+  bot.activateBlock = async () => { open = !open; operations.push(open ? 'open' : 'close'); };
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: { withinReach: () => true, goNear: async (_bot, _ctx, p) => {
+      bot.entity.position = p;
+      operations.push('walk-home');
+      return { ok: true };
+    } },
+    skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async () => assert.fail('a distant animal must not trigger a hunt'),
+      explore: async () => assert.fail('a critical bot must not explore for food') } });
+  let controller = new AbortController();
+  const ctx = { perceive: () => perceive(bot), get signal() { return controller.signal; }, record: (type, detail) => {
+    records.push([type, detail]);
+    if (type === 'resupply_shelter_wait' || type === 'resupply_food_target') controller.abort();
+  } };
+  await goal.run(ctx);
+  bot.entity.position = crop;
+  bot.entities[1] = { id: 1, name: 'pig', position: distantCrop };
+  await goal.run(ctx);
+  await goal.run(ctx);
+  await assert.rejects(goal.run(ctx), { code: 'aborted' });
+  assert.deepEqual(operations, ['walk-home', 'close']);
+  assert.deepEqual(records.find(([type]) => type === 'resupply_food_wait')[1], { reason: 'awaiting_crop_regrowth', growing: 1 });
+  assert.equal(perceive(bot).sheltered, true);
+
+  controller = new AbortController();
+  age = 7;
+  // It can see the doorway from 12 blocks, beyond the original 8-block check.
+  bot.entities[2] = { id: 2, name: 'skeleton', position: new Vec3(3.5, 64, -13.5) };
+  await assert.rejects(goal.run(ctx), { code: 'aborted' });
+  assert.deepEqual(operations, ['walk-home', 'close']);
+  assert.equal(records.at(-1)[1].reason, 'nearby_hostile');
+
+  controller = new AbortController();
+  blocked = true;
+  await goal.run(ctx);
+  await assert.rejects(goal.run(ctx), { code: 'aborted' });
+  assert.equal(operations.at(-1), 'open');
+  assert.deepEqual(records.at(-1), ['resupply_food_target', { kind: 'wheat', position: crop }]);
+  await goal.dispose();
 });
 
 for (const { key, slot, existing, target, ingredients } of [

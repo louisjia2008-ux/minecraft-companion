@@ -621,20 +621,22 @@ async function huntOne(bot, ctx, { mobs, dropMatch, radius = 48, blacklist, acce
 }
 
 /** Picks a ripe sweet berry bush (taiga food when no animals are around). */
-async function pickBerries(bot, ctx, { radius = 32, blacklist } = {}) {
+async function pickBerries(bot, ctx, { radius = 32, blacklist, position } = {}) {
   const bush = bot.registry.blocksByName.sweet_berry_bush;
   if (!bush) return fail('no_berries');
-  const ripe = bot.findBlocks({ matching: bush.id, maxDistance: radius, count: 16,
-    useExtraInfo: (b) => Number(b.getProperties?.().age) >= 2 })
-    .filter((p) => !blacklist?.has(`berry:${posKey(p)}`))
-    .map((p) => bot.blockAt(p)).filter(Boolean);
+  const isRipe = (block) => block?.type === bush.id && Number(block.getProperties?.().age) >= 2;
+  const positions = position ? [position] : bot.findBlocks({ matching: bush.id, maxDistance: radius, count: 16, useExtraInfo: isRipe });
+  const ripe = positions.filter((p) => !blacklist?.has(`berry:${posKey(p)}`))
+    .map((p) => bot.blockAt(p)).filter(isRipe);
   if (!ripe.length) return fail('no_berries');
   const block = ripe[0];
   const before = actions.countItems(bot, (n) => n === 'sweet_berries');
   const moved = await actions.goToDig(bot, ctx, block, { timeoutMs: 30000 });
   if (!moved.ok) { blacklist?.add(`berry:${posKey(block.position)}`, moved.reason); return moved; }
+  const current = bot.blockAt(block.position);
+  if (!isRipe(current)) return fail('no_berries');
   try {
-    await bot.activateBlock(bot.blockAt(block.position));
+    await bot.activateBlock(current);
   } catch (error) {
     if (isAbort(error)) throw error;
   }
