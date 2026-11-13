@@ -359,6 +359,32 @@ test('homestead never gathers stone at the deep open-to-sky starting position', 
   assert.deepEqual(result, { ok: true, waited: true, reason: 'stone_surface_wait' });
 });
 
+for (const interruption of ['path_timeout', 'breathe']) {
+  test(`homestead defers optional food after ${interruption} and continues to bed wool`, async () => {
+    const sim = simulate({ failRate: 0 });
+    const anchor = { x: 0, y: 1, z: 0 };
+    sim.inventory.porkchop = 2;
+    sim.inventory.chicken = 1;
+    sim.bot.entities = { 1: { id: 1, name: 'chicken', position: new Vec3(8.5, 1, 0.5) } };
+    const controller = new AbortController();
+    const hunts = [];
+    sim.skills.huntOne = async (_bot, _ctx, { mobs, radius }) => {
+      hunts.push({ first: mobs[0], radius });
+      if (mobs[0] === 'sheep') return { ok: true, gained: 1 };
+      if (interruption === 'path_timeout') return { ok: false, reason: 'path_timeout' };
+      controller.abort('preempted_by:breathe');
+      throw Object.assign(new Error('preempted_by:breathe'), { code: 'aborted' });
+    };
+    const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: [], skills: sim.skills, actions: sim.actions });
+    const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, food: 20 }), record() {} };
+    const hunt = goal.run({ ...ctx, signal: controller.signal });
+    if (interruption === 'breathe') await assert.rejects(hunt, { code: 'aborted' });
+    else assert.deepEqual(await hunt, { ok: true, skipped: 'food' });
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.deepEqual(hunts, [{ first: 'cow', radius: 16 }, { first: 'sheep', radius: 96 }]);
+  });
+}
+
 function simulateQuarryHomestead() {
   const sim = simulate({ failRate: 0 });
   const anchor = { x: 0, y: 64, z: 0 };

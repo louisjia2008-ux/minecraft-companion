@@ -33,6 +33,7 @@ const DEFAULT_GEAR = ['stone_sword', 'stone_tier_pickaxe', 'iron_sword', 'iron_p
 const EARLY_GEAR = new Set(['stone_sword', 'stone_tier_pickaxe', 'pickaxe', 'wooden_pickaxe']);
 const DOWN = [new Vec3(0, -1, 0)];
 const FOOD_MOBS = new Set(['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom']);
+const NEARBY_FOOD_RADIUS = 16;
 const FILLERS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const isFiller = (name) => FILLERS.has(name);
 const hasFiller = (inventory) => Object.entries(inventory).some(([name, count]) => count > 0 && isFiller(name));
@@ -384,13 +385,29 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         return result;
       }
       case 'hunt': {
-        // Optional food runs wait until the bot is healthy again.
-        if (requirement?.optional && ctx.perceive().health < 12) {
+        const state = ctx.perceive();
+        const optionalFood = step.key === 'food' && requirement?.optional;
+        // Optional hunts wait until the bot is healthy again.
+        if (requirement?.optional && state.health < 12) {
           skipped.add(requirement.key, 'low_health', 60000);
           return { ok: true, skipped: requirement.key };
         }
-        const result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist, radius: 96,
-          ...(step.key === 'wool' ? woolPreference(ctx.perceive().inventory) : {}) });
+        if (optionalFood && state.inWater) {
+          skipped.add('food', 'unsafe_food_route', 60000);
+          return { ok: true, skipped: 'food' };
+        }
+        let result;
+        try {
+          result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist,
+            radius: optionalFood ? NEARBY_FOOD_RADIUS : 96, ...(step.key === 'wool' ? woolPreference(state.inventory) : {}) });
+        } catch (error) {
+          if (optionalFood && ctx.signal?.reason === 'preempted_by:breathe') skipped.add('food', 'unsafe_food_route', 60000);
+          throw error;
+        }
+        if (optionalFood && (!result.ok || result.gained === 0)) {
+          skipped.add('food', result.reason || 'food_not_collected', 60000);
+          return { ok: true, skipped: 'food' };
+        }
         // No sheep anywhere near: spiders drop string, four of which make wool.
         if (result.reason === 'no_mob_in_range' && step.key === 'wool') {
           const spider = await skills.huntOne(bot, ctx, { mobs: ['spider', 'cave_spider'], dropMatch: (n) => n === 'string', blacklist, radius: 48 });
@@ -890,13 +907,14 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     // Animals close by are food in the bag for later: on mountains and in
     // forests the next one may be a long, failing chase away once hunger hits.
-    if (!evening && state.health >= 12 && countKey('food', state.inventory, kb) < 10 && !blacklist.has('stockpile')) {
+    if (!evening && state.health >= 12 && countKey('food', state.inventory, kb) < 10
+      && !skipped.has('food') && !blacklist.has('stockpile')) {
       const near = Object.values(bot.entities || {}).some((e) => FOOD_MOBS.has(e.name) && e.position
-        && e.position.distanceTo(bot.entity.position) <= 16 && !blacklist.has(`mob:${e.id}`));
+        && e.position.distanceTo(bot.entity.position) <= NEARBY_FOOD_RADIUS && !blacklist.has(`mob:${e.id}`));
       if (near) {
         if (inQuarry) return leaveQuarry(ctx);
         ctx.record('stockpile_food', {});
-        const hunted = await skills.huntOne(bot, ctx, { mobs: [...FOOD_MOBS], dropMatch: kb.food.match, blacklist, radius: 16 });
+        const hunted = await skills.huntOne(bot, ctx, { mobs: [...FOOD_MOBS], dropMatch: kb.food.match, blacklist, radius: NEARBY_FOOD_RADIUS });
         if (!hunted.ok) blacklist.add('stockpile', hunted.reason, 60000);
         return hunted;
       }
