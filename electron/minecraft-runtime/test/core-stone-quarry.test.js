@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
 const { createStoneQuarry } = require('../core/goals/stoneQuarry');
 const { createBlacklist, posKey } = require('../core/blacklist');
+const { standable } = require('../core/caveRetreat');
 
 const stone = (name) => name === 'stone';
 const cobble = (name) => name === 'cobblestone';
@@ -22,7 +23,7 @@ function fixture({ blocked = false, move = true, cover = 2 } = {}) {
     blockAt(p) {
       const name = world.get(posKey(p)) || (p.y >= 64 ? 'air' : p.y >= 64 - cover ? 'dirt' : 'stone');
       if (name === 'unknown') return null;
-      const empty = ['air', 'water'].includes(name);
+      const empty = ['air', 'water', 'leaf_litter'].includes(name);
       return { name, position: p, boundingBox: empty ? 'empty' : 'block',
         shapes: empty ? [] : [[0, 0, 0, 1, 1, 1]], diggable: name !== 'air',
         ...(stone(name) ? { harvestTools: { [pick.type]: true } } : {}) };
@@ -127,9 +128,73 @@ test('quarry keeps previous entrance, stair, and pickup support protected after 
   assert.equal(f.quarry.protectsFloor(entryFloor), true);
   for (let n = 0; n < 8 && f.quarry.inside(); n += 1) assert.equal((await f.quarry.leave(f.ctx, f.surface)).ok, true);
   assert.ok(f.bot.entity.position.floored().equals(f.origin));
-  await f.run(); // rotate beyond the closed route, while retaining its support
+  // Later surfacing can pillar in the old entrance. A new exposed cut can
+  // bring us to the old stair, which must no longer own a blocked exit.
+  f.world.set(posKey(f.origin), 'dirt');
+  f.world.set(posKey(f.origin.offset(0, 1, 0)), 'dirt');
+  f.bot.entity.position = f.path[0].offset(.5, 0, .5);
+  assert.equal(f.quarry.inside(), false);
+  assert.equal(await f.quarry.leave(f.ctx, f.surface), null);
   assert.equal(f.quarry.protectsFloor(stairFloor), true);
   assert.equal(f.quarry.protectsFloor(pocketFloor), true);
   f.quarry.reset();
   assert.equal(f.quarry.protectsFloor(entryFloor), false);
 });
+
+test('a closed quarry is released when another behavior moves outside it', async () => {
+  const f = fixture();
+  for (let n = 0; n < 18 && f.picked.length < 3; n += 1) assert.equal((await f.run()).ok, true);
+  const feet = f.bot.entity.position.floored();
+  for (const p of [feet.offset(1, 0, 0), feet.offset(0, 0, 1), feet.offset(0, 0, -1)]) {
+    f.world.set(posKey(p), 'water');
+  }
+  assert.equal((await f.run()).reason, 'quarry_exhausted');
+  assert.equal(f.quarry.inside(), true);
+  f.bot.entity.position = f.origin.offset(.5, 0, -1.5);
+  assert.equal(f.quarry.inside(), false);
+  f.bot.entity.position = feet.offset(.5, 0, .5);
+  assert.equal(f.quarry.inside(), false);
+  assert.equal(f.quarry.protectsFloor(feet.offset(0, -1, 0)), true);
+});
+
+for (const footing of ['leaf_litter', 'water']) {
+  test(`closed quarry final-edge alternate with ${footing} ${footing === 'water' ? 'is rejected' : 'can exit'}`, async () => {
+    const f = fixture();
+    for (let n = 0; n < 18 && f.picked.length < 3; n += 1) assert.equal((await f.run()).ok, true);
+    const feet = f.bot.entity.position.floored();
+    for (const p of [feet.offset(1, 0, 0), feet.offset(0, 0, 1), feet.offset(0, 0, -1)]) {
+      f.world.set(posKey(p), 'water');
+    }
+    assert.equal((await f.run()).reason, 'quarry_exhausted');
+    const lastStair = f.path[0];
+    for (let n = 0; n < 6 && !f.bot.entity.position.floored().equals(lastStair); n += 1) {
+      assert.equal((await f.quarry.leave(f.ctx, f.surface)).ok, true);
+    }
+    assert.ok(f.bot.entity.position.floored().equals(lastStair));
+    // Same final geometry as the native replay: old entrance filled two high
+    // with dirt, north rises by one onto existing grass with leaf litter.
+    f.world.set(posKey(f.origin), 'dirt');
+    f.world.set(posKey(f.origin.offset(0, 1, 0)), 'dirt');
+    const north = lastStair.offset(0, 1, -1);
+    f.world.set(posKey(north.offset(0, -1, 0)), 'grass_block');
+    f.world.set(posKey(north), footing);
+    f.world.set(posKey(lastStair.offset(0, 1, 1)), 'water');
+    f.world.set(posKey(lastStair.offset(0, 0, 1)), 'dirt');
+    const surface = { ...f.surface, isStand: (p) => standable(f.bot.blockAt, p) };
+    const originalCuts = f.cuts.length;
+    const originalPath = f.path.length;
+    const result = await f.quarry.leave(f.ctx, surface);
+    assert.equal(f.cuts.length, originalCuts);
+    if (footing === 'water') {
+      assert.deepEqual(result, { ok: false, reason: 'quarry_route_changed' });
+      assert.equal(f.path.length, originalPath);
+      assert.equal(f.quarry.inside(), true);
+    } else {
+      assert.deepEqual(result, { ok: true });
+      assert.deepEqual(f.path.slice(originalPath), [north]);
+      assert.deepEqual(f.events.at(-1), ['quarry_exit', { position: north, alternate: true }]);
+      assert.equal(f.quarry.inside(), false);
+      assert.equal(f.quarry.protectsFloor(f.origin.offset(0, -1, 0)), true);
+    }
+  });
+}

@@ -135,6 +135,14 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
 
   const here = () => bot.entity.position.floored();
   const landed = (p) => bot.entity.onGround && here().equals(p) && standable(read, p);
+  function inside() {
+    if (!site) return false;
+    const current = here();
+    const member = site.pocket?.at.equals(current) || site.route.some((p, index) => index > 0 && p.equals(current));
+    if (!member && site.closed) site = null;
+    return member;
+  }
+
   async function move(ctx, target, surface, exactEdge = false) {
     if (!standable(read, target)) return fail('quarry_route_changed');
     const current = here();
@@ -163,8 +171,18 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
       { radius: 2, timeoutMs: 2500 }), (p) => p.equals(from) || side && p.equals(step));
   }
 
+  function alternateExit(current, surface) {
+    if (!landed(current) || typeof surface.isStand !== 'function') return null;
+    for (const height of [1, 0]) for (const [dx, dz] of DIRS) {
+      const next = current.offset(dx, height, dz);
+      if (!avoid(next) && !site.route.some((p) => p.equals(next)) && standable(read, next) && surface.isStand(next)
+        && (!height || open(read(current.offset(0, 2, 0))))) return next;
+    }
+    return null;
+  }
+
   async function leave(ctx, surface) {
-    if (!site) return null;
+    if (!inside()) return null;
     if (site.pocket?.at.equals(here())) {
       const result = await move(ctx, site.pocket.from, surface, true);
       if (result.ok) ctx.record('quarry_exit', { position: site.pocket.from });
@@ -173,9 +191,19 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
     site.pocket = null;
     const index = site.route.findIndex((p) => p.equals(here()));
     if (index <= 0) return null;
-    const to = site.route[index - 1];
-    const result = await move(ctx, to, surface, true);
-    if (result.ok) ctx.record('quarry_exit', { position: to });
+    let to = site.route[index - 1];
+    let result = await move(ctx, to, surface, true);
+    if (!result.ok && result.reason === 'quarry_route_changed' && index === 1 && site.closed) {
+      const alternate = alternateExit(here(), surface);
+      if (alternate) {
+        to = alternate;
+        result = await move(ctx, to, surface, true);
+      }
+    }
+    if (result.ok) {
+      ctx.record('quarry_exit', { position: to, ...(to.equals(site.route[index - 1]) ? {} : { alternate: true }) });
+      if (index === 1 && site.closed) site = null;
+    }
     return result;
   }
 
@@ -183,6 +211,7 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
     ctx.record('quarry_blocked', { entry: site.entry, reason });
     blacklist.add(`quarry:${key(site.entry, site.direction)}`, reason);
     site.closed = true;
+    inside();
     return fail(reason);
   }
 
@@ -246,8 +275,7 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
     return moved;
   }
 
-  return { run, leave, active: () => Boolean(site && !site.closed),
-    inside: () => site?.pocket?.at.equals(here()) || site?.route.slice(1).some((p) => p.equals(here())),
+  return { run, leave, active: () => Boolean(site && !site.closed), inside,
     protectsFloor,
     reset: () => { site = null; protectedFloors.clear(); } };
 }
