@@ -34,6 +34,8 @@ const EARLY_GEAR = new Set(['stone_sword', 'stone_tier_pickaxe', 'pickaxe', 'woo
 const DOWN = [new Vec3(0, -1, 0)];
 const FOOD_MOBS = new Set(['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom']);
 const NEARBY_FOOD_RADIUS = 16;
+const WOOL_SEARCH_RADIUS = 144;
+const WOOL_SCOUT_LEG = 32;
 const FILLERS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const isFiller = (name) => FILLERS.has(name);
 const hasFiller = (inventory) => Object.entries(inventory).some(([name, count]) => count > 0 && isFiller(name));
@@ -66,6 +68,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   const quarry = createStoneQuarry({ bot, actions, avoid: nearHouseColumn, blacklist });
   const stoneRetreatVisited = new Set();
   let stoneRouteOwnsRecovery = false;
+  let woolRouteOwnsRecovery = false;
+  let woolSector = 0;
 
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
   const nameAt = (p) => blockAt(p)?.name || null;
@@ -175,7 +179,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     for (const [family, count] of Object.entries(remaining)) reqs.push({ key: family, count });
     const torches = memory.house.furniture.torches.length - hs.placed.torches;
     if (torches > 0 && !skipped.has('torch')) reqs.push({ key: 'torch', count: torches, optional: true });
-    for (const piece of ['bed', 'chest', 'door']) if (!hs.placed[piece]) reqs.push({ key: piece, count: 1 });
+    for (const piece of ['chest', 'door']) if (!hs.placed[piece]) reqs.push({ key: piece, count: 1 });
     if (!hs.placed.furnace) reqs.push({ key: 'furnace', count: 1 });
     if (!hs.placed.crafting_table) reqs.push({ key: 'crafting_table', count: 1 });
     return reqs;
@@ -385,6 +389,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         return result;
       }
       case 'hunt': {
+        if (step.key === 'wool') return huntWool(ctx, step.mobs, requirement?.optional);
         const state = ctx.perceive();
         const optionalFood = step.key === 'food' && requirement?.optional;
         // Optional hunts wait until the bot is healthy again.
@@ -399,7 +404,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         let result;
         try {
           result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist,
-            radius: optionalFood ? NEARBY_FOOD_RADIUS : 96, ...(step.key === 'wool' ? woolPreference(state.inventory) : {}) });
+            radius: optionalFood ? NEARBY_FOOD_RADIUS : 96 });
         } catch (error) {
           if (optionalFood && ctx.signal?.reason === 'preempted_by:breathe') skipped.add('food', 'unsafe_food_route', 60000);
           throw error;
@@ -407,11 +412,6 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         if (optionalFood && (!result.ok || result.gained === 0)) {
           skipped.add('food', result.reason || 'food_not_collected', 60000);
           return { ok: true, skipped: 'food' };
-        }
-        // No sheep anywhere near: spiders drop string, four of which make wool.
-        if (result.reason === 'no_mob_in_range' && step.key === 'wool') {
-          const spider = await skills.huntOne(bot, ctx, { mobs: ['spider', 'cave_spider'], dropMatch: (n) => n === 'string', blacklist, radius: 48 });
-          if (spider.reason !== 'no_mob_in_range') return spider;
         }
         if (result.reason === 'no_mob_in_range') {
           if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
@@ -559,22 +559,85 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
 
   // A bed takes three wool of one color: go for sheep of the color most within
   // reach (already owned plus visible), and never for sheared ones.
-  function woolPreference(inventory) {
+  function woolPreference(inventory, supported) {
     if (typeof skills.sheepWool !== 'function') return {};
     const sheep = Object.values(bot.entities || {}).filter((e) => e.name === 'sheep' && e.position
-      && e.position.distanceTo(bot.entity.position) <= 96);
+      && e.position.distanceTo(bot.entity.position) <= 96 && supported(e.position.floored()));
     const fleece = new Map(sheep.map((e) => [e.id, skills.sheepWool(bot, e)]));
     const score = {};
     for (const wool of fleece.values()) if (wool && !wool.sheared) score[wool.color] = (score[wool.color] || 0) + 1;
-    for (const [name, n] of Object.entries(inventory)) {
-      const color = name.endsWith('_wool') ? name.slice(0, -5) : null;
-      if (color && color in score) score[color] += n * 2;
-    }
-    const best = Object.keys(score).sort((a, b) => score[b] - score[a])[0];
+    const owned = (color) => inventory[`${color}_wool`] || 0;
+    const best = Object.keys(score).sort((a, b) => owned(b) - owned(a) || score[b] - score[a])[0];
     return {
       accept: (e) => !fleece.get(e.id)?.sheared,
       penalty: (e) => (best && fleece.get(e.id)?.color !== best ? 200 : 0),
     };
+  }
+
+  async function huntWool(ctx, mobs, optional) {
+    woolRouteOwnsRecovery = true;
+    const state = ctx.perceive();
+    const centre = memory.house.interiorCenter;
+    const withinRange = (p) => Math.hypot(p.x - centre.x, p.z - centre.z) <= WOOL_SEARCH_RADIUS;
+    const surface = surfaceRoute();
+    const supportedSurface = (p) => withinRange(p) && p.y >= centre.y - STONE_FLOOR_OFFSET && surface.isStand(p);
+    const unavailable = async (reason) => {
+      if (optional) {
+        skipped.add('wool', reason, 60000);
+        return { ok: true, skipped: 'wool' };
+      }
+      return scoutForWool(ctx, surface, withinRange);
+    };
+    if (state.inWater || state.health < 12 || state.isDay === false) return unavailable('unsafe_wool_route');
+    const sheep = woolPreference(state.inventory, supportedSurface);
+    const result = await surface.walk(async () => {
+      const result = await skills.huntOne(bot, ctx, { mobs, dropMatch: kb.wool.match, blacklist, radius: 96,
+        accept: (e) => supportedSurface(e.position.floored()) && (!sheep.accept || sheep.accept(e)), penalty: sheep.penalty });
+      if (result.ok && result.gained !== 0) return result;
+      if (result.reason === 'no_mob_in_range') {
+        const spider = await skills.huntOne(bot, ctx, { mobs: ['spider'], dropMatch: kb.string.match, blacklist, radius: 24,
+          accept: (e) => supportedSurface(e.position.floored()) });
+        if (spider.ok && spider.gained !== 0) return spider;
+      }
+      return result;
+    }, supportedSurface);
+    return result.ok && result.gained !== 0 ? result : unavailable(result.reason || 'wool_not_collected');
+  }
+
+  async function scoutForWool(ctx, surface, withinRange) {
+    const state = ctx.perceive();
+    if (state.inWater || state.health < 12 || state.isDay === false || typeof actions.goTo !== 'function') {
+      await sleep(1000, ctx.signal);
+      return { ok: true, waited: true, reason: 'wool_wait_for_safe_search' };
+    }
+    const centre = memory.house.interiorCenter;
+    const from = bot.entity.position.clone();
+    const sector = woolSector % 8;
+    const angle = Math.PI * sector / 4;
+    const range = [48, 88, 128][Math.floor(woolSector / 8) % 3];
+    const x = centre.x + Math.round(Math.cos(angle) * range);
+    const z = centre.z + Math.round(Math.sin(angle) * range);
+    const dx = x - from.x;
+    const dz = z - from.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance <= 4) {
+      woolSector += 1;
+      await sleep(500, ctx.signal);
+      return { ok: true, waited: true, reason: 'wool_scout_sector_complete' };
+    }
+    const scale = Math.min(1, WOOL_SCOUT_LEG / distance);
+    const target = from.offset(Math.round(dx * scale), 0, Math.round(dz * scale)).floored();
+    const safe = (p) => (withinRange(p) || !withinRange(from)
+      && Math.hypot(p.x - centre.x, p.z - centre.z) < Math.hypot(from.x - centre.x, from.z - centre.z))
+      && p.y >= centre.y - STONE_FLOOR_OFFSET && surface.isStand(p);
+    ctx.record('wool_surface_scout', { target, sector });
+    const result = await surface.walk(() => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 4),
+      { timeoutMs: 20000, retryNoProgress: false }), safe);
+    const travelled = Math.hypot(bot.entity.position.x - from.x, bot.entity.position.z - from.z);
+    if (!result.ok || travelled < 4 || Math.hypot(bot.entity.position.x - x, bot.entity.position.z - z) <= 8) woolSector += 1;
+    if (travelled >= 4) return { ok: true, moved: Math.round(travelled) };
+    await sleep(500, ctx.signal);
+    return { ok: true, waited: true, reason: result.reason || 'wool_scout_no_progress' };
   }
 
   // Raiders (an outpost) seen near a spot: no house there.
@@ -766,18 +829,19 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       // (one house per run), and once past its limit every later ask of the
       // house failed at once with exhausted:site.
       memory.exploreStreak = 0;
+      woolSector = 0;
     },
     memory,
     maintenance,
     protects,
-    ownsRouteRecovery: () => stoneRouteOwnsRecovery,
+    ownsRouteRecovery: () => stoneRouteOwnsRecovery || woolRouteOwnsRecovery,
     isDone: (state) => complete(state),
     progress: () => memory.steps,
     async run(ctx) {
       if (memory.recovery) {
         memory.recovery = false;
         ctx.record('recovery', { at: bot.entity.position.floored() });
-        if (!stoneRouteOwnsRecovery) {
+        if (!stoneRouteOwnsRecovery && !woolRouteOwnsRecovery) {
           await actions.unstick(bot, ctx);
           const entrance = memory.house?.entrance;
           if (entrance && bot.entity.position.distanceTo(new Vec3(entrance.x, entrance.y, entrance.z)) > 16) {
@@ -798,6 +862,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   };
 
   async function runOnce(ctx) {
+    woolRouteOwnsRecovery = false;
     const state = ctx.perceive();
     if (!memory.house) {
       const site = chooseSite((x, y, z) => bot.blockAt(new Vec3(x, y, z)), state.position, { avoid: nearDanger });
@@ -921,7 +986,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     }
     // Then the bed, placed at its spot in the future house: from the first
     // night on, the bot sleeps through the dark and respawns at home.
-    if (!hs.placed.bed && !skipped.has('wool') && !blacklist.has('early_bed')) {
+    if (!hs.placed.bed && !blacklist.has('early_bed')) {
       if (countKey('bed', state.inventory, kb) > 0) {
         const f = memory.house.furniture;
         const placed = await placeRecorded(ctx, f.bed.position, (n) => matches('bed', n), 'bed',
@@ -932,7 +997,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       }
       const bedReq = [{ key: 'bed', count: 1, optional: true }];
       const bedStep = planNext({ requirements: bedReq, inventory, stations, kb });
-      if (bedStep) {
+      if (bedStep && (bedStep.key !== 'wool' || !skipped.has('wool'))) {
         // Wool needs sheep; if none can be found, build on and try again later.
         const result = await runPlannerStep(ctx, bedStep, bedStep.key === 'wool' ? { key: 'wool', optional: true } : null);
         return result;
@@ -946,6 +1011,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (step) return runPlannerStep(ctx, step, reqs.find((r) => r.key === step.for));
     const build = await buildStep(ctx, hs, state.inventory, { whenBatchReady: false });
     if (build) return build;
+    if (!hs.placed.bed && buildTasks(hs).every((task) => task.what === 'bed')) {
+      const bedStep = planNext({ requirements: [{ key: 'bed', count: 1 }], inventory, stations, kb });
+      if (bedStep) return runPlannerStep(ctx, bedStep, null);
+    }
     // Furniture is only tried out once the whole house stands.
     if (buildTasks(hs).length) return inQuarry ? leaveQuarry(ctx) : { ok: false, reason: 'build_blocked' };
     // Iron gear once the house is up.

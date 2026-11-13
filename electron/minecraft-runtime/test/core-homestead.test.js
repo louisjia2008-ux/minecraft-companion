@@ -8,6 +8,7 @@ const { Vec3 } = require('vec3');
 const { createBrain } = require('../core/brain');
 const { createHomesteadGoal } = require('../core/goals/homestead');
 const { createStarterHouse } = require('../core/blueprints/starterHouse');
+const { planNext } = require('../core/planner');
 
 const RECIPES = {
   oak_planks: [{ oak_log: 1 }, 4], stick: [{ oak_planks: 2 }, 4], crafting_table: [{ oak_planks: 4 }, 1],
@@ -357,6 +358,76 @@ test('homestead never gathers stone at the deep open-to-sky starting position', 
   const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: ['stone_tier_pickaxe'], skills: sim.skills, actions: sim.actions });
   const result = await goal.run({ perceive: sim.perceive, record() {} });
   assert.deepEqual(result, { ok: true, waited: true, reason: 'stone_surface_wait' });
+});
+
+test('missing wool does not delay the house door and only supported surface mobs are hunted', async () => {
+  const sim = simulate({ failRate: 0 });
+  const house = createStarterHouse({ x: 0, y: 1, z: 0 });
+  const near = new Vec3(-3.5, 1, -3.5);
+  const deep = near.offset(0, -20, 0);
+  const wet = near.offset(0, 0, -2);
+  const blockAt = sim.bot.blockAt;
+  sim.bot.blockAt = (p) => {
+    if (p.equals(wet.floored())) return { name: 'water', boundingBox: 'empty', shapes: [] };
+    const block = blockAt(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const put = ({ x, y, z }, name) => sim.world.set(`${x},${y},${z}`, name);
+  for (const { position, family } of house.blocks) put(position, family === 'planks' ? 'oak_planks' : 'cobblestone');
+  for (const name of ['crafting_table', 'chest', 'furnace']) put(house.furniture[name].position, name);
+  for (const p of house.furniture.torches) put(p, 'torch');
+  sim.inventory.white_wool = 2;
+  sim.inventory.string = 1;
+  sim.inventory.cooked_chicken = 10;
+  sim.inventory.oak_planks = 6;
+  sim.bot.entity.position = new Vec3(-.5, 1, -3.5);
+  sim.bot.pathfinder = { movements: { canDig: true, allow1by1towers: true, exclusionAreasBreak: [], getNeighbors: () =>
+    [near.floored(), deep.floored(), wet.floored()] } };
+  let whiteAppeared = false;
+  const sheep = { id: 1, name: 'sheep', position: near, color: 'white' };
+  const black = { id: 2, name: 'sheep', position: near.offset(-1, 0, 0), color: 'black' };
+  sim.bot.entities = { 1: sheep, 2: black };
+  sim.skills.sheepWool = (_bot, mob) => ({ color: mob.color, sheared: false });
+  const targets = [];
+  sim.skills.huntOne = async (_bot, _ctx, { mobs, accept, penalty }) => {
+    assert.equal(sim.bot.pathfinder.movements.canDig, false);
+    assert.equal(sim.bot.pathfinder.movements.allow1by1towers, false);
+    assert.deepEqual(sim.bot.pathfinder.movements.getNeighbors(near.floored()), [near.floored()]);
+    assert.equal(accept({ ...sheep, position: deep }), false);
+    assert.equal(accept({ ...sheep, position: wet }), false);
+    targets.push(mobs[0]);
+    if (mobs[0] === 'sheep') {
+      assert.equal(penalty(sheep), 0);
+      assert.ok(penalty(black) > 0);
+      if (whiteAppeared) { sim.inventory.white_wool += 1; return { ok: true, gained: 1 }; }
+    } else {
+      assert.deepEqual(mobs, ['spider']);
+    }
+    return { ok: false, reason: 'no_mob_in_range' };
+  };
+  let scouted = false;
+  sim.skills.explore = async () => assert.fail('wool must not use unbounded generic exploration');
+  sim.actions.goTo = async (_bot, _ctx, goal, options) => {
+    assert.equal(options.retryNoProgress, false);
+    assert.equal(sim.bot.pathfinder.movements.canDig, false);
+    assert.ok(Math.hypot(goal.x - sim.bot.entity.position.x, goal.z - sim.bot.entity.position.z) < 34);
+    scouted = true;
+    whiteAppeared = true;
+    return { ok: true };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor: house.anchor, gear: [], skills: sim.skills, actions: sim.actions });
+  const events = [];
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, isDay: true }), record(type, data) { events.push({ type, ...data }); } };
+  for (let n = 0; n < 18 && !sim.blockAt(house.furniture.bed.position).name.endsWith('_bed'); n += 1) {
+    assert.equal((await goal.run(ctx)).ok, true);
+  }
+  assert.ok(scouted);
+  assert.ok(sim.blockAt(house.furniture.door.position).name.endsWith('_door'));
+  assert.ok(sim.blockAt(house.furniture.bed.position).name.endsWith('_bed'));
+  assert.ok(events.findIndex((e) => e.type === 'build' && e.what === 'door') < events.findIndex((e) => e.type === 'wool_surface_scout'));
+  assert.ok(targets.includes('spider'));
+  assert.deepEqual(planNext({ requirements: [{ key: 'bed', count: 1 }], inventory: { white_wool: 2, string: 4 } }),
+    { kind: 'craft', key: 'wool', item: 'white_wool', times: 1, table: false, for: 'bed' });
 });
 
 for (const interruption of ['path_timeout', 'breathe']) {
