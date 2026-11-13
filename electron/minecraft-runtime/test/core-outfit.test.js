@@ -855,6 +855,70 @@ test('expedition reserve re-enters the home range by dry local legs from beyond 
   assert.ok(bot.entity.position.x < 90);
 });
 
+test('expedition reserve scouts loaded dry legs while crops grow and retraces on low food', async (t) => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const farm = require('../core/farming');
+  const plot = new Vec3(10, 63, 4);
+  const start = new Vec3(10, 64, 2);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const water = { name: 'water', boundingBox: 'empty', shapes: [] };
+  let food = 18;
+  const native = (p) => [p.offset(1, 0, 0), p.offset(0, 0, -1), p.offset(1, 0, -1), p.offset(0, -2, 1)];
+  const movements = { canDig: true, allowSprinting: false, sprintSetting: true, getNeighbors: native };
+  const planned = [];
+  const walked = [];
+  const huntRadii = [];
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
+    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true },
+    blockAt: (p) => p.y === 63 ? (p.x === 11 && p.z === 2 ? water : grass) : air,
+    pathfinder: { movements, *getPathFromTo(profile, here, goal, options) {
+      const feet = here.floored();
+      planned.push(new Vec3(goal.x, 64, goal.z));
+      assert.equal(profile.allowSprinting, false);
+      assert.deepEqual(options, { timeout: 80, tickTimeout: 35, optimizePath: false, searchRadius: 48 });
+      assert.deepEqual(profile.getNeighbors(start), [start.offset(0, 0, -1)], 'reject water, diagonals and large drops');
+      yield { result: { status: 'partial', path: planned.length === 1 ? []
+        : Array.from({ length: 22 }, (_, index) => feet.offset(0, 0, -index - 1)) } };
+    } } });
+  t.mock.method(farm, 'plotState', () => 'growing');
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: { ...home, stations: { crafting_table: home.centre } },
+    farmPlots: [plot], actions: { goTo: async (_bot, _ctx, destination, options) => {
+      assert.ok(options.timeoutMs <= 15000 && !options.retryNoProgress);
+      assert.equal(movements.allowSprinting, false);
+      const at = new Vec3(destination.x, destination.y, destination.z);
+      walked.push(at);
+      bot.entity.position = at.offset(.5, 0, .5);
+      if (options.arrived) assert.ok(options.arrived());
+      return { ok: true };
+    } }, skills: {
+      takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async (_bot, _ctx, { radius }) => {
+        huntRadii.push(radius);
+        return { ok: false, reason: 'no_mob_in_range' };
+      },
+    } });
+  const events = [];
+  const ctx = { perceive: () => ({ inventory: { cooked_chicken: 3 }, health: 20, food, isDay: true, timeOfDay: 2000 }),
+    record: (type, data) => events.push({ type, ...data }) };
+  await goal.run(ctx);
+  bot.entity.position = start.offset(.5, 0, .5);
+  await goal.run(ctx); // no local source, reserve can wait and scout
+  await goal.run(ctx); // east blocked by water
+  await goal.run(ctx); // rotate to another sector and follow a dry prefix
+  assert.equal(planned.length, 2);
+  assert.ok(planned[1].z < planned[0].z);
+  assert.deepEqual(walked, [start.offset(0, 0, -12)], 'ignore the rest of the proposed path');
+  assert.equal(movements.allowSprinting, true, 'restore actual sprint setting, not the hunger-gated getter');
+  food = 13;
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(walked.slice(1), [start, new Vec3(2, 64, 2)]);
+  assert.deepEqual(huntRadii, [48, 12, 12]);
+  assert.deepEqual(events.map((e) => e.type), ['expedition_food_scout', 'expedition_food_scout_return']);
+  assert.equal(movements.getNeighbors, native);
+});
+
 test('healthy home recovery waits for its growing food reserve instead of exploring and harvests when ripe', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const crop = new Vec3(-10, 64, 3);

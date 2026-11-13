@@ -17,6 +17,10 @@ const FOOD_MOBS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const HOME_RADIUS = 48;
 const HOME_FLOOR = 8;
 const SEARCH_REST_MS = 60000;
+const SCOUT_RINGS = [HOME_RADIUS, 96, 144, 192];
+const SCOUT_LIMIT_MS = 180000;
+const SCOUT_STEPS = 12;
+const DUSK = 12542;
 const FIELD_MARGIN = 5;
 const MAX_RESERVE_PLOTS = 24;
 const CARDINAL = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -43,6 +47,9 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   let returning = false;
   let fuelNeeded = false;
   let returnLeg = 0;
+  let scout = null;
+  let scoutAgainAt = 0;
+  let scoutHeading = 0;
   const distance = (p) => Math.hypot(p.x - centre.x, p.z - centre.z);
   const read = (p) => bot.blockAt(p);
   const dry = (block) => block && !SURFACE_HAZARD.test(block.name) && block.getProperties?.()?.waterlogged !== true;
@@ -96,6 +103,8 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   async function dryWalk(run, accept, route) {
     const restore = applyWalkOnlyMovements(bot);
     const movement = bot.pathfinder?.movements;
+    const sprint = movement?.sprintSetting ?? movement?.allowSprinting;
+    if (movement && route.scouting) movement.allowSprinting = false;
     const neighbors = movement?.getNeighbors;
     const own = movement && Object.hasOwn(movement, 'getNeighbors');
     const checked = new Map();
@@ -104,6 +113,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       if (Date.now() - checkedAt >= 250) { checked.clear(); checkedAt = Date.now(); }
       return neighbors.call(this, node, ...args).filter((move) => {
         const p = new Vec3(move.x, move.y, move.z);
+        if (route.scouting && Math.abs(p.x - node.x) + Math.abs(p.z - node.z) !== 1) return false;
         if (route.pickup?.equals(p)) {
           const from = new Vec3(node.x, node.y, node.z);
           return accept(p) && harvestBanks(p.offset(0, -1, 0)).some((bank) => bank.equals(from))
@@ -117,6 +127,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     };
     try { return await run(); }
     finally {
+      if (movement && route.scouting) movement.allowSprinting = sprint;
       if (neighbors && own) movement.getNeighbors = neighbors;
       else if (neighbors) delete movement.getNeighbors;
       restore();
@@ -148,6 +159,79 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       return near(node) && (inHouse(p) || exposed(p));
     };
     return actions.goTo(bot, ctx, goal, { timeoutMs, retryNoProgress: false });
+  }
+
+  const daylightMs = (state) => Number.isFinite(state.timeOfDay) && state.isDay === true
+    ? ((DUSK - state.timeOfDay + 24000) % 24000) * 50 : 0;
+  const scoutFit = (state) => state.health >= 12 && state.food >= 14
+    && expeditionFoodCount(bot, state.inventory, kb) >= 2;
+  const scoutTimeLeft = (state) => {
+    const elapsed = Date.now() - scout.started;
+    return elapsed < SCOUT_LIMIT_MS && daylightMs(state) > Math.max(30000, elapsed + 20000);
+  };
+  const scoutDelay = () => ({ ok: true, waited: true });
+
+  async function scoutWalk(ctx, to, label) {
+    const from = bot.entity.position.floored();
+    if (!bot.entity.onGround || !exposed(to)) return false;
+    const arrived = () => bot.entity.onGround === true && bot.entity.position.floored().equals(to) && exposed(to);
+    const result = await actions.goTo(bot, ctx, new goals.GoalBlock(to.x, to.y, to.z),
+      { arrived, timeoutMs: 6500, retryNoProgress: false });
+    const landed = (result.ok || result.reason === 'not_arrived')
+      && await waitUntil(arrived, { timeoutMs: 450, signal: ctx.signal });
+    ctx.record(label, { from, to, arrived: landed, ring: SCOUT_RINGS[scout.ring], reason: result.reason });
+    return landed;
+  }
+
+  async function scoutOut(ctx, here) {
+    const from = here.floored();
+    const planner = bot.pathfinder;
+    const ring = SCOUT_RINGS[scout.ring];
+    if (distance(from) >= ring - 6) {
+      if (scout.ring === SCOUT_RINGS.length - 1) { returning = true; return scoutDelay(); }
+      scout.ring += 1;
+      return scoutDelay();
+    }
+    const closedDoor = door && read(door);
+    if (inHouse(from) && /_door$/.test(closedDoor?.name || '') && closedDoor.getProperties?.().open === false) {
+      if (!actions.withinReach(bot, door)) return go(ctx, door.offset(0, 0, 1), 1, 6000);
+      try { await bot.activateBlock(closedDoor); } catch (error) { if (error?.code === 'aborted') throw error; }
+      if (!await waitUntil(() => read(door)?.getProperties?.()?.open === true, { timeoutMs: 1000, signal: ctx.signal })
+        && ++scout.misses >= 8) returning = true;
+      return scoutDelay();
+    }
+    const angle = scout.heading * Math.PI / 4;
+    const waypoint = centre.offset(Math.round(ring * Math.cos(angle)), 0, Math.round(ring * Math.sin(angle)));
+    const goal = new goals.GoalNearXZ(waypoint.x, waypoint.z, 4);
+    // Inspect one short native planning slice and follow only its loaded prefix.
+    // A river can block the destination while still leaving a useful dry leg.
+    const native = planner.getPathFromTo(planner.movements, here, goal,
+      { timeout: 80, tickTimeout: 35, optimizePath: false, searchRadius: 48 }).next().value?.result;
+    const to = native?.path?.slice(0, SCOUT_STEPS).reverse().find((p) => p.distanceTo(from) >= 3 && exposed(p)
+      && !scout.trail.some((prior) => prior.distanceTo(p) < 2));
+    const landed = to && await scoutWalk(ctx, to, 'expedition_food_scout');
+    const at = bot.entity.position.floored();
+    if (bot.entity.onGround && exposed(at) && !scout.trail.some((prior) => prior.distanceTo(at) < 2)) scout.trail.push(at);
+    if (landed) {
+      scout.misses = 0;
+    } else {
+      scout.heading -= 1;
+      if (++scout.misses >= 8) returning = true;
+    }
+    return scoutDelay();
+  }
+
+  async function scoutHome(ctx, here) {
+    const from = here.floored();
+    while (scout.trail.at(-1)?.distanceTo(from) < 2) scout.trail.pop();
+    const last = scout.trail.at(-1);
+    if (!last) return returnHome(ctx, here);
+    if (await scoutWalk(ctx, last, 'expedition_food_scout_return')) scout.trail.pop();
+    else {
+      const moved = await returnHome(ctx, here);
+      if (moved.ok && distance(bot.entity.position) < distance(here) - 3) scout.trail.length = 0;
+    }
+    return scoutDelay();
   }
 
   async function returnHome(ctx, here) {
@@ -207,7 +291,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const feet = here.floored();
     if (dimension(bot) !== 'overworld') return { ok: false, reason: 'expedition_food_wrong_dimension' };
     if (state.inWater || state.health <= 6 || threatsNear(state)) return wait(ctx, 'expedition_food_unsafe');
-    if (!inHouse(feet) && !exposed(feet) && !farmlandFooting(read, bot.entity) && actions.underground?.(bot)) {
+    if (!scout && !inHouse(feet) && !exposed(feet) && !farmlandFooting(read, bot.entity) && actions.underground?.(bot)) {
       const result = await advanceCaveRetreat(bot, ctx, actions, centre, { visited,
         avoid: (p) => inHouse(p) || (state.hostiles || []).some((h) => h.position?.distanceTo(p) <= 6) });
       if (result.ok && !result.dug) {
@@ -224,14 +308,20 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const bake = crafting && state.inventory.wheat >= 3 && !blacklist.has('bake');
     const checkChest = !checkedChest || fuelNeeded;
     const homeTask = cook || bake || checkChest;
-    returning ||= distance(feet) > HOME_RADIUS;
-    const edge = Math.max(HOME_RADIUS, returning ? distance(feet) + 4 : 0);
-    const route = { pickup: null };
+    const scouting = typeof bot.pathfinder?.getPathFromTo === 'function';
+    returning ||= scout ? homeTask || !scoutFit(state) || !scoutTimeLeft(state) : distance(feet) > HOME_RADIUS;
+    const huntEdge = scout ? SCOUT_RINGS[scout.ring] : HOME_RADIUS;
+    const edge = Math.max(huntEdge, returning ? distance(feet) + 4 : 0);
+    const route = { pickup: null, scouting: Boolean(scout) };
     return dryWalk(async () => {
       if (homeTask || returning) {
         const inside = Math.abs(here.x - centre.x - .5) < 2.6 && Math.abs(here.z - centre.z - .5) < 2.6
           && Math.abs(here.y - centre.y) < .8;
-        if (!inside) return returnHome(ctx, here);
+        if (!inside) return scout ? scoutHome(ctx, here) : returnHome(ctx, here);
+        if (scout) {
+          scout = null;
+          scoutAgainAt = Date.now() + SEARCH_REST_MS;
+        }
         returning = false;
         if (cook) {
           const count = Math.min(8, (state.inventory.chicken || 0) + (furnace.input || 0));
@@ -259,20 +349,22 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
         }
       }
       if (state.isDay === false) return wait(ctx, 'expedition_food_waiting_for_daylight');
-      const canTarget = (p) => distance(p) <= HOME_RADIUS && p.y >= floor;
+      const canTarget = (p) => distance(p) <= huntEdge && p.y >= floor;
       const accept = (entity) => entity.isValid !== false && !bot.companionSpare?.(entity)
         && canTarget(entity.position) && exposed(entity.position.floored());
       const huntGuard = new AbortController();
       const onAbort = () => huntGuard.abort(ctx.signal.reason);
       ctx.signal?.addEventListener('abort', onAbort, { once: true });
       const monitor = setInterval(() => {
-        if (!canTarget(bot.entity.position) || bot.entity.isInWater || threatsNear(ctx.perceive())) {
+        const live = ctx.perceive();
+        if (!canTarget(bot.entity.position) || bot.entity.isInWater || threatsNear(live)
+          || scout && (!scoutFit(live) || !scoutTimeLeft(live))) {
           huntGuard.abort('expedition_food_hunt_unsafe');
         }
       }, 150);
       try {
         const animal = await skills.huntOne(bot, { ...ctx, signal: huntGuard.signal }, { mobs: FOOD_MOBS,
-          dropMatch: (name) => edible(name) || name === 'chicken', radius: HOME_RADIUS, blacklist, accept });
+          dropMatch: (name) => edible(name) || name === 'chicken', radius: scout ? 12 : HOME_RADIUS, blacklist, accept });
         if (animal.ok && animal.gained > 0) return animal;
         if (!animal.ok && animal.reason !== 'no_mob_in_range') return animal;
       } catch (error) {
@@ -282,6 +374,14 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       } finally {
         clearInterval(monitor);
         ctx.signal?.removeEventListener('abort', onAbort);
+      }
+      if (scout) {
+        const now = ctx.perceive();
+        if (threatsNear(now) || !scoutFit(now) || !scoutTimeLeft(now)) {
+          returning = true;
+          return scoutDelay();
+        }
+        return scoutOut(ctx, bot.entity.position);
       }
       const growing = crafting && plots.some((p) => canTarget(p) && farming.plotState(bot, p) === 'growing');
       if (crafting) {
@@ -315,6 +415,11 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
         useExtraInfo: (block) => Number(block.getProperties?.().age) >= 2 })?.find((p) => canTarget(p) && !blacklist.has(`berry:${posKey(p)}`));
       if (bush) return skills.pickBerries(bot, ctx, { position: bush, blacklist });
       if (growing && plots.some((p) => canTarget(p) && farming.plotState(bot, p) === 'growing' && harvestBanks(p).length)) {
+        if (scouting && scoutFit(state) && daylightMs(state) >= 120000 && Date.now() >= scoutAgainAt
+          && bot.entity.onGround === true && (exposed(feet) || inHouse(feet))) {
+          scout = { started: Date.now(), heading: scoutHeading++, ring: 0, trail: exposed(feet) ? [feet] : [], misses: 0 };
+          return scoutDelay();
+        }
         return wait(ctx, 'expedition_food_waiting_for_wheat');
       }
       return search(ctx, here);
