@@ -7,7 +7,7 @@ const { standable } = require('../caveRetreat');
 const { inspectStep, DIRS, pickFor } = require('../mining');
 const { waitUntil } = require('../confirm');
 
-const DEPTH = 4;
+const DEPTH = 5;
 const COVER = /^(stone|cobblestone|deepslate|cobbled_deepslate|andesite|granite|diorite|dirt|grass_block|coarse_dirt|rooted_dirt|podzol|mycelium|snow_block|tuff|calcite|clay|moss_block|[a-z_]+_ore)$/;
 const RISK = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire|sand|red_sand|gravel|suspicious_sand|suspicious_gravel|.*_concrete_powder)$/;
 const AIR = { name: 'air', boundingBox: 'empty', shapes: [] };
@@ -27,13 +27,25 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
       { descend: true, surfaceY: active.entry.y - 1, known: (p) => active.open.has(posKey(p)) });
     if (!check.ok) return null;
     const target = vec(check.target);
+    // A descending stair has three swept cells. Once more than two levels
+    // below the entry, explicitly remove the loaded natural lip up to its
+    // original surface too, so the shallow quarry never becomes a tunnel.
     const cuts = check.dig.map(vec);
+    const lip = [];
+    for (let y = active.entry.y - 1; y > target.y + 2; y -= 1) {
+      const p = new Vec3(target.x, y, target.z);
+      if (!open(projected(p))) lip.push(p);
+    }
+    cuts.unshift(...lip);
     if (avoid(target) || cuts.some((p) => avoid(p) || active.floors.has(posKey(p)))) return null;
-    if (!open(projected(target.offset(0, 2, 0))) && !cuts.some((p) => p.equals(target.offset(0, 2, 0)))) return null;
     for (const p of cuts) {
       const block = projected(p);
       if (!dry(block) || !COVER.test(block.name) || block.diggable !== true || bot.companionProtectBlock?.(block)
-        || !FACES.every(([x, y, z]) => dry(projected(p.offset(x, y, z))))) return null;
+        || !FACES.every(([x, y, z]) => {
+          const near = p.offset(x, y, z);
+          const next = projected(near);
+          return dry(next) && (near.y >= active.entry.y - 1 || !open(next) || active.open.has(posKey(near)));
+        })) return null;
     }
     const after = (p) => cuts.some((cut) => cut.equals(p)) ? AIR : projected(p);
     if (!standable(after, target)) return null;

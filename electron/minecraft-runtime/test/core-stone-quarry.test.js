@@ -8,7 +8,7 @@ const { createBlacklist, posKey } = require('../core/blacklist');
 const stone = (name) => name === 'stone';
 const cobble = (name) => name === 'cobblestone';
 
-function fixture({ blocked = false, move = true } = {}) {
+function fixture({ blocked = false, move = true, cover = 2 } = {}) {
   const origin = new Vec3(0, 64, 0);
   const world = new Map();
   const picked = [];
@@ -20,7 +20,7 @@ function fixture({ blocked = false, move = true } = {}) {
     entity: { position: origin.offset(.5, 0, .5), onGround: true },
     inventory: { items: () => [pick] },
     blockAt(p) {
-      const name = world.get(posKey(p)) || (p.y >= 64 ? 'air' : p.y >= 62 ? 'dirt' : 'stone');
+      const name = world.get(posKey(p)) || (p.y >= 64 ? 'air' : p.y >= 64 - cover ? 'dirt' : 'stone');
       if (name === 'unknown') return null;
       const empty = ['air', 'water'].includes(name);
       return { name, position: p, boundingBox: empty ? 'empty' : 'block',
@@ -89,4 +89,18 @@ test('quarry preserves the completed route when native path reports arrival from
   assert.deepEqual(miss, { ok: false, reason: 'quarry_arrival_unconfirmed' });
   assert.ok(f.bot.entity.position.floored().equals(f.origin));
   assert.equal(f.bot.blockAt(new Vec3(0, 63, 0)).name, 'dirt');
+});
+
+
+test('standard flat cover is opened from top to bottom in at most five one-block descents', async () => {
+  const f = fixture({ cover: 4 });
+  for (let n = 0; n < 30 && f.picked.length < 3; n += 1) assert.equal((await f.run()).ok, true);
+  assert.equal(f.picked.length, 3);
+  assert.deepEqual(f.path.slice(0, 5).map((p) => p.y), [63, 62, 61, 60, 59]);
+  const lastStair = f.path[4];
+  assert.deepEqual(f.cuts.filter((p) => p.x === lastStair.x && p.z === lastStair.z).map((p) => p.y), [63, 62, 61, 60, 59]);
+  assert.equal(f.bot.blockAt(lastStair.offset(0, -1, 0)).name, 'stone');
+  assert.ok(f.cuts.every((p) => p.y >= 59));
+  for (let n = 0; n < 8 && f.quarry.inside(); n += 1) assert.equal((await f.quarry.leave(f.ctx, f.surface)).ok, true);
+  assert.ok(f.bot.entity.position.floored().equals(f.origin));
 });
