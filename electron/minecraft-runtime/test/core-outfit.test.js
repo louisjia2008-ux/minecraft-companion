@@ -863,6 +863,7 @@ test('expedition reserve scouts loaded dry legs while crops grow and retraces on
   const air = { name: 'air', boundingBox: 'empty', shapes: [] };
   const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
   const water = { name: 'water', boundingBox: 'empty', shapes: [] };
+  const seagrass = { ...water, name: 'seagrass' };
   let food = 18;
   const native = (p) => [p.offset(1, 0, 0), p.offset(0, 0, -1), p.offset(1, 0, -1), p.offset(0, -2, 1)];
   const movements = { canDig: true, allowSprinting: false, sprintSetting: true, getNeighbors: native };
@@ -871,13 +872,13 @@ test('expedition reserve scouts loaded dry legs while crops grow and retraces on
   const huntRadii = [];
   const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
     entity: { position: new Vec3(2.5, 64, 2.5), onGround: true },
-    blockAt: (p) => p.y === 63 ? (p.x === 11 && p.z === 2 ? water : grass) : air,
+    blockAt: (p) => p.x === 11 && p.z === 2 && p.y === 64 ? seagrass : p.y === 63 ? grass : air,
     pathfinder: { movements, *getPathFromTo(profile, here, goal, options) {
       const feet = here.floored();
       planned.push(new Vec3(goal.x, 64, goal.z));
       assert.equal(profile.allowSprinting, false);
       assert.deepEqual(options, { timeout: 80, tickTimeout: 35, optimizePath: false, searchRadius: 48 });
-      assert.deepEqual(profile.getNeighbors(start), [start.offset(0, 0, -1)], 'reject water, diagonals and large drops');
+      assert.deepEqual(profile.getNeighbors(start), [start.offset(0, 0, -1)], 'reject seagrass, diagonals and large drops');
       yield { result: { status: 'partial', path: planned.length === 1 ? []
         : Array.from({ length: 22 }, (_, index) => feet.offset(0, 0, -index - 1)) } };
     } } });
@@ -890,6 +891,11 @@ test('expedition reserve scouts loaded dry legs while crops grow and retraces on
       walked.push(at);
       bot.entity.position = at.offset(.5, 0, .5);
       if (options.arrived) assert.ok(options.arrived());
+      if (options.arrived && walked.length === 1) {
+        bot.entity.isInWater = true;
+        assert.equal(options.arrived(), false, 'native wet flag vetoes a dry-looking endpoint');
+        bot.entity.isInWater = false;
+      }
       return { ok: true };
     } }, skills: {
       takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
@@ -917,6 +923,41 @@ test('expedition reserve scouts loaded dry legs while crops grow and retraces on
   assert.deepEqual(huntRadii, [48, 12, 12]);
   assert.deepEqual(events.map((e) => e.type), ['expedition_food_scout', 'expedition_food_scout_return']);
   assert.equal(movements.getNeighbors, native);
+});
+
+test('expedition stock gets ashore after a wet restart and follows the supported home route', async () => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const feet = new Vec3(12.9, 63, 2.5);
+  const controls = [];
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
+    entity: { position: feet, onGround: true, isInWater: true },
+    blockAt(p) {
+      if (p.x === 13 && p.y === 63) return { ...air, name: 'seagrass' };
+      return p.y === 62 ? grass : air;
+    },
+    async lookAt(at) { assert.deepEqual(at, new Vec3(12.5, 64.65, 2.5)); },
+    setControlState(control, value) {
+      controls.push([control, value]);
+      if (control === 'forward' && value) {
+        bot.entity.position = new Vec3(12.5, 63, 2.5);
+        bot.entity.isInWater = false;
+      }
+    },
+  });
+  const visits = [];
+  const events = [];
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: home, actions: {
+    goTo: async (_bot, _ctx, target) => { visits.push([target.x, target.y, target.z]); return { ok: true }; },
+  } });
+  const ctx = { perceive: () => ({ inventory: { cooked_chicken: 3 }, health: 20, food: 18,
+    isDay: true, inWater: bot.entity.isInWater }), record: (type, data) => events.push({ type, ...data }) };
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(events.map(({ type, arrived }) => ({ type, arrived })), [{ type: 'expedition_food_scout_ashore', arrived: true }]);
+  assert.deepEqual(controls.slice(-2), [['forward', false], ['jump', false]]);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(visits, [[2, 64, 2]]);
 });
 
 test('healthy home recovery waits for its growing food reserve instead of exploring and harvests when ripe', async () => {
