@@ -231,6 +231,8 @@ function incomingBlazeShot(bot, range = 10) {
 
 const { RISKY_FOODS } = defaultActions;
 const RANGED = new Set(['skeleton', 'stray', 'bogged']);
+const RESUPPLY_RANGED_RANGE = 16;
+const shootsOnSurface = (h) => RANGED.has(h.name) || h.name === 'pillager';
 // Pillagers come in groups from outposts that keep spawning them: keep away.
 const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 // Piglin brutes ignore gold armour and hit for half a heart bar with their axe: keep clear of them too.
@@ -384,6 +386,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const surfaceResupplyEvasion = (state) => caveSituation(state) && resupplying();
   const visibleThreat = (h, at) => clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, 1.6, 0))
     || clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, .5, 0));
+  const resupplyThreat = (state) => {
+    const nearby = threats(state);
+    const closest = nearby[0];
+    if (closest?.name === 'creeper' && closest.distance <= 4) return closest;
+    if (closest?.distance <= 2.5 && visibleThreat(closest, state.position)) return closest;
+    const shooter = nearby.find((h) => shootsOnSurface(h) && h.distance <= RESUPPLY_RANGED_RANGE && visibleThreat(h, state.position));
+    return shooter || (closest?.distance <= t.escapeRange && visibleThreat(closest, state.position) ? closest : null);
+  };
   const caveRetreat = {
     name: 'cave_retreat',
     // Actual fire, drowning and immediate mob escape still have first use of
@@ -472,8 +482,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     name: 'escape',
     band: BAND.ESCAPE,
     want(state) {
+      if (state.sheltered) return 0;
+      const caveEvasion = retreat || caveNeedsExit(state);
+      if (!caveEvasion && surfaceResupplyEvasion(state)) return resupplyThreat(state) ? 1 : 0;
       const threat = nearest(state);
-      if (!threat || state.sheltered) return 0;
+      if (!threat) return 0;
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
       // A brute or hoglin on the bot outruns it: running only takes the hits in the back.
       if (CHARGERS.has(threat.name) && threat.distance <= BRUTE_FIGHT) return 0;
@@ -483,31 +496,33 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // An exposed mob within striking range still wins immediately. From
       // cover, continue the persistent ascent rather than orbiting its old
       // position and handing the body back to deeper work.
-      const caveEvasion = retreat || caveNeedsExit(state);
-      if (caveEvasion || surfaceResupplyEvasion(state)) {
-        const evasionRange = caveEvasion ? (SHOOTERS.has(threat.name) ? 10 : 6) : t.escapeRange;
+      if (caveEvasion) {
+        const evasionRange = SHOOTERS.has(threat.name) ? 10 : 6;
         return threat.distance <= evasionRange && visibleThreat(threat, state.position) ? 1 : 0;
       }
       return threat.distance <= t.escapeRange && (state.health <= t.escapeHealth || threat.selfAggressor && !armed(state)) ? 1 : 0;
     },
     async run(ctx) {
       const state = ctx.perceive();
-      const threat = nearest(state);
-      if (criticalHomeResupply(state) && (!threat || state.sheltered)) return { ok: true };
       const caveEvasion = retreat || caveNeedsExit(state);
       const resupplyEvasion = !caveEvasion && surfaceResupplyEvasion(state);
+      const threat = resupplyEvasion ? resupplyThreat(state) : nearest(state);
+      if (criticalHomeResupply(state) && (!threat || state.sheltered)) return { ok: true };
       if (threat && (caveEvasion || resupplyEvasion)) {
         // Keep a critically hurt bot on its ledge while resupply approaches
         // home. Repeated one-block drops could otherwise take it back inside.
         if (resupplyEvasion) ctx.record('resupply_escape_guarded', {
-          at: bot.entity.position.floored(), mob: threat.name, id: threat.id, onGround: bot.entity.onGround === true,
+          at: bot.entity.position.floored(), mob: threat.name, id: threat.id, distance: threat.distance,
+          onGround: bot.entity.onGround === true,
         });
         if (resupplyEvasion && bot.entity.onGround !== true && threat.name !== 'creeper') {
           await sleep(50, ctx.signal);
           return { ok: true, waited: true, reason: 'resupply_escape_wait_for_ground' };
         }
         const result = await evadeInCave(bot, ctx, actions, threat, visibleThreat,
-          (id) => threats(ctx.perceive()).find((h) => h.id === id), { allowDescend: !resupplyEvasion });
+          (id) => threats(ctx.perceive()).find((h) => h.id === id), {
+            allowDescend: !resupplyEvasion, ranged: resupplyEvasion && shootsOnSurface(threat),
+          });
         if (threat.name !== 'creeper' || result.ok || result.reason !== 'cave_evasion_no_safe_step') return result;
         const current = threats(ctx.perceive()).find((h) => h.id === threat.id);
         if (!current || current.distance > (resupplyEvasion ? 4 : 6)) return result;

@@ -156,6 +156,47 @@ test('critical surface resupply evasion holds the ledge, with ordinary flee unch
   }));
 });
 
+test('a visible archer beyond ordinary flee range triggers a safe escape from grounded farmland', async () => {
+  const { bot, cells } = fixture();
+  const farmland = { ...stone, name: 'farmland', shapes: [[0, 0, 0, 1, 15 / 16, 1]] };
+  cells.set('0,0,0', farmland);
+  for (let x = -3; x <= 15; x += 1) {
+    cells.set(`${x},1,0`, air);
+    cells.set(`${x},2,0`, air);
+  }
+  // This apparent side exit is one block lower than the full-height path.
+  for (const y of [0, 1, 2]) cells.set(`0,${y},1`, air);
+  bot.entity.position.y = 15 / 16;
+  const skeleton = { id: 5, name: 'skeleton', position: new Vec3(14.5, 1, .5), distance: 14 };
+  const zombie = { id: 3, name: 'zombie', position: new Vec3(.5, 1, 5.5), distance: 5 };
+  const state = { health: 2, food: 0, position: bot.entity.position, inventory: {}, hostiles: [zombie, skeleton] };
+  const actions = {
+    underground: () => false,
+    async goTo(_bot, _ctx, goal) {
+      assert.deepEqual([goal.x, goal.y, goal.z], [-1, 1, 0]);
+      assert.equal(bot.pathfinder.movements.canDig, false);
+      bot.entity.position = new Vec3(goal.x + .5, goal.y, goal.z + .5);
+      return { ok: true };
+    },
+    async fleeFrom() { assert.fail('critical resupply evasion cannot use generic flight'); },
+  };
+  const escape = (resupplying, underground = false) => createSurvivalBehaviors({
+    bot, actions: { ...actions, underground: () => underground }, resupplying: () => resupplying,
+  }).find((behavior) => behavior.name === 'escape');
+  assert.equal(escape(false).want({ ...state, hostiles: [skeleton] }), 0);
+  assert.equal(escape(true, true).want({ ...state, hostiles: [skeleton] }), 0);
+  const guarded = escape(true);
+  assert.equal(guarded.want(state), 1);
+  const records = [];
+  const result = await guarded.run({ perceive: () => state, record: (name, data) => records.push({ name, ...data }) });
+  assert.deepEqual(result.to, new Vec3(-1, 1, 0));
+  assert.equal(records[0].mob, 'skeleton');
+  assert.equal(records[1].partialFloor, 'farmland');
+  assert.equal(records[2].distance, 15);
+  for (const y of [1, 2]) cells.set(`4,${y},0`, stone);
+  assert.equal(guarded.want({ ...state, position: bot.entity.position, hostiles: [skeleton] }), 0);
+});
+
 test('critical home resupply defends within native strike reach without approaching or collecting drops', async () => {
   const { bot } = fixture();
   bot.world = { raycast: () => null };

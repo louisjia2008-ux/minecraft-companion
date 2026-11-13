@@ -26,7 +26,7 @@ const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { upgrades } = require('../armor');
 const { entityDimensions } = require('../entityGeometry');
 const { isHostile } = require('../perception');
-const { standable } = require('../caveRetreat');
+const { farmlandFooting, standable } = require('../caveRetreat');
 const { createResupplyIrrigation } = require('./resupplyFarm');
 
 // Tools and weapons stay in the bag as they are made: stored, the bot spent
@@ -242,18 +242,6 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
     }
   }
   return null;
-}
-
-function farmlandFooting(read, entity) {
-  const at = entity.position;
-  const cell = at.floored();
-  const block = read(cell);
-  const shape = [0, 0, 0, 1, 15 / 16, 1];
-  if (!entity.onGround || block?.name !== 'farmland' || !dryBlock(block)
-    || block.shapes?.length !== 1 || block.shapes[0].length !== shape.length
-    || !block.shapes[0].every((value, i) => value === shape[i]) || Math.abs(at.y - cell.y - shape[4]) > .001
-    || !clearBlock(read(cell.offset(0, 1, 0))) || !clearBlock(read(cell.offset(0, 2, 0)))) return null;
-  return at.clone();
 }
 
 // Clear one adjacent dirt block only when that exact cut opens a complete

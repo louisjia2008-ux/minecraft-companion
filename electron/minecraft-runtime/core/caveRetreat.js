@@ -22,6 +22,18 @@ function standable(read, feet) {
   return solid(read(feet.offset(0, -1, 0))) && open(read(feet)) && open(read(feet.offset(0, 1, 0)));
 }
 
+function farmlandFooting(read, entity) {
+  const at = entity.position;
+  const cell = at.floored();
+  const block = read(cell);
+  const shape = [0, 0, 0, 1, 15 / 16, 1];
+  if (!entity.onGround || block?.name !== 'farmland' || hazard(block)
+    || block.shapes?.length !== 1 || block.shapes[0].length !== shape.length
+    || !block.shapes[0].every((value, i) => value === shape[i]) || Math.abs(at.y - cell.y - shape[4]) > .001
+    || !open(read(cell.offset(0, 1, 0))) || !open(read(cell.offset(0, 2, 0)))) return null;
+  return at.clone();
+}
+
 function skyOpen(bot, feet) {
   const head = bot.blockAt(feet.offset(0, 1, 0));
   // Sky light comes from the server's dimension light data and is independent
@@ -222,9 +234,9 @@ async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited, ris
   return result.ok ? { ...result, from } : result;
 }
 
-async function stepDry(bot, ctx, actions, p, avoid) {
+async function stepDry(bot, ctx, actions, p, avoid, maxDrop) {
   const read = (point) => bot.blockAt(point);
-  const result = await walkDry(bot, ctx, actions, new goals.GoalBlock(p.x, p.y, p.z), { avoid, adjacent: p });
+  const result = await walkDry(bot, ctx, actions, new goals.GoalBlock(p.x, p.y, p.z), { avoid, adjacent: p, maxDrop });
   if (result.ok) await waitUntil(() => bot.entity.onGround && bot.entity.position.floored().equals(p), {
     timeoutMs: 500, signal: ctx.signal,
   });
@@ -235,14 +247,18 @@ async function stepDry(bot, ctx, actions, p, avoid) {
 
 // Prefer breaking line of sight and keeping altitude over maximizing distance
 // to a point the mob already left. The caller keeps its separate ascent plan.
-async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { allowDescend = true } = {}) {
-  const from = bot.entity.position.floored();
+async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { allowDescend = true, ranged = false } = {}) {
   const read = (p) => bot.blockAt(p);
-  if (!allowDescend && (!bot.entity.onGround || !standable(read, from))) return fail('cave_evasion_no_safe_step');
+  const feet = bot.entity.position.floored();
+  const farm = !allowDescend && farmlandFooting(read, bot.entity);
+  const from = farm ? feet.offset(0, 1, 0) : feet;
+  if (!allowDescend && !farm && (!bot.entity.onGround || !standable(read, from))) return fail('cave_evasion_no_safe_step');
   const point = (p) => p.offset(.5, 0, .5);
+  const start = allowDescend ? point(from) : bot.entity.position.clone();
   const distance = (p) => point(p).distanceTo(threat.position);
-  const startDistance = distance(from);
-  ctx.record('cave_evasion_threat', { from, threat: threat.name, id: threat.id, mobAt: threat.position, distance: startDistance });
+  const startDistance = start.distanceTo(threat.position);
+  ctx.record('cave_evasion_threat', { from: feet, threat: threat.name, id: threat.id, mobAt: threat.position, distance: startDistance,
+    ...(farm ? { partialFloor: 'farmland' } : {}) });
   const queue = [{ p: from, first: null, edges: 0 }];
   const seen = new Set([key(from)]);
   let best = null;
@@ -251,7 +267,9 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { all
     if (first) {
       const range = distance(p);
       const covered = !visible(threat, point(p));
-      const score = Number(covered) * 14 + Math.min(range, 10) + (p.y - from.y) * 4 - edges * 1.5;
+      const score = ranged
+        ? Number(covered) * 14 + range - edges * .5
+        : Number(covered) * 14 + Math.min(range, 10) + (p.y - from.y) * 4 - edges * 1.5;
       if ((range >= startDistance + .3 || (covered && range >= 2.5)) && (!best || score > best.score)) {
         best = { first, score };
       }
@@ -259,7 +277,9 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { all
     if (edges >= 6) continue;
     for (const next of drySteps(read, p, allowDescend ? from.y - 1 : p.y)) {
       const id = key(next);
-      if (seen.has(id) || distance(next) < Math.min(2.5, startDistance) || (!first && distance(next) < startDistance - .35)) continue;
+      if (farm && !first && next.y !== from.y) continue;
+      if (seen.has(id) || distance(next) < Math.min(2.5, startDistance)
+        || (!first && distance(next) < startDistance - (ranged ? .05 : .35))) continue;
       seen.add(id);
       queue.push({ p: next, first: first || next, edges: edges + 1 });
     }
@@ -267,10 +287,12 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { all
   if (!best) return fail('cave_evasion_no_safe_step');
   const result = await stepDry(bot, ctx, actions, best.first, (p) => {
     const live = liveThreat(threat.id);
-    return live && point(p).distanceTo(live.position) < Math.min(2.5, point(from).distanceTo(live.position));
-  });
+    if (!live) return false;
+    const margin = ranged ? start.distanceTo(live.position) - .05 : Math.min(2.5, start.distanceTo(live.position));
+    return point(p).distanceTo(live.position) < margin;
+  }, allowDescend ? 1 : 0);
   const current = liveThreat(threat.id);
-  if (result.ok) ctx.record('cave_evasion_step', { from, to: result.to, threat: threat.name, id: threat.id,
+  if (result.ok) ctx.record('cave_evasion_step', { from: feet, to: result.to, threat: threat.name, id: threat.id,
     mobAt: current?.position ?? null, distance: current ? point(result.to).distanceTo(current.position) : null });
   return result;
 }
@@ -289,4 +311,4 @@ async function returnFromCave(bot, ctx, actions, home, avoid) {
     ? { ok: true, atHome: true } : fail(result.reason || 'cave_retreat_home_unconfirmed');
 }
 
-module.exports = { advanceCaveRetreat, evadeInCave, planRetreat, returnFromCave, skyOpen, standable };
+module.exports = { advanceCaveRetreat, evadeInCave, farmlandFooting, planRetreat, returnFromCave, skyOpen, standable };
