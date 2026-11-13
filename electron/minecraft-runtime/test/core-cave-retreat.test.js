@@ -106,6 +106,52 @@ test('emergency evasion takes one supported step toward cover and ignores a deep
   assert.deepEqual(receipts.map(([type]) => type), ['cave_evasion_threat', 'cave_evasion_step']);
 });
 
+test('critical surface resupply evasion holds the ledge, with ordinary flee unchanged', async (t) => {
+  const check = async ({ resupplying = true, flat = false, mob = 'zombie', expected }) => {
+    const { bot, cells } = fixture();
+    for (let x = 1; x <= 3; x += 1) {
+      cells.set(`${x},0,0`, air);
+      cells.set(`${x},1,0`, air);
+    }
+    // Behind the bot is a dry drop that would normally increase separation.
+    for (const y of [-1, 0, 1]) cells.set(`-1,${y},0`, air);
+    if (flat) for (const y of [0, 1]) cells.set(`0,${y},1`, air);
+    const threat = { id: 3, name: mob, position: new Vec3(3.5, 0, .5), distance: 3 };
+    const state = { health: 2, food: 0, position: bot.entity.position, inventory: {}, hostiles: [threat] };
+    const records = [];
+    const paths = [];
+    const actions = {
+      underground: () => false,
+      async goTo(_bot, _ctx, goal) {
+        assert.equal(bot.pathfinder.movements.canDig, false);
+        paths.push(['guarded', goal.x, goal.y, goal.z]);
+        bot.entity.position = new Vec3(goal.x + .5, goal.y, goal.z + .5);
+        return { ok: true };
+      },
+      async fleeFrom(_bot, _ctx, from) {
+        paths.push(['generic', from.x, from.y, from.z]);
+        return { ok: true };
+      },
+    };
+    const escape = createSurvivalBehaviors({ bot, actions, resupplying: () => resupplying })
+      .find((behavior) => behavior.name === 'escape');
+    assert.equal(escape.want(state), 1);
+    const result = await escape.run({ perceive: () => state, record: (...args) => records.push(args) });
+    assert.deepEqual(paths, expected);
+    assert.equal(result.ok, expected.length > 0);
+    if (!result.ok) assert.equal(result.reason, 'cave_evasion_no_safe_step');
+    assert.equal(records.some(([name]) => name === 'resupply_escape_guarded'), resupplying);
+  };
+  await t.test('takes a dry lateral step', () => check({ flat: true, expected: [['guarded', 0, 0, 1]] }));
+  await t.test('holds a ledge where the only route away descends', () => check({ expected: [] }));
+  await t.test('retains normal surface flight outside resupply', () => check({
+    resupplying: false, expected: [['generic', 3.5, 0, .5]],
+  }));
+  await t.test('retains the close creeper fallback with no guarded step', () => check({
+    mob: 'creeper', expected: [['generic', 3.5, 0, .5]],
+  }));
+});
+
 test('home retreat accepts the plain saved house centre and confirms a grounded arrival', async () => {
   const { bot, cells } = fixture();
   cells.set('8,0,0', air);

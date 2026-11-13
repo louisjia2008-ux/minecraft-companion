@@ -235,9 +235,10 @@ async function stepDry(bot, ctx, actions, p, avoid) {
 
 // Prefer breaking line of sight and keeping altitude over maximizing distance
 // to a point the mob already left. The caller keeps its separate ascent plan.
-async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat) {
+async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { allowDescend = true } = {}) {
   const from = bot.entity.position.floored();
   const read = (p) => bot.blockAt(p);
+  if (!allowDescend && (!bot.entity.onGround || !standable(read, from))) return fail('cave_evasion_no_safe_step');
   const point = (p) => p.offset(.5, 0, .5);
   const distance = (p) => point(p).distanceTo(threat.position);
   const startDistance = distance(from);
@@ -256,7 +257,7 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat) {
       }
     }
     if (edges >= 6) continue;
-    for (const next of drySteps(read, p, from.y - 1)) {
+    for (const next of drySteps(read, p, allowDescend ? from.y - 1 : p.y)) {
       const id = key(next);
       if (seen.has(id) || distance(next) < Math.min(2.5, startDistance) || (!first && distance(next) < startDistance - .35)) continue;
       seen.add(id);

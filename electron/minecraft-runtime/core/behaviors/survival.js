@@ -371,6 +371,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       && Math.hypot(state.position.x - centre.x, state.position.z - centre.z) <= 8) return false;
     return actions.underground?.(bot) === true;
   };
+  const surfaceResupplyEvasion = (state) => caveSituation(state) && bot.entity.onGround === true && resupplying();
   const visibleThreat = (h, at) => clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, 1.6, 0))
     || clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, .5, 0));
   const caveRetreat = {
@@ -472,8 +473,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // An exposed mob within striking range still wins immediately. From
       // cover, continue the persistent ascent rather than orbiting its old
       // position and handing the body back to deeper work.
-      if (retreat || caveNeedsExit(state)) {
-        const evasionRange = SHOOTERS.has(threat.name) ? 10 : 6;
+      const caveEvasion = retreat || caveNeedsExit(state);
+      if (caveEvasion || surfaceResupplyEvasion(state)) {
+        const evasionRange = caveEvasion ? (SHOOTERS.has(threat.name) ? 10 : 6) : t.escapeRange;
         return threat.distance <= evasionRange && visibleThreat(threat, state.position) ? 1 : 0;
       }
       return threat.distance <= t.escapeRange && (state.health <= t.escapeHealth || threat.selfAggressor && !armed(state)) ? 1 : 0;
@@ -481,12 +483,19 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     async run(ctx) {
       const state = ctx.perceive();
       const threat = nearest(state);
-      if (threat && (retreat || caveNeedsExit(state))) {
+      const caveEvasion = retreat || caveNeedsExit(state);
+      const resupplyEvasion = !caveEvasion && surfaceResupplyEvasion(state);
+      if (threat && (caveEvasion || resupplyEvasion)) {
+        // Keep a critically hurt bot on its ledge while resupply approaches
+        // home. Repeated one-block drops could otherwise take it back inside.
+        if (resupplyEvasion) ctx.record('resupply_escape_guarded', {
+          at: bot.entity.position.floored(), mob: threat.name, id: threat.id,
+        });
         const result = await evadeInCave(bot, ctx, actions, threat, visibleThreat,
-          (id) => threats(ctx.perceive()).find((h) => h.id === id));
+          (id) => threats(ctx.perceive()).find((h) => h.id === id), { allowDescend: !resupplyEvasion });
         if (threat.name !== 'creeper' || result.ok || result.reason !== 'cave_evasion_no_safe_step') return result;
         const current = threats(ctx.perceive()).find((h) => h.id === threat.id);
-        if (!current || current.distance > 6) return result;
+        if (!current || current.distance > (resupplyEvasion ? 4 : 6)) return result;
         return actions.fleeFrom(bot, ctx, current.position);
       }
       if (threat?.selfAggressor && !armed(state)) ctx.record('escape_self_aggressor', { mob: threat.name, id: threat.id });
