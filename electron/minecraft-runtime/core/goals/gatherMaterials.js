@@ -26,6 +26,7 @@ const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { materialsFor } = require('../materials');
 const { createBlacklist, posKey } = require('../blacklist');
 const mining = require('../mining');
+const { skyOpen, standable } = require('../caveRetreat');
 const obsidian = require('../obsidian');
 const nether = require('../nether');
 const { quartzToolReserve } = require('../quartzTools');
@@ -40,6 +41,7 @@ const WORN_SLOTS = [5, 6, 7, 8, 45];
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
 const MINE_FROM_HOME = 8;
+const MINE_RESTART_RINGS = [18, 26, 34, 42];
 // Further below the chest than this, home is reached by going up first.
 const HOME_BELOW = 8;
 // Stone pickaxes taken down a mine: they wear out on the rock instead of the
@@ -78,6 +80,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     pathFailures: 0,
     shortfall: {},
     mine: null,
+    mineRestart: null,
     cast: null,
     trip: null,
     steps: 0,
@@ -162,17 +165,69 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     return result;
   }
 
+  const horizontalDistance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+
+  async function relocateMine(ctx) {
+    const restart = memory.mineRestart;
+    const state = ctx.perceive();
+    if ((actions.underground || defaultActions.underground)(bot)) {
+      // The permanent critical-health retreat owns the route out. A normal
+      // mine restart may surface, but must not open another shaft down here.
+      if (state.health <= 6) return { ok: false, reason: 'mine_restart_waiting_for_retreat' };
+      const out = await actions.surface?.(bot, ctx);
+      if (out?.ok) return { ...out, progress: false };
+      // The height-based surface helper can stop below an overhang. A
+      // connected walk to a verified open site can still get out from here.
+    }
+    const awayFromOld = (p) => restart.avoid.every((old) => horizontalDistance(p, old) >= MINE_FROM_HOME);
+    const safe = (p) => horizontalDistance(p, chest) >= MINE_FROM_HOME && awayFromOld(p)
+      && standable((at) => bot.blockAt(at), p) && skyOpen(bot, p);
+    const site = () => {
+      // Rotate sides as well as widening the search. The furthest candidate
+      // stays inside a bounded ring around the established home.
+      const direction = ((memory.mineDir ?? 0) + restart.attempt) % SIDES.length;
+      const reach = MINE_RESTART_RINGS[Math.min(MINE_RESTART_RINGS.length - 1,
+        restart.barren - 1 + Math.floor(restart.attempt / SIDES.length))];
+      const [dx, dz] = SIDES[direction];
+      return new Vec3(chest.x + dx * reach, chest.y, chest.z + dz * reach);
+    };
+    let base = site();
+    for (let n = 0; n < SIDES.length && !awayFromOld(base); n += 1) {
+      restart.attempt += 1;
+      base = site();
+    }
+    if (!awayFromOld(base)) return { ok: false, reason: 'mine_restart_no_fresh_sector' };
+    let target = base;
+    for (const dy of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5]) {
+      const candidate = base.offset(0, dy, 0);
+      if (safe(candidate)) { target = candidate; break; }
+    }
+    ctx.record('mine_relocate', { from: posKey(bot.entity.position.floored()), target: posKey(target), attempt: restart.attempt + 1 });
+    const restore = nether.applyWalkOnlyMovements(bot);
+    let moved;
+    try { moved = await actions.goNear(bot, ctx, target, 1, { timeoutMs: 30000 }); }
+    finally { restore(); }
+    const landed = bot.entity.position.floored();
+    if (moved.ok && bot.entity.onGround && horizontalDistance(landed, target) <= 2.5 && safe(landed)) {
+      restart.arrived = landed;
+      return { ok: true, progress: false };
+    }
+    restart.attempt += 1;
+    return { ok: false, reason: moved.ok ? 'mine_restart_site_unconfirmed' : moved.reason };
+  }
+
   // A staircase starts at least this far from the chest, so home is never undermined.
   async function mine(ctx, step, dropMatch) {
     let start = null;
     if (!memory.mine) {
       const at = bot.entity.position.floored();
-      if (Math.hypot(at.x - chest.x, at.z - chest.z) < MINE_FROM_HOME) {
-        // Each new mine on another side of the house, and farther out after
-        // one that came to nothing: always the same spot, on sand, every
-        // staircase was blocked by gravel and sand and the goal failed.
+      if (memory.mineRestart) {
+        if (!memory.mineRestart.arrived?.equals(at) || !bot.entity.onGround
+          || !standable((p) => bot.blockAt(p), at) || !skyOpen(bot, at)) return relocateMine(ctx);
+        memory.mineRestart = null;
+      } else if (horizontalDistance(at, chest) < MINE_FROM_HOME) {
         const [sx, sz] = SIDES[(memory.mineDir ?? 0) % 4];
-        const reach = MINE_FROM_HOME + 2 + 8 * (memory.barrenMines || 0);
+        const reach = MINE_FROM_HOME + 2;
         const away = new Vec3(chest.x + sx * reach, chest.y, chest.z + sz * reach);
         const moved = await actions.goNear(bot, ctx, away, 1, { timeoutMs: 30000 });
         if (!moved.ok) return moved;
@@ -188,7 +243,11 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     const m = memory.mine;
     if (m?.junction && !m.depot && m.y === step.mineY && step.mineY <= DEPOT_BELOW) return buildDepot(ctx);
     const result = await mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions, skills });
-    if (result.reason === 'mine_exhausted') memory.barrenMines = (memory.barrenMines || 0) + 1;
+    if (!memory.mine && (m || result.reason === 'mine_exhausted')) {
+      const old = m || { entrance: start, front: bot.entity.position.floored() };
+      memory.barrenMines = (memory.barrenMines || 0) + 1;
+      memory.mineRestart = { barren: memory.barrenMines, attempt: 0, avoid: [old.entrance, old.front].filter(Boolean) };
+    }
     return result;
   }
 
