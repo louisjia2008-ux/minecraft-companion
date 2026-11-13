@@ -430,6 +430,78 @@ test('missing wool does not delay the house door and only supported surface mobs
     { kind: 'craft', key: 'wool', item: 'white_wool', times: 1, table: false, for: 'bed' });
 });
 
+test('bed wool leaves the known roof through its open door before surface scouting', async () => {
+  const sim = simulate({ failRate: 0 });
+  const house = createStarterHouse({ x: 0, y: 1, z: 0 });
+  const start = new Vec3(1, 1, 3);
+  const inside = new Vec3(3, 1, 1);
+  const doorway = new Vec3(3, 1, 0);
+  const outside = new Vec3(3, 1, -1);
+  const foreignRoof = new Vec3(1, 1, -3);
+  const set = (p, name) => sim.world.set([p.x, p.y, p.z].join(','), name);
+  for (const block of house.blocks) set(block.position, block.family === 'planks' ? 'oak_planks' : 'cobblestone');
+  for (const name of ['crafting_table', 'chest', 'furnace']) set(house.furniture[name].position, name);
+  for (const p of house.furniture.torches) set(p, 'torch');
+  set(doorway, 'oak_door');
+  set(doorway.offset(0, 1, 0), 'oak_door');
+  set(foreignRoof.offset(0, 2, 0), 'oak_planks');
+  let open = true;
+  let upperOpen = false;
+  sim.bot.blockAt = (p) => {
+    const b = sim.blockAt(p);
+    if (b.name === 'oak_door') {
+      return { ...b, shapes: [[0, 0, 0, .1875, 1, 1]], getProperties: () => ({
+        half: p.y === doorway.y ? 'lower' : 'upper', open: p.y === doorway.y ? open : upperOpen,
+        facing: 'south', hinge: 'left', powered: false,
+      }) };
+    }
+    return { ...b, shapes: b.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  Object.assign(sim.inventory, { cooked_chicken: 4, oak_planks: 6 });
+  sim.bot.entity.position = start.offset(.5, 0, .5);
+  sim.bot.entity.onGround = true;
+  const native = () => [inside, doorway, outside, foreignRoof];
+  sim.bot.pathfinder = { movements: { canDig: true, allowParkour: true, exclusionAreasBreak: [], getNeighbors: native } };
+  const events = [];
+  const walks = [];
+  let hunts = 0;
+  sim.actions.goTo = async (_bot, _ctx, goal, options) => {
+    const m = sim.bot.pathfinder.movements;
+    assert.equal(m.canDig, false);
+    assert.equal(m.allowParkour, false);
+    if (goal.constructor.name === 'GoalBlock') {
+      assert.ok(goal.isEnd(outside));
+      assert.deepEqual(m.getNeighbors(inside), [inside, doorway, outside]);
+      upperOpen = false;
+      assert.deepEqual(m.getNeighbors(inside), [inside, outside], 'door state is checked again during routing');
+      upperOpen = true;
+      sim.bot.entity.position = outside.offset(.5, 0, .5);
+      assert.equal(options.arrived(), true);
+      walks.push('exit');
+    } else {
+      assert.deepEqual(m.getNeighbors(outside), [outside], 'ordinary wool scouting does not authorize any roof');
+      walks.push('scout');
+    }
+    return { ok: true };
+  };
+  sim.skills.huntOne = async () => { hunts++; return { ok: false, reason: 'no_mob_in_range' }; };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor: house.anchor, gear: [], skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, isDay: true, timeOfDay: 4000 }),
+    record: (type, data) => events.push({ type, ...data }) };
+  assert.equal((await goal.run(ctx)).reason, 'wool_house_exit_blocked');
+  assert.deepEqual(walks, []);
+  assert.equal(hunts, 0);
+  upperOpen = true;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(walks, ['exit']);
+  assert.equal(hunts, 0);
+  for (let n = 0; n < 3 && !walks.includes('scout'); n += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(walks, ['exit', 'scout']);
+  assert.ok(hunts > 0);
+  assert.equal(sim.bot.pathfinder.movements.getNeighbors, native);
+  assert.ok(events.findIndex(e => e.type === 'wool_house_exit') < events.findIndex(e => e.type === 'wool_surface_scout'));
+});
+
 for (const interruption of ['path_timeout', 'breathe']) {
   test(`homestead defers optional food after ${interruption} and continues to bed wool`, async () => {
     const sim = simulate({ failRate: 0 });

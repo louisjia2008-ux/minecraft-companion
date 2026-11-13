@@ -575,6 +575,44 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     };
   }
 
+  async function leaveHouseForWool(ctx, surface, from) {
+    const { x, y, z } = memory.house.furniture.door.position;
+    const door = new Vec3(x, y, z);
+    if (from.y !== door.y || !(insideRoom(from) || from.equals(door))) return null;
+    const blocked = async () => {
+      await sleep(1000, ctx.signal);
+      return { ok: true, waited: true, reason: 'wool_house_exit_blocked' };
+    };
+    if (!bot.entity.onGround) return blocked();
+    if (doorOpen() === false) return await setDoor(ctx, true) || blocked();
+    const doorwayOpen = () => {
+      const lower = blockAt(door), upper = blockAt(door.offset(0, 1, 0));
+      if (doorOpen() !== true || lower?.name !== upper?.name) return false;
+      const lo = lower.getProperties(), hi = upper.getProperties?.();
+      return lo.half === 'lower' && hi?.half === 'upper' && (lo.facing === 'north' || lo.facing === 'south')
+        && ['open', 'facing', 'hinge', 'powered'].every((key) => lo[key] === hi[key]);
+    };
+    if (doorOpen() === null) return null; // Let the unfinished house place its door.
+    if (!doorwayOpen()) return blocked();
+    // Starter houses have a single entrance in the north wall.
+    const exit = [0, -1].map((dy) => door.offset(0, dy, -1)).find(surface.isStand);
+    if (!exit) return blocked();
+    const clearDoor = { name: 'air', boundingBox: 'empty', shapes: [] };
+    const readsDoor = (p) => p.equals(door) || p.equals(door.offset(0, 1, 0));
+    const doorStand = () => doorwayOpen() && standable((p) => readsDoor(p) ? clearDoor : blockAt(p), door);
+    const accepted = (p) => p.equals(door) ? doorStand() : p.equals(exit) ? surface.isStand(p)
+      : p.y === door.y && insideRoom(p) && standable(blockAt, p);
+    if (!accepted(from)) return blocked();
+    const arrived = () => bot.entity.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava
+      && bot.entity.position.floored().equals(exit) && surface.isStand(exit);
+    const result = await surface.walk(() => actions.goTo(bot, ctx, new goals.GoalBlock(exit.x, exit.y, exit.z),
+      { timeoutMs: 6500, retryNoProgress: false, arrived }), accepted);
+    const landed = (result.ok || result.reason === 'not_arrived')
+      && await waitUntil(arrived, { timeoutMs: 500, signal: ctx.signal });
+    ctx.record('wool_house_exit', { from, door, to: exit, arrived: landed, reason: result.reason });
+    return landed ? { ok: true } : blocked();
+  }
+
   async function huntWool(ctx, mobs, optional) {
     woolRouteOwnsRecovery = true;
     const state = ctx.perceive();
@@ -590,6 +628,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       return scoutForWool(ctx, surface, withinRange);
     };
     if (state.inWater || state.health < 12 || state.isDay === false) return unavailable('unsafe_wool_route');
+    if (typeof actions.goTo === 'function') {
+      const exited = await leaveHouseForWool(ctx, surface, bot.entity.position.floored());
+      if (exited) return exited;
+    }
     const sheep = woolPreference(state.inventory, supportedSurface);
     const result = await surface.walk(async () => {
       const result = await skills.huntOne(bot, ctx, { mobs, dropMatch: kb.wool.match, blacklist, radius: 96,
