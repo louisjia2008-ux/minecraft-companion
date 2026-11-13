@@ -241,7 +241,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     }
     if (!quarryNeeded) {
       const result = await surface.walk(() => skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch,
-        blacklist, radius: SUPPLY_STONE_RADIUS, ...surface.gather }));
+        blacklist, exclude: quarry.protectsFloor, radius: SUPPLY_STONE_RADIUS, ...surface.gather }));
       if (!SUPPLY_STONE_FALLBACK.has(result.reason)) return result;
       quarryNeeded = true;
       ctx.record('surface_stone_quarry', { reason: result.reason, at: posKey(bot.entity.position.floored()) });

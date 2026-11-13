@@ -104,3 +104,32 @@ test('standard flat cover is opened from top to bottom in at most five one-block
   for (let n = 0; n < 8 && f.quarry.inside(); n += 1) assert.equal((await f.quarry.leave(f.ctx, f.surface)).ok, true);
   assert.ok(f.bot.entity.position.floored().equals(f.origin));
 });
+
+test('quarry keeps previous entrance, stair, and pickup support protected after closing', async () => {
+  const f = fixture({ cover: 2 });
+  for (let n = 0; n < 18 && f.picked.length < 3; n += 1) assert.equal((await f.run()).ok, true);
+  assert.equal(f.picked.length, 3);
+  const entryFloor = f.origin.offset(0, -1, 0);
+  const stairFloor = f.path[0].offset(0, -1, 0);
+  const pocketFloor = f.picked[2].floored().offset(0, -1, 0);
+  assert.equal(f.quarry.protectsFloor(entryFloor), true);
+  assert.equal(f.quarry.protectsFloor(stairFloor), true);
+  assert.equal(f.quarry.protectsFloor(pocketFloor), true);
+  assert.equal(f.quarry.protectsFloor(entryFloor.offset(0, -1, 0)), false);
+
+  // Break the next cut only, so the retained return stair is still sound.
+  const feet = f.bot.entity.position.floored();
+  const blocked = feet.offset(1, 0, 0);
+  for (const side of [1, -1]) f.world.set(posKey(feet.offset(0, 0, side)), 'water');
+  f.world.set(posKey(blocked), 'water');
+  assert.equal((await f.run()).reason, 'quarry_exhausted');
+  assert.equal(f.quarry.active(), false);
+  assert.equal(f.quarry.protectsFloor(entryFloor), true);
+  for (let n = 0; n < 8 && f.quarry.inside(); n += 1) assert.equal((await f.quarry.leave(f.ctx, f.surface)).ok, true);
+  assert.ok(f.bot.entity.position.floored().equals(f.origin));
+  await f.run(); // rotate beyond the closed route, while retaining its support
+  assert.equal(f.quarry.protectsFloor(stairFloor), true);
+  assert.equal(f.quarry.protectsFloor(pocketFloor), true);
+  f.quarry.reset();
+  assert.equal(f.quarry.protectsFloor(entryFloor), false);
+});

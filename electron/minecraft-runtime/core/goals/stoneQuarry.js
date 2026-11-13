@@ -20,6 +20,8 @@ const open = (block) => dry(block) && block.boundingBox === 'empty' && !block.sh
 
 function createStoneQuarry({ bot, actions, avoid, blacklist }) {
   const read = (p) => bot.blockAt(p);
+  const protectedFloors = new Set();
+  const protectsFloor = (p) => protectedFloors.has(posKey(p));
   let site = null;
 
   function geometry(from, direction, active, projected = read) {
@@ -37,7 +39,7 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
       if (!open(projected(p))) lip.push(p);
     }
     cuts.unshift(...lip);
-    if (avoid(target) || cuts.some((p) => avoid(p) || active.floors.has(posKey(p)))) return null;
+    if (avoid(target) || cuts.some((p) => avoid(p) || active.floors.has(posKey(p)) || protectsFloor(p))) return null;
     for (const p of cuts) {
       const block = projected(p);
       if (!dry(block) || !COVER.test(block.name) || block.diggable !== true || bot.companionProtectBlock?.(block)
@@ -117,7 +119,7 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
       const cuts = [head, edge].filter((p) => !open(read(p)));
       if (cuts.some((p) => {
         const current = read(p);
-        return avoid(p) || active.floors.has(posKey(p)) || !dry(current) || !COVER.test(current.name)
+        return avoid(p) || active.floors.has(posKey(p)) || protectsFloor(p) || !dry(current) || !COVER.test(current.name)
           || current.diggable !== true || bot.companionProtectBlock?.(current)
           || !FACES.every(([x, y, z]) => {
             const near = p.offset(x, y, z);
@@ -155,6 +157,7 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
       // back before moving so a survival interruption cannot strand us.
       const index = site.route.findIndex((p) => p.equals(from));
       site.pocket = { at: step, from: site.route[index] };
+      protectedFloors.add(posKey(step.offset(0, -1, 0)));
     }
     return surface.walk(() => actions.collectDrops(bot, ctx, pending.position.offset(.5, .5, .5), dropMatch,
       { radius: 2, timeoutMs: 2500 }), (p) => p.equals(from) || side && p.equals(step));
@@ -192,6 +195,7 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
     if (!site) {
       site = findSite(surface, match);
       if (!site) return fail('quarry_no_site');
+      protectedFloors.add(posKey(site.entry.offset(0, -1, 0)));
       ctx.record('quarry_start', { position: site.entry, direction: site.direction });
     }
     const current = here();
@@ -235,6 +239,7 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
     // cancellation can leave the body on that stair; it still has a way out.
     site.route.push(next.target);
     site.floors.add(posKey(next.target.offset(0, -1, 0)));
+    protectedFloors.add(posKey(next.target.offset(0, -1, 0)));
     const moved = await move(ctx, next.target, surface, true);
     if (!moved.ok) return abandon(ctx, moved.reason);
     ctx.record('quarry_step', { position: next.target });
@@ -243,7 +248,8 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
 
   return { run, leave, active: () => Boolean(site && !site.closed),
     inside: () => site?.pocket?.at.equals(here()) || site?.route.slice(1).some((p) => p.equals(here())),
-    reset: () => { site = null; } };
+    protectsFloor,
+    reset: () => { site = null; protectedFloors.clear(); } };
 }
 
 module.exports = { createStoneQuarry };
