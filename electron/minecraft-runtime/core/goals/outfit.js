@@ -404,8 +404,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   const failedApproaches = createBlacklist({ ttlMs: 12000 });
   const nearShelter = (position) => Boolean(shelter && position && typeof actions.goTo === 'function'
     && position.y >= shelter.position.y - 5 && Math.hypot(position.x - shelter.position.x, position.z - shelter.position.z) <= 16);
-  goal.ownsRouteRecovery = () => dimension(bot) === 'overworld' && bot.health > 0 && bot.health < HOME_HEALTH
-    && nearShelter(bot.entity?.position);
+  goal.ownsRouteRecovery = () => goal.memory.gather?.ownsRouteRecovery?.() === true
+    || dimension(bot) === 'overworld' && bot.health > 0 && bot.health < HOME_HEALTH && nearShelter(bot.entity?.position);
   const resetRecovery = () => {
     returned = false; checkedChest = false; lastFoodWait = null; routeInterrupted = false; routeDestination = null;
     homeCut = null;
@@ -433,13 +433,14 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     }
     const completeKit = device.isDone(state);
     const critical = state.health < HOME_HEALTH;
+    const nightStone = state.isDay === false && goal.memory.gather?.ownsRouteRecovery?.() === true;
     const needsProtection = critical || state.food < HOME_FOOD;
     const inside = atResupplyHome(state, home, { verticalSlack: critical && shelter ? 0 : 1 });
     const doorstep = shelter?.position.offset(.5, 0, -.5);
     const nearbyHostiles = needsProtection ? safety.threats(state, true) : [];
     const threatened = needsProtection && (doorstep && safety.exposed(doorstep, nearbyHostiles, critical)
       || critical && !inside && safety.exposed(state.position, nearbyHostiles, true));
-    const waitForDay = needsProtection && (state.isDay === false || threatened);
+    const waitForDay = nightStone || needsProtection && (state.isDay === false || threatened);
     const carriedFood = countKey('food', state.inventory, kb);
     const foodTarget = checkedChest && needsProtection && state.food < REGEN_FOOD && carriedFood === 0 && !waitForDay
       ? resupplyFood.plan(state, critical) : null;
@@ -596,6 +597,10 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return { ok: true };
     };
     return onSurfacePath(bot, home, async () => {
+      if (!inside && (needsProtection || nightStone)) {
+        const left = await guarded('leave_supply_quarry', (scoped) => goal.memory.gather?.leaveSurfaceQuarry?.(scoped), true);
+        if (left) return left;
+      }
       if (!returned || completeKit || holdShelter || foodTarget?.kind === 'bread') {
         if (!inside) {
           const goHome = (action, cardinal = false) => guarded(
@@ -637,8 +642,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         checkedChest = true;
         return { ok: true };
       }
-      if (needsProtection) {
-        if (state.food < REGEN_FOOD) {
+      if (needsProtection || nightStone) {
+        if (needsProtection && state.food < REGEN_FOOD) {
           if (carriedFood > 0) return actions.eat(bot, ctx);
           if (home.stations?.crafting_table && countKey('wheat', state.inventory, kb) >= 3 && inside) {
             return guarded('craft_bread', (scoped) => resupplyFood.run(scoped, { kind: 'bread' }));

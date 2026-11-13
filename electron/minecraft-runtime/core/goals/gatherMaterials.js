@@ -26,8 +26,10 @@ const { planNext } = require('../planner');
 const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { materialsFor } = require('../materials');
 const { createBlacklist, posKey } = require('../blacklist');
+const { sleep } = require('../confirm');
 const mining = require('../mining');
 const { skyOpen, standable } = require('../caveRetreat');
+const { createStoneQuarry } = require('./stoneQuarry');
 const obsidian = require('../obsidian');
 const nether = require('../nether');
 const { quartzToolReserve } = require('../quartzTools');
@@ -45,6 +47,9 @@ const MINE_FROM_HOME = 8;
 const MINE_RESTART_RINGS = [18, 26, 34, 42];
 // Further below the chest than this, home is reached by going up first.
 const HOME_BELOW = 8;
+const SUPPLY_STONE_RADIUS = 24;
+const SUPPLY_STONE_FALLBACK = new Set(['no_target_in_range', 'drops_not_collected', 'NoPath', 'Timeout', 'path_timeout',
+  'not_arrived', 'no_progress', 'leg_blocked', 'no_dry_stand']);
 const SUPPLY_CANOPY = /_(leaves|log|wood)$/;
 const SUPPLY_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|campfire|soul_campfire|cactus|powder_snow|sweet_berry_bush)$/;
 const SUPPLY_STANCE_OFFSETS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1],
@@ -93,6 +98,13 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   const blacklist = createBlacklist({ ttlMs: 120000 });
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
   const nameAt = (p) => blockAt(p)?.name || null;
+  const homeStations = [chest, ...Object.values(stations)].filter(Boolean);
+  const withinStoneRange = (p) => Math.hypot(p.x - chest.x, p.z - chest.z) <= SUPPLY_STONE_RADIUS;
+  const quarry = surfaceOnly ? createStoneQuarry({ bot, actions, blacklist,
+    avoid: (p) => !withinStoneRange(p) || bot.companionHomeSite?.(p)
+      || homeStations.some((s) => Math.hypot(p.x - s.x, p.z - s.z) < 4) }) : null;
+  let quarryNeeded = false;
+  let stoneRouteOwnsRecovery = false;
 
   const wanted = () => requirements || materialsFor(blueprint.blocks, nameAt, kb);
   const stored = (key) => countKey(key, memory.chest || {}, kb);
@@ -155,8 +167,10 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   function surfaceSupplyRoute(key) {
     const floor = chest.y - HOME_BELOW;
     const minimumY = Math.max(floor, Math.floor(bot.entity.position.y) - 4);
+    const stone = key === 'cobblestone';
     const cache = new Map();
     const exposedStand = (feet) => {
+      if (feet.y < floor || (stone && !withinStoneRange(feet))) return false;
       const id = posKey(feet);
       if (cache.has(id)) return cache.get(id);
       const dryStand = standable(blockAt, feet) && !SUPPLY_CANOPY.test(nameAt(feet.offset(0, -1, 0)));
@@ -172,10 +186,31 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       cache.set(id, safe);
       return safe;
     };
-    const guarded = key === 'cobblestone' || key === 'log';
+    const walk = async (run, accept = () => true) => {
+      const restore = nether.applyWalkOnlyMovements(bot);
+      const movements = bot.pathfinder?.movements;
+      const neighbors = movements?.getNeighbors;
+      const owned = movements && Object.hasOwn(movements, 'getNeighbors');
+      if (neighbors) movements.getNeighbors = function (node, ...args) {
+        return neighbors.call(this, node, ...args).filter((move) => {
+          const feet = new Vec3(move.x, move.y, move.z);
+          return feet.y >= floor && withinStoneRange(feet) && accept(feet) && [-1, 0, 1].every((dy) => {
+            const block = blockAt(feet.offset(0, dy, 0));
+            return block && !SUPPLY_HAZARD.test(block.name) && block.getProperties?.()?.waterlogged !== true;
+          });
+        });
+      };
+      try { return await run(); }
+      finally {
+        if (neighbors && owned) movements.getNeighbors = neighbors;
+        else if (neighbors) delete movements.getNeighbors;
+        restore();
+      }
+    };
+    const guarded = stone || key === 'log';
     const acceptStand = (feet, target) => feet.y >= floor && !feet.offset(0, -1, 0).equals(target) && exposedStand(feet);
     const targetFilter = (target) => {
-      if (target.y < minimumY || !mining.exposed(bot, target)) return false;
+      if (target.y < minimumY || (stone && !withinStoneRange(target)) || !mining.exposed(bot, target)) return false;
       if (!guarded) return true;
       const block = blockAt(target);
       if (!block || bot.companionProtectBlock?.(block) || bot.companionHomeSite?.(target)) return false;
@@ -186,7 +221,37 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         return acceptStand(feet, target) && (!sight || sight.isEnd(feet));
       }));
     };
-    return { targetFilter, ...(guarded ? { acceptStand } : {}) };
+    return { floor, isStand: exposedStand, walk, gather: { targetFilter, ...(guarded ? { acceptStand } : {}) } };
+  }
+
+  const quarryRouteOutcome = (result) => SUPPLY_STONE_FALLBACK.has(result?.reason)
+    ? { ok: false, reason: 'surface_stone_unreachable' } : result;
+  const leaveSurfaceQuarry = async (ctx) => quarry?.inside()
+    ? quarryRouteOutcome(await quarry.leave(ctx, surfaceSupplyRoute('cobblestone'))) : null;
+
+  async function gatherSurfaceStone(ctx, step, dropMatch) {
+    const surface = surfaceSupplyRoute(step.key);
+    if (!withinStoneRange(bot.entity.position)) return { ok: false, reason: 'surface_stone_outside_home_range' };
+    const state = ctx.perceive();
+    if (state.isDay === false) {
+      const exited = await leaveSurfaceQuarry(ctx);
+      if (exited) return exited;
+      await sleep(1000, ctx.signal);
+      return { ok: true, waited: true, reason: 'surface_stone_wait_for_daylight' };
+    }
+    if (!quarryNeeded) {
+      const result = await surface.walk(() => skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch,
+        blacklist, radius: SUPPLY_STONE_RADIUS, ...surface.gather }));
+      if (!SUPPLY_STONE_FALLBACK.has(result.reason)) return result;
+      quarryNeeded = true;
+      ctx.record('surface_stone_quarry', { reason: result.reason, at: posKey(bot.entity.position.floored()) });
+    }
+    if (typeof actions.goTo !== 'function' || typeof actions.digBlock !== 'function' || typeof actions.collectDrops !== 'function') {
+      return { ok: false, reason: 'surface_quarry_actions_unavailable' };
+    }
+    const result = await quarry.run(ctx, surface, step.blocks, dropMatch);
+    if (result.reason === 'quarry_no_site') quarryNeeded = false;
+    return quarryRouteOutcome(result);
   }
 
   async function explore(ctx, why) {
@@ -405,7 +470,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     // Ore that needs a mine is the only thing done down there; anything else
     // (a tree for sticks, a station, a craft) walks out along the tunnel first
     // rather than letting the pathfinder dig straight up to it.
-    if (step.kind !== 'gather' || !Number.isFinite(step.mineY)) {
+    const surfaceStone = surfaceOnly && step.kind === 'gather' && step.key === 'cobblestone';
+    if (!surfaceStone && (step.kind !== 'gather' || !Number.isFinite(step.mineY))) {
       const up = await climbOut(ctx);
       if (up) return up;
     }
@@ -438,12 +504,13 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         if (step.dimension === 'the_nether' && step.key === 'quartz') return netherTrip(ctx, step.count);
         if (step.dimension && step.dimension !== nether.dimension(bot)) return { ok: false, reason: `needs_dimension:${step.dimension}` };
         const dropMatch = kb[step.key].match;
+        if (surfaceStone) return gatherSurfaceStone(ctx, step, dropMatch);
         const deep = Number.isFinite(step.mineY);
         // Ore that needs a mine is mined from the tunnel once there is one.
         if (deep && memory.mine) return mine(ctx, step, dropMatch);
         // Elsewhere only ore in the open (surface, cave mouths): never a
         // pathfinder tunnel straight down to buried ore.
-        const route = surfaceOnly ? surfaceSupplyRoute(step.key)
+        const route = surfaceOnly ? surfaceSupplyRoute(step.key).gather
           : { exclude: deep ? (p) => !mining.exposed(bot, p) : undefined };
         const gatherOptions = { blocks: step.blocks, dropMatch, blacklist, ...route };
         let result = await skills.gatherOne(bot, ctx, gatherOptions);
@@ -556,6 +623,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     if (surfaceOnly && bot.entity.position.y < chest.y - HOME_BELOW) {
       return { ok: false, reason: 'surface_supply_below_home' };
     }
+    if (quarry?.inside() && (memory.chest === null || nameAt(chest) !== 'chest')) return leaveSurfaceQuarry(ctx);
     // In the Nether there is nothing to do but the trip: quartz, then home.
     if (nether.inNether(bot)) {
       const quartz = owed().find((r) => r.key === 'quartz')?.count || 0;
@@ -636,7 +704,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     // whole item of the list in the bag: store it now, a death would lose it.
     const whole = carried.some((w) => w.count >= debts.find((r) => r.key === w.key).count);
     const nearChest = bot.entity.position.distanceTo(new Vec3(chest.x + 0.5, chest.y, chest.z + 0.5)) <= NEAR_CHEST;
-    if (carried.length && (!step || freeSlots <= FREE_SLOTS_TO_STORE || (whole && nearChest))) {
+    const shouldStore = carried.length && (!step || freeSlots <= FREE_SLOTS_TO_STORE || (whole && nearChest));
+    const surfaceStone = surfaceOnly && step?.kind === 'gather' && step.key === 'cobblestone';
+    stoneRouteOwnsRecovery = surfaceStone || quarry?.inside() === true;
+    if (quarry?.inside() && (shouldStore || !surfaceStone)) return leaveSurfaceQuarry(ctx);
+    if (!surfaceStone) quarryNeeded = false;
+    if (shouldStore) {
       // The last trip home also empties the bag of ore found on the way.
       return (await climbOut(ctx)) || store(ctx, carried, { loot: !step });
     }
@@ -655,11 +728,13 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     recover() {
       blacklist.clear();
       memory.pathFailures = 0;
-      memory.recovery = true;
+      memory.recovery = !stoneRouteOwnsRecovery;
     },
     memory,
     owed,
-    isDone: (state) => memory.chest !== null && owed(state?.inventory).length === 0,
+    ownsRouteRecovery: () => stoneRouteOwnsRecovery || quarry?.inside() === true,
+    leaveSurfaceQuarry,
+    isDone: (state) => memory.chest !== null && !quarry?.inside() && owed(state?.inventory).length === 0,
     progress: () => memory.steps,
     async run(ctx) {
       // Home coordinates belong to the overworld. A failed Nether approach
@@ -672,7 +747,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         ctx.record('recovery', { at: bot.entity.position.floored(), dimension: 'the_nether', delegate: 'nether_trip' });
         return runOnce(ctx);
       }
-      if (memory.pathFailures >= 2) {
+      if (memory.pathFailures >= 2 && !stoneRouteOwnsRecovery) {
         memory.pathFailures = 0;
         ctx.record('unstick', { at: bot.entity.position.floored() });
         return actions.unstick(bot, ctx);

@@ -280,6 +280,99 @@ test('surface resupply filters buried blocks before Mineflayer caps the stone se
   assert.deepEqual(selected, ['8,0,2']);
 });
 
+test('surface resupply replaces failed exposed stone pickup with a nearby quarry and exits before crafting', async () => {
+  const sim = simulate({ failRate: 0 });
+  const chest = new Vec3(0, 72, 0);
+  const table = chest.offset(1, 0, 0);
+  const origin = new Vec3(5, 72, -5);
+  const remote = new Vec3(27, 72, -5);
+  const position = (p) => `${p.x},${p.y},${p.z}`;
+  const placed = new Map([[position(chest), 'chest'], [position(table), 'crafting_table']]);
+  const pick = { name: 'wooden_pickaxe', type: 1 };
+  const columns = [];
+  const touched = [];
+  const events = [];
+  const cuts = [];
+  sim.bot.entity = { position: origin.offset(.5, 0, .5), onGround: true };
+  const inventoryItems = sim.bot.inventory.items;
+  sim.bot.inventory.items = () => inventoryItems().map((item) => item.name === pick.name ? { ...item, type: pick.type } : item);
+  Object.assign(sim.inventory, { wooden_pickaxe: 1, stick: 1 });
+  sim.bot.companionHomeSite = (p) => Math.abs(p.x) <= 2 && Math.abs(p.z) <= 2;
+  sim.bot.blockAt = (p) => {
+    const name = placed.get(position(p)) || (p.y >= 72 ? 'air' : p.y >= 70 ? 'dirt' : 'stone');
+    return { name, position: p, boundingBox: name === 'air' ? 'empty' : 'block', diggable: name !== 'air',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]], ...(name === 'stone' ? { harvestTools: { [pick.type]: true } } : {}) };
+  };
+  const neighbors = () => columns;
+  const movements = { canDig: true, getNeighbors: neighbors };
+  sim.bot.pathfinder = { movements };
+  const actions = {
+    goTo: async (_bot, _ctx, goal, options) => {
+      const at = new Vec3(goal.x, goal.y, goal.z);
+      columns.splice(0, columns.length, at, remote);
+      assert.ok(movements.getNeighbors(sim.bot.entity.position.floored()).includes(at));
+      assert.equal(movements.getNeighbors(sim.bot.entity.position.floored()).includes(remote), false);
+      assert.equal(options.retryNoProgress, false);
+      touched.push(at);
+      sim.bot.entity.position = at.offset(.5, 0, .5);
+      return { ok: true };
+    },
+    digBlock: async (_bot, _ctx, block) => {
+      assert.ok(movements.companionWalkOnly);
+      assert.ok(!block.position.equals(sim.bot.entity.position.floored().offset(0, -1, 0)));
+      assert.ok(!sim.bot.companionHomeSite(block.position));
+      assert.ok(Math.hypot(block.position.x, block.position.z) <= 24);
+      cuts.push(block.position);
+      placed.set(position(block.position), 'air');
+      return { ok: true };
+    },
+    collectDrops: async (_bot, _ctx, p, match) => {
+      assert.ok(match('cobblestone'));
+      assert.ok(sim.bot.entity.position.distanceTo(p) <= 2);
+      sim.inventory.cobblestone = (sim.inventory.cobblestone || 0) + 1;
+      return { ok: true, gained: 1 };
+    },
+    unstick: async () => assert.fail('recovery quarry must retain its own approach'),
+  };
+  let exposedAttempts = 0;
+  const skills = { ...sim.skills,
+    storeInChest: async (_bot, _ctx, { wants }) => {
+      assert.deepEqual(wants, []);
+      return { ok: true, contents: {} };
+    },
+    gatherOne: async (_bot, _ctx, options) => {
+      exposedAttempts += 1;
+      assert.ok(options.blocks('stone'));
+      assert.ok(movements.companionWalkOnly);
+      assert.equal(options.targetFilter(remote.offset(0, -1, 0)), false);
+      return { ok: false, reason: 'drops_not_collected' };
+    },
+    craft: async (_bot, _ctx, { item }) => {
+      assert.equal(item, 'stone_sword');
+      assert.equal(sim.bot.entity.position.y, 72, 'craft only after the quarry stairs were retraced');
+      assert.ok(sim.inventory.cobblestone >= 2);
+      sim.inventory.stone_sword = 1;
+      return { ok: true };
+    },
+    explore: async () => assert.fail('an unarmed resupply should not explore for cobblestone'),
+  };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, stations: { crafting_table: table },
+    requirements: [{ key: 'stone_sword', count: 1 }], surfaceOnly: true, skills, actions, carry: (key) => key === 'stone_sword' });
+  const ctx = { perceive: sim.perceive, record: (type, data) => events.push([type, data]), signal: new AbortController().signal };
+  for (let n = 0; n < 25 && !goal.isDone(ctx.perceive()); n++) {
+    const result = await goal.run(ctx);
+    assert.equal(result.ok, true, JSON.stringify({ result, last: events.slice(-2) }));
+  }
+  assert.equal(goal.isDone(ctx.perceive()), true);
+  assert.equal(exposedAttempts, 1);
+  assert.equal(events.filter(([type]) => type === 'quarry_start').length, 1);
+  assert.ok(events.some(([type]) => type === 'quarry_exit'));
+  assert.ok(touched.some((p) => p.y < origin.y));
+  assert.ok(cuts.every((p) => p.y >= chest.y - 8));
+  assert.equal(movements.canDig, true);
+  assert.equal(movements.getNeighbors, neighbors);
+});
+
 for (const seed of [1, 2, 3]) {
   test(`cobblestone generator materials end up in the chest from an empty inventory (seed ${seed})`, async () => {
     const sim = simulate({ seed });
