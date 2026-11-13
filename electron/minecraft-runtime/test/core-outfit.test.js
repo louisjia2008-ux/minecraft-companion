@@ -5,6 +5,7 @@ const { createOutfitGoal } = require('../core/goals/outfit');
 const { createGatherMaterialsGoal } = require('../core/goals/gatherMaterials');
 const { perceive } = require('../core/perception');
 const { createStarterHouse } = require('../core/blueprints/starterHouse');
+const { sleep } = require('../core/confirm');
 const { Vec3 } = require('vec3');
 
 function fakeBot(items = []) {
@@ -171,10 +172,61 @@ test('critical resupply returns from spent wheat to closed shelter and leaves on
 
   controller = new AbortController();
   blocked = true;
+  // A nominal ray obstruction is not enough to leave shelter this close to a shooter.
+  const nearbyWait = { ...ctx, signal: controller.signal };
+  setTimeout(() => controller.abort(), 10);
+  await assert.rejects(goal.run(nearbyWait), { code: 'aborted' });
+  assert.equal(operations.at(-1), 'close');
+  delete bot.entities[2];
+  controller = new AbortController();
   await goal.run(ctx);
   await assert.rejects(goal.run(ctx), { code: 'aborted' });
   assert.equal(operations.at(-1), 'open');
   assert.deepEqual(records.at(-1), ['resupply_food_target', { kind: 'wheat', position: crop }]);
+  await goal.dispose();
+});
+
+test('critical bread return rejects a known shooter in planning and cancels for a newly observed one', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const inside = new Vec3(3.5, 64, 3.5);
+  const farm = new Vec3(-10.5, 64, 3.5);
+  const risk = { x: -5, y: 64, z: 3 };
+  const bypass = { x: -9, y: 64, z: 9 };
+  const shooter = { id: 42, name: 'skeleton', position: new Vec3(-4.5, 64, -11.5) };
+  const items = [];
+  const bot = Object.assign(fakeBot(items), { health: 2.67, food: 10, game: { dimension: 'overworld' },
+    entity: { position: inside }, entities: {}, time: { timeOfDay: 3000 },
+    blockAt: () => ({ name: 'air', boundingBox: 'empty' }), world: { raycast: () => ({ name: 'stone' }) } });
+  const neighbors = () => [risk, bypass];
+  bot.pathfinder = { movements: { getNeighbors: neighbors } };
+  let walk = 0;
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor,
+      stations: { crafting_table: house.furniture.crafting_table.position } },
+    actions: { goNear: async (_bot, ctx) => {
+      walk += 1;
+      const from = walk === 1 ? { x: -6, y: 64, z: 3 } : { x: -10, y: 64, z: 3 };
+      if (walk === 1) {
+        assert.deepEqual(bot.pathfinder.movements.getNeighbors(from), [bypass]);
+        return { ok: false, reason: 'NoPath' };
+      }
+      assert.deepEqual(bot.pathfinder.movements.getNeighbors(from), [risk, bypass]);
+      bot.entity.position = new Vec3(-4.5, 64, 3.5);
+      bot.entities[42] = shooter;
+      await sleep(1000, ctx.signal);
+      assert.fail('the unguarded inbound action should not finish');
+    } }, skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }) } });
+  const records = [];
+  const ctx = { perceive: () => perceive(bot), record: (type, detail) => records.push([type, detail]) };
+  await goal.run(ctx);
+  items.push({ name: 'wheat', count: 3 });
+  bot.entity.position = farm;
+  bot.entities[42] = shooter;
+  assert.deepEqual(await goal.run(ctx), { ok: true, waited: true, reason: 'unsafe_resupply_food_route' });
+  bot.entities = {};
+  assert.deepEqual(await goal.run(ctx), { ok: true, waited: true, reason: 'unsafe_resupply_food_route' });
+  assert.deepEqual(records.at(-1), ['resupply_route_interrupted', { leg: 'return_for_bread', position: new Vec3(-5, 64, 3) }]);
+  assert.equal(bot.pathfinder.movements.getNeighbors, neighbors);
   await goal.dispose();
 });
 

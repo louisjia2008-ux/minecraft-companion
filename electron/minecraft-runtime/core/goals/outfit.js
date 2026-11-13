@@ -37,6 +37,9 @@ const HOME_HEALTH = 10;
 const REGEN_FOOD = 18;
 const LOCAL_FOOD_RADIUS = 24;
 const RANGED_HOSTILES = new Set(['skeleton', 'stray', 'bogged', 'pillager', 'witch']);
+const RANGED_RANGE = 16;
+const MELEE_RANGE = 8;
+const UNSAFE_ROUTE = 'unsafe_resupply_food_route';
 
 function createKit({ bot, items, kb = KNOWLEDGE, resupplyFood }) {
   const carried = (state, r) => Math.min(r.count, countKey(r.key, state.inventory, kb));
@@ -98,10 +101,28 @@ function resupplyShelter(bot, home, actions, skills) {
   const cube = [0, 0, 0, 1, 1, 1];
   const full = (block) => block?.shapes?.some((shape) =>
     shape.length === cube.length && shape.every((value, index) => value === cube[index]));
-  const sealed = ({ position: at, hostiles = [] }) => bot.health > 0 && dimension(bot) === 'overworld'
-    && atResupplyHome({ position: at }, home) && doorOpen() === false
-    && !hostiles.some((hostile) => atResupplyHome({ position: hostile.position }, home) || hostile.distance <= 2)
-    && shell.every((p) => full(bot.blockAt(p)));
+  const insideIntact = ({ position: at, hostiles = [] }) => bot.health > 0 && dimension(bot) === 'overworld'
+    && atResupplyHome({ position: at }, home)
+    && !hostiles.some((hostile) => atResupplyHome({ position: hostile.position }, home) || hostile.position.distanceTo(at) <= 2);
+  // Perception checks the shell directly. Path search can consider many
+  // nodes in one tick, so reuse only a brief snapshot of static blocks there.
+  let checkedUntil = 0;
+  let intact = false;
+  const checkShell = () => shell.every((p) => full(bot.blockAt(p)));
+  const covered = (state) => {
+    if (!insideIntact(state)) return false;
+    if (Date.now() >= checkedUntil) {
+      checkedUntil = Date.now() + 100;
+      intact = checkShell();
+    }
+    if (!intact) return false;
+    if (doorOpen() === false) return true;
+    const a = home.anchor;
+    // The starter door faces north. Two blocks deep and off its centreline,
+    // the solid wall shields the body from a direct shot through the opening.
+    return state.position.z >= a.z + 2 && Math.abs(state.position.x - position.x - .5) >= 2;
+  };
+  const sealed = (state) => doorOpen() === false && insideIntact(state) && checkShell();
   let lastWait = null;
   let nextBed = 0;
   const waitInside = async (ctx, waitReason = 'sealed_until_daylight') => {
@@ -129,7 +150,7 @@ function resupplyShelter(bot, home, actions, skills) {
     ctx.record('resupply_door', { open, confirmed });
     return confirmed ? { ok: true } : fail('resupply_door_unchanged');
   };
-  return { position, doorOpen, sealed, waitInside, setDoor };
+  return { position, doorOpen, covered, sealed, waitInside, setDoor };
 }
 
 // Base supplies use existing dry paths. Explicit harvesting still goes
@@ -147,7 +168,7 @@ async function onSurfacePath(bot, home, run, accept = () => true) {
     return neighbors.call(this, node, ...args).filter((move) => {
       if (move.y < floor) return false;
       const p = new Vec3(move.x, move.y, move.z);
-      return accept(p.offset(.5, 0, .5)) && [-1, 0, 1].every((dy) => {
+      return accept(p.offset(.5, 0, .5), new Vec3(node.x + .5, node.y, node.z + .5)) && [-1, 0, 1].every((dy) => {
         const block = bot.blockAt(p.offset(0, dy, 0));
         return block && !/lava|water|fire|magma|campfire|cactus|powder_snow|bubble_column/.test(block.name);
       });
@@ -164,12 +185,15 @@ async function onSurfacePath(bot, home, run, accept = () => true) {
 
 function localFoodSafety(bot, home) {
   const centre = new Vec3(home.centre.x + .5, home.centre.y, home.centre.z + .5);
-  const local = (position, radius = LOCAL_FOOD_RADIUS) => position.y >= centre.y - 7
-    && Math.hypot(position.x - centre.x, position.z - centre.z) <= radius;
-  const exposed = (position, hostiles) => hostiles.some((hostile) => {
+  const homeDistance = (position) => Math.hypot(position.x - centre.x, position.z - centre.z);
+  const local = (position, radius = LOCAL_FOOD_RADIUS) => position.y >= centre.y - 7 && homeDistance(position) <= radius;
+  const threatRange = (hostile) => RANGED_HOSTILES.has(hostile.name) ? RANGED_RANGE : MELEE_RANGE;
+  const exposed = (position, hostiles, critical = false) => hostiles.some((hostile) => {
     const range = hostile.position.distanceTo(position);
-    if (range <= 8) return true;
-    if (range > 16 || !RANGED_HOSTILES.has(hostile.name)) return false;
+    if (range <= MELEE_RANGE) return true;
+    if (range > threatRange(hostile)) return false;
+    if (critical) return true;
+
     if (typeof bot.world?.raycast !== 'function') return true;
     const from = hostile.position.offset(0, 1.5, 0);
     const delta = position.offset(0, 1.5, 0).minus(from);
@@ -179,7 +203,7 @@ function localFoodSafety(bot, home) {
   let observed = [];
   const threats = (state, refresh = false) => {
     if (refresh || Date.now() >= refreshed) {
-      refreshed = Date.now() + 200;
+      refreshed = Date.now() + 100;
       // A skeleton at the farm can be in range of the next step while still
       // outside the ordinary perception radius from the house.
       observed = Object.values(bot.entities || {}).filter((entity) => entity.position && entity.isValid !== false
@@ -187,8 +211,8 @@ function localFoodSafety(bot, home) {
     }
     return [...observed, ...(state.hostiles || []).filter((hostile) => hostile.selfAggressor)];
   };
-  const safe = (position, hostiles) => local(position) && !exposed(position, hostiles);
-  return { local, exposed, safe, threats, centre };
+  const safe = (position, hostiles) => local(position) && !exposed(position, hostiles, true);
+  return { local, exposed, safe, threats, threatRange, homeDistance, centre };
 }
 
 function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) {
@@ -206,7 +230,7 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) {
     const inventory = state.inventory;
     if (home.stations?.crafting_table && countKey('wheat', inventory, kb) >= 3) return { kind: 'bread' };
     const hostiles = critical ? safety.threats(state) : [];
-    const permitted = critical ? (p) => safety.local(p, LOCAL_FOOD_RADIUS - 2) && !safety.exposed(p, hostiles)
+    const permitted = critical ? (p) => safety.local(p, LOCAL_FOOD_RADIUS - 2) && !safety.exposed(p, hostiles, true)
       : (p) => p.y >= home.centre.y - 7;
     for (const [key, plot] of harvestedPlots) {
       const stage = farming.plotState(bot, plot);
@@ -315,8 +339,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const inside = atResupplyHome(state, home);
     const doorstep = shelter?.position.offset(.5, 0, -1.5);
     const nearbyHostiles = needsProtection ? safety.threats(state, true) : [];
-    const threatened = needsProtection && (doorstep && safety.exposed(doorstep, nearbyHostiles)
-      || critical && !inside && safety.exposed(state.position, nearbyHostiles));
+    const threatened = needsProtection && (doorstep && safety.exposed(doorstep, nearbyHostiles, critical)
+      || critical && !inside && safety.exposed(state.position, nearbyHostiles, true));
     const waitForDay = needsProtection && (state.isDay === false || threatened);
     const carriedFood = countKey('food', state.inventory, kb);
     const foodTarget = checkedChest && needsProtection && state.food < REGEN_FOOD && carriedFood === 0 && !waitForDay
@@ -324,17 +348,90 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const waitForFood = foodTarget?.kind === 'wait';
     const waitForHealing = critical && state.food >= REGEN_FOOD;
     const holdShelter = waitForDay || waitForFood || waitForHealing || critical && routeInterrupted;
-    let guardFoodPath = false;
-    const safeStep = (position) => !guardFoodPath || atResupplyHome({ position }, home)
-      || safety.safe(position, safety.threats(state));
+    // All low-health local travel uses the same live checks. A return may
+    // back away from a threat already beside the starting cell, but cannot
+    // move closer to it or enter another shooter's range.
+    let routeHome = false;
+    let deniedStep = false;
+    const radius = returned ? Math.max(LOCAL_FOOD_RADIUS, safety.homeDistance(state.position) + 1) : Infinity;
+    let scannedAt = 0;
+    let observed = nearbyHostiles;
+    const activeThreats = () => {
+      if (Date.now() >= scannedAt) {
+        scannedAt = Date.now() + 100;
+        observed = safety.threats(ctx.perceive(), true);
+      }
+      return observed;
+    };
+    const cover = (position, hostiles) => shelter?.covered({ position, hostiles }) === true;
+    const safeStep = (position, from) => {
+      if (!critical) return true;
+      if (safety.homeDistance(position) > radius) return false;
+      const hostiles = activeThreats();
+      if (atResupplyHome({ position }, home) && cover(position, hostiles)) return true;
+      const accepted = hostiles.every((hostile) => {
+        const distance = position.distanceTo(hostile.position);
+        const range = safety.threatRange(hostile);
+        return distance > range || routeHome && from && from.distanceTo(hostile.position) <= range
+          && distance > from.distanceTo(hostile.position) + .05;
+      });
+      deniedStep ||= !accepted;
+      return accepted;
+    };
+    const guarded = async (label, run, homebound = false) => {
+      if (!critical) return run(ctx);
+      routeHome = homebound;
+      deniedStep = false;
+      const origin = bot.entity.position.clone();
+      const previous = new Map(activeThreats().map((threat) => [threat.id, origin.distanceTo(threat.position)]));
+      const route = new AbortController();
+      const signal = ctx.signal ? AbortSignal.any([ctx.signal, route.signal]) : route.signal;
+      let last = origin;
+      let safetyBlocked = false;
+      const check = () => {
+        const here = bot.entity.position;
+        const hostiles = activeThreats();
+        if (cover(here, hostiles)) { last = here.clone(); return; }
+        const moving = here.distanceTo(last) > .15;
+        for (const threat of hostiles) {
+          const distance = here.distanceTo(threat.position);
+          if (distance <= safety.threatRange(threat) && (!homebound || !previous.has(threat.id)
+            || previous.get(threat.id) > safety.threatRange(threat)
+            || moving && distance < last.distanceTo(threat.position) - .1)) {
+            route.abort(UNSAFE_ROUTE);
+            return;
+          }
+        }
+        if (safety.homeDistance(here) > radius) route.abort(UNSAFE_ROUTE);
+        if (moving) last = here.clone();
+      };
+      const monitor = setInterval(check, 100);
+      try {
+        check();
+        if (signal.aborted) throw abortError(signal);
+        const result = await run({ ...ctx, signal });
+        if (signal.aborted) throw abortError(signal);
+        if (!result?.ok && deniedStep && ['NoPath', 'Timeout', 'path_timeout', 'no_progress', 'not_arrived'].includes(result?.reason)) safetyBlocked = true;
+        if (!safetyBlocked) return result;
+      } catch (error) {
+        if (!(isAbort(error) && route.signal.aborted && !ctx.signal?.aborted)) throw error;
+      } finally {
+        clearInterval(monitor);
+      }
+      routeInterrupted = true;
+      ctx.record('resupply_route_interrupted', { leg: label, position: bot.entity.position.floored() });
+      await sleep(500, ctx.signal);
+      return { ok: true, waited: true, reason: UNSAFE_ROUTE };
+    };
     return onSurfacePath(bot, home, async () => {
       if (!returned || completeKit || holdShelter || foodTarget?.kind === 'bread') {
         if (!inside) {
+          const goHome = (action) => guarded(foodTarget?.kind === 'bread' ? 'return_for_bread' : 'return_home', action, true);
           if (shelter?.doorOpen() === false) {
-            if (actions.withinReach(bot, shelter.position)) return shelter.setDoor(ctx, true);
-            return actions.goNear(bot, ctx, doorstep, 1, { timeoutMs: 30000 });
+            if (actions.withinReach(bot, shelter.position)) return goHome((scoped) => shelter.setDoor(scoped, true));
+            return goHome((scoped) => actions.goNear(bot, scoped, doorstep, 1, { timeoutMs: 30000 }));
           }
-          return actions.goNear(bot, ctx, safety.centre, 1, { timeoutMs: 90000 });
+          return goHome((scoped) => actions.goNear(bot, scoped, safety.centre, 1, { timeoutMs: 90000 }));
         }
         if (!returned) {
           returned = true;
@@ -345,7 +442,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         if (shelter.doorOpen() === true) {
           if (!actions.withinReach(bot, shelter.position)) {
             const insideDoor = shelter.position.offset(.5, 0, 1.5);
-            return actions.goNear(bot, ctx, insideDoor, 1, { timeoutMs: 15000 });
+            return guarded('close_shelter', (scoped) => actions.goNear(bot, scoped, insideDoor, 1, { timeoutMs: 15000 }));
           }
           return shelter.setDoor(ctx, false);
         }
@@ -354,12 +451,13 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       if (!checkedChest) {
         const wanted = items.filter(({ key, count }) => countKey(key, state.inventory, kb) < count);
         if (wanted.length) {
-          const result = await skills.takeItems(bot, ctx, { position: home.chest,
+          const result = await guarded('read_home_chest', (scoped) => skills.takeItems(bot, scoped, { position: home.chest,
             itemMatch: (name) => wanted.some(({ key }) => kb[key].match(name))
               || (name === 'water_bucket' && critical && !state.inventory.water_bucket)
               || /^(stick|wheat|cobblestone|cobbled_deepslate|coal|charcoal)$/.test(name)
-              || kb.log.match(name) || kb.planks.match(name) });
+              || kb.log.match(name) || kb.planks.match(name) }));
           ctx.record('resupply_chest_read', { ok: result.ok, reason: result.reason, taken: result.taken });
+          if (result.waited) return result;
           if (!result.ok && result.reason !== 'chest_empty' && result.reason !== 'chest_missing') return result;
         }
         checkedChest = true;
@@ -369,7 +467,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         if (state.food < REGEN_FOOD) {
           if (carriedFood > 0) return actions.eat(bot, ctx);
           if (home.stations?.crafting_table && countKey('wheat', state.inventory, kb) >= 3 && inside) {
-            return resupplyFood.run(ctx, { kind: 'bread' });
+            return guarded('craft_bread', (scoped) => resupplyFood.run(scoped, { kind: 'bread' }));
           }
         }
         if (holdShelter) {
@@ -392,27 +490,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           return shelter.setDoor(ctx, true);
         }
         if (!critical) return resupplyFood.run(ctx, foodTarget);
-        guardFoodPath = true;
         const { kind, plot, position } = foodTarget;
         ctx.record('resupply_food_target', { kind, position: position || plot });
-        if (ctx.signal?.aborted) throw abortError(ctx.signal);
-        // The planned route can become exposed when a mob moves after A*.
-        const route = new AbortController();
-        const signal = ctx.signal ? AbortSignal.any([ctx.signal, route.signal]) : route.signal;
-        const monitor = setInterval(() => {
-          if (!safeStep(bot.entity.position)) route.abort('unsafe_resupply_food_route');
-        }, 200);
-        try {
-          return await resupplyFood.run({ ...ctx, signal }, foodTarget);
-        } catch (error) {
-          if (isAbort(error) && route.signal.aborted && !ctx.signal?.aborted) {
-            routeInterrupted = true;
-            return fail('unsafe_resupply_food_route');
-          }
-          throw error;
-        } finally {
-          clearInterval(monitor);
-        }
+        return guarded(kind, (scoped) => resupplyFood.run(scoped, foodTarget));
       }
       if (shelter?.doorOpen() === false && inside) {
         clearShelter();
