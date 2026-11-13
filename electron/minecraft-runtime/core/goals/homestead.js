@@ -368,7 +368,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         };
         if (quarry.active()) return cut();
         const found = await surface.walk(() => skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match,
-          blacklist, exclude: nearHouseColumn, radius: 32, ...surface.gather(false) }));
+          blacklist, exclude: (p) => nearHouseColumn(p) || quarry.protectsFloor(p), radius: 32, ...surface.gather(false) }));
         return found.reason === 'no_target_in_range' || STONE_ROUTE_FAILURES.has(found.reason) ? cut() : found;
       }
       case 'smelt': {

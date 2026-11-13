@@ -359,7 +359,7 @@ test('homestead never gathers stone at the deep open-to-sky starting position', 
   assert.deepEqual(result, { ok: true, waited: true, reason: 'stone_surface_wait' });
 });
 
-test('unfinished site fills do not interrupt an active stone quarry', async () => {
+test('homestead finishes the active stone quarry and protects its floor from exposed gathering', async () => {
   const sim = simulate({ failRate: 0 });
   const anchor = { x: 0, y: 64, z: 0 };
   const hole = createStarterHouse(anchor).foundation[0];
@@ -410,4 +410,24 @@ test('unfinished site fills do not interrupt an active stone quarry', async () =
   assert.equal((await goal.run(ctx)).ok, true);
   assert.ok(seen('quarry_exit'));
   assert.equal(seen('generic_surface'), false);
+
+  const entry = events.find((event) => event.type === 'quarry_start').position;
+  const entryFloor = entry.offset(0, -1, 0);
+  const exposedStone = entryFloor.offset(0, 0, -12);
+  blocks.set(key(entryFloor), 'stone');
+  blocks.set(key(exposedStone), 'stone');
+  timeOfDay = 6000;
+  for (let i = 0; i < 80 && !seen('quarry_blocked'); i += 1) await goal.run(ctx);
+  assert.equal(events.find((event) => event.type === 'quarry_blocked')?.reason, 'quarry_exhausted');
+
+  let checkedExposedTargets = false;
+  sim.skills.gatherOne = async (_bot, _ctx, { exclude }) => {
+    assert.ok(sim.bot.entity.position.floored().equals(entry));
+    assert.equal(exclude(entryFloor), true);
+    assert.equal(exclude(exposedStone), false);
+    checkedExposedTargets = true;
+    return { ok: true };
+  };
+  for (let i = 0; i < 8 && !checkedExposedTargets; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(checkedExposedTargets);
 });
