@@ -7,6 +7,7 @@ const { goals } = require('mineflayer-pathfinder');
 const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const farming = require('../farming');
+const { isObservedSelfAggressor } = require('../../vendor/server/minecraft/entitySemantics');
 const { KNOWLEDGE, countKey } = require('../knowledge');
 const { createBlacklist, posKey } = require('../blacklist');
 const { applyWalkOnlyMovements, dimension } = require('../nether');
@@ -21,6 +22,8 @@ const SCOUT_RINGS = [HOME_RADIUS, 96, 144, 192];
 const SCOUT_LIMIT_MS = 180000;
 const SCOUT_STEPS = 12;
 const DIRECT_HOME_RADIUS = 28;
+const RETREAT_CLEARANCE = 8;
+const RETREAT_MELEE = new Set(['spider', 'cave_spider', 'zombie', 'zombie_villager', 'husk', 'drowned', 'silverfish', 'endermite']);
 const DUSK = 12542;
 const FIELD_MARGIN = 5;
 const MAX_RESERVE_PLOTS = 24;
@@ -85,6 +88,22 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   const onDryGround = () => bot.entity.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava
     && bodyClear(bot.entity.position);
   const threatsNear = (state) => (state.hostiles || []).some(({ distance }) => distance <= 16);
+  const distantMelee = (h) => {
+    const entity = bot.entities?.[h.id];
+    const flags = bot.registry?.entitiesByName?.[h.name]?.metadataKeys?.indexOf('mob_flags') ?? -1;
+    return h.position && RETREAT_MELEE.has(h.name) && !h.selfAggressor && !isObservedSelfAggressor(entity)
+      && !(flags >= 0 && (entity?.metadata?.[flags] & 4));
+  };
+  const retreatThreats = (state) => (state.hostiles || []).filter(({ distance }) => distance <= 16);
+  const canWithdraw = (state) => state.health >= 12 && retreatThreats(state).every((h) => h.distance > RETREAT_CLEARANCE && distantMelee(h));
+  const awayFromThreats = (hostiles, from, to) => hostiles.every((h) => {
+    if (!distantMelee(h) || to.distanceTo(h.position) <= RETREAT_CLEARANCE) return false;
+    const start = from.offset(0, -from.y, 0);
+    const end = to.offset(0, -to.y, 0);
+    const threat = h.position.offset(0, -h.position.y, 0);
+    return end.distanceTo(threat) >= start.distanceTo(threat) - .02
+      && start.plus(end).scale(.5).distanceTo(threat) >= start.distanceTo(threat) - .02;
+  });
   const wait = async (ctx, reason) => {
     await sleep(1000, ctx.signal);
     return { ok: true, waited: true, reason };
@@ -141,6 +160,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
           const edge = from.plus(p).scale(.5);
           edge.y = Math.min(from.y, p.y);
           if (!bodyClear(edge.offset(.5, 0, .5))) return false;
+          if (route.withdraw && !awayFromThreats(route.withdraw(), from.offset(.5, 0, .5), p.offset(.5, 0, .5))) return false;
         }
         if (route.pickup?.equals(p)) {
           const from = new Vec3(node.x, node.y, node.z);
@@ -199,10 +219,10 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   };
   const scoutDelay = () => ({ ok: true, waited: true });
 
-  async function scoutWalk(ctx, to, label) {
+  async function scoutWalk(ctx, to, label, validate = () => true) {
     const from = bot.entity.position.floored();
     if (!onDryGround() || !exposed(to)) return false;
-    const arrived = () => onDryGround() && bot.entity.position.floored().equals(to) && exposed(to);
+    const arrived = () => onDryGround() && bot.entity.position.floored().equals(to) && exposed(to) && validate();
     const result = await actions.goTo(bot, ctx, new goals.GoalBlock(to.x, to.y, to.z),
       { arrived, timeoutMs: 6500, retryNoProgress: false });
     const landed = (result.ok || result.reason === 'not_arrived')
@@ -270,6 +290,48 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       if (moved.ok && distance(bot.entity.position) < distance(here) - 3) scout.trail.length = 0;
     }
     return scoutDelay();
+  }
+
+  async function withdrawFromMelee(ctx, from, route) {
+    // Only use a previously reached landing while a threat is nearby.
+    const to = scout.trail.findLast((p) => p.distanceTo(from) >= 2);
+    if (!to || from.distanceTo(to) > SCOUT_STEPS + 2) return wait(ctx, 'expedition_food_unsafe');
+    const centre = to.offset(.5, 0, .5);
+    let snapshot = null, sampledAt = 0;
+    const observe = (refresh = false) => {
+      if (refresh || Date.now() >= sampledAt) {
+        sampledAt = Date.now() + 75;
+        snapshot = ctx.perceive();
+      }
+      return snapshot;
+    };
+    route.withdraw = () => retreatThreats(observe());
+    const began = bot.entity.position.clone();
+    if (!awayFromThreats(route.withdraw(), began, centre)) return wait(ctx, 'expedition_food_unsafe');
+    const abort = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, abort.signal]) : abort.signal;
+    let previous = began;
+    const monitor = setInterval(() => {
+      const live = observe(true);
+      const at = bot.entity.position;
+      if (live.inWater || bot.entity.isInLava || !bodyClear(at) || !canWithdraw(live)
+        || !awayFromThreats(retreatThreats(live), previous, at)) abort.abort('expedition_food_unsafe');
+      previous = at.clone();
+    }, 100);
+    try {
+      if (await scoutWalk({ ...ctx, signal }, to, 'expedition_food_scout_withdraw', () => canWithdraw(observe(true)))) {
+        scout.trail.length = scout.trail.indexOf(to);
+      } else {
+        return wait(ctx, 'expedition_food_unsafe');
+      }
+      return scoutDelay();
+    } catch (error) {
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      if (!abort.signal.aborted) throw error;
+      return wait(ctx, 'expedition_food_unsafe');
+    } finally {
+      clearInterval(monitor);
+    }
   }
 
   async function scoutAshore(ctx, here) {
@@ -360,7 +422,9 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const here = bot.entity.position;
     const feet = here.floored();
     if (dimension(bot) !== 'overworld') return { ok: false, reason: 'expedition_food_wrong_dimension' };
-    if (state.health <= 6 || threatsNear(state) || bot.entity.isInLava) return wait(ctx, 'expedition_food_unsafe');
+    const hostile = threatsNear(state);
+    if (state.health <= 6 || bot.entity.isInLava
+      || hostile && (!scout || !onDryGround() || !exposed(feet) || !canWithdraw(state))) return wait(ctx, 'expedition_food_unsafe');
     if (state.inWater || bot.entity.isInWater) {
       return scout || distance(feet) <= SCOUT_RINGS.at(-1) ? scoutAshore(ctx, here) : wait(ctx, 'expedition_food_unsafe');
     }
@@ -382,11 +446,12 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const checkChest = !checkedChest || fuelNeeded;
     const homeTask = cook || bake || checkChest;
     const scouting = typeof bot.pathfinder?.getPathFromTo === 'function';
-    returning ||= scout ? homeTask || !scoutFit(state) || !scoutTimeLeft(state) : distance(feet) > HOME_RADIUS;
+    returning ||= scout ? hostile || homeTask || !scoutFit(state) || !scoutTimeLeft(state) : distance(feet) > HOME_RADIUS;
     const huntEdge = scout ? SCOUT_RINGS[scout.ring] : HOME_RADIUS;
     const edge = Math.max(huntEdge, returning ? distance(feet) + 4 : 0);
     const route = { pickup: null, scouting: Boolean(scout) };
     return dryWalk(async () => {
+      if (hostile) return withdrawFromMelee(ctx, feet, route);
       if (homeTask || returning) {
         const inside = Math.abs(here.x - centre.x - .5) < 2.6 && Math.abs(here.z - centre.z - .5) < 2.6
           && Math.abs(here.y - centre.y) < .8;

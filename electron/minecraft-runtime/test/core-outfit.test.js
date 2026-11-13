@@ -969,6 +969,70 @@ test('expedition stock gets ashore after a wet restart and follows the supported
   assert.deepEqual(visits, [[2, 64, 2]]);
 });
 
+test('expedition scout can withdraw from a distant spider while close, ranged and attacking mobs still stop the trip', async (t) => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const farm = require('../core/farming');
+  const at = new Vec3(10, 64, 2);
+  const out = at.offset(0, 0, 10);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const walked = [];
+  const events = [];
+  let hostiles = [];
+  let hunts = 0;
+  const native = (p) => [p.offset(0, 0, 1), p.offset(0, 0, -1)];
+  const movements = { getNeighbors: native };
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
+    registry: { entitiesByName: { spider: { metadataKeys: ['mob_flags'] } } },
+    entities: { 1: { metadata: [0] } },
+    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true },
+    blockAt: (p) => p.y === 63 ? grass : air,
+    pathfinder: { movements, *getPathFromTo() { yield { result: { path: [out] } }; } },
+  });
+  t.mock.method(farm, 'plotState', () => 'growing');
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: { ...home, stations: { crafting_table: home.centre } },
+    farmPlots: [at.offset(1, -1, 0)], actions: {
+      async goTo(_bot, _ctx, destination) {
+        const to = new Vec3(destination.x, destination.y, destination.z);
+        walked.push(to);
+        if (to.equals(at)) {
+          assert.deepEqual(movements.getNeighbors(out), [out.offset(0, 0, -1)],
+            'the swept route can retreat, but cannot take an edge toward the spider');
+        }
+        bot.entity.position = to.offset(.5, 0, .5);
+        return { ok: true };
+      },
+    }, skills: {
+      takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async () => { hunts++; return { ok: false, reason: 'no_mob_in_range' }; },
+    } });
+  const ctx = { perceive: () => ({ inventory: { cooked_chicken: 3 }, health: 20, food: 18,
+    isDay: true, timeOfDay: 2000, hostiles }), record: (type, data) => events.push({ type, ...data }) };
+  await goal.run(ctx);
+  bot.entity.position = at.offset(.5, 0, .5);
+  const spider = { id: 1, name: 'spider', position: out.offset(.5, 0, 12.5), distance: 12 };
+  hostiles = [spider];
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe', 'an idle scout will not set out with a nearby mob');
+  assert.equal(hunts, 0);
+  hostiles = [];
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(walked, [out]);
+  for (const hostile of [{ ...spider, distance: 7 }, { ...spider, name: 'skeleton' }, { ...spider, selfAggressor: true }]) {
+    hostiles = [hostile];
+    assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  }
+  hostiles = [spider];
+  bot.entities[1].metadata[0] = 4;
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  bot.entities[1].metadata[0] = 0;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(walked, [out, at]);
+  assert.equal(hunts, 2, 'no hunts launched while any threat was present');
+  assert.deepEqual(events.map((e) => e.type), ['expedition_food_scout', 'expedition_food_scout_withdraw']);
+  assert.equal(movements.getNeighbors, native);
+});
+
 test('healthy home recovery waits for its growing food reserve instead of exploring and harvests when ripe', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const crop = new Vec3(-10, 64, 3);
