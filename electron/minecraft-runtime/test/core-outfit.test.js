@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createOutfitGoal } = require('../core/goals/outfit');
 const { createGatherMaterialsGoal } = require('../core/goals/gatherMaterials');
 const { perceive } = require('../core/perception');
+const { createStarterHouse } = require('../core/blueprints/starterHouse');
 const { Vec3 } = require('vec3');
 
 function fakeBot(items = []) {
@@ -54,6 +55,54 @@ test('home recovery leaves normal gather idle until it physically returns and re
   await goal.run(ctx);
   await goal.run(ctx);
   assert.deepEqual(operations, ['walk', 'resupply_home_arrived', 'read-chest', 'resupply_chest_read', 'device_materials', 'gather']);
+});
+
+test('critically hurt home recovery closes the real door before nighttime provisioning', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const door = house.furniture.door.position;
+  const roof = new Vec3(3, 66, 3);
+  const bot = Object.assign(fakeBot(), { health: 2.67, food: 0, game: { dimension: 'overworld' },
+    entity: { position: new Vec3(3.5, 64, 3.5) }, entities: {}, time: { timeOfDay: 15000 } });
+  const operations = [];
+  let open = true;
+  let breached = false;
+  bot.blockAt = (p) => {
+    if (p.x === door.x && p.z === door.z && (p.y === door.y || p.y === door.y + 1)) {
+      return { name: 'oak_door', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
+        open, facing: 'north', hinge: 'left' }) };
+    }
+    return p.equals(roof) && breached ? { name: 'air', shapes: [] } : { name: 'cobblestone', shapes: [[0, 0, 0, 1, 1, 1]] };
+  };
+  bot.activateBlock = async () => { open = !open; operations.push(open ? 'open' : 'close'); };
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: { withinReach: () => true },
+    skills: { takeItems: async () => { operations.push('chest'); return { ok: false, reason: 'chest_empty' }; },
+      huntOne: async () => { operations.push('hunt'); return { ok: true }; } } });
+  const controller = new AbortController();
+  const ctx = { perceive: () => perceive(bot), signal: controller.signal, record: (type) => {
+    if (type === 'resupply_shelter_wait') controller.abort();
+  } };
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(operations, ['close', 'chest']);
+  assert.equal(perceive(bot).sheltered, true);
+  breached = true;
+  assert.equal(perceive(bot).sheltered, false, 'live roof breach invalidates cover');
+  breached = false;
+  bot.entities[1] = { id: 1, name: 'zombie', position: new Vec3(5.5, 64, 3.5) };
+  assert.equal(perceive(bot).sheltered, false, 'an interior hostile invalidates cover');
+  bot.entities = {};
+  await assert.rejects(goal.run(ctx), { code: 'aborted' });
+  assert.deepEqual(operations, ['close', 'chest'], 'nighttime hunger must not send the bot outside');
+  bot.time.timeOfDay = 3000;
+  delete ctx.signal;
+  await goal.run(ctx);
+  assert.deepEqual(operations, ['close', 'chest', 'open']);
+  await goal.run(ctx);
+  assert.deepEqual(operations, ['close', 'chest', 'open', 'hunt']);
+  await goal.dispose();
+  assert.equal(bot.companionResupplySheltered, undefined);
 });
 
 for (const { key, slot, existing, target, ingredients } of [

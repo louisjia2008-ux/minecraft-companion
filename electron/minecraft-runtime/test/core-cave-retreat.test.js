@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { Vec3 } = require('vec3');
-const { advanceCaveRetreat, evadeInCave, planRetreat } = require('../core/caveRetreat');
+const { advanceCaveRetreat, evadeInCave, planRetreat, returnFromCave } = require('../core/caveRetreat');
 const { createSurvivalBehaviors } = require('../core/behaviors/survival');
 
 const key = (p) => `${p.x},${p.y},${p.z}`;
@@ -104,4 +104,19 @@ test('emergency evasion takes one supported step toward cover and ignores a deep
   }, threat, (_mob, position) => position.x < 2, () => threat);
   assert.deepEqual(result.to, new Vec3(1, 0, 0));
   assert.deepEqual(receipts.map(([type]) => type), ['cave_evasion_threat', 'cave_evasion_step']);
+});
+
+test('home retreat accepts the plain saved house centre and confirms a grounded arrival', async () => {
+  const { bot, cells } = fixture();
+  cells.set('8,0,0', air);
+  cells.set('8,1,0', air);
+  const home = { x: 8.5, y: 0, z: .5 };
+  const result = await returnFromCave(bot, {}, {
+    async goTo(_bot, _ctx, goal) {
+      assert.deepEqual([goal.x, goal.y, goal.z], [8, 0, 0]);
+      bot.entity.position = new Vec3(8.5, 0, .5);
+      return { ok: true };
+    },
+  }, home);
+  assert.deepEqual(result, { ok: true, atHome: true });
 });

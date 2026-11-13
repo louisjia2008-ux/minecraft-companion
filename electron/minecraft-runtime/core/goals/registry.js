@@ -25,7 +25,7 @@ function homeOf(memory) {
   if (!house) return null;
   const f = house.furniture;
   return { chest: f.chest.position, stations: { crafting_table: f.crafting_table.position, furnace: f.furnace.position },
-    centre: house.interiorCenter, anchor: house.anchor };
+    centre: house.interiorCenter, anchor: house.anchor, door: f.door?.position, bed: f.bed?.position };
 }
 
 // Machines stay off the house (and its doorstep) and off each other.

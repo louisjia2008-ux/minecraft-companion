@@ -1,6 +1,7 @@
 'use strict';
 
 const { goals } = require('mineflayer-pathfinder');
+const { Vec3 } = require('vec3');
 const { abortError, waitUntil } = require('./confirm');
 
 const SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -274,7 +275,7 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat) {
 }
 
 async function returnFromCave(bot, ctx, actions, home, avoid) {
-  const target = home.floored();
+  const target = new Vec3(home.x, home.y, home.z).floored();
   const atHome = (at) => Math.abs(at.y - home.y) <= 2 && Math.hypot(at.x - home.x, at.z - home.z) <= 5
     && standable((p) => bot.blockAt(p), at.floored());
   if (atHome(bot.entity.position) && bot.entity.onGround) return { ok: true, atHome: true };

@@ -18,7 +18,8 @@ const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const farming = require('../farming');
 const { createBlacklist, posKey } = require('../blacklist');
-const { sleep, abortError } = require('../confirm');
+const { createStarterHouse } = require('../blueprints/starterHouse');
+const { sleep, waitUntil, abortError } = require('../confirm');
 const { KNOWLEDGE, countKey } = require('../knowledge');
 const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { upgrades } = require('../armor');
@@ -71,6 +72,58 @@ function atResupplyHome(state, home) {
 
 function homeResupplyReady(state, home) {
   return atResupplyHome(state, home) && state.health >= HOME_HEALTH && state.food >= HOME_FOOD;
+}
+
+function resupplyShelter(bot, home, actions, skills) {
+  if (!home.anchor || !home.door) return null;
+  const position = new Vec3(home.door.x, home.door.y, home.door.z);
+  const upper = position.offset(0, 1, 0);
+  const house = createStarterHouse(home.anchor);
+  const shell = [...house.blocks.map((block) => block.position), ...house.foundation]
+    .map(({ x, y, z }) => new Vec3(x, y, z));
+  const blocks = () => [bot.blockAt(position), bot.blockAt(upper)];
+  const doorOpen = () => {
+    const [low, high] = blocks();
+    const lo = low?.getProperties?.(), hi = high?.getProperties?.();
+    if (!/_door$/.test(low?.name || '') || low.name === 'iron_door' || high?.name !== low.name
+      || lo?.half !== 'lower' || hi?.half !== 'upper' || typeof lo.open !== 'boolean'
+      || lo.open !== hi.open || lo.facing !== hi.facing || lo.hinge !== hi.hinge) return null;
+    return lo.open;
+  };
+  const cube = [0, 0, 0, 1, 1, 1];
+  const full = (block) => block?.shapes?.some((shape) =>
+    shape.length === cube.length && shape.every((value, index) => value === cube[index]));
+  const sealed = ({ position: at, hostiles = [] }) => bot.health > 0 && dimension(bot) === 'overworld'
+    && atResupplyHome({ position: at }, home) && doorOpen() === false
+    && !hostiles.some((hostile) => atResupplyHome({ position: hostile.position }, home) || hostile.distance <= 2)
+    && shell.every((p) => full(bot.blockAt(p)));
+  let lastWait = null;
+  let nextBed = 0;
+  const waitInside = async (ctx) => {
+    const state = ctx.perceive();
+    const reason = sealed(state) ? 'sealed_until_daylight' : 'shelter_unconfirmed';
+    if (lastWait !== reason) ctx.record('resupply_shelter_wait', { reason, position: state.position.floored() });
+    lastWait = reason;
+    const bed = home.bed && new Vec3(home.bed.x, home.bed.y, home.bed.z);
+    if (reason === 'sealed_until_daylight' && state.isDay === false && Date.now() >= nextBed && bed
+      && /_bed$/.test(bot.blockAt(bed)?.name || '') && actions.withinReach(bot, bed)) {
+      nextBed = Date.now() + 20000;
+      const result = await skills.useBed(bot, ctx, { position: bed });
+      if (result.slept === true) return result;
+    }
+    await sleep(2000, ctx.signal);
+    return { ok: true, waited: true };
+  };
+  const setDoor = async (ctx, open) => {
+    if (doorOpen() === open) return null;
+    if (doorOpen() === null) return fail('resupply_door_unconfirmed');
+    if (!actions.withinReach(bot, position)) return fail('resupply_door_out_of_reach');
+    try { await bot.activateBlock(bot.blockAt(position)); } catch (error) { if (isAbort(error)) throw error; }
+    const confirmed = await waitUntil(() => doorOpen() === open, { timeoutMs: 1500, signal: ctx.signal });
+    ctx.record('resupply_door', { open, confirmed });
+    return confirmed ? { ok: true } : fail('resupply_door_unchanged');
+  };
+  return { position, doorOpen, sealed, waitInside, setDoor };
 }
 
 // Base supplies use existing dry paths. Explicit harvesting still goes
@@ -155,13 +208,19 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
 
   goal.recoverAtHome = true;
   const runOutfit = goal.run;
+  const shelter = resupplyShelter(bot, home, actions, skills);
+  const shelterWitness = (state) => shelter?.sealed(state) === true;
+  const clearShelter = () => {
+    if (bot.companionResupplySheltered === shelterWitness) delete bot.companionResupplySheltered;
+  };
   let returned = false;
   let checkedChest = false;
-  const resetRecovery = () => { returned = false; checkedChest = false; };
+  const resetRecovery = () => { returned = false; checkedChest = false; clearShelter(); };
   bot.on?.('death', resetRecovery);
   const disposeOutfit = goal.dispose;
   goal.dispose = () => {
     bot.removeListener?.('death', resetRecovery);
+    clearShelter();
     return disposeOutfit();
   };
   goal.isDone = (state) => returned && dimension(bot) === 'overworld' && homeResupplyReady(state, home) && device.isDone(state);
@@ -178,8 +237,16 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     }
     return onSurfacePath(bot, home, async () => {
       const completeKit = device.isDone(state);
-      if (!returned || completeKit) {
+      const needsProtection = state.health < HOME_HEALTH || state.food < HOME_FOOD;
+      const waitForDay = needsProtection && (state.isDay === false || shelter && state.hostiles?.some((hostile) =>
+        hostile.position.distanceTo(shelter.position) <= 8));
+      if (!returned || completeKit || waitForDay) {
         if (!atResupplyHome(state, home)) {
+          if (shelter?.doorOpen() === false) {
+            if (actions.withinReach(bot, shelter.position)) return shelter.setDoor(ctx, true);
+            const doorstep = shelter.position.offset(.5, 0, -1.5);
+            return actions.goNear(bot, ctx, doorstep, 1, { timeoutMs: 30000 });
+          }
           const { x, y, z } = home.centre;
           return actions.goNear(bot, ctx, new Vec3(x + .5, y, z + .5), 1, { timeoutMs: 90000 });
         }
@@ -187,6 +254,16 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           returned = true;
           ctx.record('resupply_home_arrived', { position: state.position.floored() });
         }
+      }
+      if (shelter && atResupplyHome(state, home) && waitForDay) {
+        if (shelter.doorOpen() === true) {
+          if (!actions.withinReach(bot, shelter.position)) {
+            const insideDoor = shelter.position.offset(.5, 0, 1.5);
+            return actions.goNear(bot, ctx, insideDoor, 1, { timeoutMs: 15000 });
+          }
+          return shelter.setDoor(ctx, false);
+        }
+        bot.companionResupplySheltered = shelterWitness;
       }
       if (!checkedChest) {
         const wanted = items.filter(({ key, count }) => countKey(key, state.inventory, kb) < count);
@@ -204,10 +281,22 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       if (state.food < HOME_FOOD || state.health < HOME_HEALTH) {
         if (state.food < 18) {
           if (countKey('food', state.inventory, kb) > 0) return actions.eat(bot, ctx);
+          if (home.stations?.crafting_table && countKey('wheat', state.inventory, kb) >= 3 && atResupplyHome(state, home)) {
+            return skills.craft(bot, ctx, { item: 'bread', times: 1, tablePosition: home.stations.crafting_table });
+          }
+          if (shelter && waitForDay) return shelter.waitInside(ctx);
+          if (shelter?.doorOpen() === false && atResupplyHome(state, home)) {
+            clearShelter();
+            return shelter.setDoor(ctx, true);
+          }
           return resupplyFood(ctx);
         }
         await sleep(2000, ctx.signal);
         return { ok: true, waited: true };
+      }
+      if (shelter?.doorOpen() === false && atResupplyHome(state, home)) {
+        clearShelter();
+        return shelter.setDoor(ctx, true);
       }
       return runOutfit(ctx);
     });

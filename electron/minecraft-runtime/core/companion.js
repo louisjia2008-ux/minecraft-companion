@@ -166,7 +166,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   const nightRest = createNightRest({ bot, home: () => {
     const house = director?.memory.homestead?.memory?.house;
     // Building the house handles its own nights; pearls are hunted in the dark.
-    if (!house || ['homestead', 'hunt_pearls'].includes(brain?.status().goal?.name)) return null;
+    if (!house || goalOwner?.goal?.recoverAtHome === true
+      || ['homestead', 'hunt_pearls'].includes(brain?.status().goal?.name)) return null;
     // Nor while a goal hunts a mob that only comes out at night (spiders for a bow's string):
     // sleeping skips the very night it waits for. Only armed and armoured, though: respawned
     // empty-handed it went straight back out and died again and again.
