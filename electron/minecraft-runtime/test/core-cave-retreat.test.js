@@ -35,6 +35,19 @@ test('a liquid touching a proposed cut rules out that heading', () => {
   assert.notEqual(plan.target.x, 1);
 });
 
+test('a projected staircase into a chamber loses to a narrower cut with solid side cover', () => {
+  const { bot, cells, origin } = fixture();
+  const home = new Vec3(15, 8, 0);
+  assert.equal(planRetreat(bot, origin, home).target.x, 1);
+  for (let x = 2; x <= 5; x += 1) for (let y = 1; y <= 6; y += 1) {
+    for (let z = -2; z <= 2; z += 1) cells.set(`${x},${y},${z}`, air);
+  }
+  for (let y = 3; y <= 6; y += 1) cells.set(`1,${y},0`, air);
+  const plan = planRetreat(bot, origin, home);
+  assert.ok(plan);
+  assert.notEqual(plan.target.x, 1);
+});
+
 test('an empty-handed bot clears one checked stair cell and then physically ascends', async () => {
   const { bot, cells, origin } = fixture();
   const logs = [];

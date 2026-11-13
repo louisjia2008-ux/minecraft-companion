@@ -8,6 +8,7 @@ const FACES = [...SIDES.map(([x, z]) => [x, 0, z]), [0, 1, 0], [0, -1, 0]];
 const FLUID_OR_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
 const GRAVITY = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|.*_concrete_powder)$/;
 const NATURAL = /^(stone|deepslate|tuff|calcite|granite|diorite|andesite|dripstone_block|dirt|grass_block|coarse_dirt|rooted_dirt|podzol|clay|moss_block|snow_block|[a-z_]+_ore)$/;
+const CLEARED = Object.freeze({ name: 'air', boundingBox: 'empty', shapes: [] });
 const key = (p) => `${p.x},${p.y},${p.z}`;
 const fail = (reason) => ({ ok: false, reason });
 const hazard = (b) => !b || FLUID_OR_HAZARD.test(b.name) || b.getProperties?.()?.waterlogged === true;
@@ -57,6 +58,65 @@ function drySteps(read, feet, minY) {
   return steps;
 }
 
+function retreatExposure(read, position) {
+  let openSides = 0;
+  let longOpen = 0;
+  for (const [dx, dz] of SIDES) {
+    const near = position.offset(dx, 0, dz);
+    if (!open(read(near)) || !open(read(near.offset(0, 1, 0)))) continue;
+    openSides += 1;
+    const far = position.offset(3 * dx, 0, 3 * dz);
+    const middle = position.offset(2 * dx, 0, 2 * dz);
+    if ([middle, far].every((p) => open(read(p)) && open(read(p.offset(0, 1, 0))))) longOpen += 1;
+  }
+  const tall = [2, 3, 4].every((y) => open(read(position.offset(0, y, 0))));
+  return (tall ? 1 : 0) + Math.max(0, openSides - 2) + (longOpen > 1 ? longOpen - 1 : 0);
+}
+
+function exposedAfterCut(read, from, target, digs) {
+  const cleared = new Set(digs.map(key));
+  const projected = (p) => cleared.has(key(p)) ? CLEARED : read(p);
+  // The new stairs expose more than their destination: either headroom
+  // block can open a side passage before the bot takes the upward step.
+  return Math.max(retreatExposure(projected, from), retreatExposure(projected, target));
+}
+
+function stairOptions(bot, read, feet, avoid = () => false) {
+  const options = [];
+  for (const [dx, dz] of SIDES) {
+    const side = feet.offset(dx, 0, dz);
+    const target = side.offset(0, 1, 0);
+    if (!solid(read(side)) || avoid(target)) continue;
+    const clearance = [feet.offset(0, 2, 0), side.offset(0, 2, 0), target];
+    const statuses = clearance.map((point) => digSafety(bot, read, point));
+    if (statuses.some((status) => !status)) continue;
+    const digs = clearance.filter((_p, index) => statuses[index] === 'dig');
+    options.push({ target, digs });
+  }
+  return options;
+}
+
+// Inspect a few still-unmodified layers, favoring a heading that can keep
+// cutting upward behind stone. It is a ranking hint, not permission to dig.
+function coveredRun(bot, read, from, depth = 5) {
+  let level = [from];
+  const seen = new Set([key(from)]);
+  let layers = 0;
+  while (layers < depth && level.length) {
+    const next = [];
+    for (const feet of level) for (const { target } of stairOptions(bot, read, feet)) {
+      const id = key(target);
+      if (seen.has(id) || retreatExposure(read, target) > 0) continue;
+      seen.add(id);
+      next.push(target);
+    }
+    if (!next.length) break;
+    level = next;
+    layers += 1;
+  }
+  return layers;
+}
+
 // Find an existing uphill exit before cutting into the wall. Explore only
 // loaded, dry ground. The returned path is traversed in short rechecked legs.
 function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), risk = () => 0) {
@@ -72,12 +132,14 @@ function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), 
   const queue = [origin];
   let openExit = null;
   let staircase = null;
-  const openingCost = (p) => {
-    // A narrow stair remains behind rock on most sides. Walking through an
-    // open cavern gives nearby (possibly still unobserved) mobs more approaches.
-    const exits = SIDES.filter(([dx, dz]) => open(read(p.offset(dx, 0, dz)))
-      && open(read(p.offset(dx, 1, dz)))).length;
-    return Math.max(0, exits - 2) * 2;
+  const exposure = (p) => retreatExposure(read, p) * 60;
+  const cutExposure = (feet, target, digs) => exposedAfterCut(read, feet, target, digs) * 60;
+  const covered = new Map();
+  const stairScore = ({ target, digs }) => {
+    const id = key(target);
+    if (!covered.has(id)) covered.set(id, coveredRun(bot, read, target));
+    return covered.get(id) * 8 - cutExposure(from, target, digs)
+      - risk(target) - towardHome(target) * 0.4 - digs.length * 7;
   };
   for (let i = 0; i < queue.length && i < 1400; i += 1) {
     const node = queue[i];
@@ -86,32 +148,29 @@ function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), 
       if (!openExit || distance + node.risk < openExit.distance + openExit.risk) openExit = node;
       if (!node.risk) break;
     }
-    if (distance < 32) for (const next of drySteps(read, feet, from.y - 1)) {
+    if (distance < 14) for (const next of drySteps(read, feet, from.y - 1)) {
       const id = key(next);
       if (seen.has(id) || avoid(next)) continue;
       seen.add(id);
       queue.push({ feet: next, first: first || next, distance: distance + 1,
-        risk: node.risk + risk(next) + openingCost(next) });
+        risk: node.risk + risk(next) + exposure(next) });
     }
-    for (const [dx, dz] of SIDES) {
-      const side = feet.offset(dx, 0, dz);
-      if (!solid(read(side)) || avoid(side.offset(0, 1, 0))) continue;
-      const target = side.offset(0, 1, 0);
-      const clearance = [feet.offset(0, 2, 0), side.offset(0, 2, 0), target];
-      const statuses = clearance.map((point) => digSafety(bot, read, point));
-      if (statuses.some((status) => !status)) continue;
-      const digs = clearance.filter((_p, index) => statuses[index] === 'dig');
+    for (const { target, digs } of stairOptions(bot, read, feet, avoid)) {
       if (!digs.length) continue;
       const score = (feet.y - from.y) * 25 - distance - towardHome(target) * 0.4
         - digs.reduce((sum, p) => sum + (read(p).name === 'deepslate' ? 14 : 7), 0)
-        - node.risk - risk(target)
+        - node.risk - risk(target) - cutExposure(feet, target, digs)
         - (first && visited.has(key(first)) ? 5 : 0);
       if (!staircase || score > staircase.score) staircase = { first, target, digs, score };
     }
   }
   if (openExit) return { kind: 'walk', target: openExit.first };
   if (staircase?.first) return { kind: 'walk', target: staircase.first };
-  if (staircase) return { kind: 'stairs', target: staircase.target, digs: staircase.digs };
+  if (staircase) {
+    const better = stairOptions(bot, read, from, avoid).filter(({ digs }) => digs.length)
+      .sort((a, b) => stairScore(b) - stairScore(a))[0];
+    return { kind: 'stairs', target: better.target, digs: better.digs };
+  }
   const best = queue.find(({ first, feet }) => first && feet.y > from.y && !visited.has(key(first)));
   return best ? { kind: 'walk', target: best.first } : null;
 }

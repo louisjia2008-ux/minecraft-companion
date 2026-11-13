@@ -464,7 +464,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           (id) => threats(ctx.perceive()).find((h) => h.id === id));
         if (threat.name !== 'creeper' || result.ok || result.reason !== 'cave_evasion_no_safe_step') return result;
         const current = threats(ctx.perceive()).find((h) => h.id === threat.id);
-        if (!current || current.distance > 4) return result;
+        if (!current || current.distance > 6) return result;
         return actions.fleeFrom(bot, ctx, current.position);
       }
       return actions.fleeFrom(bot, ctx, threat?.position || bot.entity.position);
