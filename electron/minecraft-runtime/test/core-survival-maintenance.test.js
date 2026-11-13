@@ -222,6 +222,12 @@ test('a search for food keeps within reach of home', async () => {
   assert.deepEqual(seen, [{ x: 100, z: -20, radius: 160 }]);
 });
 
+test('generic provisioning yields to home resupply while eating remains available', () => {
+  const s = setup({ resupplying: () => true });
+  assert.equal(s.behavior('provision').want({ ...s.state, food: 0 }), 0);
+  assert.ok(s.behavior('eat').want({ ...s.state, food: 0, inventory: { cooked_beef: 1 } }) > 0);
+});
+
 test('explore past its radius heads back towards the centre', async () => {
   const skills = require('../core/skills');
   const actions = require('../core/actions');
@@ -276,6 +282,37 @@ test('drops are gone back for only when something dropped, and never into the la
   bot.emit('death');
   bot.emit('spawn');
   assert.equal(recoverDrops.want(state), 0);
+});
+
+test('a cave death does not draw an unarmed respawn back underground', async () => {
+  const bot = Object.assign(new EventEmitter(), {
+    entity: { position: new Vec3(0, 12, 0) }, game: { dimension: 'overworld' }, companionSurfaceY: 64,
+    registry: { foodsByName: { cooked_beef: {} } }, inventory: { slots: [], items: () => [] },
+    blockAt: () => ({ name: 'air' }),
+  });
+  let moved = 0;
+  const recoverDrops = createSurvivalBehaviors({ bot, actions: {
+    goNear: async () => { moved += 1; return { ok: true }; },
+    collectDrops: async () => ({ ok: true }),
+  } }).find((behavior) => behavior.name === 'recover_drops');
+  const state = {
+    alive: true, health: 20, food: 20, inventory: {}, hostiles: [], sheltered: false, position: new Vec3(3, 64, 0),
+  };
+  bot.emit('death');
+  assert.equal(recoverDrops.want(state), 0, 'wait for the new life before deciding whether to retrieve items');
+  bot.emit('spawn');
+  const ctx = { perceive: () => state, record() {}, signal: new AbortController().signal };
+  assert.equal(recoverDrops.want(state), 0);
+  assert.equal((await recoverDrops.run(ctx)).reason, 'drop_recovery_not_ready');
+  assert.equal(moved, 0);
+
+  state.inventory = { stone_pickaxe: 1, stone_sword: 1, cooked_beef: 2, iron_chestplate: 1 };
+  assert.equal(recoverDrops.want(state), 0, 'carrying armour does not protect the bot');
+  bot.inventory.slots[6] = { name: 'iron_chestplate' };
+  assert.ok(recoverDrops.want(state) > 0);
+  assert.equal((await recoverDrops.run(ctx)).ok, true);
+  assert.equal(moved, 1);
+  recoverDrops.dispose();
 });
 
 test('hurt but not badly, with nothing to eat and too full to heal, the bot gets food', () => {

@@ -24,6 +24,38 @@ test('outfit rejects unknown items', () => {
   assert.throws(() => createOutfitGoal({ bot: fakeBot(), home, items: [{ key: 'nope', count: 1 }] }), /bad item/);
 });
 
+test('home recovery leaves normal gather idle until it physically returns and reads the supply chest', async () => {
+  const bot = Object.assign(fakeBot(), { health: 20, food: 20, game: { dimension: 'overworld' },
+    entity: { position: new Vec3(20, 64, 0) }, entities: {} });
+  const operations = [];
+  const guardedHome = { ...home, anchor: { x: 0, y: 64, z: 0 } };
+  const items = [{ key: 'stone_tier_pickaxe', count: 1 }];
+  const goal = createOutfitGoal({ bot, home: guardedHome, items, recoverAtHome: true,
+    actions: {
+      goNear: async (_bot, _ctx, p) => { operations.push('walk'); bot.entity.position = p; return { ok: true }; },
+    },
+    skills: {
+      takeItems: async (_bot, _ctx, { itemMatch }) => {
+        operations.push('read-chest');
+        assert.ok(itemMatch('stone_pickaxe'));
+        assert.ok(itemMatch('oak_log'));
+        assert.equal(itemMatch('arrow'), false);
+        return { ok: false, reason: 'chest_empty' };
+      },
+    },
+    createGather: (options) => {
+      assert.equal(options.surfaceOnly, true);
+      operations.push('gather');
+      return { isDone: () => false, progress: () => 0, run: async () => ({ ok: true }) };
+    } });
+  const ctx = { perceive: () => perceive(bot), record: (type) => operations.push(type) };
+  assert.equal(goal.isDone(perceive(bot)), false);
+  await goal.run(ctx);
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(operations, ['walk', 'resupply_home_arrived', 'read-chest', 'resupply_chest_read', 'device_materials', 'gather']);
+});
+
 for (const { key, slot, existing, target, ingredients } of [
   { key: 'iron_helmet', slot: 5, existing: 0, target: 1, ingredients: { iron_ingot: 5 } },
   { key: 'iron_helmet', slot: 5, existing: 1, target: 2, ingredients: { iron_ingot: 5 } },

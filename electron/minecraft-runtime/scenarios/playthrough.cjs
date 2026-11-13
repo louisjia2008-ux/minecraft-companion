@@ -32,6 +32,8 @@ const { installFurnitureEvidence } = require('./furnitureEvidence.cjs');
 const { Vec3 } = require('vec3');
 const { perceive } = require('../core/perception');
 const { countKey } = require('../core/knowledge');
+const { homeOf } = require('../core/goals/registry');
+const { homeResupplyReady } = require('../core/goals/outfit');
 
 const MINUTE = 60 * 1000;
 const EYES = 12;
@@ -68,6 +70,13 @@ const REARM_MS = 60 * MINUTE;
 // none to dig its way out.
 const hasPick = (bot) => (bot.inventory?.items?.() || []).some((i) => /_pickaxe$/.test(i.name));
 const REARM = ARMOR.concat([{ key: 'iron_pickaxe', count: 1 }]);
+const RECOVERY_BASE_KIT = [
+  { key: 'stone_tier_pickaxe', count: 1 }, { key: 'stone_sword', count: 1 }, { key: 'food', count: 3 },
+];
+const WORN_ARMOR = [[5, 'helmet'], [6, 'chestplate'], [7, 'leggings'], [8, 'boots']];
+const fullArmorWorn = (bot) => WORN_ARMOR.every(([slot, kind]) =>
+  ['iron', 'diamond', 'netherite'].some((material) => bot.inventory?.slots?.[slot]?.name === `${material}_${kind}`))
+  && bot.inventory?.slots?.[45]?.name === 'shield';
 // Then the rest for the trip, armour not asked again: worn through the hours
 // this takes, it broke piece by piece and the full list was never all carried
 // at once (a world spent eight hours re-making it). Arrows wait for the End.
@@ -113,6 +122,9 @@ const STEPS = [
   { id: 'ranch', task: 'ranch', args: () => ({ kind: 'cow', target: COWS }), done: ({ state }) => state.goals.ranch?.isDone?.(state.lastPerceive) },
   { id: 'machines', autonomy: true, done: ({ companion, bot }) => machinesDone(companion, bot) },
 ];
+const ARMOR_INDEX = STEPS.findIndex((step) => step.id === 'armor');
+const GEAR_INDEX = STEPS.findIndex((step) => step.id === 'gear');
+const END_INDEX = STEPS.findIndex((step) => step.id === 'end');
 
 // Fields go a little way off the house, clear of the machine sites the director picks.
 function farmCenter(companion) {
@@ -246,6 +258,66 @@ async function observeRecovery(context) {
   }
 }
 
+async function runDeathRecovery(context, index, entry) {
+  const { companion, bot, state, write } = context;
+  const death = state.audit?.deaths.at(-1);
+  if (!death || index < ARMOR_INDEX || index > END_INDEX) return false;
+  if (state.deathRecovery?.death !== death.id) {
+    state.deathRecovery = { death: death.id, phase: 'base', attempts: 0, goal: null };
+    state.rearm = false;
+    state.snack = false;
+  }
+  const recovery = state.deathRecovery;
+  if (recovery.phase === 'done') return false;
+  if (!death.respawn?.alive || !state.lastPerceive.alive) return true;
+  // A dimension-specific task already in flight owns its way out. While the
+  // respawn is outside the Overworld, don't advance or start a new stage.
+  if (dimensionOf(bot) !== 'overworld') {
+    if (companion.status().paused) await companion.resumeTask();
+    return true;
+  }
+  const home = homeOf(companion.director.memory);
+  if (!home) return false;
+  const status = companion.status();
+  const recoveryItems = recovery.phase === 'base' ? RECOVERY_BASE_KIT : REARM;
+  const ready = recovery.phase === 'base'
+    ? kitDone(bot, recoveryItems) && homeResupplyReady(state.lastPerceive, home)
+    : kitDone(bot, recoveryItems) && fullArmorWorn(bot);
+  if (ready) {
+    write('playthrough_death_recovery_verified', { death: death.id, phase: recovery.phase, position: positionOf(bot),
+      health: state.lastPerceive.health, food: state.lastPerceive.food, inventory: bagOf(bot) });
+    if (recovery.phase === 'base' && index > ARMOR_INDEX) {
+      Object.assign(recovery, { phase: 'iron', attempts: 0, goal: null });
+      return true;
+    }
+    recovery.phase = 'done';
+    // Retire even a paused task with its kit already intact. The following
+    // stage must never observe a stale, paused outfit and wait for it forever.
+    if (status.goal || status.paused) await companion.cancelTask('playthrough_death_resupply_complete');
+    state.replace = false;
+    return false;
+  }
+  if (recovery.goal && status.goal && status.goal.generation === recovery.goal.generation) return true;
+  if (recovery.attempts >= RETRIES) {
+    if (!entry.stuck) {
+      entry.stuck = true;
+      write('model_stuck', { step: entry.id, recovery: recovery.phase, death: death.id, asks: recovery.attempts });
+    }
+    return true;
+  }
+  const args = { items: recoveryItems, ...(recovery.phase === 'base' ? { recoverAtHome: true } : {}) };
+  recovery.attempts += 1;
+  state.activeStage = 'rearm';
+  write('model_ask', { step: 'rearm', phase: recovery.phase, death: death.id, task: 'outfit', args, ask: recovery.attempts });
+  await companion.submitTask('outfit', args);
+  const running = companion.status().goal;
+  // A concurrent death may pause this new invocation before dispatch returns.
+  // Its successor will use the newer death receipt and recheck the whole kit.
+  if (state.audit?.deaths.at(-1)?.id === death.id) recovery.goal = running ? { generation: running.generation } : null;
+  else await companion.pauseTask('playthrough_death_resupply');
+  return true;
+}
+
 async function observeReturn(context) {
   const { state, companion, write, server, username } = context;
   if (!state.dragon || state.returnedHome?.pass || !state.lastEndExitAt) return;
@@ -305,6 +377,14 @@ const playthroughNatural = {
         dimension: dimensionOf(bot), position: positionOf(bot), positionSource: 'client_death_event', clientInventory: bagOf(bot) };
       state.audit.deaths.push(death);
       write('playthrough_death', death);
+      const index = state.steps?.findIndex((step) => !step.doneAt);
+      if (index >= ARMOR_INDEX && index <= END_INDEX && state.companion && houseOf(state.companion)) {
+        // Block the old goal before the next brain tick can send the fresh
+        // body back down the mine. Safety behaviours remain enabled.
+        void state.companion.pauseTask('playthrough_death_resupply').catch((error) => {
+          write('playthrough_death_pause_failed', { death: death.id, reason: error.message });
+        });
+      }
     };
     bot.on('death', state.onPlaythroughDeath);
     state.furnitureEvidence = await installFurnitureEvidence(context);
@@ -351,11 +431,13 @@ const playthroughNatural = {
       write('dragon_killed', { minute: Math.round(context.elapsedMs / MINUTE) });
     }
     await observeRecovery(context);
+    state.lastPerceive = perceive(bot);
     await observeReturn(context);
     const index = state.steps.findIndex((e) => !e.doneAt);
     if (index < 0) return;
     const step = STEPS[index];
     const entry = state.steps[index];
+    if (await runDeathRecovery(context, index, entry) || context.signal?.aborted) return;
     // These are readbacks after an explicit task request, never completion
     // flags imported from the pre-dragon stage.
     if (entry.asks > 0 && step.id === 'house_after_end'
@@ -407,7 +489,7 @@ const playthroughNatural = {
       if (goal) return;
       state.rearm = false;
       state.replace = false;
-    } else if (index > STEPS.findIndex((s) => s.id === 'gear') && (worn(bot) < 2 || !hasPick(bot)) && (!goal || entry.asks > 0)
+    } else if (index > GEAR_INDEX && (worn(bot) < 2 || !hasPick(bot)) && (!goal || entry.asks > 0)
       && bot.game?.dimension?.endsWith('overworld') && Date.now() - (state.rearmAt || 0) > REARM_MS) {
       state.rearm = true;
       state.rearmAt = Date.now();
@@ -471,4 +553,5 @@ const playthroughNatural = {
   },
 };
 
-module.exports = { playthroughNatural, STEPS, GEAR, EYE_KIT, atHouse, readPlayer, verifyFarm, verifyRanch, observeReturn, observeRecovery };
+module.exports = { playthroughNatural, STEPS, GEAR, EYE_KIT, REARM, RECOVERY_BASE_KIT, atHouse, readPlayer,
+  verifyFarm, verifyRanch, observeReturn, observeRecovery };

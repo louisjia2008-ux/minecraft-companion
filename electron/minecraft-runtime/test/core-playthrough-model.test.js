@@ -1,7 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { playthroughNatural, STEPS } = require('../scenarios/playthrough.cjs');
+const { Vec3 } = require('vec3');
+const { playthroughNatural, STEPS, REARM, RECOVERY_BASE_KIT } = require('../scenarios/playthrough.cjs');
+const { createStarterHouse } = require('../core/blueprints/starterHouse');
 
 test('a nether trip short of obsidian for its portal sends the model back for the gear', () => {
   const state = { gearDone: true, steps: STEPS.map((s) => ({ id: s.id, asks: 1, doneAt: s.id === 'nether' ? null : 1 })) };
@@ -16,7 +18,6 @@ test('a nether trip short of obsidian for its portal sends the model back for th
 });
 
 function modelContext({ armour = [], step = 'pearls', goal = null, pick = false } = {}) {
-  const { Vec3 } = require('vec3');
   const slots = [];
   armour.forEach((name, i) => { slots[5 + i] = { name, count: 1 }; });
   const asked = [];
@@ -53,4 +54,56 @@ test('every pickaxe worn out: the new set comes with one', async () => {
   await playthroughNatural.onTick(context);
   assert.equal(asked[0]?.task, 'outfit');
   assert.ok(asked[0].args.items.some((r) => r.key === 'iron_pickaxe'));
+});
+
+test('death during active expedition prep holds gear until home supplies and worn iron kit are observed', async () => {
+  const { context, state } = modelContext({ step: 'gear' });
+  const { companion, bot } = context;
+  const items = [];
+  const requests = [];
+  const events = [];
+  let goal = { name: 'outfit', generation: 1 };
+  let generation = 1;
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  companion.director = { memory: { homestead: { memory: { house } } } };
+  companion.status = () => ({ goal });
+  companion.submitTask = async (task, args) => {
+    requests.push({ task, args });
+    goal = { name: 'outfit', generation: ++generation };
+  };
+  companion.cancelTask = async () => { goal = null; };
+  bot.inventory.items = () => items;
+  bot.entity.position = new Vec3(3.5, 64, 3.5);
+  state.audit = { deaths: [{ id: 1, at: 1 }], taskEvents: [] };
+  context.server.query = async (command, pattern) => (command.endsWith(' Health') ? 'data: 0' : 'Test failed').match(pattern);
+  // Until the real respawn is known, even the still active old request is not continued.
+  bot.health = 0;
+  context.write = (type, data) => events.push({ type, ...data });
+  state.gearDone = false;
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(requests, []);
+  state.audit.deaths[0].respawn = { alive: true };
+  bot.health = 20;
+  await playthroughNatural.onTick(context);
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(requests, [{ task: 'outfit', args: { items: RECOVERY_BASE_KIT, recoverAtHome: true } }]);
+  items.push({ name: 'stone_pickaxe', count: 1 }, { name: 'stone_sword', count: 1 }, { name: 'bread', count: 12 });
+  bot.entity.position = new Vec3(4, 10, 4);
+  await playthroughNatural.onTick(context);
+  assert.equal(state.deathRecovery.phase, 'base', 'gear in a cave is not verified home resupply');
+  bot.entity.position = new Vec3(3.5, 64, 3.5);
+  await playthroughNatural.onTick(context);
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(requests[1], { task: 'outfit', args: { items: REARM } });
+  items.push(...REARM.filter(({ key }) => key !== 'food').map(({ key }) => ({ name: key, count: 1 })));
+  await playthroughNatural.onTick(context);
+  assert.equal(requests.length, 2, 'carrying the armour without wearing it cannot release the gear gate');
+  ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots', 'shield'].forEach((name, i) => {
+    bot.inventory.slots[i === 4 ? 45 : 5 + i] = { name, count: 1 };
+    items.splice(items.findIndex((item) => item.name === name), 1);
+  });
+  await playthroughNatural.onTick(context);
+  assert.equal(requests[2].task, 'outfit');
+  assert.ok(requests[2].args.items.some(({ key }) => key === 'bow'));
+  assert.deepEqual(events.filter((e) => e.type === 'playthrough_death_recovery_verified').map(({ phase }) => phase), ['base', 'iron']);
 });

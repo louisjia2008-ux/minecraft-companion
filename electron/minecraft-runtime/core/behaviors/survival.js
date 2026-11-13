@@ -10,6 +10,7 @@ const { BAND } = require('../brain');
 const { sleep, waitUntil, abortError } = require('../confirm');
 const { isFireResistancePotion, hasEffect } = require('../netherStructures');
 const { createBlacklist } = require('../blacklist');
+const { advanceCaveRetreat, returnFromCave, skyOpen, standable } = require('../caveRetreat');
 const { goals } = require('mineflayer-pathfinder');
 
 // Entity flag bit 0 is "on fire".
@@ -257,7 +258,7 @@ const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const FEEDING_RANGE = 32;
 
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false,
-  feeding = () => false, home = () => null, activeGoal = () => null, thresholds = {} } = {}) {
+  feeding = () => false, resupplying = () => false, home = () => null, activeGoal = () => null, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
@@ -356,6 +357,73 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           && Math.abs(h.position.y - state.position.y) <= 4))) || null;
   };
 
+  let retreat = null;
+  const caveSituation = (state) => dimensionOf(bot) === 'overworld' && !state.sheltered && !state.inWater
+    && !bot.entity?.isInLava && state.health <= t.escapeHealth && typeof bot.blockAt === 'function'
+    && typeof bot.pathfinder?.movements?.getNeighbors === 'function';
+  const caveNeedsExit = (state) => {
+    if (!caveSituation(state)) return false;
+    const centre = home();
+    if (centre && Math.abs(state.position.y - centre.y) <= 3
+      && Math.hypot(state.position.x - centre.x, state.position.z - centre.z) <= 8) return false;
+    return actions.underground?.(bot) === true;
+  };
+  const visibleThreat = (h, at) => clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, 1.6, 0))
+    || clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, .5, 0));
+  const caveRetreat = {
+    name: 'cave_retreat',
+    // Actual fire, drowning and immediate mob escape still have first use of
+    // the body. Ordinary combat, provisioning and work wait for the retreat.
+    band: BAND.ESCAPE - 1,
+    want(state) {
+      if (dimensionOf(bot) !== 'overworld') retreat = null;
+      if (state.inWater || bot.entity?.isInLava || state.sheltered) return 0;
+      return retreat || caveNeedsExit(state) ? 1 : 0;
+    },
+    async run(ctx) {
+      if (!retreat && !caveNeedsExit(ctx.perceive())) return { ok: false, reason: 'cave_retreat_not_needed' };
+      retreat ||= { visited: new Set(), surfaced: false };
+      const current = retreat;
+      const here = bot.entity.position.floored();
+      const centre = home();
+      let observed = 0;
+      let nearby = [];
+      const avoid = (feet) => {
+        if (Date.now() - observed >= 100) {
+          nearby = threats(ctx.perceive());
+          observed = Date.now();
+        }
+        const at = feet.offset(.5, 0, .5);
+        return nearby.some((h) => at.distanceTo(h.position) < (h.name === 'creeper' ? 5 : 4)
+          && visibleThreat(h, at));
+      };
+      const dry = standable((p) => bot.blockAt(p), here);
+      if (!current.surfaced && dry && bot.entity.onGround && skyOpen(bot, here)) {
+        current.surfaced = true;
+        ctx.record('cave_retreat_surface', { at: here });
+      }
+      if (current.surfaced) {
+        if (!centre) {
+          retreat = null;
+          return { ok: true, surfaced: true };
+        }
+        const result = await returnFromCave(bot, ctx, actions, centre, avoid);
+        if (result.atHome && retreat === current) {
+          retreat = null;
+          ctx.record('cave_retreat_home', { at: bot.entity.position.floored(), home: centre });
+        }
+        return result;
+      }
+      const result = await advanceCaveRetreat(bot, ctx, actions, centre, { avoid, visited: current.visited });
+      if (result.ok && !result.dug && retreat === current) {
+        current.visited.add(`${here.x},${here.y},${here.z}`);
+        if (current.visited.size > 80) current.visited.delete(current.visited.values().next().value);
+        ctx.record('cave_retreat_step', { from: result.from, to: result.to, kind: result.to.y > result.from.y ? 'uphill' : 'walk' });
+      }
+      return result;
+    },
+  };
+
   const escape = {
     name: 'escape',
     band: BAND.ESCAPE,
@@ -368,7 +436,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // In the End an enderman teleports after anything that runs, and the
       // run ends in the void: fight it out there instead.
       if (threat.name === 'enderman' && dimensionOf(bot) === 'the_end') return 0;
-      return state.health <= t.escapeHealth && threat.distance <= t.escapeRange ? 1 : 0;
+      if (state.health > t.escapeHealth || threat.distance > t.escapeRange) return 0;
+      // An exposed mob within striking range still wins immediately. From
+      // cover, continue the persistent ascent rather than orbiting its old
+      // position and handing the body back to deeper work.
+      if (retreat || caveNeedsExit(state)) {
+        return threat.distance <= 3.5 && visibleThreat(threat, state.position) ? 1 : 0;
+      }
+      return 1;
     },
     run: (ctx) => actions.fleeFrom(bot, ctx, nearest(ctx.perceive())?.position || bot.entity.position),
   };
@@ -886,6 +961,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     name: 'provision',
     band: BAND.MAINTENANCE,
     want(state) {
+      // Home resupply has a surface food route of its own. Generic hunting
+      // must not pull an injured bot back underground while it restocks.
+      if (resupplying()) return 0;
       // Hunger alone is not the only reason to get food: below 18 a badly
       // injured bot cannot regenerate, even at food 16. Stop supplying at the
       // same threshold at which recovery can take over, and eat carried food
@@ -961,10 +1039,16 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Items dropped on death stay for five minutes: go back for them once it is safe.
   let lastDeath = null;
   const onDeathDrops = () => {
+    retreat = null;
     // Died in lava: whatever dropped burnt up, and going back is the same swim.
     const feet = bot.blockAt?.(bot.entity.position.floored());
     const burnt = /lava/.test(feet?.name || '');
-    lastDeath = burnt ? null : { position: bot.entity.position.clone(), dimension: dimensionOf(bot), at: Date.now(), tries: 0 };
+    const position = bot.entity.position.clone();
+    const dimension = dimensionOf(bot);
+    const surfaceY = bot.companionSurfaceY ?? home()?.y;
+    const cave = dimension === 'overworld' && (actions.underground?.(bot)
+      || (Number.isFinite(surfaceY) && position.y < surfaceY - 12));
+    lastDeath = burnt ? null : { position, dimension, cave, at: Date.now(), tries: 0 };
   };
   // Back alive with the bag still full (keepInventory): nothing was dropped.
   // A bot went back for its "drops" into the lava that killed it, five deaths running.
@@ -976,30 +1060,42 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
   bot.on?.('death', onDeathDrops);
   bot.on?.('spawn', onSpawnDrops);
+  function canRecoverDrops(state, target) {
+    if (resupplying()) return false;
+    if (!target?.respawned || !state.alive || state.sheltered || target.tries >= 3) return false;
+    const left = t.dropsTtlMs - (Date.now() - target.at);
+    if (left <= 0 || state.health < 10 || threats(state).some((h) => h.distance <= 8)) return false;
+    if (target.dimension !== dimensionOf(bot)) return false;
+    if (target.cave) {
+      // A fresh respawn has full health, but chasing a cave drop unarmed
+      // exposes the new life to the same threat that killed the equipped one.
+      const hasPick = Object.entries(state.inventory).some(([name, count]) => count > 0 && name.endsWith('_pickaxe'));
+      const chestplate = bot.inventory?.slots?.[6]?.name || '';
+      if (state.health < 14 || state.food < 14 || !hasPick || !armed(state)
+        || !chestplate.endsWith('_chestplate') || !hasSafeFood(state, false)) return false;
+    }
+    const danger = bot.companionDeathDanger;
+    if (danger && danger.until > Date.now() && danger.dimension === target.dimension
+      && target.position.distanceTo(new Vec3(danger.center.x, danger.center.y, danger.center.z)) <= 24) return false;
+    const reachable = Math.min(t.dropsMaxDistance, (left / 1000) * t.walkSpeed);
+    return state.position.distanceTo(target.position) < reachable;
+  }
   const recoverDrops = {
     name: 'recover_drops',
     band: BAND.MAINTENANCE,
     dispose: () => { bot.removeListener?.('death', onDeathDrops); bot.removeListener?.('spawn', onSpawnDrops); },
-    want(state) {
-      if (state.sheltered || !lastDeath || Date.now() - lastDeath.at > t.dropsTtlMs || lastDeath.tries >= 3) return 0;
-      if (state.health < 10 || threats(state).some((h) => h.distance <= 8)) return 0;
-      // Drops left in the other dimension wait until a goal takes the bot back there.
-      if (lastDeath.dimension !== dimensionOf(bot)) return 0;
-      // Where the bot keeps dying, the drops are bait: leave them.
-      const danger = bot.companionDeathDanger;
-      if (danger && danger.until > Date.now() && danger.dimension === lastDeath.dimension
-        && lastDeath.position.distanceTo(new Vec3(danger.center.x, danger.center.y, danger.center.z)) <= 24) return 0;
-      // Worth the trip while the bot can still get there before they despawn.
-      const reachable = Math.min(t.dropsMaxDistance, ((t.dropsTtlMs - (Date.now() - lastDeath.at)) / 1000) * t.walkSpeed);
-      return state.position.distanceTo(lastDeath.position) < reachable ? 0.8 : 0;
-    },
+    want: (state) => canRecoverDrops(state, lastDeath) ? 0.8 : 0,
     async run(ctx) {
       const target = lastDeath;
+      if (!canRecoverDrops(ctx.perceive(), target)) return { ok: false, reason: 'drop_recovery_not_ready' };
       target.tries += 1;
       ctx.record('recover_drops', { position: target.position.floored(), try: target.tries });
       const left = t.dropsTtlMs - (Date.now() - target.at);
       const moved = await actions.goNear(bot, ctx, target.position, 2, { timeoutMs: Math.max(60000, Math.min(240000, left)) });
       if (!moved.ok) return moved;
+      if (target !== lastDeath || ctx.signal?.aborted || !ctx.perceive().alive) {
+        return { ok: false, reason: 'drop_recovery_interrupted' };
+      }
       const result = await actions.collectDrops(bot, ctx, target.position, () => true, { radius: 8, timeoutMs: 15000 });
       if (result.ok || target.tries >= 3) lastDeath = null;
       return result;
@@ -1170,7 +1266,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
   deflect.dispose = disposeNether;
 
-  return [quench, leaveLava, leaveFire, heal, escape, breathe, deflect, block, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
+  return [quench, leaveLava, leaveFire, heal, escape, breathe, deflect, block, hide, caveRetreat, defend, cover, avoid, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };

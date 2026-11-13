@@ -205,6 +205,37 @@ async function runGoal(sim, goal, { limit = 5000, dieWhen = () => false } = {}) 
 const STATIONS = { crafting_table: { x: 1, y: 0, z: 0 }, furnace: { x: 2, y: 0, z: 0 } };
 const COBBLEGEN = [{ key: 'water_bucket', count: 1 }, { key: 'lava_bucket', count: 1 }, { key: 'cobblestone', count: 10 }];
 
+test('surface resupply skips deep and buried stone and refuses a branch-mining requirement', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.inventory.stone_pickaxe = 1;
+  sim.bot.blockAt = (p) => ({
+    name: p.x === 0 && p.y === 0 && p.z === 0 ? 'chest'
+      : p.x === 1 && p.y === 0 && p.z === 2 ? 'air' : 'stone',
+    boundingBox: p.x === 1 && p.y === 0 && p.z === 2 ? 'empty' : 'block',
+    position: p,
+  });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  let gathered = 0;
+  const skills = { ...sim.skills, gatherOne: async (_bot, _ctx, { exclude }) => {
+    gathered += 1;
+    assert.equal(exclude(new Vec3(1, -1, 2)), false, 'a surface opening exposes this stone');
+    assert.equal(exclude(new Vec3(1, -9, 2)), true);
+    assert.equal(exclude(new Vec3(4, -1, 2)), true, 'no dry exposed face');
+    return { ok: true };
+  } };
+  const goal = (key) => createGatherMaterialsGoal({
+    bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key, count: 1 }],
+    stations: STATIONS, skills, actions: sim.actions, surfaceOnly: true,
+  });
+  const stone = goal('cobblestone');
+  await stone.run(ctx);
+  assert.equal((await stone.run(ctx)).ok, true);
+  const iron = goal('raw_iron');
+  await iron.run(ctx);
+  assert.equal((await iron.run(ctx)).reason, 'surface_supply_requires_mine');
+  assert.equal(gathered, 1);
+});
+
 for (const seed of [1, 2, 3]) {
   test(`cobblestone generator materials end up in the chest from an empty inventory (seed ${seed})`, async () => {
     const sim = simulate({ seed });

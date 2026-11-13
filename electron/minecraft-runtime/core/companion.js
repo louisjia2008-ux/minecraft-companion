@@ -181,6 +181,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     activeGoal: () => brain?.status().goal?.name });
   const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity),
     feeding: () => FEEDING_GOALS.has(brain?.status().goal?.name),
+    resupplying: () => goalOwner?.goal?.recoverAtHome === true,
     activeGoal: () => brain?.status().goal?.name,
     home: () => (director ? homeOf(director.memory)?.centre || null : null) }), ...recovery.behaviors,
     nightRest, homeMaintenance, ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];

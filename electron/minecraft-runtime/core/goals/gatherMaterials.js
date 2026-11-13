@@ -63,7 +63,8 @@ const FRAME_OBSIDIAN = 10;
 const FRAME_CORNERS = 4;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
-  skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20, carry = () => false, reserved = {}, countWorn = false } = {}) {
+  skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20, carry = () => false, reserved = {},
+  countWorn = false, surfaceOnly = false } = {}) {
   if (!chest || ![chest.x, chest.y, chest.z].every(Number.isInteger)) throw new TypeError('chest must have integer x, y, z');
   if (!requirements === !blueprint) throw new TypeError('give either requirements or a blueprint');
   for (const r of requirements || []) {
@@ -330,6 +331,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       case 'cast':
         return obsidian.castStep(bot, ctx, memory, { skills, actions, avoid: nearHome });
       case 'gather': {
+        if (surfaceOnly && (Number.isFinite(step.mineY) || step.dimension === 'the_nether')) {
+          return { ok: false, reason: 'surface_supply_requires_mine' };
+        }
         if (step.dimension === 'the_nether' && step.key === 'quartz') return netherTrip(ctx, step.count);
         if (step.dimension && step.dimension !== nether.dimension(bot)) return { ok: false, reason: `needs_dimension:${step.dimension}` };
         const dropMatch = kb[step.key].match;
@@ -338,10 +342,13 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         if (deep && memory.mine) return mine(ctx, step, dropMatch);
         // Elsewhere only ore in the open (surface, cave mouths): never a
         // pathfinder tunnel straight down to buried ore.
-        const exclude = deep ? (p) => !mining.exposed(bot, p) : undefined;
+        const exclude = surfaceOnly
+          ? (p) => p.y < chest.y - 8 || p.y < bot.entity.position.y - 4
+            || !mining.exposed(bot, p)
+          : deep ? (p) => !mining.exposed(bot, p) : undefined;
         let result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch, blacklist, exclude });
         if (result.reason === 'no_target_in_range') {
-          result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch, blacklist, exclude, radius: 128 });
+          result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch, blacklist, exclude, radius: surfaceOnly ? 64 : 128 });
         }
         if (result.reason === 'no_target_in_range') return deep ? mine(ctx, step, dropMatch) : explore(ctx, step.key);
         // Gravel gives flint one time in ten: the gravel is the progress.
@@ -443,6 +450,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   }
 
   async function runOnce(ctx) {
+    if (surfaceOnly && nether.dimension(bot) !== 'overworld') {
+      return { ok: false, reason: 'surface_supply_wrong_dimension' };
+    }
     // In the Nether there is nothing to do but the trip: quartz, then home.
     if (nether.inNether(bot)) {
       const quartz = owed().find((r) => r.key === 'quartz')?.count || 0;
@@ -499,7 +509,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     // Down there, running out of stone pickaxes sends the bot to the depot,
     // and only up for more when the depot cannot help.
     const belowSurface = memory.mine && bot.entity.position.y < memory.mine.surfaceY - 1;
-    if (step?.kind === 'gather' && Number.isFinite(step.mineY)) {
+    if (!surfaceOnly && step?.kind === 'gather' && Number.isFinite(step.mineY)) {
       if (!belowSurface && memory.mine?.depot) memory.mine.depot.dry = false;
       const outOfPicks = countKey('stone_pickaxe', inventory, kb) < 1;
       if (belowSurface && outOfPicks) {
@@ -511,7 +521,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         step = planNext({ requirements: [...kit, ...reqs], inventory, stations: placedStations(), kb }) || step;
       }
     }
-    if (step?.kind === 'gather' && step.dimension === 'the_nether') {
+    if (!surfaceOnly && step?.kind === 'gather' && step.dimension === 'the_nether') {
       const kit = portalKit(inventory);
       if (kit.length) {
         const prepared = planNext({ requirements: [...kit, ...reqs], inventory, stations: placedStations(), kb });
