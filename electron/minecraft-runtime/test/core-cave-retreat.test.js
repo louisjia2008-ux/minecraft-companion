@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { Vec3 } = require('vec3');
-const { advanceCaveRetreat, planRetreat } = require('../core/caveRetreat');
+const { advanceCaveRetreat, evadeInCave, planRetreat } = require('../core/caveRetreat');
 const { createSurvivalBehaviors } = require('../core/behaviors/survival');
 
 const key = (p) => `${p.x},${p.y},${p.z}`;
@@ -70,4 +70,25 @@ test('critical underground escape starts without a nearby threat and excludes th
   const behaviors = (home) => createSurvivalBehaviors({ bot, home: () => home, actions: { underground: () => true } });
   assert.ok(behaviors(new Vec3(15, 8, 0)).find((b) => b.name === 'cave_retreat').want(state));
   assert.equal(behaviors(new Vec3(0, 0, 0)).find((b) => b.name === 'cave_retreat').want(state), 0);
+});
+
+test('emergency evasion takes one supported step toward cover and ignores a deeper direct drop', async () => {
+  const { bot, cells } = fixture();
+  for (let x = 1; x < 4; x += 1) {
+    cells.set(`${x},0,0`, air);
+    cells.set(`${x},1,0`, air);
+  }
+  for (let y = -5; y < 3; y += 1) cells.set(`0,${y},1`, air);
+  const threat = { id: 3, name: 'zombie', position: new Vec3(-2, 0, .5) };
+  const receipts = [];
+  const result = await evadeInCave(bot, { record: (...args) => receipts.push(args) }, {
+    async goTo(_bot, _ctx, goal) {
+      assert.equal(bot.pathfinder.movements.maxDropDown, 2);
+      assert.equal(bot.pathfinder.movements.canDig, false);
+      bot.entity.position = new Vec3(goal.x + .5, goal.y, goal.z + .5);
+      return { ok: true };
+    },
+  }, threat, (_mob, position) => position.x < 2, () => threat);
+  assert.deepEqual(result.to, new Vec3(1, 0, 0));
+  assert.deepEqual(receipts.map(([type]) => type), ['cave_evasion_threat', 'cave_evasion_step']);
 });

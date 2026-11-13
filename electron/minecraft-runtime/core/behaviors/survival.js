@@ -10,7 +10,7 @@ const { BAND } = require('../brain');
 const { sleep, waitUntil, abortError } = require('../confirm');
 const { isFireResistancePotion, hasEffect } = require('../netherStructures');
 const { createBlacklist } = require('../blacklist');
-const { advanceCaveRetreat, returnFromCave, skyOpen, standable } = require('../caveRetreat');
+const { advanceCaveRetreat, evadeInCave, returnFromCave, skyOpen, standable } = require('../caveRetreat');
 const { goals } = require('mineflayer-pathfinder');
 
 // Entity flag bit 0 is "on fire".
@@ -388,14 +388,25 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const centre = home();
       let observed = 0;
       let nearby = [];
-      const avoid = (feet) => {
+      const currentThreats = () => {
         if (Date.now() - observed >= 100) {
           nearby = threats(ctx.perceive());
           observed = Date.now();
         }
+        return nearby;
+      };
+      const avoid = (feet) => {
         const at = feet.offset(.5, 0, .5);
-        return nearby.some((h) => at.distanceTo(h.position) < (h.name === 'creeper' ? 5 : 4)
+        return currentThreats().some((h) => at.distanceTo(h.position) < (h.name === 'creeper' ? 6 : 5)
           && visibleThreat(h, at));
+      };
+      const risk = (feet) => {
+        const at = feet.offset(.5, 0, .5);
+        return currentThreats().reduce((total, h) => {
+          const range = SHOOTERS.has(h.name) ? 14 : 9;
+          const distance = at.distanceTo(h.position);
+          return total + (distance < range && visibleThreat(h, at) ? (range - distance) * 2 : 0);
+        }, 0);
       };
       const dry = standable((p) => bot.blockAt(p), here);
       if (!current.surfaced && dry && bot.entity.onGround && skyOpen(bot, here)) {
@@ -414,7 +425,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         }
         return result;
       }
-      const result = await advanceCaveRetreat(bot, ctx, actions, centre, { avoid, visited: current.visited });
+      const result = await advanceCaveRetreat(bot, ctx, actions, centre, { avoid, risk, visited: current.visited });
       if (result.ok && !result.dug && retreat === current) {
         current.visited.add(`${here.x},${here.y},${here.z}`);
         if (current.visited.size > 80) current.visited.delete(current.visited.values().next().value);
@@ -436,16 +447,28 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // In the End an enderman teleports after anything that runs, and the
       // run ends in the void: fight it out there instead.
       if (threat.name === 'enderman' && dimensionOf(bot) === 'the_end') return 0;
-      if (state.health > t.escapeHealth || threat.distance > t.escapeRange) return 0;
       // An exposed mob within striking range still wins immediately. From
       // cover, continue the persistent ascent rather than orbiting its old
       // position and handing the body back to deeper work.
       if (retreat || caveNeedsExit(state)) {
-        return threat.distance <= 3.5 && visibleThreat(threat, state.position) ? 1 : 0;
+        const evasionRange = SHOOTERS.has(threat.name) ? 10 : 6;
+        return threat.distance <= evasionRange && visibleThreat(threat, state.position) ? 1 : 0;
       }
-      return 1;
+      return state.health <= t.escapeHealth && threat.distance <= t.escapeRange ? 1 : 0;
     },
-    run: (ctx) => actions.fleeFrom(bot, ctx, nearest(ctx.perceive())?.position || bot.entity.position),
+    async run(ctx) {
+      const state = ctx.perceive();
+      const threat = nearest(state);
+      if (threat && (retreat || caveNeedsExit(state))) {
+        const result = await evadeInCave(bot, ctx, actions, threat, visibleThreat,
+          (id) => threats(ctx.perceive()).find((h) => h.id === id));
+        if (threat.name !== 'creeper' || result.ok || result.reason !== 'cave_evasion_no_safe_step') return result;
+        const current = threats(ctx.perceive()).find((h) => h.id === threat.id);
+        if (!current || current.distance > 4) return result;
+        return actions.fleeFrom(bot, ctx, current.position);
+      }
+      return actions.fleeFrom(bot, ctx, threat?.position || bot.entity.position);
+    },
   };
 
   const droppedNear = (at, radius) => Object.values(bot.entities || {})

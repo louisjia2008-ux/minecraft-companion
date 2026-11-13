@@ -44,9 +44,22 @@ function digSafety(bot, read, point, { requireReach = false } = {}) {
   return 'dig';
 }
 
+function drySteps(read, feet, minY) {
+  const steps = [];
+  for (const [dx, dz] of SIDES) for (const dy of [1, 0, -1]) {
+    const next = feet.offset(dx, dy, dz);
+    if (next.y < minY || !standable(read, next)) continue;
+    // Check headroom swept by the step, not only the destination.
+    if (dy === 1 && !open(read(feet.offset(0, 2, 0)))) continue;
+    if (dy === -1 && !open(read(next.offset(0, 2, 0)))) continue;
+    steps.push(next);
+  }
+  return steps;
+}
+
 // Find an existing uphill exit before cutting into the wall. Explore only
 // loaded, dry ground. The returned path is traversed in short rechecked legs.
-function planRetreat(bot, from, home, avoid = () => false, visited = new Set()) {
+function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), risk = () => 0) {
   const cache = new Map();
   const read = (p) => {
     const cell = key(p);
@@ -54,31 +67,34 @@ function planRetreat(bot, from, home, avoid = () => false, visited = new Set()) 
     return cache.get(cell);
   };
   const towardHome = (p) => home ? Math.hypot(p.x - home.x, p.z - home.z) : 0;
-  const origin = { feet: from, first: null, distance: 0 };
+  const origin = { feet: from, first: null, distance: 0, risk: 0 };
   const seen = new Set([key(from)]);
   const queue = [origin];
   let openExit = null;
   let staircase = null;
+  const openingCost = (p) => {
+    // A narrow stair remains behind rock on most sides. Walking through an
+    // open cavern gives nearby (possibly still unobserved) mobs more approaches.
+    const exits = SIDES.filter(([dx, dz]) => open(read(p.offset(dx, 0, dz)))
+      && open(read(p.offset(dx, 1, dz)))).length;
+    return Math.max(0, exits - 2) * 2;
+  };
   for (let i = 0; i < queue.length && i < 1400; i += 1) {
     const node = queue[i];
     const { feet, first, distance } = node;
     if (first && read(feet.offset(0, 1, 0))?.skyLight === 15 && skyOpen(bot, feet)) {
-      openExit = node;
-      break;
+      if (!openExit || distance + node.risk < openExit.distance + openExit.risk) openExit = node;
+      if (!node.risk) break;
+    }
+    if (distance < 32) for (const next of drySteps(read, feet, from.y - 1)) {
+      const id = key(next);
+      if (seen.has(id) || avoid(next)) continue;
+      seen.add(id);
+      queue.push({ feet: next, first: first || next, distance: distance + 1,
+        risk: node.risk + risk(next) + openingCost(next) });
     }
     for (const [dx, dz] of SIDES) {
       const side = feet.offset(dx, 0, dz);
-      for (const dy of [1, 0, -1]) {
-        const next = side.offset(0, dy, 0);
-        const id = key(next);
-        if (seen.has(id) || distance >= 32 || next.y < from.y - 1 || avoid(next)
-          || !standable(read, next)) continue;
-        // Check headroom swept by the step, not only the destination.
-        if (dy === 1 && !open(read(feet.offset(0, 2, 0)))) continue;
-        if (dy === -1 && !open(read(next.offset(0, 2, 0)))) continue;
-        seen.add(id);
-        queue.push({ feet: next, first: first || next, distance: distance + 1 });
-      }
       if (!solid(read(side)) || avoid(side.offset(0, 1, 0))) continue;
       const target = side.offset(0, 1, 0);
       const clearance = [feet.offset(0, 2, 0), side.offset(0, 2, 0), target];
@@ -88,6 +104,7 @@ function planRetreat(bot, from, home, avoid = () => false, visited = new Set()) 
       if (!digs.length) continue;
       const score = (feet.y - from.y) * 25 - distance - towardHome(target) * 0.4
         - digs.reduce((sum, p) => sum + (read(p).name === 'deepslate' ? 14 : 7), 0)
+        - node.risk - risk(target)
         - (first && visited.has(key(first)) ? 5 : 0);
       if (!staircase || score > staircase.score) staircase = { first, target, digs, score };
     }
@@ -124,10 +141,10 @@ async function walkDry(bot, ctx, actions, goal, { timeoutMs = 5000, maxDrop = 1,
   }
 }
 
-async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited } = {}) {
+async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited, risk } = {}) {
   if (ctx.signal?.aborted) throw abortError(ctx.signal);
   const from = bot.entity.position.floored();
-  const plan = planRetreat(bot, from, home, avoid, visited);
+  const plan = planRetreat(bot, from, home, avoid, visited, risk);
   if (!plan) return fail('cave_retreat_no_dry_route');
   const read = (p) => bot.blockAt(p);
   if (plan.kind === 'stairs') {
@@ -141,14 +158,60 @@ async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited } = 
     ctx.record('cave_retreat_cut', { from, block: dig, toward: plan.target });
     return { ok: true, dug: true, from, to: from };
   }
-  const p = plan.target;
+  const result = await stepDry(bot, ctx, actions, plan.target, avoid);
+  return result.ok ? { ...result, from } : result;
+}
+
+async function stepDry(bot, ctx, actions, p, avoid) {
+  const read = (point) => bot.blockAt(point);
   const result = await walkDry(bot, ctx, actions, new goals.GoalBlock(p.x, p.y, p.z), { avoid, adjacent: p });
   if (result.ok) await waitUntil(() => bot.entity.onGround && bot.entity.position.floored().equals(p), {
     timeoutMs: 500, signal: ctx.signal,
   });
   const to = bot.entity.position.floored();
   if (!result.ok || !to.equals(p) || !bot.entity.onGround || !standable(read, to)) return fail(result.reason || 'cave_retreat_step_unconfirmed');
-  return { ok: true, from, to };
+  return { ok: true, to };
+}
+
+// Prefer breaking line of sight and keeping altitude over maximizing distance
+// to a point the mob already left. The caller keeps its separate ascent plan.
+async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat) {
+  const from = bot.entity.position.floored();
+  const read = (p) => bot.blockAt(p);
+  const point = (p) => p.offset(.5, 0, .5);
+  const distance = (p) => point(p).distanceTo(threat.position);
+  const startDistance = distance(from);
+  ctx.record('cave_evasion_threat', { from, threat: threat.name, id: threat.id, mobAt: threat.position, distance: startDistance });
+  const queue = [{ p: from, first: null, edges: 0 }];
+  const seen = new Set([key(from)]);
+  let best = null;
+  for (let i = 0; i < queue.length && i < 180; i += 1) {
+    const { p, first, edges } = queue[i];
+    if (first) {
+      const range = distance(p);
+      const covered = !visible(threat, point(p));
+      const score = Number(covered) * 14 + Math.min(range, 10) + (p.y - from.y) * 4 - edges * 1.5;
+      if ((range >= startDistance + .3 || (covered && range >= 2.5)) && (!best || score > best.score)) {
+        best = { first, score };
+      }
+    }
+    if (edges >= 6) continue;
+    for (const next of drySteps(read, p, from.y - 1)) {
+      const id = key(next);
+      if (seen.has(id) || distance(next) < Math.min(2.5, startDistance) || (!first && distance(next) < startDistance - .35)) continue;
+      seen.add(id);
+      queue.push({ p: next, first: first || next, edges: edges + 1 });
+    }
+  }
+  if (!best) return fail('cave_evasion_no_safe_step');
+  const result = await stepDry(bot, ctx, actions, best.first, (p) => {
+    const live = liveThreat(threat.id);
+    return live && point(p).distanceTo(live.position) < Math.min(2.5, point(from).distanceTo(live.position));
+  });
+  const current = liveThreat(threat.id);
+  if (result.ok) ctx.record('cave_evasion_step', { from, to: result.to, threat: threat.name, id: threat.id,
+    mobAt: current?.position ?? null, distance: current ? point(result.to).distanceTo(current.position) : null });
+  return result;
 }
 
 async function returnFromCave(bot, ctx, actions, home, avoid) {
@@ -165,4 +228,4 @@ async function returnFromCave(bot, ctx, actions, home, avoid) {
     ? { ok: true, atHome: true } : fail(result.reason || 'cave_retreat_home_unconfirmed');
 }
 
-module.exports = { advanceCaveRetreat, planRetreat, returnFromCave, skyOpen, standable };
+module.exports = { advanceCaveRetreat, evadeInCave, planRetreat, returnFromCave, skyOpen, standable };
