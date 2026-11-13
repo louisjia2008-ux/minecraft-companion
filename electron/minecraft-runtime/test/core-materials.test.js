@@ -442,6 +442,35 @@ test('obsidian is cast with a diamond pickaxe, a water bucket and a lava bucket'
   assert.deepEqual([cast.kind, cast.key, cast.count], ['cast', 'obsidian', 7]);
 });
 
+test('only casting lava keeps trying the local bank before resurfacing', async () => {
+  for (const key of ['obsidian', 'lava_bucket', 'water_bucket']) {
+    const sim = simulate({ failRate: 0 });
+    Object.assign(sim.inventory, { diamond_pickaxe: 1, bucket: 1 });
+    if (key === 'obsidian') sim.inventory.water_bucket = 1;
+    let surfaced = 0;
+    const fills = [];
+    sim.actions.surface = async () => { surfaced += 1; return { ok: true }; };
+    sim.skills.fillBucket = async (_bot, _ctx, options) => {
+      fills.push(options);
+      return { ok: false, reason: 'lava_bank_unreachable' };
+    };
+    const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+      requirements: [{ key, count: 1 }], skills: sim.skills, actions: sim.actions });
+    goal.memory.chest = {};
+    const step = await runOnceWith(sim, goal);
+    if (key === 'obsidian') {
+      assert.equal(surfaced, 0);
+      assert.equal(fills[0]?.guardLava, true);
+      assert.equal(step.result.reason, 'lava_bank_unreachable');
+      assert.equal(goal.ownsRouteRecovery(), true);
+    } else {
+      assert.equal(surfaced, 1);
+      assert.equal(fills.length, 0);
+      assert.equal(goal.ownsRouteRecovery(), false);
+    }
+  }
+});
+
 test('flint and steel takes an iron ingot and flint, which gravel only sometimes drops', () => {
   const step = planNext({ requirements: [{ key: 'flint_and_steel', count: 1 }], inventory: { iron_ingot: 1 } });
   assert.deepEqual([step.kind, step.key, step.rare], ['gather', 'flint', true]);

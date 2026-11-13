@@ -108,6 +108,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   // Outfit opts into worn items; standalone material orders and machines keep
   // their existing hunt policy even when they also require string.
   const bowHunt = (step) => countWorn && !surfaceOnly && step?.kind === 'hunt' && step.key === 'string' && step.for === 'bow';
+  const castingLava = (step) => !surfaceOnly && step?.kind === 'fill' && step.liquid === 'lava' && step.for === 'obsidian';
   const huntHome = new Vec3(chest.x + .5, chest.y, chest.z + .5);
   const quarry = surfaceOnly ? createStoneQuarry({ bot, actions, blacklist,
     avoid: (p) => !withinStoneRange(p) || bot.companionHomeSite?.(p)
@@ -115,6 +116,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   let quarryNeeded = false;
   let stoneRouteOwnsRecovery = false;
   let bowRouteOwnsRecovery = false;
+  let lavaRouteOwnsRecovery = false;
   let nightHunt = null;
   let nextBowFoodCheck = 0;
   let bowSearchSince = 0;
@@ -577,6 +579,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
     // Night rest stays out of the way while a night mob is hunted (companion.js).
     const guardedBow = bowHunt(step);
+    const guardedLava = castingLava(step);
     setNightHunt(!guardedBow && step.kind === 'hunt' && (step.mobs || []).some((m) => NIGHT_MOBS.has(m)) ? step.key : null, true);
     // Ore that needs a mine is the only thing done down there; anything else
     // (a tree for sticks, a station, a craft) walks out along the tunnel first
@@ -587,7 +590,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       await sleep(1000, ctx.signal);
       return { ok: true, waited: true, progress: false, reason: 'bow_string_waiting_for_retreat' };
     }
-    if (!surfaceStone && (step.kind !== 'gather' || !Number.isFinite(step.mineY))) {
+    if (!surfaceStone && !guardedLava && (step.kind !== 'gather' || !Number.isFinite(step.mineY))) {
       const up = await climbOut(ctx);
       if (up) return up;
     }
@@ -647,9 +650,14 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         return result;
       }
       case 'fill': {
-        let result = await skills.fillBucket(bot, ctx, { liquid: step.liquid, blacklist });
-        if (result.reason === 'no_target_in_range') result = await skills.fillBucket(bot, ctx, { liquid: step.liquid, blacklist, radius: 128 });
-        if (result.reason === 'no_target_in_range') return explore(ctx, step.key);
+        const options = { liquid: step.liquid, blacklist, ...(guardedLava ? { guardLava: true } : {}) };
+        let result = await skills.fillBucket(bot, ctx, options);
+        if (result.reason === 'no_target_in_range') result = await skills.fillBucket(bot, ctx, { ...options, radius: 128 });
+        if (result.reason === 'no_target_in_range') {
+          // No usable bank in the currently loaded cave. Surface before
+          // looking for a different pool, but retry a known local bank in place.
+          return (guardedLava && await climbOut(ctx)) || explore(ctx, step.key);
+        }
         return result;
       }
       case 'hunt': {
@@ -817,6 +825,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         if (prepared) step = { ...prepared, quartzSupply: prepared.for === 'food' };
       }
     }
+    lavaRouteOwnsRecovery = castingLava(step);
     const freeSlots = typeof bot.inventory.emptySlotCount === 'function' ? bot.inventory.emptySlotCount() : Infinity;
     // Passing by the chest (crafting and smelting happen next to it) with a
     // whole item of the list in the bag: store it now, a death would lose it.
@@ -846,11 +855,11 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     recover() {
       blacklist.clear();
       memory.pathFailures = 0;
-      memory.recovery = !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery;
+      memory.recovery = !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery && !lavaRouteOwnsRecovery;
     },
     memory,
     owed,
-    ownsRouteRecovery: () => stoneRouteOwnsRecovery || bowRouteOwnsRecovery || quarry?.inside() === true,
+    ownsRouteRecovery: () => stoneRouteOwnsRecovery || bowRouteOwnsRecovery || lavaRouteOwnsRecovery || quarry?.inside() === true,
     leaveSurfaceQuarry,
     isDone: (state) => memory.chest !== null && !quarry?.inside() && owed(state?.inventory).length === 0,
     progress: () => memory.steps,
@@ -865,7 +874,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         ctx.record('recovery', { at: bot.entity.position.floored(), dimension: 'the_nether', delegate: 'nether_trip' });
         return runOnce(ctx);
       }
-      if (memory.pathFailures >= 2 && !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery) {
+      if (memory.pathFailures >= 2 && !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery && !lavaRouteOwnsRecovery) {
         memory.pathFailures = 0;
         ctx.record('unstick', { at: bot.entity.position.floored() });
         return actions.unstick(bot, ctx);

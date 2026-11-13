@@ -10,6 +10,8 @@ const { posKey } = require('./blacklist');
 const { FUELS, COLORS } = require('./knowledge');
 const { ownedItems } = require('./perception');
 const { withCursorConfirmation } = require('./inventory');
+const { RaycastIterator } = require('prismarine-world').iterators;
+const { standable, walkDry } = require('./caveRetreat');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -830,11 +832,155 @@ async function storeInChest(bot, ctx, { position, wants = [] }) {
 
 const sourceLevel = (block) => Number(block?.getProperties?.().level);
 
+const BUCKET_REACH = 4.5;
+const LAVA_APPROACH_MS = 20000;
+const LAVA_ROUTE_RETRY_MS = 30000;
+const LAVA_STANCES_PER_ROUTE = 40;
+const LAVA_HAZARD = /^(lava|water|bubble_column|fire|soul_fire|magma_block|campfire|soul_campfire)$/;
+const LAVA_ROUTE_FACES = [new Vec3(0, 0, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+  new Vec3(0, 0, 1), new Vec3(0, 0, -1), new Vec3(0, -1, 0), new Vec3(0, 1, 0)];
+
+/** A bucket hits the first solid shape or source fluid along the eye ray. */
+function lavaAim(read, eye, source) {
+  for (const y of [.85, .5]) {
+    const aim = source.offset(.5, y, .5);
+    const delta = aim.minus(eye);
+    const distance = delta.norm();
+    if (!distance || distance > BUCKET_REACH) continue;
+    const ray = new RaycastIterator(eye, delta.scaled(1 / distance), distance + .001);
+    for (let cell = eye; cell; cell = ray.next()) {
+      const block = read(new Vec3(cell.x, cell.y, cell.z).floored());
+      if (!block) break;
+      if (isFluidSource(block, 'lava') || isFluidSource(block, 'water')) {
+        if (isFluidSource(block, 'lava') && block.position.equals(source)) return aim;
+        break;
+      }
+      if (block.shapes?.length && ray.intersect(block.shapes, block.position)) break;
+    }
+  }
+  return null;
+}
+
+function lavaStances(bot, sources, blacklist) {
+  const read = (p) => bot.blockAt(p);
+  const eyeY = bot.entity.eyeHeight || 1.62;
+  const stances = new Map();
+  const checked = new Map();
+  for (const { position } of sources) {
+    for (let dx = -4; dx <= 4; dx += 1) for (let dz = -4; dz <= 4; dz += 1) {
+      for (const dy of [1, 0, 2, -1]) {
+        const feet = position.offset(dx, dy, dz);
+        const key = posKey(feet);
+        const eye = feet.offset(.5, eyeY, .5);
+        if (stances.has(key) || blacklist.has(`lava_stance:${key}`)) continue;
+        if (!checked.has(key)) checked.set(key, standable(read, feet));
+        if (!checked.get(key) || !lavaAim(read, eye, position)) continue;
+        stances.set(key, { feet, source: position });
+      }
+    }
+  }
+  return stances;
+}
+
+async function walkTowardLavaBank(bot, ctx, goal, timeoutMs) {
+  const movement = bot.pathfinder?.movements;
+  const neighbors = movement?.getNeighbors;
+  if (typeof neighbors !== 'function') return fail('lava_bank_no_pathfinder');
+  const owned = Object.hasOwn(movement, 'getNeighbors');
+  const hazard = (p) => {
+    const block = bot.blockAt(p);
+    return !block || LAVA_HAZARD.test(block.name) || block.getProperties?.().waterlogged === true;
+  };
+  const wet = (p) => LAVA_ROUTE_FACES.some((face) => hazard(p.plus(face)));
+  const guarded = function (node, ...args) {
+    return neighbors.call(this, node, ...args).filter((move) => {
+      const feet = new Vec3(move.x, move.y, move.z);
+      return !move.toPlace?.length && !move.parkour && move.y >= node.y - 2 && !wet(feet)
+        && !move.toBreak?.some((point) => wet(new Vec3(point.x, point.y, point.z)));
+    });
+  };
+  movement.getNeighbors = guarded;
+  try {
+    return await actions.goTo(bot, ctx, goal, { timeoutMs, retryNoProgress: false });
+  } finally {
+    if (movement.getNeighbors === guarded) {
+      if (owned) movement.getNeighbors = neighbors;
+      else delete movement.getNeighbors;
+    }
+  }
+}
+
+async function fillCastingLava(bot, ctx, sources, blacklist) {
+  const read = (p) => bot.blockAt(p);
+  const stanceMap = lavaStances(bot, sources, blacklist);
+  if (!stanceMap.size) return fail('no_target_in_range');
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const deadline = Date.now() + LAVA_APPROACH_MS;
+  const current = () => {
+    const body = bot.entity;
+    const feet = body.position.floored();
+    const pair = stanceMap.get(posKey(feet));
+    if (!pair || !body.onGround || body.isInWater || body.isInLava || bot.health < 14 || !standable(read, feet)) return null;
+    const aim = lavaAim(read, body.position.offset(0, body.eyeHeight || 1.62, 0), pair.source);
+    return aim && { ...pair, aim };
+  };
+  if (!current()) {
+    const stances = [...stanceMap.values()].sort((a, b) => a.feet.distanceTo(bot.entity.position) - b.feet.distanceTo(bot.entity.position));
+    const nearby = stances.slice(0, LAVA_STANCES_PER_ROUTE);
+    const exact = new goals.GoalCompositeAny(nearby.map(({ feet }) => new goals.GoalBlock(feet.x, feet.y, feet.z)));
+    const arrived = () => Boolean(current());
+    const blocked = () => {
+      for (const { feet } of nearby) blacklist.add(`lava_stance:${posKey(feet)}`, 'lava_bank_unreachable', LAVA_ROUTE_RETRY_MS);
+      return fail('lava_bank_unreachable');
+    };
+    const moved = await walkDry(bot, ctx, actions, exact, { timeoutMs: 8000, arrived });
+    if (!moved.ok && !current()) {
+      // Reach a distant bank via ordinary terrain routing, while keeping the
+      // final lava-edge walk on verified dry ground. Never use the bucket on
+      // a loose GoalNear arrival.
+      const { feet, source } = stances[0];
+      if (bot.entity.position.distanceTo(feet) <= 10) return blocked();
+      const coarse = new goals.GoalNear(feet.x, feet.y, feet.z, 5);
+      const accept = coarse.isEnd.bind(coarse);
+      coarse.isEnd = (p) => accept(p) && p.distanceTo(source) >= 4
+        && standable(read, new Vec3(p.x, p.y, p.z));
+      const near = await walkTowardLavaBank(bot, ctx, coarse, Math.max(1, deadline - Date.now()));
+      if (!near.ok || Date.now() >= deadline) return blocked();
+      const bank = await walkDry(bot, ctx, actions, exact, { timeoutMs: Math.max(1, deadline - Date.now()), arrived });
+      if (!bank.ok && !current()) return blocked();
+    }
+  }
+  const selected = current();
+  if (!selected) return fail('lava_bank_unreachable');
+  const { feet, source, aim } = selected;
+  ctx.record('target_selected', { block: 'lava', position: posKey(source), stance: posKey(feet), options: stanceMap.size });
+  const before = actions.countItems(bot, (name) => name === 'lava_bucket');
+  const bucket = bot.inventory.items().find((item) => item.name === 'bucket');
+  if (!bucket) return fail('no_bucket');
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  try { await bot.equip(bucket, 'hand'); }
+  catch (error) { if (isAbort(error)) throw error; return fail('equip_failed'); }
+  await bot.lookAt(aim, true);
+  await sleep(100, ctx.signal);
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const fresh = current();
+  if (!fresh || !fresh.feet.equals(feet) || !fresh.source.equals(source) || !fresh.aim.equals(aim)
+    || bot.heldItem?.name !== 'bucket') {
+    blacklist.add(`lava_stance:${posKey(feet)}`, 'lava_bank_changed', LAVA_ROUTE_RETRY_MS);
+    return fail('lava_bank_changed');
+  }
+  try { bot.activateItem(); } catch { /* checked by inventory confirmation */ }
+  if (await waitUntil(() => actions.countItems(bot, (name) => name === 'lava_bucket') > before,
+    { timeoutMs: 1500, signal: ctx.signal })) return { ok: true, filled: 'lava_bucket' };
+  blacklist.add(posKey(source), 'bucket_unfilled');
+  return fail('bucket_unfilled');
+}
+
 /**
  * Fills one empty bucket from a still source of water or lava, seen from dry
  * ground. Confirmed only by the full bucket appearing in the inventory.
  */
-async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48 }) {
+async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48, guardLava = false }) {
   const full = `${liquid}_bucket`;
   if (!bot.inventory.items().some((i) => i.name === 'bucket')) return fail('no_bucket');
   // Lava is only approached in good health: a slip costs a lot more than water.
@@ -842,13 +988,17 @@ async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48 }) {
   const id = bot.registry.blocksByName[liquid]?.id;
   if (id === undefined) return fail('unknown_block');
   const here = bot.entity.position;
-  const sources = bot.findBlocks({ matching: id, maxDistance: radius, count: 128 })
+  const protectedLava = guardLava && liquid === 'lava';
+  const sourceOpen = (b) => b && !blacklist.has(posKey(b.position)) && isFluidSource(b, liquid)
+    && AIR.has(bot.blockAt(b.position.offset(0, 1, 0))?.name || '');
+  const sources = bot.findBlocks({ matching: id, maxDistance: radius, count: 128, ...(protectedLava ? { useExtraInfo: sourceOpen } : {}) })
     .filter((p) => !blacklist.has(posKey(p)))
     .map((p) => bot.blockAt(p))
     // A still source with open air above it, so the bucket can be aimed from the side or above.
     .filter((b) => b && sourceLevel(b) === 0 && AIR.has(bot.blockAt(b.position.offset(0, 1, 0))?.name || ''))
     .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here));
   if (sources.length === 0) return fail('no_target_in_range');
+  if (protectedLava) return fillCastingLava(bot, ctx, sources, blacklist);
   const target = sources[0];
   const key = posKey(target.position);
   ctx.record('target_selected', { block: liquid, position: key, options: sources.length });

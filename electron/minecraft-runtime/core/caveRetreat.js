@@ -188,7 +188,7 @@ function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), 
   return best ? { kind: 'walk', target: best.first } : null;
 }
 
-async function walkDry(bot, ctx, actions, goal, { timeoutMs = 5000, maxDrop = 1, avoid = () => false, adjacent } = {}) {
+async function walkDry(bot, ctx, actions, goal, { timeoutMs = 5000, maxDrop = 1, avoid = () => false, adjacent, arrived } = {}) {
   const movements = bot.pathfinder?.movements;
   if (!movements || typeof movements.getNeighbors !== 'function') return fail('cave_retreat_no_pathfinder');
   const saved = Object.fromEntries(['canDig', 'allowParkour', 'allow1by1towers', 'scafoldingBlocks', 'maxDropDown',
@@ -204,7 +204,7 @@ async function walkDry(bot, ctx, actions, goal, { timeoutMs = 5000, maxDrop = 1,
     scafoldingBlocks: [], maxDropDown: Math.min(saved.maxDropDown ?? 2, maxDrop + 1),
     infiniteLiquidDropdownDistance: false, getNeighbors: guardedNeighbors });
   try {
-    return await actions.goTo(bot, ctx, goal, { timeoutMs, retryNoProgress: false });
+    return await actions.goTo(bot, ctx, goal, { timeoutMs, retryNoProgress: false, ...(arrived ? { arrived } : {}) });
   } finally {
     if (movements.getNeighbors === guardedNeighbors) {
       Object.assign(movements, saved);
@@ -311,4 +311,4 @@ async function returnFromCave(bot, ctx, actions, home, avoid) {
     ? { ok: true, atHome: true } : fail(result.reason || 'cave_retreat_home_unconfirmed');
 }
 
-module.exports = { advanceCaveRetreat, evadeInCave, farmlandFooting, planRetreat, returnFromCave, skyOpen, standable };
+module.exports = { advanceCaveRetreat, evadeInCave, farmlandFooting, planRetreat, returnFromCave, skyOpen, standable, walkDry };

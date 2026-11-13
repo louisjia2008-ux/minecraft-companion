@@ -6,6 +6,8 @@ const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
 const obsidian = require('../core/obsidian');
 const skillsModule = require('../core/skills');
+const actionsModule = require('../core/actions');
+const { createBlacklist } = require('../core/blacklist');
 
 // Flat ground: grass at y=0, dirt below, air above.
 function world() {
@@ -121,4 +123,103 @@ test('the mold keeps away from pools its water would run into', () => {
   const mold = obsidian.findMold(bot);
   assert.ok(mold);
   assert.ok(Math.abs(mold.pit.x - pool.x) > 9 || Math.abs(mold.pit.z - pool.z) > 9);
+});
+
+function lavaBank() {
+  const at = new Vec3(-73, 43, -102);
+  const bank = new Vec3(-70, 41, -107);
+  const accessible = new Vec3(-73, 40, -107);
+  const blocked = new Vec3(-72, 40, -105);
+  const bag = [{ name: 'bucket', count: 1 }];
+  const open = new Map();
+  const record = (p, name) => open.set(p.toString(), name);
+  for (const feet of [at, bank]) {
+    record(feet, 'cave_air');
+    record(feet.offset(0, 1, 0), 'cave_air');
+  }
+  for (let x = -74; x <= -70; x += 1) for (let y = 41; y <= 43; y += 1) {
+    record(new Vec3(x, y, -107), 'cave_air');
+  }
+  record(accessible, 'lava');
+  record(blocked, 'lava');
+  record(blocked.offset(0, 1, 0), 'cave_air');
+  const read = (p) => {
+    const position = p.floored();
+    const name = open.get(position.toString()) || 'stone';
+    return { name, position, type: name === 'lava' ? 1 : 0,
+      shapes: name === 'stone' ? [[0, 0, 0, 1, 1, 1]] : [],
+      boundingBox: name === 'stone' ? 'block' : 'empty', getProperties: () => name === 'lava' ? { level: 0 } : {} };
+  };
+  const neighbors = () => [bank, blocked, { x: -70, y: 41, z: -107, toBreak: [blocked] }];
+  const movements = { canDig: true, getNeighbors: neighbors };
+  const bot = { health: 20, entity: { position: at.offset(.5, 0, .5), eyeHeight: 1.62, onGround: true },
+    blockAt: read, registry: { blocksByName: { lava: { id: 1 } } }, inventory: { items: () => bag },
+    findBlocks: ({ useExtraInfo }) => [blocked, accessible].filter((p) => !useExtraInfo || useExtraInfo(read(p))),
+    pathfinder: { movements }, equip: async (item) => { bot.heldItem = item; }, lookAt: async () => {},
+    activateItem: () => { bag.splice(0, 1, { name: 'lava_bucket', count: 1 }); } };
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }) };
+  const fill = () => skillsModule.fillBucket(bot, ctx, { liquid: 'lava', blacklist: createBlacklist(), guardLava: true });
+  return { at, bank, accessible, blocked, bot, fill, movements, neighbors, record, records };
+}
+
+test('casting lava skips the nearest blocked source and fills from a confirmed grounded bank', async (t) => {
+  const f = lavaBank();
+  t.mock.method(actionsModule, 'goTo', async (_bot, _ctx, goal, options) => {
+    assert.equal(f.movements.canDig, false);
+    assert.equal(options.retryNoProgress, false);
+    assert.ok(goal.isEnd(f.bank));
+    assert.equal(goal.isEnd(f.blocked.offset(0, 1, 0)), false);
+    f.bot.entity.position = f.bank.offset(.5, 0, .5);
+    assert.equal(options.arrived(), true);
+    return { ok: true };
+  });
+  assert.deepEqual(await f.fill(), { ok: true, filled: 'lava_bucket' });
+  assert.ok(f.records.some((e) => e.type === 'target_selected' && e.position === '-73,40,-107' && e.stance === '-70,41,-107'));
+  assert.equal(f.movements.getNeighbors, f.neighbors);
+  assert.equal(f.movements.canDig, true);
+});
+
+test('casting lava never uses the bucket if the bank becomes wet or its ray changes after aiming', async (t) => {
+  for (const change of ['wet', 'blocked']) {
+    const f = lavaBank();
+    f.bot.entity.position = f.bank.offset(.5, 0, .5);
+    f.bot.activateItem = () => assert.fail('an invalidated bank cannot send a bucket interaction');
+    f.bot.lookAt = async () => {
+      if (change === 'wet') f.bot.entity.isInWater = true;
+      else f.record(new Vec3(-71, 42, -107), 'stone');
+    };
+    assert.equal((await f.fill()).reason, 'lava_bank_changed');
+    assert.equal(f.bot.inventory.items()[0].name, 'bucket');
+  }
+});
+
+test('a distant lava bank can use a guarded dry approach without breaking its liquid containment', async (t) => {
+  const f = lavaBank();
+  const entry = new Vec3(-66, 41, -107);
+  const dryCut = { x: -66, y: 41, z: -107, toBreak: [new Vec3(-66, 42, -107)] };
+  const opensLava = { x: -67, y: 41, z: -107, toBreak: [f.accessible.offset(0, 0, 1)] };
+  f.record(entry, 'cave_air');
+  f.record(entry.offset(0, 1, 0), 'cave_air');
+  f.bot.entity.position = new Vec3(-51.5, 45, -105.5);
+  const neighbors = () => [dryCut, opensLava];
+  f.movements.getNeighbors = neighbors;
+  let calls = 0;
+  t.mock.method(actionsModule, 'goTo', async (_bot, _ctx, goal, options) => {
+    calls += 1;
+    if (calls === 1) return { ok: false, reason: 'NoPath' };
+    if (calls === 2) {
+      assert.ok(goal.isEnd(entry));
+      assert.deepEqual(f.movements.getNeighbors(entry), [dryCut]);
+      f.bot.entity.position = entry.offset(.5, 0, .5);
+      return { ok: true };
+    }
+    assert.equal(f.movements.canDig, false);
+    f.bot.entity.position = f.bank.offset(.5, 0, .5);
+    assert.ok(options.arrived());
+    return { ok: true };
+  });
+  assert.equal((await f.fill()).ok, true);
+  assert.equal(calls, 3);
+  assert.equal(f.movements.getNeighbors, neighbors);
 });
