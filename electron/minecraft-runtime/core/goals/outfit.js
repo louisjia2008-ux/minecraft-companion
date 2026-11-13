@@ -357,11 +357,12 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) {
     return Number.isInteger(id) && typeof bot.findBlocks === 'function'
       ? bot.findBlocks({ matching: id, point, maxDistance, count, ...(useExtraInfo ? { useExtraInfo } : {}) }) : [];
   };
-  const plan = (state, critical) => {
+  const plan = (state, critical, keepLocalFarm = false) => {
     const inventory = state.inventory;
     if (home.stations?.crafting_table && countKey('wheat', inventory, kb) >= 3) return { kind: 'bread' };
-    const hostiles = critical ? safety.threats(state) : [];
-    const permitted = critical ? (p) => safety.local(p, LOCAL_FOOD_RADIUS - 2) && !safety.exposed(p, hostiles, true)
+    const local = critical || keepLocalFarm;
+    const hostiles = local ? safety.threats(state) : [];
+    const permitted = local ? (p) => safety.local(p, LOCAL_FOOD_RADIUS - 2) && !safety.exposed(p, hostiles, true)
       : (p) => p.y >= home.centre.y - 7;
     for (const [key, plot] of harvestedPlots) {
       const stage = farming.plotState(bot, plot);
@@ -369,21 +370,21 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) {
       if (inventory.wheat_seeds > 0 && stage === 'empty' && !blacklist.has(`plant:${key}`)
         && permitted(plot.offset(.5, 1, .5))) return { kind: 'plant', plot };
     }
-    const crops = find('wheat', critical ? safety.centre : farm, 24, 64)
-      .filter((p) => critical ? safety.local(p, LOCAL_FOOD_RADIUS - 2) : permitted(p))
+    const crops = find('wheat', local ? safety.centre : farm, 24, 64)
+      .filter((p) => local ? safety.local(p, LOCAL_FOOD_RADIUS - 2) : permitted(p))
       .map((p) => ({ position: p, plot: p.offset(0, -1, 0), state: farming.plotState(bot, p.offset(0, -1, 0)) }));
     const crop = crops.find(({ position, state }) => state === 'ripe'
       && !blacklist.has(posKey(position)) && permitted(position.offset(.5, 0, .5)));
     if (crop) return { kind: 'wheat', ...crop };
-    if (!critical) return { kind: 'forage' };
+    const growing = crops.filter((crop) => crop.state === 'growing');
+    if (!critical && (!keepLocalFarm || !growing.length)) return { kind: 'forage' };
     const berries = find('sweet_berry_bush', safety.centre, 24, 16, (b) => Number(b.getProperties?.().age) >= 2)
       .find((p) => !blacklist.has(`berry:${posKey(p)}`) && permitted(p.offset(.5, 0, .5)));
     if (berries) return { kind: 'berries', position: berries };
-    const animal = Object.values(bot.entities || {}).find((entity) => FOOD_MOBS.includes(entity.name)
+    const animal = Object.values(bot.entities || {}).find((entity) => FOOD_MOBS.includes(entity.name) && entity.isValid !== false
       && entity.position && !blacklist.has(`mob:${entity.id}`) && !bot.companionSpare?.(entity)
       && permitted(entity.position));
     if (animal) return { kind: 'animal', position: animal.position, animalId: animal.id };
-    const growing = crops.filter((crop) => crop.state === 'growing');
     const basin = irrigation.plan(growing.map((crop) => crop.plot));
     if (basin && permitted(basin.offset(.5, 1, .5))) return { kind: 'irrigate', position: basin };
     return { kind: 'wait', growing: growing.length };
@@ -458,15 +459,17 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   let routeInterrupted = false;
   let routeDestination = null;
   let ownsShelterRoute = false;
+  let ownsReserveRoute = false;
   let homeCut = null;
   const failedApproaches = createBlacklist({ ttlMs: 12000 });
   const nearShelter = (position) => Boolean(shelter && position && typeof actions.goTo === 'function'
     && position.y >= shelter.position.y - 5 && Math.hypot(position.x - shelter.position.x, position.z - shelter.position.z) <= 16);
-  goal.ownsRouteRecovery = () => ownsGatherRoute() || ownsShelterRoute
+  goal.ownsRouteRecovery = () => ownsGatherRoute() || ownsShelterRoute || ownsReserveRoute
     || dimension(bot) === 'overworld' && bot.health > 0 && bot.health < HOME_HEALTH && nearShelter(bot.entity?.position);
   const resetRecovery = () => {
     returned = false; checkedChest = false; lastFoodWait = null; routeInterrupted = false; routeDestination = null;
     ownsShelterRoute = false;
+    ownsReserveRoute = false;
     homeCut = null;
     failedApproaches.clear();
     clearShelter();
@@ -505,14 +508,19 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const unarmedShelter = Boolean(shelter && unarmed && (state.isDay === false || exposedUnarmed));
     const threatened = needsProtection && (doorstep && safety.exposed(doorstep, nearbyHostiles, critical)
       || critical && !inside && safety.exposed(state.position, nearbyHostiles, true));
-    const waitForDay = nightStone || unarmedShelter || needsProtection && (state.isDay === false || threatened);
+    const reserveTarget = checkedChest && !needsProtection && device.stocking(state)
+      ? resupplyFood.plan(state, false, true) : null;
+    const localReserve = Boolean(reserveTarget && reserveTarget.kind !== 'forage');
+    ownsReserveRoute = localReserve;
+    const waitForDay = nightStone || unarmedShelter || (needsProtection || localReserve) && (state.isDay === false || threatened);
     const carriedFood = countKey('food', state.inventory, kb);
-    const foodTarget = checkedChest && needsProtection && state.food < REGEN_FOOD && carriedFood === 0 && !waitForDay
-      ? resupplyFood.plan(state, critical) : null;
+    const foodTarget = !waitForDay && localReserve ? reserveTarget
+      : checkedChest && needsProtection && state.food < REGEN_FOOD && carriedFood === 0 && !waitForDay
+        ? resupplyFood.plan(state, critical) : null;
     const waitForFood = foodTarget?.kind === 'wait';
     const waitForHealing = critical && state.food >= REGEN_FOOD;
-    const holdShelter = waitForDay || waitForFood || waitForHealing || critical && routeInterrupted;
-    const guardRoute = critical || unarmedShelter;
+    const holdShelter = waitForDay || waitForFood || waitForHealing || (critical || localReserve) && routeInterrupted;
+    const guardRoute = critical || unarmedShelter || localReserve;
     ownsShelterRoute = missingDoor && nearShelter(state.position) && (!inside || holdShelter);
     if (shelter && holdShelter) bot.companionResupplySheltered = shelterWitness;
     else clearShelter();
@@ -714,7 +722,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return { ok: true };
     };
     return onSurfacePath(bot, home, async () => {
-      if (!inside && (needsProtection || nightStone || unarmedShelter)) {
+      if (!inside && (needsProtection || nightStone || unarmedShelter || localReserve)) {
         const left = await guarded('leave_supply_quarry', (scoped) => goal.memory.gather?.leaveSurfaceQuarry?.(scoped), true);
         if (left) return left;
       }
@@ -761,7 +769,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         checkedChest = true;
         return { ok: true };
       }
-      if (needsProtection || nightStone || unarmedShelter) {
+      if (needsProtection || nightStone || unarmedShelter || localReserve) {
         if (needsProtection && state.food < REGEN_FOOD) {
           if (carriedFood > 0) return actions.eat(bot, ctx);
           if (home.stations?.crafting_table && countKey('wheat', state.inventory, kb) >= 3 && inside) {
@@ -787,7 +795,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           clearShelter();
           return shelter.setDoor(ctx, true);
         }
-        if (!critical) return resupplyFood.run(ctx, foodTarget);
+        if (!critical && !localReserve) return resupplyFood.run(ctx, foodTarget);
         const { kind, plot, position } = foodTarget;
         ctx.record('resupply_food_target', { kind, position: position || plot });
         return guarded(kind, (scoped) => resupplyFood.run(scoped, foodTarget));

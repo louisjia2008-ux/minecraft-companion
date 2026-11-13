@@ -778,3 +778,52 @@ test('expedition reserve re-enters the home range by dry local legs from beyond 
   assert.notEqual(targets[0].z, targets[1].z, 'retry uses a different safe heading');
   assert.ok(bot.entity.position.x < 90);
 });
+
+test('healthy home recovery waits for its growing food reserve instead of exploring and harvests when ripe', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const crop = new Vec3(-10, 64, 3);
+  const { door } = house.furniture;
+  let open = true;
+  let age = 1;
+  const items = [{ name: 'stone_sword', count: 1 }, { name: 'stone_pickaxe', count: 1 }, { name: 'bread', count: 1 }];
+  const bot = Object.assign(fakeBot(items), { health: 20, food: 17, time: { timeOfDay: 3000 }, entities: {},
+    entity: { position: new Vec3(3.5, 64, 3.5), onGround: true }, game: { dimension: 'overworld' },
+    registry: { blocksByName: { wheat: { id: 1 } } }, findBlocks: () => [crop] });
+  bot.blockAt = (p) => {
+    if (p.x === door.position.x && p.z === door.position.z && (p.y === door.position.y || p.y === door.upper.y)) {
+      return { name: 'oak_door', getProperties: () => ({ half: p.y === door.position.y ? 'lower' : 'upper',
+        open, facing: 'north', hinge: 'left' }) };
+    }
+    if (p.equals(crop)) return { name: 'wheat', getProperties: () => ({ age }) };
+    if (p.equals(crop.offset(0, -1, 0))) return { name: 'farmland', getProperties: () => ({ moisture: 7 }) };
+    return { name: 'cobblestone', shapes: [[0, 0, 0, 1, 1, 1]] };
+  };
+  bot.activateBlock = async () => { open = !open; };
+  const goal = createOutfitGoal({ bot, recoverAtHome: true,
+    items: [{ key: 'stone_sword', count: 1 }, { key: 'stone_tier_pickaxe', count: 1 }, { key: 'food', count: 3 }],
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door: door.position,
+      stations: { crafting_table: house.furniture.crafting_table.position } },
+    actions: { withinReach: () => true }, skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async () => assert.fail('healthy recovery should not hunt without a nearby verified target'),
+      explore: async () => assert.fail('healthy recovery should not leave a growing local farm') } });
+  const records = [];
+  let controller = new AbortController();
+  const ctx = { perceive: () => perceive(bot), get signal() { return controller.signal; }, record: (type, detail) => {
+    records.push({ type, ...detail });
+    if (type === 'resupply_shelter_wait' || type === 'resupply_food_target') controller.abort();
+  } };
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.equal(open, false);
+  await assert.rejects(goal.run(ctx), { code: 'aborted' });
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.deepEqual(records.find(({ type }) => type === 'resupply_food_wait'), {
+    type: 'resupply_food_wait', reason: 'awaiting_crop_regrowth', growing: 1 });
+  assert.equal(goal.isDone(perceive(bot)), false);
+  age = 7;
+  controller = new AbortController();
+  await goal.run(ctx);
+  assert.equal(open, true);
+  await assert.rejects(goal.run(ctx), { code: 'aborted' });
+  assert.equal(records.find(({ type }) => type === 'resupply_food_target')?.kind, 'wheat');
+});
