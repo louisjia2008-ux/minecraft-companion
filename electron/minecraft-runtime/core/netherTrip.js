@@ -169,7 +169,9 @@ function createPortalTrip({ bot, memory, actions = defaultActions, walkOnly = fa
         const arrived = () => bot.entity.onGround && to.equals(at());
         const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(to.x, to.y, to.z),
           { timeoutMs, arrived, retryNoProgress: false });
-        if (!moved.ok || !await waitUntil(arrived, { timeoutMs: 450, signal: ctx.signal })) {
+        // Native goto may finish the path before a descending body lands.
+        if ((!moved.ok && moved.reason !== 'not_arrived')
+          || !await waitUntil(arrived, { timeoutMs: 450, signal: ctx.signal })) {
           return fail(moved.reason || 'portal_scout_step_unconfirmed');
         }
       }

@@ -39,6 +39,11 @@ test('when the local elevation has no portal site, scout one reachable dry slope
       assert.equal(movements.allowParkour, false);
       paths.push(target);
       bot.entity.position = target.offset(.5, 0, .5);
+      if (paths.length === 1) {
+        bot.entity.onGround = false;
+        setImmediate(() => { bot.entity.onGround = true; });
+        return { ok: false, reason: 'not_arrived' };
+      }
       return { ok: true };
     },
   } });
