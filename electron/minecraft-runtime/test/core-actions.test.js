@@ -103,3 +103,51 @@ test('guarded dig path must select and physically land at an accepted stance', a
   setTimeout(() => controller.abort(), 15);
   await assert.rejects(goToDig(bot, { signal: controller.signal }, block, options), { code: 'aborted' });
 });
+
+test('rejected native bed clicks release only their own sleep and message witnesses', async () => {
+  const { useBed } = require('../core/skills');
+  const bot = new EventEmitter();
+  const position = new Vec3(1, 64, 1);
+  const block = { name: 'white_bed', position };
+  bot.game = { dimension: 'minecraft:overworld' };
+  bot.entity = { position: new Vec3(1.5, 64, 2.5) };
+  bot.blockAt = () => block;
+  bot.sleep = () => assert.fail('sleep has no timeout listener cleanup in the pinned Mineflayer');
+  const existing = () => {};
+  bot.once('sleep', existing);
+  bot.on('message', existing);
+  let attempts = 0;
+  bot.activateBlock = async (clicked) => {
+    assert.equal(clicked, block);
+    attempts += 1;
+    bot.emit('message', { json: { translate: 'block.minecraft.bed.not_safe' } }, 'game_info');
+  };
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    assert.deepEqual(await useBed(bot, ctx(), { position }), { ok: false, reason: 'bed_blocked',
+      spawnSet: true, messages: ['block.minecraft.bed.not_safe'], refused: null });
+    assert.deepEqual(bot.listeners('sleep'), [existing]);
+    assert.deepEqual(bot.listeners('message'), [existing]);
+  }
+  assert.equal(attempts, 12);
+});
+
+test('native bed confirmation preserves a rapid sleep/wake and daytime spawn', async () => {
+  const { useBed } = require('../core/skills');
+  const bot = new EventEmitter();
+  const position = new Vec3(1, 64, 1);
+  bot.game = { dimension: 'overworld' };
+  bot.entity = { position: new Vec3(1.5, 64, 2.5) };
+  bot.blockAt = () => ({ name: 'white_bed', position });
+  bot.activateBlock = async () => {
+    bot.isSleeping = true;
+    bot.emit('sleep');
+    bot.isSleeping = false;
+    bot.emit('wake');
+  };
+  assert.deepEqual(await useBed(bot, ctx(), { position }), { ok: true, slept: true, spawnSet: true, messages: [] });
+  bot.activateBlock = async () => bot.emit('message', { translate: 'block.minecraft.bed.no_sleep' }, 'game_info');
+  assert.deepEqual(await useBed(bot, ctx(), { position }), { ok: true, spawnSet: true, messages: ['block.minecraft.bed.no_sleep'] });
+  assert.equal(bot.listenerCount('sleep'), 0);
+  assert.equal(bot.listenerCount('message'), 0);
+});

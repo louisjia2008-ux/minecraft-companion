@@ -570,3 +570,36 @@ test('homestead stays in the quarry for furnace stone and returns to craft once 
   assert.ok(events.slice(0, firstExit).filter((e) => e.type === 'quarry_dig' && e.block === 'stone').length >= 8);
   assert.equal(seen('generic_surface'), false);
 });
+
+test('homestead keeps a witnessed respawn when monsters refuse sleep and throttles the next try', async (t) => {
+  const { sim, house, setBlock, events, clock, ctx, goal } = simulateQuarryHomestead();
+  for (const block of house.blocks) setBlock(block.position, block.family === 'planks' ? 'oak_planks' : 'cobblestone');
+  const { bed, door } = house.furniture;
+  setBlock(bed.position, 'white_bed');
+  setBlock(bed.head, 'white_bed');
+  setBlock(door.position, 'oak_door');
+  setBlock(door.upper, 'oak_door');
+  const center = house.interiorCenter;
+  sim.bot.entity.position = new Vec3(center.x + .5, center.y, center.z + .5);
+  clock.timeOfDay = 13000;
+  let attempts = 0;
+  sim.skills.useBed = async () => {
+    attempts += 1;
+    return { ok: false, reason: 'bed_blocked', spawnSet: true };
+  };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  async function step() {
+    const result = goal.run(ctx);
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(3000);
+    return result;
+  }
+  assert.equal((await step()).waited, true);
+  assert.equal(goal.memory.verified.bed, true);
+  assert.equal(events.find(({ action }) => action === 'bed_wait')?.reason, 'bed_blocked');
+  assert.equal((await step()).waited, true);
+  assert.equal(attempts, 1);
+  t.mock.timers.tick(15000);
+  assert.equal((await step()).waited, true);
+  assert.equal(attempts, 2);
+});

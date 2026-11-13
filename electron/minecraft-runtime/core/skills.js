@@ -1136,7 +1136,7 @@ async function digOut(bot, ctx, bunker) {
 }
 
 /** Uses the bed: sleeps at night, otherwise sets the respawn point by interacting. */
-const BED_REPLY = /set_spawn|no_sleep|not_safe|too_far|obstructed|occupied/;
+const BED_REPLY = /^block\.minecraft\.(?:set_spawn|bed\.(?:no_sleep|not_safe|too_far_away|obstructed|occupied))$/;
 
 async function useBed(bot, ctx, { position }) {
   // Outside the overworld a bed explodes when used.
@@ -1146,33 +1146,41 @@ async function useBed(bot, ctx, { position }) {
   const block = bot.blockAt(v(position));
   if (!block?.name.endsWith('_bed')) return fail('bed_missing');
   const messages = [];
-  const onMessage = (message) => { messages.push(message?.translate || String(message)); };
+  let slept = bot.isSleeping === true;
+  const onSleep = () => { slept = true; };
+  const onMessage = (message, channel) => {
+    if (channel === 'chat') return;
+    const text = message?.translate || message?.json?.translate || String(message);
+    if (BED_REPLY.test(text)) messages.push(text);
+  };
+  bot.on('sleep', onSleep);
   bot.on('message', onMessage);
   let refused = null;
   try {
-    try {
-      await runCancellable(() => bot.sleep(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'sleep_timeout' });
-    } catch (error) {
-      if (isAbort(error)) throw error;
-      refused = error.message || String(error);
-      // Mineflayer refuses by day without asking the server. Using the bed by
-      // hand still sets the respawn point there, as for a player.
-      if (/night|thunder/i.test(refused)) await bot.activateBlock(block).catch(() => {});
+    if (!slept) {
+      try {
+        // Mineflayer's sleep() leaves its once('sleep') callback behind
+        // whenever the server rejects the request. Use the same native click
+        // and own the witness for both accepted and refused interactions.
+        await runCancellable(() => bot.activateBlock(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'sleep_timeout' });
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        refused = error.message || String(error);
+      }
+      await waitUntil(() => slept || bot.isSleeping || messages.length > 0, { timeoutMs: 2500, signal: ctx.signal });
     }
-    await waitUntil(() => bot.isSleeping || messages.some((m) => BED_REPLY.test(m)), { timeoutMs: 2500, signal: ctx.signal });
-    if (bot.isSleeping) {
-      // Sleep through the night; the server wakes us at dawn.
+    if (slept || bot.isSleeping) {
+      // The server may have already woken us when the last player slept.
       await waitUntil(() => !bot.isSleeping, { timeoutMs: 20000, signal: ctx.signal });
       return { ok: true, slept: true, spawnSet: true, messages };
     }
-    // Vanilla sets the respawn point before checking daylight and monsters,
-    // and only announces it when it changes: "only at night" or "not safe"
-    // also mean the respawn point is this bed.
+    // Vanilla sets the respawn point before checking daylight and monsters.
     const spawnSet = messages.some((m) => /set_spawn|no_sleep|not_safe/.test(m));
-    if (spawnSet && !messages.some((m) => /not_safe/.test(m))) return { ok: true, spawnSet, messages };
-    const reason = messages.some((m) => /not_safe|too_far|obstructed/.test(m)) ? 'bed_blocked' : 'bed_not_used';
-    return fail(reason, { spawnSet, messages, refused });
+    const blocked = messages.some((m) => /not_safe|too_far|obstructed|occupied/.test(m));
+    if (spawnSet && !blocked) return { ok: true, spawnSet, messages };
+    return fail(blocked ? 'bed_blocked' : 'bed_not_used', { spawnSet, messages, refused });
   } finally {
+    bot.removeListener('sleep', onSleep);
     bot.removeListener('message', onMessage);
     if (bot.isSleeping) bot.wake().catch(() => {});
   }

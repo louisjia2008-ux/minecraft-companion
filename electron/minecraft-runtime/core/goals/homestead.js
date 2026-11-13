@@ -41,6 +41,7 @@ const isFiller = (name) => FILLERS.has(name);
 const hasFiller = (inventory) => Object.entries(inventory).some(([name, count]) => count > 0 && isFiller(name));
 const stationFloor = (position) => ({ ...position, y: position.y - 1 });
 const BATCH = 16;
+const BED_RETRY_MS = 20000;
 const RAW_MEATS = ['beef', 'porkchop', 'mutton', 'chicken', 'rabbit'];
 const STORABLE = ['dirt', 'cobblestone', 'cobbled_deepslate', 'stick', 'rotten_flesh', 'feather', 'leather'];
 const LOG_PATH_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
@@ -725,7 +726,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     // Dig in where the bot is instead.
     const homeDistance = bot.entity.position.distanceTo(new Vec3(house.interiorCenter.x + 0.5, house.interiorCenter.y, house.interiorCenter.z + 0.5));
     const strandedFar = state.timeOfDay >= 12542 && homeDistance > 64;
-    if (hs.placed.bed && !memory.bedRefusedAt && !strandedFar) {
+    const canRetryBed = !memory.bedRefusedAt || shellDone && Date.now() - memory.bedRefusedAt >= BED_RETRY_MS;
+    if (hs.placed.bed && canRetryBed && !strandedFar) {
       const bed = house.furniture.bed.position;
       const centre = new Vec3(bed.x + 0.5, bed.y, bed.z + 0.5);
       if (bot.entity.position.distanceTo(centre) > 4) {
@@ -738,9 +740,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       }
       ctx.record('night', { action: 'sleep' });
       const slept = await skills.useBed(bot, ctx, { position: bed });
-      if (slept.ok) { memory.verified.bed = true; return slept; }
-      // Monsters too close to sleep: do not keep trying all night.
-      if (!shellDone) memory.bedRefusedAt = Date.now();
+      if (slept.ok || slept.spawnSet) memory.verified.bed = true;
+      if (slept.slept) return slept;
+      // Stay in shelter until the next bounded attempt. An unfinished house
+      // uses its normal bunker fallback for the rest of this night.
+      memory.bedRefusedAt = Date.now();
+      ctx.record('night', { action: 'bed_wait', reason: slept.reason || 'not_sleeping', spawnSet: slept.spawnSet === true });
     }
     if (shellDone && !strandedFar) {
       const centre = new Vec3(house.interiorCenter.x + 0.5, house.interiorCenter.y, house.interiorCenter.z + 0.5);
