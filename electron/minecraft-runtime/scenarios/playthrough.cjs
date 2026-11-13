@@ -32,6 +32,7 @@ const { installFurnitureEvidence } = require('./furnitureEvidence.cjs');
 const { Vec3 } = require('vec3');
 const { perceive } = require('../core/perception');
 const { countKey } = require('../core/knowledge');
+const { RISKY_FOODS } = require('../core/actions');
 const { homeOf } = require('../core/goals/registry');
 const { homeResupplyReady } = require('../core/goals/outfit');
 
@@ -42,8 +43,7 @@ const BLAZE_RODS = Math.ceil(EYES / 2) + 1;
 const RETRIES = 8;
 // Bread a trip to the farm brings back; asked for again whenever the bot goes hungry with nothing in the bag.
 const SNACK = 3;
-// A trip to the farm ends once the bag holds food again, or after this long
-// with nothing grown (the bot then hunts on its way); the next trip waits as long.
+// Leave time for more wheat to grow after a trip to the established farm.
 const SNACK_MS = 20 * MINUTE;
 // Plots growing wheat for the farm to count as started.
 const SOWN = 8;
@@ -136,9 +136,31 @@ function sown(bot, farm) {
   return (farm?.memory?.plots || []).filter((p) => bot.blockAt(new Vec3(p.x, p.y + 1, p.z))?.name === 'wheat').length;
 }
 
-// The bag has no food and the stomach is low, in the overworld (the farm is there).
+const safeFood = (bot) => (bot.inventory?.items?.() || []).some((item) => item.count > 0
+  && !RISKY_FOODS.has(item.name) && (bot.registry?.foodsByName?.[item.name] || countKey('food', { [item.name]: 1 }) > 0));
+
 function hungry({ bot }) {
-  return bot.food <= 6 && have(bot, 'food') === 0 && Boolean(bot.game?.dimension?.endsWith('overworld'));
+  return (bot.food <= 12 || bot.health < 16 && bot.food < 18)
+    && !safeFood(bot) && dimensionOf(bot) === 'overworld';
+}
+
+function snackFarm(context) {
+  const { companion, bot, state } = context;
+  const farm = state.goals.farm?.memory;
+  const table = houseOf(companion)?.furniture?.crafting_table?.position;
+  if (!farm?.center || !farm.plots?.length || !table) return null;
+  // Unloaded plots may have grown while we were away. Only suppress a return
+  // when we can actually observe that none of the old plots are ripe.
+  const wheat = (bot.inventory?.items?.() || []).filter((item) => item.name === 'wheat')
+    .reduce((sum, item) => sum + item.count, 0);
+  const possible = farm.plots.filter((p) => {
+    const crop = bot.blockAt?.(new Vec3(p.x, p.y + 1, p.z));
+    return !crop || crop.name === 'wheat' && Number(crop.getProperties?.().age) >= 7;
+  });
+  if (wheat + possible.length < 3) return null;
+  const plain = ({ x, y, z }) => ({ x, y, z });
+  return { bread: Math.min(2, Math.ceil((18 - bot.food) / 5)),
+    center: plain(farm.center), snackPlots: farm.plots.map(plain), home: { table: plain(table) } };
 }
 
 function machinesDone(companion, bot) {
@@ -468,21 +490,24 @@ const playthroughNatural = {
     // hunted: the model sends the bot to its farm for bread, then asks for
     // the step again (the detour is not counted as one of its asks).
     const goal = companion.status().goal;
-    if (state.snack && (!goal || have(bot, 'food') > 0 || Date.now() - (state.snackAt || 0) > SNACK_MS)) {
+    if (state.snack && (!goal || bot.food >= 18 || Date.now() - (state.snackAt || 0) > SNACK_MS)) {
       state.snack = false;
       state.snackEnd = Date.now();
       // The farm may still be running: the step asked again replaces it.
       state.replace = Boolean(goal);
       entry.asks = Math.max(0, entry.asks - 1);
-    } else if (!state.snack && hungry(context) && state.steps[1].doneAt && step.id !== 'farm'
+    } else if (!state.snack && hungry(context) && state.steps[1].doneAt && step.id !== 'farm' && !state.rearm
       && Date.now() - (state.snackEnd || 0) > SNACK_MS) {
-      state.snack = true;
-      state.snackAt = Date.now();
-      state.activeStage = 'snack';
-      write('model_ask', { step: 'snack', task: 'farm', args: { bread: SNACK } });
-      console.log('    model: farm (hungry)');
-      await companion.submitTask('farm', { bread: SNACK, center: farmCenter(companion) });
-      return;
+      const args = snackFarm(context);
+      if (args) {
+        state.snack = true;
+        state.snackAt = Date.now();
+        state.activeStage = 'snack';
+        write('model_ask', { step: 'snack', task: 'farm', args });
+        console.log('    model: farm (hungry)');
+        await companion.submitTask('farm', args);
+        return;
+      }
     }
     // Armour worn through (it breaks piece by piece over the nights): before
     // the next step out there, the model asks for a new set. Not counted as

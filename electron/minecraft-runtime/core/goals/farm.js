@@ -7,6 +7,7 @@
 // it waits, which neither spends nor refills the goal's stall budget.
 
 const { Vec3 } = require('vec3');
+const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const defaultFarming = require('../farming');
 const { planNext } = require('../planner');
@@ -14,14 +15,22 @@ const { KNOWLEDGE, countKey } = require('../knowledge');
 const { createBlacklist, posKey } = require('../blacklist');
 const { sleep } = require('../confirm');
 const { createPlannerRunner } = require('./common');
+const { applyWalkOnlyMovements } = require('../nether');
 
 // Farther than this from the centre, the farm's ground may be out of view.
 const FAR_FROM_FARM = 48;
 
-function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = null,
-  skills = defaultSkills, farming = defaultFarming, kb = KNOWLEDGE, exclude = () => false, waitMs = 3000 } = {}) {
+function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = null, snackPlots = null,
+  skills = defaultSkills, farming = defaultFarming, actions = defaultActions, kb = KNOWLEDGE,
+  exclude = () => false, waitMs = 3000 } = {}) {
   const blacklist = createBlacklist({ ttlMs: 60000 });
-  const memory = { center: center || null, barren: false, plots: null, table: home?.table || null, steps: 0, harvested: 0, shortfall: {} };
+  const point = (p) => p && [p.x, p.y, p.z].every(Number.isInteger);
+  const snack = snackPlots !== null;
+  if (snack && (!Array.isArray(snackPlots) || !snackPlots.length || !snackPlots.every(point) || !point(center) || !point(home?.table))) {
+    throw new TypeError('farm snack requires the existing plots, centre and crafting table');
+  }
+  const memory = { center: center || null, barren: false, plots: snack ? snackPlots.map((p) => new Vec3(p.x, p.y, p.z)) : null,
+    table: home?.table || null, steps: 0, harvested: 0, shortfall: {} };
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
   // Never put the crafting table on a plot.
   const onPlot = (p) => (memory.plots || []).some((q) => q.x === p.x && q.z === p.z);
@@ -36,6 +45,66 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
         findWater: (c, r) => farming.findWater(bot, c, r) });
     }
     return memory.plots;
+  }
+
+  async function runSnack(ctx) {
+    const state = ctx.perceive();
+    if (state.food >= 18) return { ok: true };
+    if (bot.entity.position.y < (bot.companionSurfaceY ?? center.y) - 3 && actions.underground(bot)) {
+      if (state.health <= 6) {
+        await sleep(waitMs, ctx.signal);
+        return { ok: true, waited: true };
+      }
+      return (await actions.surface(bot, ctx)) || { ok: false, reason: 'farm_snack_still_underground' };
+    }
+    const here = bot.entity.position;
+    const homeward = new Vec3(center.x, center.y, center.z);
+    const restore = applyWalkOnlyMovements(bot);
+    try {
+      if (state.food < 18 && countKey('bread', state.inventory, kb) > 0
+        && !(state.hostiles || []).some((h) => h.distance <= 4)) {
+        const ate = await actions.eat(bot, ctx);
+        if (ate.ok) ctx.record('farm', { action: 'snack_eat', item: ate.ate, foodBefore: state.food, foodAfter: ctx.perceive().food });
+        return ate;
+      }
+      const nearest = memory.plots.slice().sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
+      const byState = (want) => nearest.find((p) => farming.plotState(bot, p) === want && !blacklist.has(posKey(p)));
+      const unknown = byState('unknown');
+      const distance = Math.hypot(here.x - center.x, here.z - center.z);
+      if (distance > FAR_FROM_FARM || unknown && distance > 20) {
+        ctx.record('farm', { action: 'snack_return', plot: posKey(unknown || nearest[0]) });
+        const from = here.clone();
+        const returned = await actions.goNear(bot, ctx, homeward, 4, { timeoutMs: 60000, retryNoProgress: false });
+        const closer = from.distanceTo(homeward) - bot.entity.position.distanceTo(homeward) > 4;
+        return returned.ok || closer ? { ok: true } : returned;
+      }
+      const planted = state.inventory.wheat_seeds > 0 && byState('empty');
+      if (planted) {
+        const result = await farming.plant(bot, ctx, planted);
+        if (!result.ok) blacklist.add(posKey(planted), result.reason);
+        return result;
+      }
+      if (state.inventory.wheat >= 3) {
+        const baked = await skills.craft(bot, ctx, { item: 'bread', times: Math.min(bread, Math.floor(state.inventory.wheat / 3)), tablePosition: memory.table });
+        if (baked.ok && baked.gained > 0) {
+          ctx.record('farm', { action: 'snack_baked', gained: baked.gained, table: posKey(memory.table) });
+        }
+        return baked;
+      }
+      const ripe = byState('ripe');
+      if (ripe) {
+        ctx.record('farm', { action: 'snack_harvest', plot: posKey(ripe) });
+        const result = await farming.harvest(bot, ctx, ripe);
+        if (result.ok && result.gained) memory.harvested += result.gained;
+        else blacklist.add(posKey(ripe), result.reason || 'wheat_not_collected');
+        return result;
+      }
+      // This detour neither explores for seed nor waits for a new crop cycle.
+      ctx.record('farm', { action: 'snack_unavailable' });
+      return { ok: false, reason: 'farm_snack_no_ripe_wheat' };
+    } finally {
+      restore();
+    }
   }
 
   async function runOnce(ctx) {
@@ -130,14 +199,15 @@ function createFarmGoal({ bot, center, plots: plotCount = 16, bread = 3, home = 
 
   return {
     name: 'farm',
-    noProgressLimit: 30,
+    noProgressLimit: snack ? 3 : 30,
     memory,
+    ...(snack ? { farmSnack: true, ownsRouteRecovery: () => true } : {}),
     // Done with the bread in the bag and the farm left sown behind it.
-    isDone: (state) => countKey('bread', state.inventory, kb) >= bread
+    isDone: (state) => (snack && state.food >= 18) || countKey('bread', state.inventory, kb) >= bread
       && (!(state.inventory.wheat_seeds > 0) || !(memory.plots || []).some((p) => farming.plotState(bot, p) === 'empty')),
     progress: () => memory.steps,
     async run(ctx) {
-      const result = await runOnce(ctx);
+      const result = await (snack ? runSnack(ctx) : runOnce(ctx));
       if (result.ok && !result.waited) memory.steps += 1;
       return result;
     },

@@ -184,6 +184,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity),
     feeding: () => FEEDING_GOALS.has(brain?.status().goal?.name),
     resupplying: () => goalOwner?.goal?.recoverAtHome === true,
+    farmSnack: () => !paused && goalOwner?.goal?.farmSnack === true && brain?.status().goal?.name === 'farm',
     activeGoal: () => brain?.status().goal?.name,
     home: () => (director ? homeOf(director.memory)?.centre || null : null) }), ...recovery.behaviors,
     nightRest, homeMaintenance, ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];
@@ -290,11 +291,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       director.notePlayerGoal();
       paused = false;
       useGoal(goal, metadata);
-      if (epoch === taskEpoch && goal.recoverAtHome === true
-        && ['provision', 'recover_drops'].includes(brain.status().running)) {
-        // The installed goal excludes new hunts and drop retrieval. Release
-        // any existing path before letting home recovery take over the body.
-        await brain.interrupt('home_resupply');
+      const running = brain.status().running;
+      const takingOver = goal.recoverAtHome === true && ['provision', 'recover_drops'].includes(running)
+        || goal.farmSnack === true && running === 'provision';
+      if (epoch === taskEpoch && takingOver) {
+        // Release an old hunt before the home recovery or farm detour starts.
+        await brain.interrupt(goal.farmSnack === true ? 'farm_snack' : 'home_resupply');
         assertActive();
         if (epoch !== taskEpoch) throw Object.assign(new Error('Task dispatch was cancelled'), { code: 'aborted' });
       }

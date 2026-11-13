@@ -40,6 +40,68 @@ test('a farm asked for again picks its own sown farmland, not new ground', () =>
   assert.deepEqual(again.map((p) => `${p.x},${p.y},${p.z}`).sort(), first.map((p) => `${p.x},${p.y},${p.z}`).sort());
 });
 
+test('a hungry farm return surfaces, follows a walk-only route and uses only the established plots and table', async () => {
+  const center = new Vec3(-117, 64, -179);
+  const table = new Vec3(-104, 64, -179);
+  const plot = new Vec3(-113, 62, -180);
+  const movements = { canDig: true };
+  const bot = { entity: { position: new Vec3(-187.5, 57, -260.5) }, pathfinder: { movements } };
+  const inventory = { chicken: 5, wheat: 2 };
+  const calls = [];
+  const state = { food: 11, health: 16, inventory, hostiles: [] };
+  let stage = 'unknown';
+  const actions = {
+    underground: () => bot.entity.position.y < center.y,
+    surface: async () => { calls.push('surface'); bot.entity.position = bot.entity.position.offset(0, 7, 0); return { ok: true }; },
+    goNear: async (_bot, _ctx, where) => {
+      calls.push('return');
+      assert.equal(movements.canDig, false);
+      assert.ok(where.equals(center));
+      bot.entity.position = center.offset(.5, 0, .5);
+      stage = 'ripe';
+      return { ok: true };
+    },
+    eat: async () => {
+      assert.ok(inventory.bread > 0);
+      calls.push('eat');
+      inventory.bread -= 1;
+      state.food += 5;
+      return { ok: true };
+    },
+  };
+  const farming = {
+    plotState: (_bot, where) => { assert.ok(where.equals(plot)); return stage; },
+    choosePlots: () => assert.fail('snack must not create a new farm'),
+    gatherSeeds: () => assert.fail('snack must not explore for seed'),
+    harvest: async (_bot, _ctx, where) => {
+      assert.ok(where.equals(plot));
+      assert.equal(stage, 'ripe');
+      assert.equal(movements.canDig, false);
+      calls.push('harvest'); stage = 'empty'; inventory.wheat += 1; inventory.wheat_seeds = 1;
+      return { ok: true, gained: 1 };
+    },
+    plant: async () => { calls.push('replant'); stage = 'growing'; inventory.wheat_seeds = 0; return { ok: true }; },
+  };
+  const skills = {
+    explore: () => assert.fail('snack must not roam'),
+    craft: async (_bot, _ctx, { item, tablePosition }) => {
+      assert.equal(item, 'bread');
+      assert.ok(tablePosition.equals(table));
+      assert.equal(movements.canDig, false);
+      calls.push('bread'); inventory.wheat -= 3; inventory.bread = 1;
+      return { ok: true, gained: 1 };
+    },
+  };
+  const goal = createFarmGoal({ bot, center, home: { table }, snackPlots: [plot], bread: 2, actions, skills, farming });
+  const ctx = { perceive: () => state, record() {}, signal: new AbortController().signal };
+  assert.equal(goal.farmSnack, true);
+  for (let i = 0; i < 6; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(calls, ['surface', 'return', 'harvest', 'replant', 'bread', 'eat']);
+  assert.equal(goal.isDone(state), false);
+  assert.equal((await goal.run(ctx)).reason, 'farm_snack_no_ripe_wheat');
+  assert.equal(movements.canDig, true);
+});
+
 test('farm goal goes from an empty inventory to bread and leaves the plots sown', async () => {
   const blocks = new Map();
   const ages = new Map();

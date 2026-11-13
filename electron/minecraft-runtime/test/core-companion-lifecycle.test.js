@@ -225,6 +225,37 @@ test('home resupply retires an in-flight provision path before outfit takes the 
   assert.ok(installed >= 0 && interrupted > installed && settled > interrupted && started > settled);
 });
 
+test('a known farm snack interrupts provision without disabling eating or later provision', async (t) => {
+  const f = fixture(t);
+  f.bot.food = 11;
+  const near = new Vec3(2, 63, 0);
+  f.bot.entities[1] = { name: 'pig', position: near.offset(0, 1, 1) };
+  let hunts = 0;
+  let provisionSignal;
+  t.mock.method(require('../core/skills'), 'huntOne', async (_bot, ctx) => {
+    hunts += 1;
+    provisionSignal = ctx.signal;
+    await sleep(10000, ctx.signal);
+  });
+  let harvestSignal;
+  t.mock.method(require('../core/farming'), 'plotState', () => 'ripe');
+  t.mock.method(require('../core/farming'), 'harvest', async (_bot, ctx) => {
+    harvestSignal = ctx.signal;
+    await sleep(10000, ctx.signal);
+  });
+  await f.companion.brain.tick();
+  assert.equal(f.companion.status().running, 'provision');
+  await f.companion.submitTask('farm', { center: { x: 2, y: 64, z: 0 }, snackPlots: [{ x: 2, y: 63, z: 0 }],
+    home: { table: { x: 0, y: 64, z: 1 } }, bread: 2 });
+  assert.equal(provisionSignal.aborted, true);
+  assert.ok(harvestSignal);
+  assert.equal(hunts, 1, 'nearby livestock does not regain the body during the farm detour');
+  await f.companion.cancelTask();
+  assert.equal(harvestSignal.aborted, true);
+  await f.companion.brain.tick();
+  assert.equal(hunts, 2, 'ordinary provisioning can resume after retirement');
+});
+
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 const dragonListeners = (bot) => ['entityUpdate', 'entityGone', 'entityMoved'].map((name) => bot.listenerCount(name));
 

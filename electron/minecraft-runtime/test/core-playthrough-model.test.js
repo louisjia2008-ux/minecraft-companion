@@ -80,6 +80,39 @@ test('the Nether trip requires portal supplies; the eyes stage also waits for a 
   assert.ok(state.steps.find((step) => step.id === 'eyes').doneAt);
 });
 
+test('only safe edible food prevents a snack detour to the existing ripe farm', async () => {
+  const { context, asked, state } = modelContext({ step: 'gear', goal: { name: 'outfit' }, pick: true });
+  const house = createStarterHouse({ x: -105, y: 64, z: -182 });
+  context.companion.director = { memory: { homestead: { memory: { house } } } };
+  state.gearDone = false;
+  state.snackEnd = 0;
+  context.bot.food = 11;
+  const bag = [{ name: 'bread', count: 1 }, { name: 'chicken', count: 5 }];
+  context.bot.inventory.items = () => bag;
+  const center = { x: -117, y: 64, z: -179 };
+  const plots = [new Vec3(-113, 62, -180), new Vec3(-113, 62, -178), new Vec3(-113, 62, -177)];
+  state.goals.farm = { memory: { center, plots } };
+  let age = 6;
+  context.bot.blockAt = () => ({ name: 'wheat', getProperties: () => ({ age }) });
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked, [], 'carried bread can be eaten');
+  bag.shift();
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked, [], 'the loaded farm has no ripe wheat yet');
+  age = 7;
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked, [{ task: 'farm', args: { bread: 2, center,
+    snackPlots: plots.map(({ x, y, z }) => ({ x, y, z })), home: { table: house.furniture.crafting_table.position } } }]);
+  assert.equal(state.snack, true);
+  await playthroughNatural.onTick(context);
+  assert.equal(asked.length, 1, 'raw chicken does not end the new farm task');
+  context.bot.food = 18;
+  await playthroughNatural.onTick(context);
+  assert.equal(state.snack, false);
+  assert.equal(asked[1]?.task, 'outfit');
+  assert.deepEqual(asked[1].args.items.find(({ key }) => key === 'food'), { key: 'food', count: 12 });
+});
+
 test('a lost bow after eyes preparation restocks the End weapons without recrafting spent eyes', async () => {
   const { context, asked, state } = modelContext({ step: 'end', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
   state.rearm = true;

@@ -263,7 +263,8 @@ const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const FEEDING_RANGE = 32;
 
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false,
-  feeding = () => false, resupplying = () => false, home = () => null, activeGoal = () => null, thresholds = {} } = {}) {
+  feeding = () => false, resupplying = () => false, farmSnack = () => false,
+  home = () => null, activeGoal = () => null, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
@@ -1050,7 +1051,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     want(state) {
       // Home resupply has a surface food route of its own. Generic hunting
       // must not pull an injured bot back underground while it restocks.
-      if (resupplying()) return 0;
+      if (resupplying() || farmSnack()) return 0;
       // Hunger alone is not the only reason to get food: below 18 a badly
       // injured bot cannot regenerate, even at food 16. Stop supplying at the
       // same threshold at which recovery can take over, and eat carried food
