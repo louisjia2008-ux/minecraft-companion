@@ -188,3 +188,23 @@ test('death during active expedition prep holds gear until home supplies and wor
   assert.equal(requests[2].args.items.some(({ key }) => key === 'bow'), false);
   assert.deepEqual(events.filter((e) => e.type === 'playthrough_death_recovery_verified').map(({ phase }) => phase), ['base', 'iron']);
 });
+
+test('gear and eyes ask for the full safe food reserve using the known farm plots', () => {
+  const { context, state } = modelContext({ step: 'gear', pick: true });
+  state.gearDone = false;
+  state.goals.farm = { memory: { plots: [new Vec3(-112, 62, -178)] } };
+  const gear = STEPS.find((step) => step.id === 'gear');
+  const eyes = STEPS.find((step) => step.id === 'eyes');
+  for (const [step, food] of [[gear, 12], [eyes, 24]]) {
+    const args = step.args(context);
+    assert.equal(args.expeditionFood, true);
+    assert.deepEqual(args.farmPlots, [{ x: -112, y: 62, z: -178 }]);
+    assert.equal(args.items.find(({ key }) => key === 'food').count, food);
+    const bag = args.items.filter(({ key }) => key !== 'food').map(({ key, count }) => ({ name: key, count }));
+    const reserve = { name: 'chicken', count: food };
+    context.bot.inventory.items = () => [...bag, reserve];
+    assert.equal(step.done(context), false, 'raw chicken will not feed the expedition');
+    reserve.name = 'cooked_chicken';
+    assert.equal(step.done(context), true);
+  }
+});

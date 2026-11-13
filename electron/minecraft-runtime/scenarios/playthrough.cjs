@@ -35,6 +35,7 @@ const { countKey } = require('../core/knowledge');
 const { RISKY_FOODS } = require('../core/actions');
 const { homeOf } = require('../core/goals/registry');
 const { homeResupplyReady } = require('../core/goals/outfit');
+const { expeditionFoodCount } = require('../core/goals/stockFood');
 
 const MINUTE = 60 * 1000;
 const EYES = 12;
@@ -88,6 +89,14 @@ const EYE_KIT = [{ key: 'ender_eye', count: EYES }, ...END_WEAPONS, END_FOOD,
 const have = (bot, key) => countKey(key, perceive(bot).inventory);
 const kitDone = (bot, kit) => kit.every((r) => have(bot, r.key) >= r.count);
 const houseOf = (companion) => companion.director.memory.homestead?.memory?.house || null;
+const expeditionKitDone = (bot, kit) => {
+  const inventory = perceive(bot).inventory;
+  return kit.every(({ key, count }) => (key === 'food' ? expeditionFoodCount(bot, inventory) : countKey(key, inventory)) >= count);
+};
+const expeditionKitArgs = (items, state) => ({
+  items, expeditionFood: true,
+  farmPlots: (state?.goals?.farm?.memory?.plots || []).map(({ x, y, z }) => ({ x, y, z })),
+});
 
 // What the model asks for, in order. `done` reads the world as the model
 // would see it (the bag, the dimension); `when` holds a step back (pearls at night).
@@ -100,14 +109,16 @@ const STEPS = [
     done: ({ state, bot }) => state.goals.farm?.isDone?.(state.lastPerceive)
       || sown(bot, state.goals.farm) >= Math.min(SOWN, Math.max(1, state.goals.farm?.memory?.plots?.length || 0)) },
   { id: 'armor', task: 'outfit', args: () => ({ items: ARMOR }), done: ({ bot, state }) => state.armorDone || kitDone(bot, ARMOR) },
-  { id: 'gear', task: 'outfit', args: () => ({ items: TRIP }), done: ({ bot, state }) => state.gearDone || kitDone(bot, TRIP) },
+  { id: 'gear', task: 'outfit', args: ({ state } = {}) => expeditionKitArgs(TRIP, state),
+    done: ({ bot, state }) => state.gearDone || expeditionKitDone(bot, TRIP) },
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }), patient: true,
     done: ({ bot }) => have(bot, 'blaze_rod') + have(bot, 'ender_eye') / 2 >= BLAZE_RODS && bot.game?.dimension?.endsWith('overworld') },
   { id: 'pearls', task: 'huntPearls', args: ({ bot }) => ({ count: Math.max(1, EYES - have(bot, 'ender_eye')) }),
     when: ({ bot }) => bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000,
     done: ({ bot }) => have(bot, 'ender_pearl') + have(bot, 'ender_eye') >= EYES, nightly: true },
-  { id: 'eyes', task: 'outfit', args: ({ state } = {}) => ({ items: state?.endWeaponsRestock ? END_WEAPONS : EYE_KIT }),
-    done: ({ bot, state }) => kitDone(bot, state?.endWeaponsRestock ? END_WEAPONS : EYE_KIT) },
+  { id: 'eyes', task: 'outfit', args: ({ state } = {}) => state?.endWeaponsRestock
+    ? { items: END_WEAPONS } : expeditionKitArgs(EYE_KIT, state),
+    done: ({ bot, state }) => expeditionKitDone(bot, state?.endWeaponsRestock ? END_WEAPONS : EYE_KIT) },
   { id: 'end', task: 'endJourney', args: () => ({ withCity: false, home: true }),
     done: ({ state }) => state.dragon === true && state.returnedOverworld?.pass === true },
   // This remains the original house-first journey, with explicit post-return

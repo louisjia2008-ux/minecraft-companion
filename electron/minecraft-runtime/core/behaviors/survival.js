@@ -263,7 +263,7 @@ const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const FEEDING_RANGE = 32;
 
 function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false,
-  feeding = () => false, resupplying = () => false, farmSnack = () => false,
+  feeding = () => false, resupplying = () => false, farmSnack = () => false, expeditionStocking = () => false,
   home = () => null, activeGoal = () => null, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
@@ -1052,7 +1052,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     want(state) {
       // Home resupply has a surface food route of its own. Generic hunting
       // must not pull an injured bot back underground while it restocks.
-      if (resupplying() || farmSnack()) return 0;
+      if (resupplying() || farmSnack() || expeditionStocking(state)) return 0;
       // A failed retreat leg backs off briefly. Keep that pause available for
       // eating or regeneration without starting a new search deeper in the cave.
       if (retreat && dimensionOf(bot) === 'overworld' && retreatCanMove(state)) return 0;

@@ -641,3 +641,140 @@ test('critical resupply steps inward only while a continuous roof separates the 
   assert.equal(open, false);
   await goal.dispose();
 });
+
+test('expedition stock uses the home furnace and only counts food that can be eaten safely', async () => {
+  const furnace = { x: 3, y: 64, z: 3 };
+  const bag = { chicken: 3 };
+  const bot = Object.assign(fakeBot(), { health: 20, food: 20, game: { dimension: 'overworld' },
+    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true }, blockAt: () => null });
+  const goal = createOutfitGoal({ bot, home: { ...home, stations: { furnace } }, items: [{ key: 'food', count: 3 }],
+    expeditionFood: true, skills: {
+      smelt: async (_bot, _ctx, options) => {
+        assert.equal(options.input, 'chicken');
+        assert.equal(options.count, 3);
+        assert.equal(options.furnacePosition, furnace);
+        delete bag.chicken;
+        bag.cooked_chicken = 3;
+        return { ok: true, taken: 3 };
+      },
+    } });
+  const state = () => ({ position: bot.entity.position, inventory: { ...bag }, health: bot.health, food: bot.food });
+  assert.equal(goal.isDone(state()), false);
+  assert.equal(goal.expeditionStocking(state()), true);
+  const events = [];
+  assert.deepEqual(await goal.run({ perceive: state, record: (type, data) => events.push({ type, ...data }) }), { ok: true, taken: 3 });
+  assert.deepEqual(events, [{ type: 'expedition_food_cook', input: 'chicken', ok: true, taken: 3 }]);
+  assert.equal(goal.isDone(state()), true);
+});
+
+test('expedition stock rejects deep and distant animals and leaves native movement restored', async () => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const dry = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const originalNeighbors = () => [new Vec3(3, 64, 2), new Vec3(55, 64, 2), new Vec3(3, 40, 2), new Vec3(4, 63, 2)];
+  const movements = { canDig: true, allowParkour: true, scafoldingBlocks: [1], getNeighbors: originalNeighbors };
+  const pig = (x, y, z) => ({ name: 'pig', position: new Vec3(x, y, z), isValid: true });
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' }, pathfinder: { movements },
+    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true }, blockAt: (p) => {
+      if (p.x === 4 && p.y === 63) return { ...air, name: 'water' };
+      return p.y === 63 ? dry : air;
+    } });
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: home,
+    actions: { underground: () => false }, skills: {
+      takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async (_bot, _ctx, { accept, radius, dropMatch }) => {
+        assert.equal(radius, 48);
+        assert.equal(accept(pig(13, 64, 6)), true);
+        assert.equal(accept(pig(13, 40, 6)), false);
+        assert.equal(accept(pig(55, 64, 6)), false);
+        assert.equal(dropMatch('chicken'), true, 'take raw chicken to the furnace');
+        assert.equal(dropMatch('rotten_flesh'), false);
+        assert.equal(movements.canDig, false);
+        assert.equal(movements.allowParkour, false);
+        assert.deepEqual(movements.scafoldingBlocks, []);
+        assert.deepEqual(movements.getNeighbors(new Vec3(2, 64, 2)), [new Vec3(3, 64, 2)]);
+        return { ok: true, gained: 2 };
+      },
+    } });
+  const ctx = { perceive: () => ({ inventory: {}, health: 20, food: 20, isDay: true }), record() {} };
+  assert.deepEqual(await goal.run(ctx), { ok: true });
+  assert.deepEqual(await goal.run(ctx), { ok: true, gained: 2 });
+  assert.equal(movements.canDig, true);
+  assert.equal(movements.getNeighbors, originalNeighbors);
+});
+
+test('expedition reserve uses real ripe plots and replants before seeking new ground', async (t) => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const farm = require('../core/farming');
+  const plot = { x: 13, y: 63, z: 2 };
+  let crop = 'ripe';
+  const bag = {};
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
+    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true }, blockAt: () => null });
+  const calls = [];
+  t.mock.method(farm, 'plotState', (_bot, p) => {
+    assert.ok(p.equals(new Vec3(plot.x, plot.y, plot.z)));
+    return crop;
+  });
+  t.mock.method(farm, 'harvest', async () => {
+    calls.push('harvest');
+    crop = 'empty';
+    bag.wheat = 3;
+    bag.wheat_seeds = 1;
+    return { ok: true, gained: 3 };
+  });
+  t.mock.method(farm, 'plant', async () => {
+    calls.push('plant');
+    crop = 'growing';
+    bag.wheat_seeds = 0;
+    return { ok: true };
+  });
+  const table = { x: 1, y: 64, z: 1 };
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: { ...home, stations: { crafting_table: table } },
+    farmPlots: [plot], skills: {
+      takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async () => ({ ok: false, reason: 'no_mob_in_range' }),
+      craft: async (_bot, _ctx, { item, times, tablePosition }) => {
+        assert.equal(item, 'bread');
+        assert.equal(times, 1);
+        assert.equal(tablePosition, table);
+        calls.push('bake');
+        bag.wheat = 0;
+        bag.bread = 1;
+        return { ok: true, gained: 1 };
+      },
+    } });
+  const ctx = { perceive: () => ({ inventory: { ...bag }, health: 20, food: 20, isDay: true }), record() {} };
+  for (let i = 0; i < 4; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(calls, ['harvest', 'bake', 'plant']);
+  assert.equal(goal.progress(ctx.perceive()), 1);
+  assert.equal(goal.isDone(ctx.perceive()), false);
+});
+
+test('expedition reserve re-enters the home range by dry local legs from beyond a loaded route', async () => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const floor = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' }, blockAt: (p) => p.y === 63 ? floor : air,
+    entity: { position: new Vec3(108.5, 64, 2.5), onGround: true } });
+  const targets = [];
+  let blocked = true;
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: home, actions: {
+    underground: () => false,
+    goTo: async (_bot, _ctx, destination) => {
+      assert.ok(destination.constructor.name === 'GoalNearXZ', 'a bounded leg rather than a goal outside loaded terrain');
+      const p = new Vec3(destination.x, 64, destination.z);
+      targets.push(p);
+      assert.ok(destination.isEnd(p));
+      if (blocked) { blocked = false; return { ok: false, reason: 'NoPath' }; }
+      bot.entity.position = p.offset(.5, 0, .5);
+      return { ok: true };
+    },
+  } });
+  const ctx = { perceive: () => ({ inventory: {}, health: 20, food: 20, isDay: true }), record() {} };
+  assert.equal((await goal.run(ctx)).reason, 'NoPath');
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.notEqual(targets[0].z, targets[1].z, 'retry uses a different safe heading');
+  assert.ok(bot.entity.position.x < 90);
+});

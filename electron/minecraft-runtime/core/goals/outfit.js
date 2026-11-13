@@ -12,7 +12,7 @@
 
 const { createDeviceProjectGoal } = require('./deviceProject');
 const { createGatherMaterialsGoal } = require('./gatherMaterials');
-const { createStockFoodGoal, FOOD_MOBS } = require('./stockFood');
+const { createStockFoodGoal, expeditionFoodCount, FOOD_MOBS } = require('./stockFood');
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const defaultActions = require('../actions');
@@ -25,7 +25,7 @@ const { KNOWLEDGE, countKey } = require('../knowledge');
 const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { upgrades } = require('../armor');
 const { entityDimensions } = require('../entityGeometry');
-const { isHostile } = require('../perception');
+const { isHostile, perceive } = require('../perception');
 const { farmlandFooting, standable } = require('../caveRetreat');
 const { createResupplyIrrigation } = require('./resupplyFarm');
 
@@ -74,16 +74,20 @@ function blocksThreat(bot, hostile, position) {
   }));
 }
 
-function createKit({ bot, items, kb = KNOWLEDGE, resupplyFood }) {
-  const carried = (state, r) => Math.min(r.count, countKey(r.key, state.inventory, kb));
+function createKit({ bot, items, kb, resupplyFood, expedition, actions, skills }) {
+  const carried = (state, r) => Math.min(r.count, expedition && r.key === 'food'
+    ? expeditionFoodCount(bot, state.inventory, kb) : countKey(r.key, state.inventory, kb));
   const food = items.find((r) => r.key === 'food');
   const gathered = items.filter((r) => r !== food);
-  const hunt = food ? createStockFoodGoal({ bot, target: food.count, kb }) : null;
+  const hunt = food ? createStockFoodGoal({ bot, target: food.count, kb,
+    ...(expedition && { expeditionHome: expedition.home, farmPlots: expedition.plots, actions, skills }) }) : null;
+  const stocking = (state) => hunt && !hunt.isDone(state) && gathered.every((r) => carried(state, r) >= r.count);
   return {
     name: 'kit',
     // A device with no site: deviceProject walks to a site only while this is unset.
     memory: { device: { kind: 'kit' } },
     needs: () => gathered,
+    stocking,
     isDone: (state) => items.every((r) => carried(state, r) >= r.count) && upgrades(bot).length === 0,
     progress: (state) => items.reduce((n, r) => n + carried(state, r), 0) + (upgrades(bot).length === 0 ? 1 : 0),
     async run(ctx) {
@@ -416,19 +420,28 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) {
 
 /** `items`: [{ key, count }] in the knowledge's keys; `home`: { chest, stations, centre } of the finished house. */
 function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultActions, skills = defaultSkills,
-  createGather = createGatherMaterialsGoal, recoverAtHome = false, ...rest } = {}) {
+  createGather = createGatherMaterialsGoal, recoverAtHome = false, expeditionFood = false, farmPlots = [], ...rest } = {}) {
   if (!Array.isArray(items) || items.length === 0) throw new TypeError('items must be a non-empty list');
   for (const r of items) {
     if (!kb[r?.key] || !Number.isSafeInteger(r.count) || r.count < 1) throw new TypeError(`bad item ${JSON.stringify(r)}`);
   }
+  if (typeof expeditionFood !== 'boolean' || !Array.isArray(farmPlots) || farmPlots.some((p) =>
+    !p || ![p.x, p.y, p.z].every(Number.isInteger))) throw new TypeError('invalid expedition food options');
+  const expedition = expeditionFood && !recoverAtHome ? { home, plots: farmPlots } : null;
   const safety = recoverAtHome ? localFoodSafety(bot, home) : null;
   const resupplyFood = recoverAtHome ? resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) : undefined;
-  const device = createKit({ bot, items, kb, resupplyFood: resupplyFood?.run });
+  const device = createKit({ bot, items, kb, expedition, actions, skills, resupplyFood: resupplyFood?.run });
   const goal = createDeviceProjectGoal({ bot, name: 'outfit', device, home, kb, actions, skills, carry: (key) => CARRY.test(key),
     createGather: recoverAtHome ? (options) => createGather({ ...options, surfaceOnly: true }) : createGather,
     ...rest, countWorn: true });
   const ownsGatherRoute = () => goal.memory.gather?.ownsRouteRecovery?.() === true;
   goal.ownsRouteRecovery = ownsGatherRoute;
+  if (expedition) {
+    goal.expeditionStocking = (state) => device.stocking(state) === true;
+    goal.ownsRouteRecovery = () => ownsGatherRoute() || goal.expeditionStocking(perceive(bot));
+    const recover = goal.recover;
+    goal.recover = () => { if (!goal.expeditionStocking(perceive(bot))) recover(); };
+  }
   if (!recoverAtHome) return goal;
 
   goal.recoverAtHome = true;

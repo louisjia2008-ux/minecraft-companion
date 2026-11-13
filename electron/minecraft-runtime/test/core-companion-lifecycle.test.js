@@ -557,3 +557,37 @@ test('body life hook restores the exact prior own descriptor only while still it
   assert.notEqual(read,prior);await next.dispose();assert.equal(read(),null);
   assert.deepEqual(Object.getOwnPropertyDescriptor(f.bot,'companionBodyLife'),descriptor);
 });
+
+test('an expedition with only food missing takes over provisioning until cancellation', async (t) => {
+  const { createStarterHouse } = require('../core/blueprints/starterHouse');
+  const f = fixture(t);
+  f.bot.food = 11;
+  const house = createStarterHouse({ x: -3, y: 64, z: -3 });
+  f.companion.director.memory.homestead = { memory: { house } };
+  const { inventory } = f.bot;
+  let food = [{ name: 'chicken', count: 3 }];
+  inventory.items = () => food;
+  const signals = [];
+  const skills = require('../core/skills');
+  t.mock.method(skills, 'huntOne', async (_bot, ctx) => {
+    signals.push(ctx.signal);
+    await sleep(10000, ctx.signal);
+  });
+  let ovenSignal;
+  t.mock.method(skills, 'smelt', async (_bot, ctx) => {
+    ovenSignal = ctx.signal;
+    await sleep(10000, ctx.signal);
+  });
+  await f.companion.brain.tick();
+  assert.equal(f.companion.status().running, 'provision');
+  const goal = await f.companion.submitTask('outfit', { items: [{ key: 'food', count: 12 }], expeditionFood: true });
+  assert.equal(signals[0].aborted, true);
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.ok(ovenSignal);
+  assert.equal(signals.length, 1);
+  await f.companion.cancelTask();
+  assert.equal(ovenSignal.aborted, true);
+  food = [];
+  await f.companion.brain.tick();
+  assert.equal(signals.length, 2);
+});
