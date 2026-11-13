@@ -217,21 +217,23 @@ async function goNear(bot, ctx, position, range = 2, options = {}) {
 }
 
 /** Moves to any spot from which `block` can be seen and dug. */
-function goToDig(bot, ctx, block, { acceptStand, ...options } = {}) {
+async function goToDig(bot, ctx, block, { acceptStand, ...options } = {}) {
   const arrived = () => withinReach(bot, block.position)
     && (!acceptStand || bot.entity.onGround && acceptStand(bot.entity.position.floored()));
   // Plants have no collision shape, so a line-of-sight goal can never be met.
-  if (block.boundingBox === 'empty') {
-    return goTo(bot, ctx, new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2), {
-      targetY: block.position.y, ...options, arrived,
-    });
-  }
-  const goal = new goals.GoalLookAtBlock(block.position, bot.world, { reach: 4 });
+  const plant = block.boundingBox === 'empty';
+  const goal = plant ? new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2)
+    : new goals.GoalLookAtBlock(block.position, bot.world, { reach: 4 });
   if (acceptStand) {
-    const seesBlock = goal.isEnd.bind(goal);
-    goal.isEnd = (node) => acceptStand(node) && seesBlock(node);
+    const reachesBlock = goal.isEnd.bind(goal);
+    goal.isEnd = (node) => acceptStand(node) && reachesBlock(node);
   }
-  return goTo(bot, ctx, goal, { targetY: block.position.y - 1, ...options, arrived });
+  const targetY = block.position.y - (plant ? 0 : 1);
+  const result = await goTo(bot, ctx, goal, { targetY, ...options, arrived });
+  // Native pathfinding can finish during the final fall to its stance.
+  if (acceptStand && result.reason === 'not_arrived' && !bot.entity.onGround
+    && await waitUntil(arrived, { timeoutMs: 600, signal: ctx.signal })) return { ok: true };
+  return result;
 }
 
 function withinReach(bot, position, reach = 4.5) {

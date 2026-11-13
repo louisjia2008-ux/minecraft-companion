@@ -159,6 +159,24 @@ for (const trigger of ['path_failures', 'not_moving']) {
   });
 }
 
+test('an active scoped surface route owns recovery until the goal releases it', async () => {
+  const bot = fakeBot();
+  let owned = true;
+  let calls = 0;
+  const recovery = createRecovery({ bot, ownsRouteRecovery: () => owned,
+    actions: { unstick: async () => { calls += 1; return { ok: true }; } } });
+  const perceive = perceiveFor(bot);
+  const unstick = recovery.behaviors.find((behavior) => behavior.name === 'unstick');
+  recovery.observe({ type: 'goal_set' });
+  for (let i = 0; i < 2; i += 1) recovery.observe({ type: 'behavior_finished', behavior: 'goal:homestead', ok: false, reason: 'NoPath' });
+  assert.equal(unstick.want(perceive()), 0);
+  assert.deepEqual(await unstick.run({ perceive, record() {} }), { ok: false, reason: 'goal_route_recovery_owned' });
+  assert.equal(calls, 0);
+  owned = false;
+  assert.equal(unstick.want(perceive()), .9);
+  recovery.dispose();
+});
+
 test('an overworld walk-only profile does not disable ordinary stuck recovery', () => {
   const bot = fakeBot();
   bot.game = { dimension: 'overworld' };

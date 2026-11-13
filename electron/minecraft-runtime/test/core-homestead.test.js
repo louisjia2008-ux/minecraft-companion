@@ -253,3 +253,60 @@ test('homestead gathers hillside trees from dry standing cells and rejects mines
   assert.equal(movement.allowParkour, true);
   assert.equal(movement.maxDropDown, 4);
 });
+
+
+test('homestead falls back to a guarded stone quarry after an exposed face path failure', async () => {
+  const sim = simulate({ failRate: 0 });
+  const anchor = { x: 0, y: 64, z: 0 };
+  const legal = new Vec3(2, 64, -4);
+  const low = new Vec3(20, 49, -4);
+  sim.bot.entity.position = new Vec3(.5, 64, -3.5);
+  sim.bot.entity.onGround = true;
+  sim.inventory.wooden_pickaxe = 1;
+  const key = (p) => p.floored().toString();
+  sim.bot.blockAt = (p) => {
+    const pos = p.floored();
+    const name = sim.world.get(key(p)) || (pos.equals(legal) || pos.equals(low) || pos.y <= 61 ? 'stone'
+      : pos.y < 64 && pos.x < 16 ? 'dirt' : 'air');
+    return { name, position: pos, boundingBox: name === 'air' ? 'empty' : 'block', diggable: name !== 'air',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const operations = [];
+  sim.skills.gatherOne = async (_bot, _ctx, { blocks, targetFilter, radius }) => {
+    assert.ok(blocks('stone'));
+    assert.equal(radius, 32);
+    assert.ok(targetFilter(legal), 'near-house exposed stone is still eligible');
+    assert.equal(targetFilter(low), false, 'deep visible stone is rejected');
+    operations.push('exposed-path-failed');
+    return { ok: false, reason: 'Timeout' };
+  };
+  sim.actions.digBlock = async (_bot, _ctx, block) => {
+    operations.push('quarry-cut');
+    sim.world.set(key(block.position), 'air');
+    return { ok: true };
+  };
+  sim.actions.goTo = async (_bot, _ctx, target) => {
+    sim.bot.entity.position = new Vec3(target.x + .5, target.y, target.z + .5);
+    return { ok: true };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: ['stone_tier_pickaxe'], skills: sim.skills, actions: sim.actions });
+  const result = await goal.run({ perceive: sim.perceive, record: (type) => {
+    if (type === 'quarry_start') operations.push(type);
+  } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(operations, ['exposed-path-failed', 'quarry_start']);
+  assert.equal((await goal.run({ perceive: sim.perceive, record() {} })).ok, true);
+  assert.deepEqual(operations, ['exposed-path-failed', 'quarry_start', 'quarry-cut']);
+});
+
+test('homestead never gathers stone at the deep open-to-sky starting position', async () => {
+  const sim = simulate({ failRate: 0 });
+  const anchor = { x: 0, y: 64, z: 0 };
+  sim.bot.entity.position = new Vec3(12.5, 33, 0.5);
+  sim.inventory.wooden_pickaxe = 1;
+  sim.skills.gatherOne = async () => assert.fail('a deep ravine must not rebase the stone floor');
+  sim.skills.explore = async () => assert.fail('a deep ravine must not start stone exploration');
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: ['stone_tier_pickaxe'], skills: sim.skills, actions: sim.actions });
+  const result = await goal.run({ perceive: sim.perceive, record() {} });
+  assert.deepEqual(result, { ok: true, waited: true, reason: 'stone_surface_wait' });
+});

@@ -83,6 +83,7 @@ function createRecovery({
   now = Date.now,
   thresholds = {},
   activeGoal = () => null,
+  ownsRouteRecovery = () => false,
 } = {}) {
   if (!bot) throw new TypeError('bot is required');
   const t = {
@@ -166,7 +167,7 @@ function createRecovery({
     band: BAND.MAINTENANCE,
     want(state) {
       trackMotion(state);
-      if (tripOwnsRecovery()) return 0;
+      if (tripOwnsRecovery() || ownsRouteRecovery()) return 0;
       return stuckReason(state) && calm(state, 6) ? 0.9 : 0;
     },
     async run(ctx) {
@@ -174,6 +175,10 @@ function createRecovery({
       if (tripOwnsRecovery()) {
         ctx.record('unstick_deferred', { dimension: 'the_nether', delegate: 'nether_trip' });
         return { ok: false, reason: 'trip_recovery_owned' };
+      }
+      if (ownsRouteRecovery()) {
+        ctx.record('unstick_deferred', { delegate: activeGoal() });
+        return { ok: false, reason: 'goal_route_recovery_owned' };
       }
       const state = ctx.perceive();
       ctx.record('unstick', { why: stuckReason(state), at: state.position?.floored?.() || state.position });

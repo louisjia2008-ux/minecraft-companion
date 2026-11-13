@@ -89,9 +89,17 @@ test('guarded dig path must select and physically land at an accepted stance', a
   };
   const options = { acceptStand: (p) => p.equals(safe), retryNoProgress: false };
   assert.deepEqual(await goToDig(bot, ctx(), block, options), { ok: false, reason: 'not_arrived' });
-  bot.entity.position = safe.offset(.5, 0, .5);
+  bot.entity.position = safe.offset(.5, .25, .5);
   bot.entity.onGround = false;
-  assert.deepEqual(await goToDig(bot, ctx(), block, options), { ok: false, reason: 'not_arrived' });
-  bot.entity.onGround = true;
+  setTimeout(() => {
+    bot.entity.position = safe.offset(.5, 0, .5);
+    bot.entity.onGround = true;
+  }, 25);
   assert.deepEqual(await goToDig(bot, ctx(), block, options), { ok: true });
+  assert.equal(bot.entity.onGround, true);
+
+  const controller = new AbortController();
+  bot.entity.onGround = false;
+  setTimeout(() => controller.abort(), 15);
+  await assert.rejects(goToDig(bot, { signal: controller.signal }, block, options), { code: 'aborted' });
 });
