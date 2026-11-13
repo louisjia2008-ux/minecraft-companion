@@ -221,7 +221,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     scan(ctx, true);
     // A failed guarded leg does not prove the bot is on an island.
     m.misses = moved < 10 ? m.misses + 1 : 0;
-    if (left <= 16 || m.misses >= (bridge ? 2 : 1)) {
+    if (left <= 16 || m.misses >= (bridge ? 2 : 1) || !bridge && !result.ok) {
       m.index += 1;
       m.misses = 0;
     }

@@ -950,9 +950,9 @@ test('hurt in the nether with nothing to eat, the bot heads home instead of wait
   goal.dispose();
 });
 
-test('an ordinary lookout timeout on a supported shelf rotates to another guarded direction', async () => {
+for (const z of [-46.5, -48.357]) test(`an ordinary lookout timeout on a supported shelf rotates to another guarded direction (${z})`, async () => {
   const start = new Vec3(-87.5, 91, -38.5);
-  const settled = new Vec3(-83.497, 91, -46.5);
+  const settled = new Vec3(-83.497, 91, z);
   const nativeNeighbors = () => [];
   const movements = { getNeighbors: nativeNeighbors, allowParkour: true, allow1by1towers: false,
     scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() };
