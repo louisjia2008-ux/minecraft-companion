@@ -9,6 +9,7 @@ const { planNext } = require('../core/planner');
 const { materialsFor } = require('../core/materials');
 const { createBrain } = require('../core/brain');
 const { createGatherMaterialsGoal } = require('../core/goals/gatherMaterials');
+const { gatherOne } = require('../core/skills');
 
 test('a water bucket needs a bucket, which needs three iron at the table', () => {
   const water = [{ key: 'water_bucket', count: 1 }];
@@ -208,19 +209,21 @@ const COBBLEGEN = [{ key: 'water_bucket', count: 1 }, { key: 'lava_bucket', coun
 test('surface resupply skips deep and buried stone and refuses a branch-mining requirement', async () => {
   const sim = simulate({ failRate: 0 });
   sim.inventory.stone_pickaxe = 1;
-  sim.bot.blockAt = (p) => ({
-    name: p.x === 0 && p.y === 0 && p.z === 0 ? 'chest'
-      : p.x === 1 && p.y === 0 && p.z === 2 ? 'air' : 'stone',
-    boundingBox: p.x === 1 && p.y === 0 && p.z === 2 ? 'empty' : 'block',
-    position: p,
-  });
+  const exposed = new Vec3(1, -1, 2);
+  sim.bot.blockAt = (p) => {
+    const name = p.x === 0 && p.y === 0 && p.z === 0 ? 'chest'
+      : p.equals(exposed) || p.x >= 3 && p.y <= 0 || p.y < -1 ? 'stone' : 'air';
+    return { name, boundingBox: name === 'air' ? 'empty' : 'block', position: p,
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
   const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
   let gathered = 0;
-  const skills = { ...sim.skills, gatherOne: async (_bot, _ctx, { exclude }) => {
+  const skills = { ...sim.skills, gatherOne: async (_bot, _ctx, { targetFilter, acceptStand }) => {
     gathered += 1;
-    assert.equal(exclude(new Vec3(1, -1, 2)), false, 'a surface opening exposes this stone');
-    assert.equal(exclude(new Vec3(1, -9, 2)), true);
-    assert.equal(exclude(new Vec3(4, -1, 2)), true, 'no dry exposed face');
+    assert.equal(targetFilter(exposed), true, 'a dry supported cell reaches the exposed face');
+    assert.equal(targetFilter(new Vec3(1, -9, 2)), false);
+    assert.equal(targetFilter(new Vec3(4, -1, 2)), false, 'no dry exposed face');
+    assert.equal(acceptStand(exposed.offset(0, 1, 0), exposed), false, 'the bot cannot mine its own support');
     return { ok: true };
   } };
   const goal = (key) => createGatherMaterialsGoal({
@@ -234,6 +237,47 @@ test('surface resupply skips deep and buried stone and refuses a branch-mining r
   await iron.run(ctx);
   assert.equal((await iron.run(ctx)).reason, 'surface_supply_requires_mine');
   assert.equal(gathered, 1);
+});
+
+test('surface resupply filters buried blocks before Mineflayer caps the stone search', async () => {
+  const sim = simulate({ failRate: 0 });
+  const exposed = new Vec3(8, 0, 2);
+  const buried = Array.from({ length: 64 }, (_, i) => new Vec3(1 + i % 8, -2 - Math.floor(i / 32), 1 + Math.floor(i / 8) % 4));
+  sim.inventory.stone_pickaxe = 1;
+  sim.bot.registry = { blocksByName: { stone: { name: 'stone', id: 1 } } };
+  sim.bot.entity.onGround = true;
+  sim.bot.world = { raycast: () => ({ position: exposed }) };
+  sim.bot.entities = {};
+  sim.bot.blockAt = (p) => {
+    const at = p.floored();
+    const name = at.x === 0 && at.y === 0 && at.z === 0 ? 'chest' : at.equals(exposed) || at.y < 0 ? 'stone' : 'air';
+    return { name, position: at, type: name === 'stone' ? 1 : 0, boundingBox: name === 'air' ? 'empty' : 'block',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  sim.bot.findBlocks = ({ matching, count, useExtraInfo }) => {
+    assert.deepEqual(matching, [1]);
+    assert.equal(count, 64);
+    assert.equal(typeof useExtraInfo, 'function');
+    const found = [...buried, exposed].filter((p) => useExtraInfo(sim.bot.blockAt(p))).slice(0, count);
+    assert.deepEqual(found, [exposed]);
+    return found;
+  };
+  sim.bot.pathfinder = { goto: async (goal) => {
+    const stance = new Vec3(7, 0, 2);
+    assert.ok(goal.isEnd(stance));
+    sim.bot.entity.position = stance.offset(.5, 0, .5);
+  } };
+  // Stop after the native selector and stance have run. Mining is covered by
+  // the action tests; the rejected dig must not be replaced with exploration.
+  sim.bot.canDigBlock = () => false;
+  const skills = { ...sim.skills, gatherOne, explore: async () => assert.fail('exposed stone survived the native count limit') };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'cobblestone', count: 1 }], surfaceOnly: true, skills });
+  const selected = [];
+  const ctx = { perceive: sim.perceive, record: (type, data) => { if (type === 'target_selected') selected.push(data.position); } };
+  await goal.run(ctx);
+  assert.equal((await goal.run(ctx)).reason, 'cannot_dig');
+  assert.deepEqual(selected, ['8,0,2']);
 });
 
 for (const seed of [1, 2, 3]) {

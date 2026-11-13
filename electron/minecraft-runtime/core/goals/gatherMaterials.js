@@ -19,6 +19,7 @@
 // what was left in the furnace, where the mine's front is, and short-lived blacklists.
 
 const { Vec3 } = require('vec3');
+const { goals } = require('mineflayer-pathfinder');
 const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const { planNext } = require('../planner');
@@ -44,6 +45,10 @@ const MINE_FROM_HOME = 8;
 const MINE_RESTART_RINGS = [18, 26, 34, 42];
 // Further below the chest than this, home is reached by going up first.
 const HOME_BELOW = 8;
+const SUPPLY_CANOPY = /_(leaves|log|wood)$/;
+const SUPPLY_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|campfire|soul_campfire|cactus|powder_snow|sweet_berry_bush)$/;
+const SUPPLY_STANCE_OFFSETS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1],
+  [2, 0], [-2, 0], [0, 2], [0, -2]];
 // Stone pickaxes taken down a mine: they wear out on the rock instead of the
 // iron one (a deep staircase digs a few hundred blocks; one lasts 131).
 const SPARE_PICKS = 5;
@@ -146,6 +151,43 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     crafting_table: Boolean(stations.crafting_table) && nameAt(stations.crafting_table) === 'crafting_table',
     furnace: Boolean(stations.furnace) && nameAt(stations.furnace) === 'furnace',
   });
+
+  function surfaceSupplyRoute(key) {
+    const floor = chest.y - HOME_BELOW;
+    const minimumY = Math.max(floor, Math.floor(bot.entity.position.y) - 4);
+    const cache = new Map();
+    const exposedStand = (feet) => {
+      const id = posKey(feet);
+      if (cache.has(id)) return cache.get(id);
+      const dryStand = standable(blockAt, feet) && !SUPPLY_CANOPY.test(nameAt(feet.offset(0, -1, 0)));
+      const openAbove = (p) => {
+        const block = blockAt(p);
+        return block && !SUPPLY_HAZARD.test(block.name) && block.getProperties?.()?.waterlogged !== true
+          && (block.boundingBox === 'empty' || SUPPLY_CANOPY.test(block.name));
+      };
+      let safe = dryStand;
+      for (let y = feet.y + 2; safe && y <= Math.max(chest.y, feet.y) + 12; y += 1) {
+        safe = openAbove(new Vec3(feet.x, y, feet.z));
+      }
+      cache.set(id, safe);
+      return safe;
+    };
+    const guarded = key === 'cobblestone' || key === 'log';
+    const acceptStand = (feet, target) => feet.y >= floor && !feet.offset(0, -1, 0).equals(target) && exposedStand(feet);
+    const targetFilter = (target) => {
+      if (target.y < minimumY || !mining.exposed(bot, target)) return false;
+      if (!guarded) return true;
+      const block = blockAt(target);
+      if (!block || bot.companionProtectBlock?.(block) || bot.companionHomeSite?.(target)) return false;
+      const sight = bot.world?.raycast && new goals.GoalLookAtBlock(target, bot.world, { reach: 4 });
+      const heights = key === 'log' ? [0, -1, -2, -3, 1] : [0, 1, -1];
+      return SUPPLY_STANCE_OFFSETS.some(([x, z]) => heights.some((y) => {
+        const feet = target.offset(x, y, z);
+        return acceptStand(feet, target) && (!sight || sight.isEnd(feet));
+      }));
+    };
+    return { targetFilter, ...(guarded ? { acceptStand } : {}) };
+  }
 
   async function explore(ctx, why) {
     memory.exploreStreak += 1;
@@ -401,13 +443,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         if (deep && memory.mine) return mine(ctx, step, dropMatch);
         // Elsewhere only ore in the open (surface, cave mouths): never a
         // pathfinder tunnel straight down to buried ore.
-        const exclude = surfaceOnly
-          ? (p) => p.y < chest.y - 8 || p.y < bot.entity.position.y - 4
-            || !mining.exposed(bot, p)
-          : deep ? (p) => !mining.exposed(bot, p) : undefined;
-        let result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch, blacklist, exclude });
+        const route = surfaceOnly ? surfaceSupplyRoute(step.key)
+          : { exclude: deep ? (p) => !mining.exposed(bot, p) : undefined };
+        const gatherOptions = { blocks: step.blocks, dropMatch, blacklist, ...route };
+        let result = await skills.gatherOne(bot, ctx, gatherOptions);
         if (result.reason === 'no_target_in_range') {
-          result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch, blacklist, exclude, radius: surfaceOnly ? 64 : 128 });
+          result = await skills.gatherOne(bot, ctx, { ...gatherOptions, radius: surfaceOnly ? 64 : 128 });
         }
         if (result.reason === 'no_target_in_range') return deep ? mine(ctx, step, dropMatch) : explore(ctx, step.key);
         // Gravel gives flint one time in ten: the gravel is the progress.
@@ -511,6 +552,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   async function runOnce(ctx) {
     if (surfaceOnly && nether.dimension(bot) !== 'overworld') {
       return { ok: false, reason: 'surface_supply_wrong_dimension' };
+    }
+    if (surfaceOnly && bot.entity.position.y < chest.y - HOME_BELOW) {
+      return { ok: false, reason: 'surface_supply_below_home' };
     }
     // In the Nether there is nothing to do but the trip: quartz, then home.
     if (nether.inNether(bot)) {
