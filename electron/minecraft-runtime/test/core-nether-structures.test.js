@@ -950,9 +950,11 @@ test('hurt in the nether with nothing to eat, the bot heads home instead of wait
   goal.dispose();
 });
 
-for (const z of [-46.5, -48.357]) test(`an ordinary lookout timeout on a supported shelf rotates to another guarded direction (${z})`, async () => {
+for (const { ends, targets } of [
+  { ends: [[-83.497, 91, -46.5]], targets: [[-70, -84], [-13, -107]] },
+  { ends: [[-83.497, 91, -48.357], [-83.497, 91, -52.5]], targets: [[-70, -84], [-70, -84], [-13, -107]] },
+]) test(`an ordinary lookout rotates after a short timeout and keeps productive timeout legs guarded (${ends.length})`, async () => {
   const start = new Vec3(-87.5, 91, -38.5);
-  const settled = new Vec3(-83.497, 91, z);
   const nativeNeighbors = () => [];
   const movements = { getNeighbors: nativeNeighbors, allowParkour: true, allow1by1towers: false,
     scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() };
@@ -964,7 +966,7 @@ for (const z of [-46.5, -48.357]) test(`an ordinary lookout timeout on a support
   const actions = { async goTo(_bot, _ctx, target, options) {
     calls.push({ target: [target.x, target.z], guarded: movements.getNeighbors !== nativeNeighbors,
       towers: movements.allow1by1towers, retry: options.retryNoProgress });
-    if (calls.length === 1) bot.entity.position = settled;
+    if (ends[calls.length - 1]) bot.entity.position = new Vec3(...ends[calls.length - 1]);
     return { ok: false, reason: 'Timeout' };
   } };
   const goal = createNetherExpeditionGoal({ bot, blazeRods: 7, witherSkulls: 0, trades: 0, actions });
@@ -972,11 +974,8 @@ for (const z of [-46.5, -48.357]) test(`an ordinary lookout timeout on a support
   goal.memory.explore.index = 5;
   const ctx = { record() {}, perceive: () => ({ inventory: { iron_sword: 1 }, health: 20, food: 20 }) };
   try {
-    await goal.run(ctx);
-    await goal.run(ctx);
-    assert.deepEqual(calls.map(({ guarded, towers, retry }) => [guarded, towers, retry]),
-      [[true, false, false], [true, false, false]]);
-    assert.deepEqual(calls[0].target, [-70, -84]);
-    assert.notDeepEqual(calls[1].target, calls[0].target);
+    for (const _target of targets) await goal.run(ctx);
+    assert.deepEqual(calls.map(({ target }) => target), targets);
+    assert.ok(calls.every(({ guarded, towers, retry }) => guarded && !towers && !retry));
   } finally { goal.dispose(); }
 });

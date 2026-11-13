@@ -220,12 +220,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const left = Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
     scan(ctx, true);
     // A failed guarded leg does not prove the bot is on an island.
-    m.misses = moved < 10 ? m.misses + 1 : 0;
-    if (left <= 16 || m.misses >= (bridge ? 2 : 1) || !bridge && !result.ok) {
+    const nearer = Math.hypot(start.x - target.x, start.z - target.z) - left;
+    const progressed = moved >= 10 && (bridge || result.ok || nearer >= 10);
+    m.misses = progressed ? 0 : m.misses + 1;
+    if (left <= 16 || m.misses >= (bridge ? 2 : 1)) {
       m.index += 1;
       m.misses = 0;
     }
-    return moved >= 10 ? { ok: true, moved: Math.round(moved) } : fail(result.ok ? 'explore_blocked' : result.reason);
+    return progressed ? { ok: true, moved: Math.round(moved) } : fail(result.ok ? 'explore_blocked' : result.reason);
   }
 
   /** Walks to a reachable cell of the structure's floor near `around`; far ones in legs. */
