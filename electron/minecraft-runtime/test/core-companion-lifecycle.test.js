@@ -192,6 +192,39 @@ test('submitTask is built-in data-only dispatch with task-correlated goal events
   assert.equal(f.companion.status().goal.taskId, 'dispatch-id');
 });
 
+test('home resupply retires an in-flight provision path before outfit takes the body', async (t) => {
+  const f = fixture(t);
+  const { createStarterHouse } = require('../core/blueprints/starterHouse');
+  const house = createStarterHouse({ x: -68, y: 72, z: -35 });
+  f.companion.director.memory.homestead = { memory: { house } };
+  f.bot.food = 0;
+  let provisionSignal;
+  t.mock.method(require('../core/skills'), 'huntOne', async (bot, ctx) => {
+    provisionSignal = ctx.signal;
+    bot.setControlState('forward', true);
+    try { await sleep(10000, ctx.signal); }
+    finally { bot.setControlState('forward', false); }
+  });
+  await f.companion.brain.tick();
+  assert.equal(f.companion.status().running, 'provision');
+  const items = [{ key: 'food', count: 3 }];
+  await f.companion.submitTask('outfit', { items });
+  assert.equal(provisionSignal.aborted, false);
+  assert.equal(f.controls.forward, true);
+
+  await f.companion.submitTask('outfit', { items, recoverAtHome: true }, { taskId: 'home-rearm' });
+  assert.equal(provisionSignal.aborted, true);
+  assert.equal(f.controls.forward, false);
+  const installed = f.events.findIndex((event) => event.type === 'goal_set' && event.taskId === 'home-rearm');
+  const interrupted = f.events.findIndex((event) => event.type === 'interrupted' && event.reason === 'home_resupply'
+    && event.behavior === 'provision');
+  const settled = f.events.findIndex((event) => event.type === 'behavior_finished' && event.behavior === 'provision'
+    && event.reason === 'aborted');
+  const started = f.events.findIndex((event) => event.type === 'behavior_started' && event.behavior === 'goal:outfit'
+    && event.taskId === 'home-rearm');
+  assert.ok(installed >= 0 && interrupted > installed && settled > interrupted && started > settled);
+});
+
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 const dragonListeners = (bot) => ['entityUpdate', 'entityGone', 'entityMoved'].map((name) => bot.listenerCount(name));
 

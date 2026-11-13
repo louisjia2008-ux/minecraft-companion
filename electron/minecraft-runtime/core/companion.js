@@ -290,6 +290,14 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       director.notePlayerGoal();
       paused = false;
       useGoal(goal, metadata);
+      if (epoch === taskEpoch && goal.recoverAtHome === true
+        && ['provision', 'recover_drops'].includes(brain.status().running)) {
+        // The installed goal excludes new hunts and drop retrieval. Release
+        // any existing path before letting home recovery take over the body.
+        await brain.interrupt('home_resupply');
+        assertActive();
+        if (epoch !== taskEpoch) throw Object.assign(new Error('Task dispatch was cancelled'), { code: 'aborted' });
+      }
       await brain.tick();
       return returnGoal ? goal : undefined;
     }).finally(() => { dispatching -= 1; });
