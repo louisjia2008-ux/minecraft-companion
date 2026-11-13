@@ -217,19 +217,21 @@ async function goNear(bot, ctx, position, range = 2, options = {}) {
 }
 
 /** Moves to any spot from which `block` can be seen and dug. */
-function goToDig(bot, ctx, block, options = {}) {
+function goToDig(bot, ctx, block, { acceptStand, ...options } = {}) {
+  const arrived = () => withinReach(bot, block.position)
+    && (!acceptStand || bot.entity.onGround && acceptStand(bot.entity.position.floored()));
   // Plants have no collision shape, so a line-of-sight goal can never be met.
   if (block.boundingBox === 'empty') {
     return goTo(bot, ctx, new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2), {
-      targetY: block.position.y, ...options, arrived: () => withinReach(bot, block.position),
+      targetY: block.position.y, ...options, arrived,
     });
   }
   const goal = new goals.GoalLookAtBlock(block.position, bot.world, { reach: 4 });
-  return goTo(bot, ctx, goal, {
-    targetY: block.position.y - 1,
-    ...options,
-    arrived: () => withinReach(bot, block.position),
-  });
+  if (acceptStand) {
+    const seesBlock = goal.isEnd.bind(goal);
+    goal.isEnd = (node) => acceptStand(node) && seesBlock(node);
+  }
+  return goTo(bot, ctx, goal, { targetY: block.position.y - 1, ...options, arrived });
 }
 
 function withinReach(bot, position, reach = 4.5) {

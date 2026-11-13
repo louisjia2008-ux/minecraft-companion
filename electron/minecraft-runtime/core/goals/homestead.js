@@ -22,6 +22,8 @@ const { createStarterHouse } = require('../blueprints/starterHouse');
 const { chooseSite, siteWork } = require('../site');
 const { createBlacklist, posKey } = require('../blacklist');
 const { sleep, waitUntil } = require('../confirm');
+const { applyWalkOnlyMovements } = require('../nether');
+const { standable } = require('../caveRetreat');
 
 const DEFAULT_GEAR = ['stone_sword', 'stone_tier_pickaxe', 'iron_sword', 'iron_pickaxe', 'shield'];
 // Stone tools come before the house; iron waits until there is a bed to sleep in.
@@ -32,6 +34,11 @@ const FILLERS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dir
 const BATCH = 16;
 const RAW_MEATS = ['beef', 'porkchop', 'mutton', 'chicken', 'rabbit'];
 const STORABLE = ['dirt', 'cobblestone', 'cobbled_deepslate', 'stick', 'rotten_flesh', 'feather', 'leather'];
+const LOG_PATH_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
+const LOG_CANOPY = /_(leaves|log|wood|stem|hyphae)$/;
+const LOG_STANCE_OFFSETS = [
+  [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1], [2, 0], [-2, 0], [0, 2], [0, -2],
+];
 
 function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills = defaultSkills, actions = defaultActions,
   kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
@@ -190,10 +197,59 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return skills.explore(bot, ctx, memory.explore);
   }
 
+  // Mineshaft supports use the same block ID as trees. Only take logs with
+  // a dry, reachable-height stance under a canopy or open sky, and walk to
+  // that stance without opening terrain or dropping into ravines.
+  async function gatherLogsOnSurface(run) {
+    const hereY = Math.floor(bot.entity.position.y);
+    const homeY = memory.house.anchor.y;
+    // A valley may sit below the house, while a mineshaft can be much deeper.
+    const floor = Math.min(hereY, homeY) - 16;
+    const memo = new Map();
+    const surfaceStand = (p) => {
+      if (p.y < floor || !standable(blockAt, p)) return false;
+      if (LOG_CANOPY.test(nameAt(p.offset(0, -1, 0)))) return false;
+      const key = posKey(p);
+      if (memo.has(key)) return memo.get(key);
+      const top = Math.max(hereY, homeY, p.y) + 16;
+      for (let y = p.y + 2; y <= top; y += 1) {
+        const block = blockAt(p.offset(0, y - p.y, 0));
+        if (!block || LOG_PATH_HAZARD.test(block.name) || block.getProperties?.()?.waterlogged === true
+          || (block.boundingBox !== 'empty' && !LOG_CANOPY.test(block.name))) {
+          memo.set(key, false);
+          return false;
+        }
+      }
+      memo.set(key, true);
+      return true;
+    };
+    const acceptStand = (feet, log) => feet.y >= log.y - 4 && feet.y <= log.y + 1 && surfaceStand(feet);
+    const targetFilter = (p) => p.y >= floor - 1 && LOG_STANCE_OFFSETS.some(([x, z]) =>
+      [0, -1, -2, -3, -4, 1].some((y) => acceptStand(p.offset(x, y, z), p)));
+    const restore = applyWalkOnlyMovements(bot);
+    const movements = bot.pathfinder?.movements;
+    const getNeighbors = movements?.getNeighbors;
+    const own = movements && Object.hasOwn(movements, 'getNeighbors');
+    if (getNeighbors) movements.getNeighbors = function (node, ...args) {
+      return getNeighbors.call(this, node, ...args).filter((move) => move.y >= floor && [-1, 0, 1].every((dy) => {
+        const block = blockAt(new Vec3(move.x, move.y + dy, move.z));
+        return block && !LOG_PATH_HAZARD.test(block.name) && block.getProperties?.()?.waterlogged !== true;
+      }));
+    };
+    try {
+      return await run({ targetFilter, acceptStand, navigationTrace: true });
+    } finally {
+      if (getNeighbors && own) movements.getNeighbors = getNeighbors;
+      else if (getNeighbors) delete movements.getNeighbors;
+      restore();
+    }
+  }
+
   async function runPlannerStep(ctx, step, requirement) {
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
     // Everything except mining happens up top: climb out of the pit first.
-    if (step.kind !== 'gather') {
+    const gatheringLogs = step.kind === 'gather' && step.key === 'log';
+    if (step.kind !== 'gather' || gatheringLogs) {
       const up = await surfaceFirst(ctx);
       if (up) return up;
     }
@@ -224,17 +280,19 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       case 'gather': {
         // Nothing within the usual 48 blocks: look as far as the loaded world
         // reaches before walking off to explore (a felled plain, a treeless hill).
-        let result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match,
-          blacklist, exclude: nearHouseColumn });
-        if (result.reason === 'no_target_in_range') {
-          result = await skills.gatherOne(bot, ctx, { blocks: step.blocks, dropMatch: kb[step.key].match,
-            blacklist, exclude: nearHouseColumn, radius: 128 });
-        }
-        if (result.reason === 'no_target_in_range') {
-          if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
-          return explore(ctx, step.key);
-        }
-        return result;
+        const gather = async (route = {}) => {
+          const options = { blocks: step.blocks, dropMatch: kb[step.key].match, blacklist, exclude: nearHouseColumn, ...route };
+          let result = await skills.gatherOne(bot, ctx, options);
+          if (result.reason === 'no_target_in_range') {
+            result = await skills.gatherOne(bot, ctx, { ...options, radius: 128 });
+          }
+          if (result.reason === 'no_target_in_range') {
+            if (requirement?.optional) { skipped.add(requirement.key, 'unavailable'); return { ok: true, skipped: requirement.key }; }
+            return explore(ctx, step.key);
+          }
+          return result;
+        };
+        return gatheringLogs ? gatherLogsOnSurface(gather) : gather();
       }
       case 'smelt': {
         const result = await skills.smelt(bot, ctx, { input: step.input, count: step.count,

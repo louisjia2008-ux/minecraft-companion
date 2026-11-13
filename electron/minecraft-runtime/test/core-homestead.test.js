@@ -204,3 +204,52 @@ test('a recovery starts the search for a site over, so a later ask is not failed
   goal.recover();
   assert.equal(goal.memory.exploreStreak, 0);
 });
+
+test('homestead gathers hillside trees from dry standing cells and rejects mineshaft logs before pathing', async () => {
+  const sim = simulate({ failRate: 0 });
+  const anchor = { x: 0, y: 1, z: 0 };
+  const shaft = new Vec3(12, -26, 0);
+  const covered = new Vec3(20, -3, 0);
+  const lowTree = new Vec3(30, -9, 0);
+  const highTree = new Vec3(40, 8, 0);
+  const ground = (x) => x >= 38 ? 7 : x >= 28 ? -10 : x >= 18 ? -4 : 0;
+  sim.bot.blockAt = (p) => {
+    const pos = p.floored();
+    let name = pos.y <= ground(pos.x) ? 'stone' : 'air';
+    if (pos.equals(shaft) || pos.equals(covered) || pos.equals(lowTree) || pos.equals(highTree)) name = 'oak_log';
+    else if (pos.x >= 11 && pos.x <= 13 && pos.y >= -27 && pos.y <= -24) name = pos.y === -27 ? 'stone' : 'cave_air';
+    else if (pos.x >= 17 && pos.x <= 23 && pos.y === 4) name = 'stone';
+    else if (pos.x >= 39 && pos.x <= 42 && pos.y === 11) name = 'spruce_leaves';
+    else if (pos.equals(highTree.offset(1, 0, 0))) name = 'snow';
+    const isOpen = ['air', 'cave_air', 'snow'].includes(name);
+    return { name, position: pos, boundingBox: isOpen ? 'empty' : 'block', shapes: isOpen ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const safe = { x: 41, y: 8, z: 0 };
+  const neighbor = () => [safe,
+    { x: 42, y: 1, z: 0 }, // physical drop even though above the route floor
+    { x: 42, y: 8, z: 0, toBreak: [new Vec3(42, 8, 0)] },
+    { x: 42, y: 8, z: 0, toPlace: [new Vec3(42, 7, 0)] }];
+  const movement = { getNeighbors: neighbor, exclusionAreasBreak: [], canDig: true, allowParkour: true, maxDropDown: 4 };
+  sim.bot.pathfinder = { movements: movement };
+  sim.skills.gatherOne = async (_bot, _ctx, { blocks, targetFilter, acceptStand, radius }) => {
+    assert.ok(blocks('oak_log'));
+    assert.equal(radius, undefined);
+    assert.equal(targetFilter(shaft), false);
+    assert.equal(targetFilter(covered), false);
+    assert.equal(targetFilter(lowTree), true, 'lower exposed hillside is valid');
+    assert.equal(targetFilter(highTree), true, 'higher hillside with canopy and thin snow is valid');
+    assert.equal(acceptStand(highTree.offset(1, 0, 0), highTree), true);
+    assert.equal(acceptStand(highTree.offset(0, 1, 0), highTree), false, 'the log itself cannot support the bot');
+    assert.equal(movement.canDig, false);
+    assert.equal(movement.allowParkour, false);
+    assert.deepEqual(movement.getNeighbors({ y: 8 }), [safe]);
+    return { ok: true };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor, skills: sim.skills, actions: sim.actions });
+  const result = await goal.run({ perceive: sim.perceive, record() {} });
+  assert.equal(result.ok, true);
+  assert.equal(movement.getNeighbors, neighbor);
+  assert.equal(movement.canDig, true);
+  assert.equal(movement.allowParkour, true);
+  assert.equal(movement.maxDropDown, 4);
+});

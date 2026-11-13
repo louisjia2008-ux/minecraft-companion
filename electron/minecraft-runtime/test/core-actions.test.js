@@ -2,7 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { eat } = require('../core/actions');
+const { Vec3 } = require('vec3');
+const { eat, goToDig } = require('../core/actions');
 const { waitUntil, runCancellable } = require('../core/confirm');
 
 // Fake bot whose server effects arrive as separate, delayed packets.
@@ -70,4 +71,27 @@ test('runCancellable calls cancel and rejects on timeout', async () => {
     cancel: () => { cancelled = true; release(); } });
   await assert.rejects(result, { code: 'dig_timeout' });
   assert.equal(cancelled, true);
+});
+
+
+test('guarded dig path must select and physically land at an accepted stance', async () => {
+  const bad = new Vec3(0, 64, 0);
+  const safe = new Vec3(1, 64, 0);
+  const block = { position: new Vec3(2, 64, 0), boundingBox: 'block' };
+  const bot = {
+    entity: { position: bad.offset(.5, 0, .5), onGround: true },
+    world: { raycast: () => block },
+    blockAt: () => ({ name: 'air', boundingBox: 'empty' }),
+    pathfinder: { goto: async (goal) => {
+      assert.equal(goal.isEnd(bad), false);
+      assert.equal(goal.isEnd(safe), true);
+    } },
+  };
+  const options = { acceptStand: (p) => p.equals(safe), retryNoProgress: false };
+  assert.deepEqual(await goToDig(bot, ctx(), block, options), { ok: false, reason: 'not_arrived' });
+  bot.entity.position = safe.offset(.5, 0, .5);
+  bot.entity.onGround = false;
+  assert.deepEqual(await goToDig(bot, ctx(), block, options), { ok: false, reason: 'not_arrived' });
+  bot.entity.onGround = true;
+  assert.deepEqual(await goToDig(bot, ctx(), block, options), { ok: true });
 });

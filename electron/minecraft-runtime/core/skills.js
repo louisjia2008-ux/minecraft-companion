@@ -24,12 +24,15 @@ function inventoryCounts(bot) {
 
 /** Breaks one matching block (nearest, cheapest first) and collects its drop. */
 async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () => false, radius = 48,
-  selectTarget, navigationTrace = false }) {
+  selectTarget, navigationTrace = false, targetFilter, acceptStand }) {
   const ids = Object.values(bot.registry.blocksByName).filter((b) => blocks(b.name)).map((b) => b.id);
   if (ids.length === 0) return fail('unknown_block');
   const here = bot.entity.position;
-  const candidates = bot.findBlocks({ matching: ids, maxDistance: radius, count: 64 })
-    .filter((p) => !blacklist.has(posKey(p)) && !exclude(p))
+  const useExtraInfo = targetFilter && ((block) => block?.position && !blacklist.has(posKey(block.position))
+    && !exclude(block.position) && targetFilter(block.position));
+  const candidates = bot.findBlocks({ matching: ids, maxDistance: radius, count: 64,
+    ...(useExtraInfo ? { useExtraInfo } : {}) })
+    .filter((p) => !blacklist.has(posKey(p)) && !exclude(p) && (!targetFilter || targetFilter(p)))
     .map((p) => bot.blockAt(p))
     // Digging next to water or lava floods the pit the bot is standing in.
     .filter((b) => b && !bot.companionProtectBlock?.(b) && !bot.companionPlacedRecently?.(b.position) && !touchesLiquid(bot, b.position))
@@ -75,7 +78,9 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
   }
   const from = { ...bot.entity.position };
   trace('mining_stance', null, from, 'start');
-  const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 45000, ...(selectTarget ? { retryNoProgress: false } : {}) });
+  const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 45000,
+    ...(selectTarget ? { retryNoProgress: false } : {}),
+    ...(acceptStand ? { acceptStand: (p) => acceptStand(p, block.position), retryNoProgress: false } : {}) });
   trace('mining_stance', reach, from);
   if (!reach.ok) {
     // The rest of the same tree or vein is almost always just as unreachable.
