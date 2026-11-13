@@ -205,6 +205,54 @@ test('a recovery starts the search for a site over, so a later ask is not failed
   assert.equal(goal.memory.exploreStreak, 0);
 });
 
+test('homestead gets soil for a table without support before filling unrelated site holes', async () => {
+  const sim = simulate({ failRate: 0 });
+  const house = createStarterHouse({ x: -33, y: 67, z: -9 });
+  const table = house.furniture.crafting_table.position;
+  const floor = new Vec3(table.x, table.y - 1, table.z);
+  const other = new Vec3(-33, 66, -9);
+  const solid = [[0, 0, 0, 1, 1, 1]];
+  const placed = new Map();
+  sim.bot.entity.position = new Vec3(-29.5, 67, -6.5);
+  sim.bot.blockAt = (p) => {
+    const position = new Vec3(p.x, p.y, p.z);
+    const existing = placed.get(position.toString());
+    const name = existing || (position.equals(floor) || position.equals(other) || p.y > 66 ? 'air' : 'dirt');
+    return { name, position, boundingBox: name === 'air' ? 'empty' : 'block', shapes: name === 'air' ? [] : solid };
+  };
+  Object.assign(sim.inventory, { crafting_table: 1, oak_planks: 8, stick: 2, cobblestone: 0 });
+  const operations = [];
+  const motion = { canDig: true, exclusionAreasBreak: [], getNeighbors: () => [] };
+  sim.bot.pathfinder = { movements: motion };
+  const dirt = new Vec3(-40, 66, -5);
+  sim.skills.gatherOne = async (_bot, _ctx, options) => {
+    assert.ok(options.blocks('coarse_dirt'));
+    assert.ok(options.dropMatch('coarse_dirt'));
+    assert.ok(options.exclude(floor));
+    assert.ok(options.targetFilter(dirt));
+    assert.equal(motion.canDig, false);
+    operations.push('gather');
+    sim.inventory.coarse_dirt = 1;
+    return { ok: true };
+  };
+  sim.skills.placeAt = async (_bot, _ctx, p, match) => {
+    const position = new Vec3(p.x, p.y, p.z);
+    const item = Object.keys(sim.inventory).find((name) => sim.inventory[name] > 0 && match(name));
+    assert.ok(item, 'native placement requires a real inventory item');
+    if (item === 'crafting_table') assert.equal(sim.bot.blockAt(floor).name, 'coarse_dirt');
+    sim.inventory[item] -= 1;
+    placed.set(position.toString(), item);
+    operations.push(item);
+    return { ok: true };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor: house.anchor, gear: ['wooden_pickaxe'], skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: sim.perceive, record() {} };
+  for (let i = 0; i < 3; i++) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(operations, ['gather', 'coarse_dirt', 'crafting_table']);
+  assert.equal(sim.bot.blockAt(other).name, 'air');
+  assert.equal(motion.canDig, true);
+});
+
 test('homestead gathers hillside trees from dry standing cells and rejects mineshaft logs before pathing', async () => {
   const sim = simulate({ failRate: 0 });
   const anchor = { x: 0, y: 1, z: 0 };

@@ -20,7 +20,7 @@ const defaultActions = require('../actions');
 const { planNext } = require('../planner');
 const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { createStarterHouse } = require('../blueprints/starterHouse');
-const { chooseSite, siteWork } = require('../site');
+const { chooseSite, siteWork, isSolid } = require('../site');
 const { createBlacklist, posKey } = require('../blacklist');
 const { sleep, waitUntil } = require('../confirm');
 const { applyWalkOnlyMovements } = require('../nether');
@@ -34,6 +34,9 @@ const EARLY_GEAR = new Set(['stone_sword', 'stone_tier_pickaxe', 'pickaxe', 'woo
 const DOWN = [new Vec3(0, -1, 0)];
 const FOOD_MOBS = new Set(['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom']);
 const FILLERS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
+const isFiller = (name) => FILLERS.has(name);
+const hasFiller = (inventory) => Object.entries(inventory).some(([name, count]) => count > 0 && isFiller(name));
+const stationFloor = (position) => ({ ...position, y: position.y - 1 });
 const BATCH = 16;
 const RAW_MEATS = ['beef', 'porkchop', 'mutton', 'chicken', 'rabbit'];
 const STORABLE = ['dirt', 'cobblestone', 'cobbled_deepslate', 'stick', 'rotten_flesh', 'feather', 'leather'];
@@ -301,13 +304,14 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     // Everything except mining happens up top: climb out of the pit first.
     const gatheringLogs = step.kind === 'gather' && step.key === 'log';
     const gatheringStone = step.kind === 'gather' && step.key === 'cobblestone';
+    const gatheringFoundation = step.kind === 'gather' && step.foundation === true;
     stoneRouteOwnsRecovery = gatheringStone;
     if (gatheringStone) {
       if (bot.entity.position.y < memory.house.anchor.y - STONE_FLOOR_OFFSET && !quarry.inside()) return returnToStoneSurface(ctx);
       stoneRetreatVisited.clear();
     }
     if (!gatheringStone && quarry.inside()) return stoneRouteOutcome(await quarry.leave(ctx, surfaceRoute(true)));
-    if (step.kind !== 'gather' || gatheringLogs) {
+    if (step.kind !== 'gather' || gatheringLogs || gatheringFoundation) {
       const up = await surfaceFirst(ctx);
       if (up) return up;
     }
@@ -316,11 +320,14 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       case 'place_station': {
         // A station needs its foundation; if that hole is still open, fill it first.
         const spot = house.furniture[step.station].position;
-        const below = { x: spot.x, y: spot.y - 1, z: spot.z };
-        if (blockAt(below)?.boundingBox !== 'block') {
+        const below = stationFloor(spot);
+        if (!isSolid(blockAt(below))) {
           blacklist.delete(`site:${posKey(below)}`);
           ctx.record('station_needs_foundation', { station: step.station });
-          return skills.placeAt(bot, ctx, below, (n) => FILLERS.has(n));
+          const inventory = ctx.perceive().inventory;
+          if (hasFiller(inventory)) return skills.placeAt(bot, ctx, below, isFiller);
+          const dirt = planNext({ requirements: [{ key: 'dirt', count: 1 }], inventory, kb });
+          return dirt ? runPlannerStep(ctx, { ...dirt, foundation: true }) : { ok: false, reason: 'station_foundation_no_filler' };
         }
         return skills.placeAt(bot, ctx, spot, (n) => n === step.station, { faces: DOWN });
       }
@@ -339,7 +346,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         // Nothing within the usual 48 blocks: look as far as the loaded world
         // reaches before walking off to explore (a felled plain, a treeless hill).
         const gather = async (route = {}) => {
-          const options = { blocks: step.blocks, dropMatch: kb[step.key].match, blacklist, exclude: nearHouseColumn, ...route };
+          const options = { blocks: step.blocks, dropMatch: gatheringFoundation ? isFiller : kb[step.key].match,
+            blacklist, exclude: nearHouseColumn, ...route };
           let result = await skills.gatherOne(bot, ctx, options);
           if (result.reason === 'no_target_in_range') {
             result = await skills.gatherOne(bot, ctx, { ...options, radius: 128 });
@@ -350,9 +358,9 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
           }
           return result;
         };
-        if (!gatheringLogs && !gatheringStone) return gather();
+        if (!gatheringLogs && !gatheringStone && !gatheringFoundation) return gather();
         const surface = surfaceRoute(gatheringStone);
-        if (gatheringLogs) return surface.walk(() => gather(surface.gather(true)));
+        if (!gatheringStone) return surface.walk(() => gather(surface.gather(gatheringLogs)));
         const cut = async () => {
           const result = await quarry.run(ctx, surface, step.blocks, kb[step.key].match);
           if (result.reason !== 'quarry_no_site') return stoneRouteOutcome(result);
@@ -448,10 +456,16 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       if (dug.ok) await actions.collectDrops(bot, ctx, block.position.offset(0.5, 0.5, 0.5), () => true, { timeoutMs: 3000 });
       return dug;
     }
-    if (work.fills.length && Object.keys(ctx.perceive().inventory).some((n) => FILLERS.has(n))) {
-      ctx.record('site_fill', { position: posKey(work.fills[0].position) });
-      const filled = await skills.placeAt(bot, ctx, work.fills[0].position, (n) => FILLERS.has(n));
-      if (!filled.ok) blacklist.add(`site:${posKey(work.fills[0].position)}`, filled.reason, 20000);
+    if (work.fills.length) {
+      const inventory = ctx.perceive().inventory;
+      if (!hasFiller(inventory)) return null;
+      // A gathered filler first unblocks a station already in the bag.
+      const support = ['crafting_table', 'furnace'].filter((name) => inventory[name] > 0)
+        .map((name) => posKey(stationFloor(memory.house.furniture[name].position)));
+      const target = work.fills.find(({ position }) => support.includes(posKey(position))) || work.fills[0];
+      ctx.record('site_fill', { position: posKey(target.position) });
+      const filled = await skills.placeAt(bot, ctx, target.position, isFiller);
+      if (!filled.ok) blacklist.add(`site:${posKey(target.position)}`, filled.reason, 20000);
       return filled;
     }
     return null;
