@@ -56,6 +56,53 @@ test('every pickaxe worn out: the new set comes with one', async () => {
   assert.ok(asked[0].args.items.some((r) => r.key === 'iron_pickaxe'));
 });
 
+test('the Nether trip requires portal supplies; the eyes stage also waits for a bow and 48 arrows', async () => {
+  const gear = STEPS.find((step) => step.id === 'gear').args().items;
+  assert.ok(gear.some(({ key }) => key === 'obsidian'));
+  assert.ok(gear.some(({ key }) => key === 'flint_and_steel'));
+  assert.equal(gear.some(({ key }) => key === 'bow' || key === 'arrow'), false);
+
+  const { context, asked, state } = modelContext({ step: 'eyes', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
+  const eyes = STEPS.find((step) => step.id === 'eyes');
+  const inventory = eyes.args().items.filter(({ key }) => key !== 'bow').map(({ key, count }) => ({
+    name: key === 'food' ? 'bread' : key, count: key === 'arrow' ? 47 : count,
+  }));
+  context.bot.inventory.items = () => [...inventory, { name: 'iron_pickaxe', count: 1 }];
+  await playthroughNatural.onTick(context);
+  assert.equal(asked[0]?.task, 'outfit', 'eyes alone do not finish the kit');
+  assert.deepEqual(asked[0].args.items.filter(({ key }) => key === 'bow' || key === 'arrow'),
+    [{ key: 'bow', count: 1 }, { key: 'arrow', count: 48 }]);
+  inventory.push({ name: 'bow', count: 1 });
+  await playthroughNatural.onTick(context);
+  assert.equal(state.steps.find((step) => step.id === 'eyes').doneAt, null);
+  inventory.find(({ name }) => name === 'arrow').count = 48;
+  await playthroughNatural.onTick(context);
+  assert.ok(state.steps.find((step) => step.id === 'eyes').doneAt);
+});
+
+test('a lost bow after eyes preparation restocks the End weapons without recrafting spent eyes', async () => {
+  const { context, asked, state } = modelContext({ step: 'end', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
+  state.rearm = true;
+  let goal = null;
+  context.companion.status = () => ({ goal });
+  context.companion.submitTask = async (task, args) => {
+    asked.push({ task, args });
+    goal = { name: task };
+  };
+  const inventory = [{ name: 'iron_pickaxe', count: 1 }, { name: 'arrow', count: 47 }];
+  context.bot.inventory.items = () => inventory;
+  await playthroughNatural.onTick(context);
+  assert.equal(state.rearm, false);
+  assert.equal(state.steps.find((step) => step.id === 'eyes').doneAt, null);
+  assert.deepEqual(asked, []);
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked[0], { task: 'outfit', args: { items: [{ key: 'bow', count: 1 }, { key: 'arrow', count: 48 }] } });
+  inventory.push({ name: 'bow', count: 1 }, { name: 'arrow', count: 1 });
+  await playthroughNatural.onTick(context);
+  await playthroughNatural.onTick(context);
+  assert.equal(asked[1]?.task, 'endJourney');
+});
+
 test('death during active expedition prep holds gear until home supplies and worn iron kit are observed', async () => {
   const { context, state } = modelContext({ step: 'gear' });
   const { companion, bot } = context;
@@ -104,6 +151,7 @@ test('death during active expedition prep holds gear until home supplies and wor
   });
   await playthroughNatural.onTick(context);
   assert.equal(requests[2].task, 'outfit');
-  assert.ok(requests[2].args.items.some(({ key }) => key === 'bow'));
+  assert.ok(requests[2].args.items.some(({ key }) => key === 'obsidian'));
+  assert.equal(requests[2].args.items.some(({ key }) => key === 'bow'), false);
   assert.deepEqual(events.filter((e) => e.type === 'playthrough_death_recovery_verified').map(({ phase }) => phase), ['base', 'iron']);
 });

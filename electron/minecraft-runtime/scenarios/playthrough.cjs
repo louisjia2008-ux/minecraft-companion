@@ -11,10 +11,10 @@
 //      and a wheat farm by it, for bread whenever     farm
 //      the animals around are hunted out
 //   2. iron armour, worn                              outfit
-//      then bow and arrows, buckets, obsidian         outfit (gathered into the house chest)
+//      then buckets and obsidian                      outfit (gathered into the house chest)
 //   3. blaze rods from a nether fortress             netherExpedition
 //   4. ender pearls from endermen, night after night huntPearls
-//   5. eyes of ender                                 outfit
+//   5. eyes of ender, bow and arrows                 outfit
 //   6. the End: find the stronghold, kill the dragon endJourney
 //   7. back home: recheck/repair the same house and farm, then a cow pen
 //      and the machines on its own
@@ -52,17 +52,12 @@ const AUDIT_STATS = { wheat: ['mcPlayWheat', 'minecraft.mined:minecraft.wheat'],
   bread: ['mcPlayBread', 'minecraft.crafted:minecraft.bread'],
   bred: ['mcPlayBred', 'minecraft.custom:minecraft.animals_bred'] };
 
-const GEAR = [
+const IRON_ARMOR = [
   { key: 'iron_helmet', count: 1 }, { key: 'iron_chestplate', count: 1 }, { key: 'iron_leggings', count: 1 },
   { key: 'iron_boots', count: 1 }, { key: 'iron_sword', count: 1 }, { key: 'shield', count: 1 },
-  { key: 'iron_pickaxe', count: 1 }, { key: 'bow', count: 1 }, { key: 'arrow', count: 48 },
-  { key: 'water_bucket', count: 1 }, { key: 'flint_and_steel', count: 1 }, { key: 'obsidian', count: 10 },
-  { key: 'cobblestone', count: 64 }, { key: 'food', count: 24 },
 ];
-// Armour first, as a player would: worn, it keeps the bot alive through the
-// nights spent hunting spiders for the bow's string.
-const ARMORY = (r) => /^iron_(helmet|chestplate|leggings|boots|sword)$/.test(r.key) || r.key === 'shield';
-const ARMOR = GEAR.filter(ARMORY).concat([{ key: 'food', count: 12 }]);
+const TRIP_FOOD = { key: 'food', count: 12 };
+const ARMOR = [...IRON_ARMOR, TRIP_FOOD];
 // Armour pieces worn now; a new set is asked for at most this often.
 const worn = (bot) => [5, 6, 7, 8].filter((i) => /_(helmet|chestplate|leggings|boots)$/.test(bot.inventory?.slots?.[i]?.name || '')).length;
 const REARM_MS = 60 * MINUTE;
@@ -77,15 +72,17 @@ const WORN_ARMOR = [[5, 'helmet'], [6, 'chestplate'], [7, 'leggings'], [8, 'boot
 const fullArmorWorn = (bot) => WORN_ARMOR.every(([slot, kind]) =>
   ['iron', 'diamond', 'netherite'].some((material) => bot.inventory?.slots?.[slot]?.name === `${material}_${kind}`))
   && bot.inventory?.slots?.[45]?.name === 'shield';
-// Then the rest for the trip, armour not asked again: worn through the hours
-// this takes, it broke piece by piece and the full list was never all carried
-// at once (a world spent eight hours re-making it). Arrows wait for the End.
-const TRIP = GEAR.filter((r) => !ARMORY(r)).map((r) => {
-  if (r.key === 'arrow') return { key: 'arrow', count: 16 };
-  if (r.key === 'food') return { key: 'food', count: 12 };
-  return r;
-});
-const EYE_KIT = [{ key: 'ender_eye', count: EYES }, { key: 'arrow', count: 48 }, { key: 'food', count: 24 },
+// The Nether expedition uses melee. Finish the portal supplies before
+// spending time on the bow and arrows needed for the End.
+const PORTAL_GEAR = [
+  { key: 'iron_pickaxe', count: 1 }, { key: 'water_bucket', count: 1 }, { key: 'flint_and_steel', count: 1 },
+  { key: 'obsidian', count: 10 }, { key: 'cobblestone', count: 64 },
+];
+const TRIP = [...PORTAL_GEAR, TRIP_FOOD];
+const END_WEAPONS = [{ key: 'bow', count: 1 }, { key: 'arrow', count: 48 }];
+const END_FOOD = { key: 'food', count: 24 };
+const GEAR = [...IRON_ARMOR, PORTAL_GEAR[0], ...END_WEAPONS, ...PORTAL_GEAR.slice(1), END_FOOD];
+const EYE_KIT = [{ key: 'ender_eye', count: EYES }, ...END_WEAPONS, END_FOOD,
   { key: 'cobblestone', count: 64 }, { key: 'water_bucket', count: 1 }];
 
 const have = (bot, key) => countKey(key, perceive(bot).inventory);
@@ -109,7 +106,8 @@ const STEPS = [
   { id: 'pearls', task: 'huntPearls', args: ({ bot }) => ({ count: Math.max(1, EYES - have(bot, 'ender_eye')) }),
     when: ({ bot }) => bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000,
     done: ({ bot }) => have(bot, 'ender_pearl') + have(bot, 'ender_eye') >= EYES, nightly: true },
-  { id: 'eyes', task: 'outfit', args: () => ({ items: EYE_KIT }), done: ({ bot }) => have(bot, 'ender_eye') >= EYES },
+  { id: 'eyes', task: 'outfit', args: ({ state } = {}) => ({ items: state?.endWeaponsRestock ? END_WEAPONS : EYE_KIT }),
+    done: ({ bot, state }) => kitDone(bot, state?.endWeaponsRestock ? END_WEAPONS : EYE_KIT) },
   { id: 'end', task: 'endJourney', args: () => ({ withCity: false, home: true }),
     done: ({ state }) => state.dragon === true && state.returnedOverworld?.pass === true },
   // This remains the original house-first journey, with explicit post-return
@@ -124,6 +122,7 @@ const STEPS = [
 ];
 const ARMOR_INDEX = STEPS.findIndex((step) => step.id === 'armor');
 const GEAR_INDEX = STEPS.findIndex((step) => step.id === 'gear');
+const EYES_INDEX = STEPS.findIndex((step) => step.id === 'eyes');
 const END_INDEX = STEPS.findIndex((step) => step.id === 'end');
 
 // Fields go a little way off the house, clear of the machine sites the director picks.
@@ -457,6 +456,10 @@ const playthroughNatural = {
       entry.minute = Math.round(context.elapsedMs / MINUTE);
       if (step.id === 'gear') state.gearDone = true;
       if (step.id === 'armor') state.armorDone = true;
+      if (step.id === 'eyes') {
+        state.endWeaponsRestock = false;
+        if (entry.asks > 0) state.replace = true;
+      }
       write('model_step_done', { step: step.id, minute: entry.minute, asks: entry.asks });
       console.log(`    model: ${step.id} done at ${entry.minute}m`);
       return;
@@ -497,6 +500,17 @@ const playthroughNatural = {
       write('model_ask', { step: 'rearm', task: 'outfit', args: { items: REARM } });
       console.log('    model: outfit (armour or pickaxe worn out)');
       await companion.submitTask('outfit', { items: REARM });
+      return;
+    }
+    // A death or rearm after completing the eyes can leave the bow behind.
+    // The End journey may already have used arrows once underway, so only
+    // repeat equipment preparation before dispatching it from the Overworld.
+    if (index === END_INDEX && !state.dragon && dimensionOf(bot) === 'overworld'
+      && (!goal || state.replace) && !kitDone(bot, END_WEAPONS)) {
+      const eyes = state.steps[EYES_INDEX];
+      Object.assign(eyes, { doneAt: null, minute: null, asks: 0 });
+      state.endWeaponsRestock = true;
+      write('playthrough_end_gear_missing', { missing: END_WEAPONS.filter((r) => have(bot, r.key) < r.count) });
       return;
     }
     // The model waits for the bot to finish (or give up) before asking again.

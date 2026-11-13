@@ -556,6 +556,99 @@ test('hunting spiders for string marks a night hunt; other steps clear it', asyn
   assert.equal(sim.bot.companionNightHunt, null);
 });
 
+function bowFixture({ health = 20, food = 20 } = {}) {
+  const sim = simulate({ failRate: 0 });
+  const local = { id: 1, name: 'spider', position: new Vec3(8.5, 0, .5) };
+  const far = { id: 2, name: 'spider', position: new Vec3(55.5, 0, .5) };
+  const underground = { id: 3, name: 'spider', position: new Vec3(7.5, -9, .5) };
+  const caveSpider = { id: 4, name: 'cave_spider', position: new Vec3(6.5, 0, .5) };
+  const aboveCave = new Vec3(9, 2, 0);
+  sim.inventory.stick = 3;
+  const original = sim.bot.blockAt;
+  sim.bot.blockAt = (p) => {
+    const name = p.equals(aboveCave) ? 'stone' : original(p).name;
+    return { name, position: p, boundingBox: name === 'air' ? 'empty' : 'block',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const dry = new Vec3(8, 0, 0);
+  const tooFar = new Vec3(55, 0, 0);
+  const underRoof = new Vec3(9, 0, 0);
+  const breaking = { x: 6, y: 0, z: 0, toBreak: [new Vec3(6, 0, 0)] };
+  const neighbors = () => [dry, tooFar, underRoof, breaking];
+  const movements = { canDig: true, getNeighbors: neighbors };
+  const records = [];
+  Object.assign(sim.bot, { health, food, entities: { 1: local, 2: far, 3: underground, 4: caveSpider },
+    pathfinder: { movements } });
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: sim.bot.health, food: sim.bot.food }),
+    record: (name) => records.push(name), signal: new AbortController().signal };
+  const create = () => createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    stations: STATIONS, requirements: [{ key: 'bow', count: 1 }], countWorn: true, actions: sim.actions,
+    skills: { ...sim.skills, explore: () => assert.fail('bow hunt must not roam'), ...sim.bowSkills } });
+  return { sim, local, far, underground, caveSpider, dry, neighbors, movements, ctx, create, records };
+}
+
+test('outfit hunts only local surface spiders along a walk-only route and releases the profile', async () => {
+  const f = bowFixture();
+  f.sim.bowSkills = { huntOne: async (_bot, _ctx, options) => {
+    assert.deepEqual(options.mobs, ['spider']);
+    assert.ok(options.accept(f.local));
+    for (const blocked of [f.far, f.underground, f.caveSpider]) assert.equal(options.accept(blocked), false);
+    assert.equal(f.movements.canDig, false);
+    assert.deepEqual(f.movements.getNeighbors(f.sim.bot.entity.position.floored()), [f.dry]);
+    assert.equal(f.sim.bot.companionNightHunt?.key, 'string');
+    return { ok: true, gained: 1 };
+  } };
+  const goal = f.create();
+  await goal.run(f.ctx);
+  assert.equal((await goal.run(f.ctx)).gained, 1);
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal(f.sim.bot.companionNightHunt, null);
+  assert.equal(f.movements.getNeighbors, f.neighbors);
+  assert.equal(f.movements.canDig, true);
+});
+
+test('low health returns by a dry route and uses available food before bow hunts', async () => {
+  const f = bowFixture({ health: 3, food: 17 });
+  f.sim.bot.entity.position = new Vec3(9.5, 0, 1.5);
+  let took = 0;
+  f.sim.bowSkills = { huntOne: () => assert.fail('low health forbids a bow hunt'),
+    takeItems: async (_bot, _ctx, { itemMatch }) => {
+      assert.equal(itemMatch('bread'), true);
+      assert.equal(itemMatch('chicken'), false);
+      took += 1;
+      return { ok: true, taken: 1 };
+    } };
+  f.sim.actions.goNear = async (_bot, _ctx, target, _radius, options) => {
+    assert.deepEqual(target, new Vec3(.5, 0, .5));
+    assert.equal(options.retryNoProgress, false);
+    assert.equal(f.movements.canDig, false);
+    f.sim.bot.entity.position = target;
+    return { ok: true };
+  };
+  const goal = f.create();
+  await goal.run(f.ctx);
+  assert.equal((await goal.run(f.ctx)).progress, false);
+  assert.equal((await goal.run(f.ctx)).taken, 1);
+  assert.equal(took, 1);
+  assert.equal(f.sim.bot.companionNightHunt, null);
+  assert.equal(f.movements.getNeighbors, f.neighbors);
+});
+
+test('an ongoing outfit spider pursuit aborts on injury and lets recovery take over', async () => {
+  const f = bowFixture();
+  f.sim.bowSkills = { huntOne: async (_bot, ctx) => {
+    f.sim.bot.health = 9;
+    const { sleep } = require('../core/confirm');
+    await sleep(500, ctx.signal);
+    assert.fail('unsafe hunt should cancel its pursuit');
+  } };
+  const goal = f.create();
+  await goal.run(f.ctx);
+  assert.equal((await goal.run(f.ctx)).reason, 'bow_string_unsafe');
+  assert.equal(f.sim.bot.companionNightHunt, null);
+  assert.equal(f.movements.getNeighbors, f.neighbors);
+});
+
 test('a carried requirement stays in the bag and counts there, never stored', async () => {
   const sim = simulate({ seed: 4, failRate: 0 });
   const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },

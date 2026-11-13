@@ -48,6 +48,11 @@ const MINE_RESTART_RINGS = [18, 26, 34, 42];
 // Further below the chest than this, home is reached by going up first.
 const HOME_BELOW = 8;
 const SUPPLY_STONE_RADIUS = 24;
+const BOW_HUNT_RADIUS = 32;
+const BOW_HUNT_HEALTH = 14;
+const BOW_HUNT_FOOD = 12;
+const BOW_SEARCH_MS = 20 * 60 * 1000;
+const BOW_RESUPPLY_MS = 2 * 60 * 1000;
 const SUPPLY_STONE_FALLBACK = new Set(['no_target_in_range', 'drops_not_collected', 'NoPath', 'Timeout', 'path_timeout',
   'not_arrived', 'no_progress', 'leg_blocked', 'no_dry_stand']);
 const SUPPLY_CANOPY = /_(leaves|log|wood)$/;
@@ -100,11 +105,28 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   const nameAt = (p) => blockAt(p)?.name || null;
   const homeStations = [chest, ...Object.values(stations)].filter(Boolean);
   const withinStoneRange = (p) => Math.hypot(p.x - chest.x, p.z - chest.z) <= SUPPLY_STONE_RADIUS;
+  // Outfit opts into worn items; standalone material orders and machines keep
+  // their existing hunt policy even when they also require string.
+  const bowHunt = (step) => countWorn && !surfaceOnly && step?.kind === 'hunt' && step.key === 'string' && step.for === 'bow';
+  const huntHome = new Vec3(chest.x + .5, chest.y, chest.z + .5);
   const quarry = surfaceOnly ? createStoneQuarry({ bot, actions, blacklist,
     avoid: (p) => !withinStoneRange(p) || bot.companionHomeSite?.(p)
       || homeStations.some((s) => Math.hypot(p.x - s.x, p.z - s.z) < 4) }) : null;
   let quarryNeeded = false;
   let stoneRouteOwnsRecovery = false;
+  let bowRouteOwnsRecovery = false;
+  let nightHunt = null;
+  let nextBowFoodCheck = 0;
+  let bowSearchSince = 0;
+  let bowResupplySince = 0;
+
+  function setNightHunt(key, clearPrevious = false) {
+    if (key) bot.companionNightHunt = nightHunt = { key, at: Date.now() };
+    else {
+      if (clearPrevious || bot.companionNightHunt === nightHunt) bot.companionNightHunt = null;
+      nightHunt = null;
+    }
+  }
 
   const wanted = () => requirements || materialsFor(blueprint.blocks, nameAt, kb);
   const stored = (key) => countKey(key, memory.chest || {}, kb);
@@ -186,7 +208,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       cache.set(id, safe);
       return safe;
     };
-    const walk = async (run, accept = () => true) => {
+    const walk = async (run, accept = () => true, withinRange = withinStoneRange) => {
       const restore = nether.applyWalkOnlyMovements(bot);
       const movements = bot.pathfinder?.movements;
       const neighbors = movements?.getNeighbors;
@@ -194,7 +216,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       if (neighbors) movements.getNeighbors = function (node, ...args) {
         return neighbors.call(this, node, ...args).filter((move) => {
           const feet = new Vec3(move.x, move.y, move.z);
-          return feet.y >= floor && withinStoneRange(feet) && accept(feet) && [-1, 0, 1].every((dy) => {
+          return feet.y >= floor && withinRange(feet) && accept(feet) && [-1, 0, 1].every((dy) => {
             const block = blockAt(feet.offset(0, dy, 0));
             return block && !SUPPLY_HAZARD.test(block.name) && block.getProperties?.()?.waterlogged !== true;
           });
@@ -462,19 +484,114 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     return result;
   }
 
+  async function gatherBowString(ctx, step) {
+    const state = ctx.perceive();
+    const surface = surfaceSupplyRoute('string');
+    const at = bot.entity.position;
+    const homeDistance = horizontalDistance(at, huntHome);
+    const home = bot.companionHomeAt?.();
+    const homeSite = (p) => horizontalDistance(p, huntHome) <= 6 && Math.abs(p.y - huntHome.y) <= 2;
+    const onSurface = (p) => p.y >= surface.floor && horizontalDistance(p, huntHome) <= BOW_HUNT_RADIUS && surface.isStand(p);
+    const safeFood = (name) => kb.food.match(name) && !defaultActions.RISKY_FOODS.has(name);
+    const nearbyHostile = (range) => (state.hostiles || []).some((h) => h.distance <= range);
+    const supplied = (current) => current.health >= BOW_HUNT_HEALTH && current.food > BOW_HUNT_FOOD;
+    const wait = async (reason) => {
+      await sleep(1000, ctx.signal);
+      return { ok: true, waited: true, progress: false, reason };
+    };
+    const canWalk = (p) => homeSite(p) || p.y >= surface.floor && surface.isStand(p);
+    const walk = (run) => surface.walk(run, canWalk, (p) =>
+      horizontalDistance(p, huntHome) <= Math.max(BOW_HUNT_RADIUS, homeDistance + 1));
+
+    if (nether.dimension(bot) !== 'overworld' || at.y < surface.floor) return wait('bow_string_waiting_for_surface');
+    if (!supplied(state) || homeDistance > BOW_HUNT_RADIUS) {
+      bowSearchSince = 0;
+      bowResupplySince ||= Date.now();
+      const defer = (reason) => Date.now() - bowResupplySince > BOW_RESUPPLY_MS
+        ? { ok: false, reason } : wait(reason);
+      ctx.record('bow_string_deferred', { health: state.health, food: state.food, distanceFromHome: Math.round(homeDistance) });
+      if (!homeSite(at)) {
+        if (nearbyHostile(6)) return defer('bow_string_return_unsafe');
+        const target = home ? new Vec3(home.x + .5, home.y, home.z + .5) : huntHome;
+        const returned = await walk(() => actions.goNear(bot, ctx, target, 2, { timeoutMs: 12000, retryNoProgress: false }));
+        return returned.ok ? { ...returned, progress: false } : defer('bow_string_return_blocked');
+      }
+      if (state.food < 20 && !nearbyHostile(6)) {
+        if (bot.inventory.items().some((item) => safeFood(item.name))) return (actions.eat || defaultActions.eat)(bot, ctx);
+        if (Date.now() >= nextBowFoodCheck && typeof skills.takeItems === 'function') {
+          nextBowFoodCheck = Date.now() + 30000;
+          const took = await walk(() => skills.takeItems(bot, ctx, { position: chest, itemMatch: safeFood }));
+          if (took.ok) return took;
+        }
+      }
+      return defer('bow_string_needs_supplies');
+    }
+    bowResupplySince = 0;
+
+    if (!homeSite(at) && !onSurface(at.floored())) {
+      const up = await surfaceFirst(ctx);
+      return up?.ok ? up : { ok: false, reason: 'bow_string_no_surface_footing' };
+    }
+    const usefulDrop = (name) => kb.string.match(name) || kb.bow.match(name);
+    const drop = Object.values(bot.entities || {}).find((entity) => entity.name === 'item'
+      && entity.position && entity.position.distanceTo(at) <= 8 && onSurface(entity.position.floored())
+      && usefulDrop((actions.droppedItemName || defaultActions.droppedItemName)(entity) || ''));
+    if (drop) {
+      const picked = await walk(() => actions.collectDrops(bot, ctx, drop.position, usefulDrop, { radius: 2, timeoutMs: 6000 }));
+      return picked.ok ? picked : wait('bow_string_drop_unreachable');
+    }
+    const accept = (entity) => entity.name === 'spider' && entity.isValid !== false && onSurface(entity.position.floored());
+    bowSearchSince ||= Date.now();
+    const targetAvailable = Object.values(bot.entities || {}).some((entity) => entity.position && accept(entity)
+      && entity.position.distanceTo(at) <= BOW_HUNT_RADIUS && !blacklist.has(`mob:${entity.id}`));
+    if (!targetAvailable && Date.now() - bowSearchSince > BOW_SEARCH_MS) return { ok: false, reason: 'bow_string_no_surface_spider' };
+    // Let night spawn surface spiders while we're healthy enough to take one.
+    // Clear this exemption before surfacing, returning or waiting for supplies.
+    setNightHunt('string');
+    if (!targetAvailable) return wait('bow_string_no_surface_spider');
+    const guarded = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, guarded.signal]) : guarded.signal;
+    const monitor = setInterval(() => {
+      const p = bot.entity.position;
+      if (!supplied(bot) || horizontalDistance(p, huntHome) > BOW_HUNT_RADIUS + 1 || p.y < surface.floor) {
+        guarded.abort('bow_string_unsafe');
+      }
+    }, 100);
+    try {
+      const hunted = await walk(() => skills.huntOne(bot, { ...ctx, signal }, {
+        mobs: step.mobs.filter((name) => name === 'spider'), dropMatch: kb.string.match,
+        radius: BOW_HUNT_RADIUS, blacklist, accept,
+      }));
+      if (hunted.gained > 0) bowSearchSince = 0;
+      return hunted.ok ? hunted : wait('bow_string_hunt_unconfirmed');
+    } catch (error) {
+      if (guarded.signal.aborted && !ctx.signal?.aborted) return wait('bow_string_unsafe');
+      throw error;
+    } finally {
+      clearInterval(monitor);
+      setNightHunt(null);
+    }
+  }
+
   async function runStep(ctx, step) {
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
     // Night rest stays out of the way while a night mob is hunted (companion.js).
-    bot.companionNightHunt = step.kind === 'hunt' && (step.mobs || []).some((m) => NIGHT_MOBS.has(m))
-      ? { key: step.key, at: Date.now() } : null;
+    const guardedBow = bowHunt(step);
+    setNightHunt(!guardedBow && step.kind === 'hunt' && (step.mobs || []).some((m) => NIGHT_MOBS.has(m)) ? step.key : null, true);
     // Ore that needs a mine is the only thing done down there; anything else
     // (a tree for sticks, a station, a craft) walks out along the tunnel first
     // rather than letting the pathfinder dig straight up to it.
     const surfaceStone = surfaceOnly && step.kind === 'gather' && step.key === 'cobblestone';
+    if (guardedBow && ctx.perceive().health <= 6 && bot.entity.position.y < chest.y - HOME_BELOW) {
+      // The persistent cave retreat handles critical egress.
+      await sleep(1000, ctx.signal);
+      return { ok: true, waited: true, progress: false, reason: 'bow_string_waiting_for_retreat' };
+    }
     if (!surfaceStone && (step.kind !== 'gather' || !Number.isFinite(step.mineY))) {
       const up = await climbOut(ctx);
       if (up) return up;
     }
+    if (guardedBow) return gatherBowString(ctx, step);
     switch (step.kind) {
       case 'place_station': {
         const spot = stations[step.station];
@@ -676,6 +793,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       reqs.unshift({ key, count: countKey(key, inventory, kb) + entry.extra });
     }
     let step = planNext({ requirements: reqs, inventory, stations: placedStations(), kb });
+    bowRouteOwnsRecovery = bowHunt(step);
     // About to go (back) down a mine from up top: take its supplies along.
     // Down there, running out of stone pickaxes sends the bot to the depot,
     // and only up for more when the depot cannot help.
@@ -722,17 +840,17 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     name: 'gather_materials',
     // The trip owns temporary movement overrides, even when its parent stops
     // before the bot returns through the portal. Keep its remembered portals.
-    dispose() { return memory.trip?.dispose?.(); },
+    dispose() { setNightHunt(null); return memory.trip?.dispose?.(); },
     noProgressLimit: 40,
     maxRecoveries: 6,
     recover() {
       blacklist.clear();
       memory.pathFailures = 0;
-      memory.recovery = !stoneRouteOwnsRecovery;
+      memory.recovery = !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery;
     },
     memory,
     owed,
-    ownsRouteRecovery: () => stoneRouteOwnsRecovery || quarry?.inside() === true,
+    ownsRouteRecovery: () => stoneRouteOwnsRecovery || bowRouteOwnsRecovery || quarry?.inside() === true,
     leaveSurfaceQuarry,
     isDone: (state) => memory.chest !== null && !quarry?.inside() && owed(state?.inventory).length === 0,
     progress: () => memory.steps,
@@ -747,7 +865,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         ctx.record('recovery', { at: bot.entity.position.floored(), dimension: 'the_nether', delegate: 'nether_trip' });
         return runOnce(ctx);
       }
-      if (memory.pathFailures >= 2 && !stoneRouteOwnsRecovery) {
+      if (memory.pathFailures >= 2 && !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery) {
         memory.pathFailures = 0;
         ctx.record('unstick', { at: bot.entity.position.floored() });
         return actions.unstick(bot, ctx);
