@@ -870,6 +870,7 @@ test('expedition reserve scouts loaded dry legs while crops grow and retraces on
   const planned = [];
   const walked = [];
   const huntRadii = [];
+  let directBlocked = true;
   const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
     entity: { position: new Vec3(2.5, 64, 2.5), onGround: true },
     blockAt: (p) => p.x === 11 && p.z === 2 && p.y === 64 ? seagrass : p.y === 63 ? grass : air,
@@ -889,6 +890,11 @@ test('expedition reserve scouts loaded dry legs while crops grow and retraces on
       assert.equal(movements.allowSprinting, false);
       const at = new Vec3(destination.x, destination.y, destination.z);
       walked.push(at);
+      if (at.equals(new Vec3(2, 64, 2)) && directBlocked) {
+        directBlocked = false;
+        assert.equal(options.timeoutMs, 6500);
+        return { ok: false, reason: 'NoPath' };
+      }
       bot.entity.position = at.offset(.5, 0, .5);
       if (options.arrived) assert.ok(options.arrived());
       if (options.arrived && walked.length === 1) {
@@ -919,9 +925,12 @@ test('expedition reserve scouts loaded dry legs while crops grow and retraces on
   food = 13;
   await goal.run(ctx);
   await goal.run(ctx);
-  assert.deepEqual(walked.slice(1), [start, new Vec3(2, 64, 2)]);
+  assert.deepEqual(walked.slice(1), [new Vec3(2, 64, 2), start, new Vec3(2, 64, 2)]);
   assert.deepEqual(huntRadii, [48, 12, 12]);
-  assert.deepEqual(events.map((e) => e.type), ['expedition_food_scout', 'expedition_food_scout_return']);
+  assert.deepEqual(events.map((e) => e.type), [
+    'expedition_food_scout', 'expedition_food_scout_home', 'expedition_food_scout_return', 'expedition_food_scout_home',
+  ]);
+  assert.deepEqual(events.filter((e) => e.type === 'expedition_food_scout_home').map((e) => e.ok), [false, true]);
   assert.equal(movements.getNeighbors, native);
 });
 

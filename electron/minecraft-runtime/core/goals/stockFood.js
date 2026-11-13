@@ -20,6 +20,7 @@ const SEARCH_REST_MS = 60000;
 const SCOUT_RINGS = [HOME_RADIUS, 96, 144, 192];
 const SCOUT_LIMIT_MS = 180000;
 const SCOUT_STEPS = 12;
+const DIRECT_HOME_RADIUS = 28;
 const DUSK = 12542;
 const FIELD_MARGIN = 5;
 const MAX_RESERVE_PLOTS = 24;
@@ -249,7 +250,17 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   }
 
   async function scoutHome(ctx, here) {
-    const from = here.floored();
+    let from = here.floored();
+    if (distance(here) <= DIRECT_HOME_RADIUS && !scout.failedHome?.has(posKey(from))) {
+      const moved = await returnHome(ctx, here, { timeoutMs: 6500 });
+      const at = bot.entity.position;
+      const progress = moved.ok || onDryGround() && distance(at) + 1 < distance(here);
+      ctx.record('expedition_food_scout_home', { from, to: at.floored(), ok: progress, reason: moved.reason });
+      if (progress) return scoutDelay();
+      (scout.failedHome ||= new Set()).add(posKey(from));
+      here = at;
+      from = at.floored();
+    }
     while (scout.trail.at(-1)?.distanceTo(from) < 2) scout.trail.pop();
     const last = scout.trail.at(-1);
     if (!last) return returnHome(ctx, here);
@@ -293,8 +304,8 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     return scoutDelay();
   }
 
-  async function returnHome(ctx, here) {
-    if (distance(here) > 28) {
+  async function returnHome(ctx, here, { timeoutMs = 15000 } = {}) {
+    if (distance(here) > DIRECT_HOME_RADIUS) {
       const from = here.floored();
       const bearing = Math.atan2(centre.z - from.z, centre.x - from.x);
       const headings = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2];
@@ -315,12 +326,12 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const approach = door?.offset(0, 0, -1);
     const closedDoor = door && read(door);
     if (/_door$/.test(closedDoor?.name || '') && closedDoor.getProperties?.().open === false) {
-      if (!actions.withinReach(bot, door)) return go(ctx, approach, 1);
+      if (!actions.withinReach(bot, door)) return go(ctx, approach, 1, timeoutMs);
       try { await bot.activateBlock(closedDoor); } catch (error) { if (error?.code === 'aborted') throw error; }
       return await waitUntil(() => read(door)?.getProperties?.().open === true, { timeoutMs: 1500, signal: ctx.signal })
         ? { ok: true } : { ok: false, reason: 'expedition_food_door_closed' };
     }
-    return go(ctx, centre, 1, 15000);
+    return go(ctx, centre, 1, timeoutMs);
   }
 
   async function search(ctx, here) {
