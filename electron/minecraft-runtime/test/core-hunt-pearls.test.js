@@ -170,3 +170,32 @@ test('a hunter starting inside the known house walks out through an observed doo
     perceive: () => ({ isDay: false, position: player, inventory: {} }) });
   assert.deepEqual(records, ['pearl_house_exit']);
 });
+
+test('a grounded body straddling leaf litter and a supported lip regains just that footing', async () => {
+  const player = new Vec3(-30.9, 70, -24.5);
+  const foot = player.floored();
+  const support = new Vec3(-32, 70, -25);
+  const neighbors = () => [support, new Vec3(-30, 70, -25)];
+  const movements = { getNeighbors: neighbors, canDig: true };
+  const bot = { ...terrain, entity: { position: player, onGround: true }, pathfinder: { movements },
+    blockAt(p) {
+      if (p.equals(foot.offset(0, -1, 0))) return { ...AIR, name: 'leaf_litter' };
+      return p.y < 70 ? STONE : AIR;
+    } };
+  const actions = { goTo: async (_b, _c, target, options) => {
+    assert.equal(target.isEnd(support), true);
+    assert.deepEqual(movements.getNeighbors(foot), [support]);
+    assert.equal(movements.canDig, false);
+    assert.equal(options.arrived(player), false);
+    bot.entity.position = support.offset(.5, 0, .5);
+    assert.equal(options.arrived(bot.entity.position), true);
+    return { ok: true };
+  } };
+  const goal = createHuntPearlsGoal({ bot, actions });
+  const records = [];
+  await goal.run({ signal: new AbortController().signal, record: (type) => records.push(type),
+    perceive: () => ({ isDay: false, position: player, inventory: {} }) });
+  assert.deepEqual(records, ['pearl_scout_regained_footing']);
+  assert.equal(movements.getNeighbors, neighbors);
+  assert.equal(movements.canDig, true);
+});

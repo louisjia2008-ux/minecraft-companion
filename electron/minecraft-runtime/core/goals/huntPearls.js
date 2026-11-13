@@ -127,6 +127,24 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     const house = home();
     if (state.inWater || bot.entity.onGround === false) return wait(ctx, 'pearl_wait_for_dry_ground');
     if (!outdoors(from)) {
+      // On a natural lip the grounded collision box can overlap the support
+      // while the centre has crossed into the next, lower column.
+      if (bot.entity.onGround && skyOpen(bot, from)) {
+        const here = bot.entity.position;
+        const bodyRadius = (bot.entity.width || 0.6) / 2;
+        const support = Object.values(DOOR_DIRECTIONS).map(([x, z]) => from.offset(x, 0, z)).find((p) =>
+          here.x + bodyRadius > p.x && here.x - bodyRadius < p.x + 1
+          && here.z + bodyRadius > p.z && here.z - bodyRadius < p.z + 1 && outdoors(p));
+        if (support) {
+          const arrived = (at) => bot.entity.onGround && at.floored().equals(support) && outdoors(support);
+          const result = await walkDry(bot, ctx, actions, new goals.GoalBlock(support.x, support.y, support.z),
+            { adjacent: support, timeoutMs: 2000, arrived });
+          if (result.ok && arrived(bot.entity.position)) {
+            ctx.record('pearl_scout_regained_footing', { from, to: support });
+            return { ok: true, waited: true };
+          }
+        }
+      }
       if (await leaveHouse(ctx, from, house)) return { ok: true, waited: true };
       return wait(ctx, 'pearl_wait_for_surface');
     }
