@@ -208,21 +208,20 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     memory.heading = `${target.x},${target.z}`;
     ctx.record('explore', { lookout: m.index, x: target.x, z: target.z, ...(centre ? { around: posKey(centre) } : {}),
       want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
-    // A walk that went nowhere last time (an island in the lava sea, a ledge
-    // under a fortress): bridge and tower this time.
-    const bridge = centre || m.stuck > 0 || boxedIn();
+    // A blocked lookout on ordinary terrain should try a different direction.
+    // Use scaffolding for a known structure or after repeated failures in place.
+    const bridge = Boolean(centre || boxedIn());
     const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8),
-      { timeoutMs: 60000, arrived: () => true, retryNoProgress: Boolean(bridge) });
+      { timeoutMs: 60000, arrived: () => true, retryNoProgress: bridge });
     if (bridge) await stockScaffolding(ctx, 16);
     const start = bot.entity.position.clone();
     const result = await (bridge ? withScaffolding(walk) : nether.withLookoutTerrain(bot, walk));
     const moved = bot.entity.position.distanceTo(start);
     const left = Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
     scan(ctx, true);
-    // Reached it, or stuck short of it twice: on to the next lookout.
+    // A failed guarded leg does not prove the bot is on an island.
     m.misses = moved < 10 ? m.misses + 1 : 0;
-    m.stuck = moved < 10 ? (m.stuck || 0) + 1 : 0;
-    if (left <= 16 || m.misses >= 2) {
+    if (left <= 16 || m.misses >= (bridge ? 2 : 1)) {
       m.index += 1;
       m.misses = 0;
     }

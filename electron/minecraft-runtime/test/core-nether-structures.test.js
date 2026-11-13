@@ -949,3 +949,34 @@ test('hurt in the nether with nothing to eat, the bot heads home instead of wait
   assert.ok(walks.length >= 1 && bot.entity.position.x < 60, walks.join(' '));
   goal.dispose();
 });
+
+test('an ordinary lookout timeout on a supported shelf rotates to another guarded direction', async () => {
+  const start = new Vec3(-87.5, 91, -38.5);
+  const settled = new Vec3(-83.497, 91, -46.5);
+  const nativeNeighbors = () => [];
+  const movements = { getNeighbors: nativeNeighbors, allowParkour: true, allow1by1towers: false,
+    scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() };
+  const bot = { ...world({}), game: { dimension: 'the_nether' },
+    entity: { position: start, onGround: true }, pathfinder: { movements },
+    inventory: { slots: [], items: () => [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }] },
+    registry: { itemsByName: { netherrack: { id: 2 } }, blocksByName: {} } };
+  const calls = [];
+  const actions = { async goTo(_bot, _ctx, target, options) {
+    calls.push({ target: [target.x, target.z], guarded: movements.getNeighbors !== nativeNeighbors,
+      towers: movements.allow1by1towers, retry: options.retryNoProgress });
+    if (calls.length === 1) bot.entity.position = settled;
+    return { ok: false, reason: 'Timeout' };
+  } };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 7, witherSkulls: 0, trades: 0, actions });
+  goal.memory.netherPortal = new Vec3(-13, 71, -27);
+  goal.memory.explore.index = 5;
+  const ctx = { record() {}, perceive: () => ({ inventory: { iron_sword: 1 }, health: 20, food: 20 }) };
+  try {
+    await goal.run(ctx);
+    await goal.run(ctx);
+    assert.deepEqual(calls.map(({ guarded, towers, retry }) => [guarded, towers, retry]),
+      [[true, false, false], [true, false, false]]);
+    assert.deepEqual(calls[0].target, [-70, -84]);
+    assert.notDeepEqual(calls[1].target, calls[0].target);
+  } finally { goal.dispose(); }
+});
