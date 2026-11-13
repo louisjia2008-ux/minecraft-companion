@@ -22,6 +22,42 @@ test('dimension names are normalized', () => {
   assert.equal(nether.inNether({ game: { dimension: 'overworld' } }), false);
 });
 
+test('lookout movement keeps loaded footholds, rejects cliff shortcuts and admits dry horizontal cuts', async () => {
+  const solid = { name: 'netherrack', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const lava = { name: 'lava', boundingBox: 'empty', shapes: [] };
+  const start = new Vec3(0, 64, 0);
+  const move = (x, y, z, toBreak = [], toPlace = []) => Object.assign(new Vec3(x, y, z), { toBreak, toPlace });
+  const dry = move(-1, 64, 0);
+  const cliff = move(1, 31, 0);
+  const flooded = move(0, 64, -1);
+  const shortcut = move(1, 64, -1);
+  const tunnel = move(0, 64, 1, [new Vec3(0, 64, 1), new Vec3(0, 65, 1)]);
+  const down = move(1, 63, 0);
+  const scaffold = move(1, 64, 0, [], [{}]);
+  const native = () => [dry, cliff, flooded, shortcut, tunnel, down, scaffold];
+  const cells = new Map([
+    ['(1, 31, 0)', lava], ['(0, 64, -1)', lava],
+    ['(0, 64, 1)', solid], ['(0, 65, 1)', solid],
+    ['(1, 63, 0)', air],
+  ]);
+  const movements = { getNeighbors: native, allowParkour: true, allow1by1towers: true, infiniteLiquidDropdownDistance: true };
+  const bot = { pathfinder: { movements }, blockAt: (p) => cells.get(p.toString()) || (p.y < 64 ? solid : air) };
+  await nether.withLookoutTerrain(bot, async () => {
+    assert.equal(movements.allowParkour, false);
+    assert.equal(movements.allow1by1towers, false);
+    assert.equal(movements.infiniteLiquidDropdownDistance, false);
+    assert.deepEqual(movements.getNeighbors(start), [dry, tunnel, down]);
+    cells.set('(1, 62, 0)', lava);
+    cells.set('(0, 65, 2)', lava);
+    assert.deepEqual(movements.getNeighbors(start), [dry]);
+  });
+  assert.equal(movements.getNeighbors, native);
+  assert.equal(movements.allowParkour, true);
+  assert.equal(movements.allow1by1towers, true);
+  assert.equal(movements.infiniteLiquidDropdownDistance, true);
+});
+
 test('portal frame has 10 obsidian cells, 4 corners and a 2x3 interior', () => {
   const frame = nether.portalFrame(new Vec3(0, 64, 0), 'x');
   assert.equal(frame.cells.filter((c) => !c.corner).length, 10);

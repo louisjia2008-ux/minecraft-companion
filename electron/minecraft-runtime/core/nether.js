@@ -429,6 +429,68 @@ function applyWalkOnlyMovements(bot) {
   };
 }
 
+const LOOKOUT_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|campfire|soul_campfire|powder_snow|cactus)$/;
+const LOOKOUT_LOOSE = /^(gravel|sand|red_sand|.*_concrete_powder)$/;
+const LOOKOUT_ROCK = /^(netherrack|blackstone|basalt|soul_soil)$/;
+const lookoutDry = (b) => b && !LOOKOUT_HAZARD.test(b.name) && b.getProperties?.()?.waterlogged !== true;
+const lookoutOpen = (b) => lookoutDry(b) && b.boundingBox === 'empty';
+const lookoutSupport = (b) => lookoutDry(b) && b.boundingBox === 'block' && !LOOKOUT_LOOSE.test(b.name)
+  && b.shapes?.some(([x, y, z, right, top, back]) => x === 0 && y === 0 && z === 0 && right === 1 && top >= .75 && back === 1);
+
+function lookoutMoveSafe(bot, node, move) {
+  const from = new Vec3(node.x, node.y, node.z);
+  const to = new Vec3(move.x, move.y, move.z);
+  const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+  if (![dx, dy, dz].every(Number.isInteger) || Math.abs(dx) > 1 || Math.abs(dz) > 1 || Math.abs(dy) > 1
+    || (!dx && !dz) || move.parkour || move.toPlace?.length) return false;
+  const read = (p) => bot.blockAt(p);
+  if (!lookoutSupport(read(to.offset(0, -1, 0)))) return false;
+  const cuts = move.toBreak || [];
+  const breakable = (p) => {
+    if (dy || (dx && dz) || p.x !== to.x || p.z !== to.z || p.y < to.y || p.y > to.y + 1) return false;
+    const rock = read(p);
+    const above = read(p.offset(0, 1, 0));
+    return lookoutDry(rock) && LOOKOUT_ROCK.test(rock.name) && !bot.companionProtectBlock?.(rock)
+      && lookoutDry(above) && !LOOKOUT_LOOSE.test(above.name)
+      && FACES.every((face) => lookoutDry(read(p.plus(face))));
+  };
+  if (cuts.some((p) => !breakable(p))) return false;
+  const clear = (p) => lookoutOpen(read(p)) || cuts.some((cut) => p.equals(cut));
+  if (!clear(to) || !clear(to.offset(0, 1, 0))) return false;
+  if (dy && !lookoutOpen(read((dy > 0 ? from : to).offset(0, 2, 0)))) return false;
+  if (dx && dz) {
+    // The body cuts across both corners. A native diagonal can otherwise
+    // have a valid endpoint on the far side of an unsupported cliff edge.
+    for (const corner of [from.offset(dx, 0, 0), from.offset(0, 0, dz)]) {
+      const feet = corner.offset(0, dy, 0);
+      if (!lookoutSupport(read(feet.offset(0, -1, 0))) || !lookoutOpen(read(feet)) || !lookoutOpen(read(feet.offset(0, 1, 0)))
+        || dy && !lookoutOpen(read((dy > 0 ? corner : feet).offset(0, 2, 0)))) return false;
+    }
+  }
+  return true;
+}
+
+/** Limits a plain Nether lookout leg to loaded ground or a checked horizontal cut. */
+async function withLookoutTerrain(bot, run) {
+  const movements = bot.pathfinder?.movements;
+  const neighbors = movements?.getNeighbors;
+  if (typeof neighbors !== 'function') return run();
+  const keys = ['getNeighbors', 'allowParkour', 'allow1by1towers', 'infiniteLiquidDropdownDistance'];
+  const saved = keys.map((key) => [key, Object.hasOwn(movements, key), movements[key]]);
+  const guarded = function (node, ...args) {
+    return neighbors.call(this, node, ...args).filter((move) => lookoutMoveSafe(bot, node, move));
+  };
+  Object.assign(movements, { getNeighbors: guarded, allowParkour: false, allow1by1towers: false, infiniteLiquidDropdownDistance: false });
+  try {
+    return await run();
+  } finally {
+    if (movements.getNeighbors === guarded) for (const [key, owned, value] of saved) {
+      if (owned) movements[key] = value;
+      else delete movements[key];
+    }
+  }
+}
+
 /**
  * Runs `fn` with the nether movement's lava margins lifted: only a cell with
  * lava (or fire, or magma) at, under or over it stays shut. Boxed into a pocket
@@ -481,5 +543,5 @@ module.exports = {
   netherScaffolding, scaffoldCount, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, scoutPortalSite, portalScoutStep,
   buildPortalStep, ignite, travel, leavePortal,
-  applyNetherMovements, applyWalkOnlyMovements, lavaRisk, lavaNear, NEVER_BREAK,
+  applyNetherMovements, applyWalkOnlyMovements, withLookoutTerrain, lavaRisk, lavaNear, NEVER_BREAK,
 };
