@@ -236,3 +236,63 @@ test('obsidian across the tunnel turns it while stone pickaxes are carried; none
   const fetch = await run([{ name: 'iron_pickaxe', type: 2 }]);
   assert.equal(fetch.result.reason, 'no_spare_pickaxe');
 });
+
+test('iron above a deep branch resumes at a supported recorded stair and preserves the diamond front', async () => {
+  const { mineStep } = require('../core/mining');
+  const { Vec3 } = require('vec3');
+  const cells = {};
+  const stone = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  for (let x = 0; x <= 12; x += 1) cells[`${x},${20 - x},0`] = x ? `${x - 1},${21 - x},0` : null;
+  cells['13,8,0'] = '12,8,0';
+  const deep = { x: 13, y: 8, z: 0 };
+  const depot = { chest: { x: 12, y: 8, z: 1 } };
+  const open = { '12,9,0': true };
+  const mine = { entrance: { x: 0, y: 20, z: 0 }, front: deep, surfaceY: 20, y: 8, dir: 0, phase: 'main',
+    junction: { x: 12, y: 8, z: 0, dir: 0 }, depot, cells, open, walkFailures: 0 };
+  const memory = { mine };
+  const bot = { entity: { position: new Vec3(6.5, 14, .5), onGround: true }, registry: { blocksByName: {} },
+    blockAt(p) { return p.z === 0 && p.y >= 20 - Math.min(p.x, 12) ? air : stone; },
+    inventory: { emptySlotCount: () => 20 } };
+  const goals = [];
+  const actions = { goTo: async (_bot, _ctx, goal) => {
+    goals.push(new Vec3(goal.x, goal.y, goal.z));
+    bot.entity.position = goals.at(-1).offset(.5, 0, .5);
+    return { ok: true };
+  } };
+  const ctx = { record() {} };
+  const request = (y) => mineStep(bot, ctx, memory, { blocks: () => false, dropMatch: () => false, y, actions,
+    blacklist: { has: () => false } });
+  await request(16);
+  assert.deepEqual(goals[0], new Vec3(4, 16, 0), 'iron uses its own height along the existing staircase');
+  assert.equal(mine.y, 16);
+  assert.equal(mine.cells, cells);
+  assert.equal(mine.open, open);
+  await request(8);
+  assert.equal(mine.front, deep, 'diamond returns to the original front');
+  assert.equal(mine.depot, depot);
+  assert.deepEqual(goals[1], new Vec3(10, 10, 0), 'follow the recorded route towards the deep front');
+});
+
+test('a blocked level-change route stops retrying without discarding known workings', async () => {
+  const { mineStep } = require('../core/mining');
+  const { Vec3 } = require('vec3');
+  const front = { x: 1, y: 15, z: 0 };
+  const cells = { '0,16,0': null, '1,15,0': '0,16,0' };
+  const mine = { entrance: { x: 0, y: 16, z: 0 }, front, surfaceY: 16, y: 15, dir: 0, phase: 'main', cells };
+  const memory = { mine };
+  const solid = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const bot = { entity: { position: new Vec3(1.5, 15, .5), onGround: true }, registry: { blocksByName: {} },
+    blockAt: (p) => p.y >= 16 - p.x ? air : solid, inventory: { emptySlotCount: () => 20 } };
+  let walks = 0;
+  const ctx = { record() {} };
+  const options = { blocks: () => false, dropMatch: () => false, y: 16, blacklist: { has: () => false },
+    actions: { goTo: async () => { walks += 1; return { ok: false, reason: 'NoPath' }; } } };
+  for (let attempt = 0; attempt < 3; attempt += 1) assert.equal((await mineStep(bot, ctx, memory, options)).reason, 'NoPath');
+  assert.equal((await mineStep(bot, ctx, memory, options)).reason, 'mine_level_route_blocked');
+  assert.equal(walks, 3);
+  assert.equal(memory.mine, mine);
+  assert.equal(memory.mine.cells, cells);
+  assert.equal(memory.mine.levels[15].front, front);
+});

@@ -17,7 +17,8 @@ const { goals } = require('mineflayer-pathfinder');
 const defaultActions = require('./actions');
 const defaultSkills = require('./skills');
 const { posKey } = require('./blacklist');
-const { abortError } = require('./confirm');
+const { abortError, waitUntil } = require('./confirm');
+const { applyWalkOnlyMovements } = require('./nether');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -42,6 +43,7 @@ const TORCH_EVERY = 8;
 // A walk back to the front takes a leg per call; the deepest mine needs well under this many.
 const MAX_RETURN_LEGS = 80; // y=-53 and a long main tunnel: some 40 legs from the surface
 const MAX_TURNS = 4;
+const LEVEL_ROUTE_FAILURES = 3;
 // Directions (relative to the staircase) a boxed-in main tunnel restarts in from its foot.
 const RESTART_SIDES = [1, 3];
 
@@ -175,9 +177,14 @@ async function tossRubble(bot, ctx) {
 async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, start = null, actions = defaultActions, skills = defaultSkills }) {
   const feet = bot.entity.position.floored();
   if (memory.mine?.floorRepair) return repairFloor(bot, ctx, memory.mine, skills);
+  const previousLevel = memory.mine?.y;
+  const switched = memory.mine && selectMineLevel(bot, memory.mine, y);
+  if (switched) ctx.record('mine_level_changed', { from: previousLevel, y, front: posKey(memory.mine.front) });
+  const changingLevel = memory.mine?.changingLevel === true;
+  if (changingLevel && memory.mine.levelRouteFailures >= LEVEL_ROUTE_FAILURES) return fail('mine_level_route_blocked');
   // Ore already open to the tunnel first: the ore asked for, and any other
   // ore worth taking that the carried pickaxes can harvest.
-  if (memory.mine) {
+  if (memory.mine && !changingLevel) {
     const wanted = (name) => blocks(name) || LOOT_ORES.has(name);
     const ore = visibleOre(bot, wanted, bot.entity.position)
       .filter((b) => !blacklist.has(posKey(b.position)) && harvestable(bot, b))[0];
@@ -229,13 +236,18 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
   if (!feet.equals(new Vec3(mine.front.x, mine.front.y, mine.front.z))) {
     ctx.record('mine_return', { front: posKey(mine.front) });
     const front = new Vec3(mine.front.x, mine.front.y, mine.front.z);
-    const back = (await walkTunnel(bot, ctx, mine, 'front', actions))
-      || await actions.goTo(bot, ctx, new goals.GoalBlock(front.x, front.y, front.z),
-        { timeoutMs: 8000, arrived: (at) => at.floored().equals(front) });
+    const back = changingLevel ? await walkLevelChange(bot, ctx, mine, actions)
+      : (await walkTunnel(bot, ctx, mine, 'front', actions))
+        || await actions.goTo(bot, ctx, new goals.GoalBlock(front.x, front.y, front.z),
+          { timeoutMs: 8000, arrived: (at) => at.floored().equals(front) });
     // Legs that each succeed yet never end at the front (a cell that cannot
     // be stood in any more) loop as surely as failing ones.
-    mine.returns = (mine.returns || 0) + 1;
-    if ((!back.ok && ++mine.walkFailures >= 3) || mine.returns > MAX_RETURN_LEGS) {
+    if (changingLevel) {
+      mine.levelRouteFailures = back.ok && !bot.entity.position.floored().equals(feet) ? 0 : (mine.levelRouteFailures || 0) + 1;
+    } else {
+      mine.returns = (mine.returns || 0) + 1;
+    }
+    if (!changingLevel && ((!back.ok && ++mine.walkFailures >= 3) || mine.returns > MAX_RETURN_LEGS)) {
       ctx.record('mine_abandoned', { reason: back.ok ? 'front_unreached' : back.reason });
       memory.mineDir = (mine.dir + 1) % 4;
       memory.mine = null;
@@ -243,6 +255,15 @@ async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, sta
     return { ...back, progress: back.ok && !bot.entity.position.floored().equals(feet) };
   }
 
+  if (changingLevel) {
+    if (!bot.entity.onGround || !rejoinGeometry(bot).standing(feet)) {
+      mine.levelRouteFailures = (mine.levelRouteFailures || 0) + 1;
+      return fail('mine_level_front_unsafe');
+    }
+    mine.changingLevel = false;
+    mine.levelRouteFailures = 0;
+    return { ok: true, progress: false };
+  }
   mine.returns = 0;
   let dir = mine.dir;
   let descend = mine.phase === 'descend' && mine.front.y > mine.y;
@@ -347,7 +368,7 @@ async function repairFloor(bot, ctx, mine, skills) {
 /** A safe, untried exit from the existing tree, deepest and nearest first. */
 function findFrontier(bot, mine) {
   const from = bot.entity.position;
-  const cells = Object.keys(mine.cells).map(unkey).sort((a, b) => a.y - b.y
+  const cells = Object.keys(mine.cells).map(unkey).filter((p) => p.y >= mine.y).sort((a, b) => a.y - b.y
     || Math.hypot(a.x - from.x, a.z - from.z) - Math.hypot(b.x - from.x, b.z - from.z));
   for (const cell of cells) {
     const descend = cell.y > mine.y;
@@ -502,16 +523,18 @@ function chain(mine, k) {
  * hillside; short legs along known open cells do not. Returns null when
  * there is nowhere to go (already there, or not in the tunnel).
  */
-async function walkTunnel(bot, ctx, mine, towards, actions = defaultActions, { stopAt = null } = {}) {
+async function walkTunnel(bot, ctx, mine, towards, actions = defaultActions, { stopAt = null, guarded = false } = {}) {
   const go = async (p, timeoutMs = 20000) => {
     const result = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z),
-      { timeoutMs, arrived: (at) => near(at.floored(), p, 0.5) });
+      { timeoutMs, ...(guarded && { retryNoProgress: false }), arrived: (at) => near(at.floored(), p, 0.5) });
     if (result.ok) mine.walkFailures = 0;
     return result;
   };
   const feet = bot.entity.position.floored();
   const here = cellAt(mine, feet);
   if (!here) {
+    // Level changes only use the dry native profile, including the entrance approach.
+    if (guarded) return towards === 'out' ? null : go(mine.entrance, 30000);
     // Just off the tunnel (in the hole an ore left): step back to the closest cell.
     const closest = Object.keys(mine.cells).map(unkey)
       .map((p) => ({ p, d: Math.hypot(p.x - feet.x, p.y - feet.y, p.z - feet.z) })).sort((a, b) => a.d - b.d)[0];
@@ -564,10 +587,67 @@ function leaveMine(bot, ctx, memory, actions = defaultActions) {
   return walkTunnel(bot, ctx, mine, 'out', actions);
 }
 
+const LEVEL_FIELDS = ['front', 'dir', 'phase', 'mainSteps', 'turns', 'restarts', 'branch', 'junction', 'depot', 'depotTries', 'exhausted'];
+
+function selectMineLevel(bot, mine, y) {
+  if (!Number.isFinite(mine.y) || !Number.isFinite(y) || mine.y === y) return false;
+  const saved = mine.levels?.[y];
+  let next = saved;
+  if (saved && y > mine.y && !rejoinGeometry(bot).standing(saved.front)) next = null;
+  if (!next && y > mine.y) {
+    const { standing } = rejoinGeometry(bot);
+    const anchor = chain(mine, posKey(mine.front)).map(unkey).find((p) => p.y === y && standing(p));
+    if (!anchor) return false;
+    next = { front: anchor, dir: mine.dir, phase: 'main', mainSteps: 0, turns: 0, restarts: 0,
+      junction: { ...anchor, dir: mine.dir } };
+  }
+  // Preserve a level as soon as we extend its staircase, so a later request
+  // can resume its old working front and depot without losing the route.
+  mine.levels ||= {};
+  mine.levels[mine.y] = Object.fromEntries(LEVEL_FIELDS.map((key) => [key, mine[key]]));
+  if (!next) return false;
+  for (const key of LEVEL_FIELDS) mine[key] = next[key];
+  mine.y = y;
+  mine.returns = 0;
+  mine.walkFailures = 0;
+  mine.levelRouteFailures = 0;
+  mine.changingLevel = true;
+  return true;
+}
+
+/** A level change walks recorded mine cells without clearing fresh rock. */
+async function walkLevelChange(bot, ctx, mine, actions) {
+  const geometry = rejoinGeometry(bot);
+  const movement = bot.pathfinder?.movements;
+  const restore = applyWalkOnlyMovements(bot);
+  const neighbors = movement?.getNeighbors;
+  const owned = movement && Object.hasOwn(movement, 'getNeighbors');
+  const origin = bot.entity.position.floored();
+  const travellingToEntrance = !cellAt(mine, origin);
+  if (neighbors) movement.getNeighbors = function (node, ...args) {
+    return neighbors.call(this, node, ...args).filter((move) =>
+      (travellingToEntrance || Object.hasOwn(mine.cells, posKey(move))) && geometry.standing(move));
+  };
+  try {
+    const result = await walkTunnel(bot, ctx, mine, 'front', actions, { guarded: true });
+    if (!result) return fail('mine_level_route_unconfirmed');
+    if (!result.ok) return result;
+    const arrived = await waitUntil(() => {
+      const actual = bot.entity.position.floored();
+      return bot.entity.onGround && geometry.standing(actual) && Object.hasOwn(mine.cells, posKey(actual));
+    }, { timeoutMs: 600, signal: ctx.signal });
+    return arrived ? result : fail('mine_level_arrival_unconfirmed');
+  } finally {
+    if (neighbors && owned) movement.getNeighbors = neighbors;
+    else if (neighbors) delete movement.getNeighbors;
+    restore();
+  }
+}
+
 /**
  * Ore deeper than the mine (redstone after iron): the staircase carries on
- * down from the front, so the way out stays one tunnel. Shallower ore is
- * mined where the mine already is; every ore list includes its deepslate form.
+ * down from the front, so the way out stays one tunnel. selectMineLevel
+ * handles a move to an existing level before extending the staircase.
  * Returns true when the mine was sent deeper.
  */
 function retarget(mine, y) {

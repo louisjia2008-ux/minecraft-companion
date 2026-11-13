@@ -855,11 +855,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     recover() {
       blacklist.clear();
       memory.pathFailures = 0;
-      memory.recovery = !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery && !lavaRouteOwnsRecovery;
+      memory.recovery = !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery && !lavaRouteOwnsRecovery && !memory.mine?.changingLevel;
     },
     memory,
     owed,
-    ownsRouteRecovery: () => stoneRouteOwnsRecovery || bowRouteOwnsRecovery || lavaRouteOwnsRecovery || quarry?.inside() === true,
+    ownsRouteRecovery: () => stoneRouteOwnsRecovery || bowRouteOwnsRecovery || lavaRouteOwnsRecovery
+      || memory.mine?.changingLevel === true || quarry?.inside() === true,
     leaveSurfaceQuarry,
     isDone: (state) => memory.chest !== null && !quarry?.inside() && owed(state?.inventory).length === 0,
     progress: () => memory.steps,
@@ -874,7 +875,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         ctx.record('recovery', { at: bot.entity.position.floored(), dimension: 'the_nether', delegate: 'nether_trip' });
         return runOnce(ctx);
       }
-      if (memory.pathFailures >= 2 && !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery && !lavaRouteOwnsRecovery) {
+      if (memory.pathFailures >= 2 && !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery && !lavaRouteOwnsRecovery && !memory.mine?.changingLevel) {
         memory.pathFailures = 0;
         ctx.record('unstick', { at: bot.entity.position.floored() });
         return actions.unstick(bot, ctx);
