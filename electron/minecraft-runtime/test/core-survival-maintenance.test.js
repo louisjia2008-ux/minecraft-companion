@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
 const { createSurvivalBehaviors } = require('../core/behaviors/survival');
+const { perceive } = require('../core/perception');
 const { createBrain } = require('../core/brain');
 const { sleep } = require('../core/confirm');
 const { EventEmitter } = require('node:events');
@@ -120,6 +121,40 @@ test('an angry enderman retains hiding, low-health escape and close self-defense
   assert.ok(s.behavior('hide').want(s.state) > 0);
   assert.ok(s.behavior('escape').want({ ...s.state, health: 2.5 }) > 0);
   assert.ok(s.behavior('defend').want({ ...s.state, sheltered: true }) > 0);
+});
+
+test('an unarmed bot flees the neutral mob identified by its own native damage event', async () => {
+  const bot = Object.assign(new EventEmitter(), {
+    health: 16, food: 20, entity: { id: 1, position: new Vec3(0, 64, 0) },
+    registry: minecraftData('1.21.8'), inventory: { slots: [] }, entities: {},
+  });
+  const bear = { id: 2, name: 'polar_bear', type: 'animal', position: new Vec3(2, 64, 0) };
+  const bystander = { ...bear, id: 3, position: new Vec3(3, 64, 0) };
+  bot.entities = { 1: bot.entity, 2: bear, 3: bystander };
+  const fleeTargets = [];
+  const behaviors = createSurvivalBehaviors({ bot, actions: { fleeFrom: async (_bot, _ctx, target) => {
+    fleeTargets.push(target);
+    return { ok: true };
+  } } });
+  const escape = behaviors.find(({ name }) => name === 'escape');
+  const defend = behaviors.find(({ name }) => name === 'defend');
+  try {
+    bot.emit('entityHurt', bystander, bear);
+    bot.emit('entityHurt', bot.entity);
+    assert.deepEqual(perceive(bot).hostiles, []);
+    bot.emit('entityHurt', bot.entity, bear);
+    const state = perceive(bot);
+    assert.deepEqual(state.hostiles.map(({ id }) => id), [bear.id]);
+    assert.equal(state.hostiles[0].selfAggressor, true);
+    assert.ok(escape.want(state) > 0);
+    assert.equal(defend.want(state), 0);
+    await escape.run({ perceive: () => perceive(bot), record() {} });
+    assert.deepEqual(fleeTargets, [bear.position]);
+    bot.entities[bear.id] = { ...bear };
+    assert.deepEqual(perceive(bot).hostiles, []);
+  } finally {
+    for (const behavior of behaviors) behavior.dispose?.();
+  }
 });
 
 test('a melee swing followed by damage retains enderman self-defense even before angry metadata arrives', () => {

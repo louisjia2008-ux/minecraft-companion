@@ -2,6 +2,8 @@
 // A plain, serializable snapshot of what the bot can observe right now.
 // Behaviors decide from this snapshot only; they never cache "what happened".
 
+const { isObservedSelfAggressor } = require('../vendor/server/minecraft/entitySemantics');
+
 const HOSTILE_NAMES = new Set([
   'zombie', 'zombie_villager', 'husk', 'drowned', 'skeleton', 'stray', 'bogged', 'spider', 'cave_spider',
   'creeper', 'witch', 'slime', 'phantom', 'pillager', 'vindicator', 'evoker', 'ravager', 'vex',
@@ -37,12 +39,17 @@ function perceive(bot, { hostileRange = 16, now = Date.now } = {}) {
   const position = self.position;
   const hostiles = [];
   for (const entity of Object.values(bot.entities || {})) {
-    if (entity === self || !isHostile(entity) || !entity.position) continue;
+    if (entity === self || !entity.position) continue;
+    const hostile = isHostile(entity);
+    const selfAggressor = !hostile && isObservedSelfAggressor(entity);
+    if (!hostile && !selfAggressor) continue;
     // Set by a goal for mobs it keeps penned on purpose (a farm's zombie).
-    if (bot.companionSpare?.(entity)) continue;
+    if (!selfAggressor && bot.companionSpare?.(entity)) continue;
     const distance = entity.position.distanceTo(position);
     if (distance <= hostileRange) {
-      hostiles.push({ id: entity.id, name: entity.name, distance, position: entity.position.clone() });
+      const observed = { id: entity.id, name: entity.name, distance, position: entity.position.clone() };
+      if (selfAggressor) observed.selfAggressor = true;
+      hostiles.push(observed);
     }
   }
   hostiles.sort((a, b) => a.distance - b.distance);

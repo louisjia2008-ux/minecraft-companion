@@ -10,8 +10,10 @@ const { BAND } = require('../brain');
 const { sleep, waitUntil, abortError } = require('../confirm');
 const { isFireResistancePotion, hasEffect } = require('../netherStructures');
 const { createBlacklist } = require('../blacklist');
+const { ownedItems } = require('../perception');
 const { advanceCaveRetreat, evadeInCave, returnFromCave, skyOpen, standable } = require('../caveRetreat');
 const { goals } = require('mineflayer-pathfinder');
+const { recordObservedSelfAggressor } = require('../../vendor/server/minecraft/entitySemantics');
 
 // Entity flag bit 0 is "on fire".
 const burning = (bot) => (Number(bot.entity?.metadata?.[0]) & 1) === 1 || bot.entity?.isInLava === true;
@@ -296,16 +298,16 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     return h.name === 'zombified_piglin' || wearsGold(bot);
   };
   const threats = (state) => state.hostiles.filter((h) => !calm(h));
-  // entityHurt names no attacker, so a mob counts as the culprit only if it
-  // swung its arm at melee range just before the hit; a skeleton arrow, a fall
-  // or fire next to a calm piglin must not turn the pack hostile.
+  // For the older neutral-pack heuristics, require a recent swing in melee
+  // range; a fall or fire next to a calm piglin must not provoke its pack.
   const swings = new Map(); // entity id -> time of last arm swing
   const trackedNeutral = (e) => CALM_UNLESS_PROVOKED.has(e.name) || e.name === 'enderman';
   const onSwing = (entity) => {
     if (entity && trackedNeutral(entity)) swings.set(entity.id, Date.now());
   };
-  const onHurt = (entity) => {
+  const onHurt = (entity, source) => {
     if (entity !== bot.entity) return;
+    recordObservedSelfAggressor(bot, entity, source);
     const here = bot.entity.position;
     const culprit = Object.values(bot.entities || {})
       .filter((e) => trackedNeutral(e) && e.position && e.position.distanceTo(here) <= 4
@@ -350,7 +352,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2) || null;
-    return threats(state).find((h) => h.name !== 'creeper' && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
+    return threats(state).find((h) => h.name !== 'creeper' && (!h.selfAggressor || armed(state))
+      && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
       && (h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || ((RANGED.has(h.name) || (h.name === 'pillager' && !avoided(state, h))) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
           && state.health > t.rangedHealth && armed(state)
@@ -454,7 +457,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         const evasionRange = SHOOTERS.has(threat.name) ? 10 : 6;
         return threat.distance <= evasionRange && visibleThreat(threat, state.position) ? 1 : 0;
       }
-      return state.health <= t.escapeHealth && threat.distance <= t.escapeRange ? 1 : 0;
+      return threat.distance <= t.escapeRange && (state.health <= t.escapeHealth || threat.selfAggressor && !armed(state)) ? 1 : 0;
     },
     async run(ctx) {
       const state = ctx.perceive();
@@ -467,6 +470,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         if (!current || current.distance > 6) return result;
         return actions.fleeFrom(bot, ctx, current.position);
       }
+      if (threat?.selfAggressor && !armed(state)) ctx.record('escape_self_aggressor', { mob: threat.name, id: threat.id });
       return actions.fleeFrom(bot, ctx, threat?.position || bot.entity.position);
     },
   };
@@ -1061,8 +1065,35 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
 
   // Items dropped on death stay for five minutes: go back for them once it is safe.
   let lastDeath = null;
+  let emptyDeathSnapshot = null;
+  const PLAYER_INVENTORY_SLOTS = 46; // InventoryMenu, including off-hand.
+  const observeCombatDeath = bot.version === '1.21.8' && typeof bot._client?.on === 'function';
+  const onCombatDeath = ({ playerId } = {}) => {
+    const entity = bot.entity;
+    if (!Number.isInteger(playerId) || playerId !== entity?.id || bot.isAlive === false) return;
+    emptyDeathSnapshot = null;
+    // For this version the server sends combat-death before dropping the
+    // inventory. Mineflayer's later health/death event may see a cleared bag.
+    const inventory = bot.inventory;
+    const slots = inventory?.slots;
+    if (!Array.isArray(slots) || typeof inventory.items !== 'function'
+      || slots.length !== PLAYER_INVENTORY_SLOTS
+      || slots.slice(1).includes(undefined)) return;
+    const current = bot.currentWindow;
+    const crafting = slots.slice(1, 5).some(Boolean);
+    if (current || crafting || inventory.selectedItem || ownedItems(bot).length) return;
+    emptyDeathSnapshot = { entity, dimension: dimensionOf(bot), at: Date.now() };
+  };
   const onDeathDrops = () => {
     retreat = null;
+    const now = Date.now();
+    const snapshot = emptyDeathSnapshot;
+    emptyDeathSnapshot = null;
+    if (snapshot?.entity === bot.entity && snapshot.dimension === dimensionOf(bot) && now - snapshot.at <= 2000
+      && !ownedItems(bot).length) {
+      lastDeath = null;
+      return;
+    }
     // Died in lava: whatever dropped burnt up, and going back is the same swim.
     const feet = bot.blockAt?.(bot.entity.position.floored());
     const burnt = /lava/.test(feet?.name || '');
@@ -1071,16 +1102,18 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     const surfaceY = bot.companionSurfaceY ?? home()?.y;
     const cave = dimension === 'overworld' && (actions.underground?.(bot)
       || (Number.isFinite(surfaceY) && position.y < surfaceY - 12));
-    lastDeath = burnt ? null : { position, dimension, cave, at: Date.now(), tries: 0 };
+    lastDeath = burnt ? null : { position, dimension, cave, at: now, tries: 0 };
   };
   // Back alive with the bag still full (keepInventory): nothing was dropped.
   // A bot went back for its "drops" into the lava that killed it, five deaths running.
   const onSpawnDrops = () => {
+    emptyDeathSnapshot = null;
     if (lastDeath && !lastDeath.respawned) {
       lastDeath.respawned = true;
-      if ((bot.inventory?.items?.() || []).length > 0) lastDeath = null;
+      if (ownedItems(bot).length > 0) lastDeath = null;
     }
   };
+  if (observeCombatDeath) bot._client.on('death_combat_event', onCombatDeath);
   bot.on?.('death', onDeathDrops);
   bot.on?.('spawn', onSpawnDrops);
   function canRecoverDrops(state, target) {
@@ -1106,7 +1139,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const recoverDrops = {
     name: 'recover_drops',
     band: BAND.MAINTENANCE,
-    dispose: () => { bot.removeListener?.('death', onDeathDrops); bot.removeListener?.('spawn', onSpawnDrops); },
+    dispose: () => {
+      bot.removeListener?.('death', onDeathDrops);
+      bot.removeListener?.('spawn', onSpawnDrops);
+      if (observeCombatDeath) bot._client.removeListener?.('death_combat_event', onCombatDeath);
+    },
     want: (state) => canRecoverDrops(state, lastDeath) ? 0.8 : 0,
     async run(ctx) {
       const target = lastDeath;
