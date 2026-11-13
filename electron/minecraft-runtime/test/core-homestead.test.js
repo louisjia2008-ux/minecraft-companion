@@ -358,3 +358,56 @@ test('homestead never gathers stone at the deep open-to-sky starting position', 
   const result = await goal.run({ perceive: sim.perceive, record() {} });
   assert.deepEqual(result, { ok: true, waited: true, reason: 'stone_surface_wait' });
 });
+
+test('unfinished site fills do not interrupt an active stone quarry', async () => {
+  const sim = simulate({ failRate: 0 });
+  const anchor = { x: 0, y: 64, z: 0 };
+  const hole = createStarterHouse(anchor).foundation[0];
+  const key = (p) => p.floored().toString();
+  const blocks = new Map([[new Vec3(hole.x, hole.y, hole.z).toString(), 'air']]);
+  sim.bot.entity.position = new Vec3(.5, 64, -3.5);
+  sim.bot.entity.onGround = true;
+  sim.inventory.wooden_pickaxe = 1;
+  sim.bot.blockAt = (p) => {
+    const position = p.floored();
+    const name = blocks.get(key(position)) || (position.y <= 61 ? 'stone' : position.y < 64 ? 'dirt' : 'air');
+    return { name, position, boundingBox: name === 'air' ? 'empty' : 'block', diggable: name !== 'air',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const events = [];
+  const seen = (type) => events.some((entry) => entry.type === type);
+  sim.skills.gatherOne = async () => ({ ok: false, reason: 'no_target_in_range' });
+  sim.actions.goTo = async (_bot, _ctx, target) => {
+    sim.bot.entity.position = new Vec3(target.x + .5, target.y, target.z + .5);
+    return { ok: true };
+  };
+  sim.actions.digBlock = async (_bot, _ctx, block) => {
+    blocks.set(key(block.position), 'air');
+    return { ok: true };
+  };
+  sim.actions.surface = async () => {
+    if (sim.bot.entity.position.y >= 64) return null;
+    events.push({ type: 'generic_surface' });
+    sim.bot.entity.position = new Vec3(.5, 64, -3.5);
+    return { ok: true };
+  };
+  let timeOfDay = 6000;
+  const ctx = {
+    perceive: () => ({ ...sim.perceive(), timeOfDay }),
+    record: (type, data) => events.push({ type, ...data }),
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: ['stone_tier_pickaxe'], skills: sim.skills, actions: sim.actions });
+
+  for (let i = 0; i < 14 && !events.some((e) => e.type === 'quarry_dig' && e.block === 'stone'); i += 1) {
+    assert.equal((await goal.run(ctx)).ok, true);
+  }
+  assert.ok(seen('quarry_step'));
+  assert.ok(events.some((e) => e.type === 'quarry_dig' && e.block === 'stone'));
+  assert.equal(seen('generic_surface'), false);
+  assert.equal(seen('site_fill'), false);
+
+  timeOfDay = 12500;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(seen('quarry_exit'));
+  assert.equal(seen('generic_surface'), false);
+});

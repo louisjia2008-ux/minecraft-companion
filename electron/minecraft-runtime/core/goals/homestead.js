@@ -804,7 +804,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     // Leave the cut via its own staircase before a planned return home or
     // night action. Continued daytime stone gathering can use the same cut.
     const evening = Number.isFinite(state.timeOfDay) && state.timeOfDay >= 11800 && state.timeOfDay < 23400;
-    if (quarry.inside()) {
+    const inQuarry = quarry.inside();
+    if (inQuarry) {
       if (evening || !quarry.active()) return stoneRouteOutcome(await quarry.leave(ctx, surfaceRoute(true)));
       const hs = houseState();
       const early = gear.filter((key) => EARLY_GEAR.has(key)).map((key) => ({ key, count: 1 }));
@@ -832,8 +833,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       const lowerRowsDone = !hs0.missing.some((b) => b.phase === 'walls' && dy(b) < 2);
       memory.scaffoldActive = (memory.scaffoldActive || lowerRowsDone) && hs0.missing.length > 0;
     }
-    const site = await siteStep(ctx);
-    if (site) return site;
+    // This run already chose to continue inside the quarry. Site work's
+    // generic surfacing would otherwise walk out before the next stone cut.
+    if (!inQuarry) {
+      const site = await siteStep(ctx);
+      if (site) return site;
+    }
 
     const hs = houseState();
     memory.houseBuilt = memory.house.blocks.length - hs.missing.length;
