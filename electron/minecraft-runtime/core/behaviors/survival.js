@@ -385,7 +385,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       if (!retreat && !caveNeedsExit(ctx.perceive())) return { ok: false, reason: 'cave_retreat_not_needed' };
-      retreat ||= { visited: new Set(), surfaced: false };
+      retreat ||= { visited: new Set(), surfaced: false, nextMealAt: 0 };
       const current = retreat;
       const here = bot.entity.position.floored();
       const centre = home();
@@ -416,8 +416,27 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         current.surfaced = true;
         ctx.record('cave_retreat_surface', { at: here });
       }
+      const state = ctx.perceive();
+      if (Date.now() >= current.nextMealAt && dry && bot.entity.onGround && !burning(bot) && !fireContacts(bot).length
+        && state.health <= t.escapeHealth && state.food < t.recoverFood
+        && !currentThreats().some((h) => h.distance <= 2.5
+          || (h.distance <= (SHOOTERS.has(h.name) || RANGED.has(h.name) || h.name === 'pillager' ? 14 : 6)
+            && visibleThreat(h, state.position)))) {
+        const food = actions.pickFood?.(bot);
+        if (food && !RISKY_FOODS.has(food.name)) {
+          const result = await actions.eat(bot, ctx);
+          const foodAfter = ctx.perceive().food;
+          if (result.ok && foodAfter > state.food) {
+            ctx.record('cave_retreat_ate', { at: here, food: result.ate || food.name, foodBefore: state.food, foodAfter });
+            return result;
+          }
+          // An unconfirmed meal should not hold up a usable retreat route.
+          if (ctx.signal?.aborted) throw abortError(ctx.signal);
+          current.nextMealAt = Date.now() + 30000;
+        }
+      }
       if (current.surfaced) {
-        if (!centre) {
+        if (!centre || (state.health >= t.recoverHealth && state.food >= t.recoverFood && !resupplying())) {
           retreat = null;
           return { ok: true, surfaced: true };
         }

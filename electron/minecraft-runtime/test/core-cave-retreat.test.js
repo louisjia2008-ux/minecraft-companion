@@ -120,3 +120,38 @@ test('home retreat accepts the plain saved house centre and confirms a grounded 
   }, home);
   assert.deepEqual(result, { ok: true, atHome: true });
 });
+
+test('critical retreat pauses on dry cover for carried safe food, while a visible threat still wins', async () => {
+  const { bot, cells } = fixture();
+  const state = { health: 2, food: 15, position: bot.entity.position, inventory: { rabbit: 2 }, hostiles: [] };
+  const records = [];
+  let bites = 0;
+  let cuts = 0;
+  const actions = {
+    underground: () => true,
+    pickFood: () => ({ name: 'rabbit' }),
+    async eat() { bites += 1; state.food += 2; return { ok: true, ate: 'rabbit' }; },
+    async digBlock(_bot, _ctx, block) {
+      cuts += 1;
+      cells.set(key(block.position), air);
+      return { ok: true };
+    },
+  };
+  const behaviors = createSurvivalBehaviors({ bot, actions });
+  const retreat = behaviors.find((b) => b.name === 'cave_retreat');
+  const escape = behaviors.find((b) => b.name === 'escape');
+  const ctx = { perceive: () => ({ ...state }), record: (...args) => records.push(args) };
+  assert.equal((await retreat.run(ctx)).ok, true);
+  assert.equal(bites, 1);
+  assert.equal(cuts, 0);
+  assert.deepEqual(records[0], ['cave_retreat_ate', { at: new Vec3(0, 0, 0), food: 'rabbit', foodBefore: 15, foodAfter: 17 }]);
+  for (let x = 1; x <= 3; x += 1) {
+    cells.set(`${x},1,0`, air);
+    cells.set(`${x},0,0`, air);
+  }
+  state.hostiles = [{ id: 3, name: 'zombie', position: new Vec3(3.5, 0, .5), distance: 3 }];
+  assert.ok(escape.want(state));
+  assert.ok(escape.band > retreat.band);
+  await retreat.run(ctx);
+  assert.equal(bites, 1, 'a visible nearby threat interrupts eating');
+});
