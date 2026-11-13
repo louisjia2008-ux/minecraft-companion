@@ -279,3 +279,53 @@ for (const { key, slot, existing, target, ingredients } of [
     assert.equal(slots[slot].count, 1);
   });
 }
+
+test('critical home arrival walks the saved ledge and crosses the door from the supported step', async () => {
+  const house = createStarterHouse({ x: -68, y: 72, z: -35 });
+  const door = new Vec3(-65, 72, -35);
+  const ledge = new Vec3(-70, 70, -33);
+  const route = [ledge, new Vec3(-70, 71, -34), new Vec3(-69, 72, -34), new Vec3(-69, 72, -35),
+    new Vec3(-69, 72, -36), new Vec3(-68, 72, -36), new Vec3(-67, 72, -36), new Vec3(-66, 72, -36),
+    new Vec3(-65, 72, -36), door, new Vec3(-65, 72, -34)];
+  const floors = route.map((p) => p.offset(0, -1, 0));
+  const bot = Object.assign(fakeBot(), { health: 2.67, food: 0, game: { dimension: 'overworld' },
+    entity: { position: ledge.offset(.5, 0, .5), onGround: true }, entities: {}, time: { timeOfDay: 15000 } });
+  let open = false;
+  bot.blockAt = (p) => {
+    if (p.equals(door) || p.equals(door.offset(0, 1, 0))) {
+      return { name: 'oak_door', boundingBox: 'block', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
+        open, facing: 'south', hinge: 'left' }) };
+    }
+    const solid = floors.some((floor) => p.equals(floor));
+    return { name: solid ? 'grass_block' : 'air', boundingBox: solid ? 'block' : 'empty',
+      shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const operations = [];
+  const nativeNeighbors = () => [...route.map(({ x, y, z }) => ({ x, y, z })), { x: -57, y: 61, z: -38 }];
+  bot.pathfinder = { movements: { getNeighbors: nativeNeighbors } };
+  bot.activateBlock = async () => { open = !open; operations.push(open ? 'open' : 'close'); };
+  let moves = 0;
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: { withinReach: () => true, goNear: async () => assert.fail('unconstrained native arrival is not allowed'),
+      goTo: async (_bot, _ctx, destination, options) => {
+        const next = route[moves + 1];
+        assert.equal(options.retryNoProgress, false);
+        assert.ok(destination.isEnd(next));
+        assert.deepEqual(bot.pathfinder.movements.getNeighbors(route[moves]).map((move) => new Vec3(move.x, move.y, move.z)), [next]);
+        bot.entity.position = next.offset(.5, 0, .5);
+        moves += 1;
+        return { ok: true };
+      } }, skills: { takeItems: async () => { operations.push('chest'); return { ok: false, reason: 'chest_empty' }; } } });
+  const events = [];
+  const ctx = { perceive: () => perceive(bot), record: (type, detail) => events.push([type, detail]) };
+  assert.equal(goal.ownsRouteRecovery(), true);
+  for (let n = 0; n < 13; n += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(moves, 10);
+  assert.deepEqual(operations, ['open', 'close', 'chest']);
+  assert.deepEqual(events.filter(([type]) => type === 'resupply_home_step').map(([, d]) => d.to), route.slice(1));
+  assert.equal(bot.pathfinder.movements.getNeighbors, nativeNeighbors);
+  bot.health = 20;
+  assert.equal(goal.ownsRouteRecovery(), false);
+  await goal.dispose();
+});
