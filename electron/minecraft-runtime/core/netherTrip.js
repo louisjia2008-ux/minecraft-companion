@@ -12,7 +12,7 @@ const { goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
 const nether = require('./nether');
 const end = require('./end');
-const { abortError } = require('./confirm');
+const { abortError, sleep, waitUntil } = require('./confirm');
 const { RaycastIterator } = require('prismarine-world').iterators;
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
@@ -140,6 +140,50 @@ function createPortalTrip({ bot, memory, actions = defaultActions, walkOnly = fa
     return siteUnseen() || framePlaced() > 0 || nether.portalSiteOk(bot, memory.site.base, memory.site.axis);
   }
 
+  async function scoutOverworldPortal(ctx, state) {
+    const movements = bot.pathfinder?.movements;
+    if (typeof movements?.getNeighbors !== 'function') return fail('no_portal_site');
+    if (state.isDay === false) {
+      await sleep(500, ctx.signal);
+      return { ok: true, waited: true, reason: 'portal_scout_wait_daylight' };
+    }
+    const plan = nether.scoutPortalSite(bot);
+    if (!plan) return fail('no_portal_site');
+    const { site, path } = plan;
+    const restore = nether.applyWalkOnlyMovements(bot);
+    const guarded = movements.getNeighbors;
+    const deadline = Date.now() + 25000;
+    ctx.record('portal_scout', { from: path[0], stand: path.at(-1), steps: path.length - 1 });
+    try {
+      for (let i = 1; i < path.length; i += 1) {
+        const from = path[i - 1], to = path[i];
+        const at = () => bot.entity.position.floored();
+        if (!bot.entity.onGround || !from.equals(at()) || !nether.portalScoutStep(bot, from, to)) return fail('portal_scout_route_changed');
+        const timeoutMs = Math.min(4000, deadline - Date.now());
+        if (timeoutMs <= 0) return fail('portal_scout_timeout');
+        movements.getNeighbors = function (node, ...args) {
+          if (!from.equals(node) || !nether.portalScoutStep(bot, from, to)) return [];
+          return guarded.call(this, node, ...args).filter((move) => to.equals(move)
+            && !move.parkour && !move.toBreak?.length && !move.toPlace?.length);
+        };
+        const arrived = () => bot.entity.onGround && to.equals(at());
+        const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(to.x, to.y, to.z),
+          { timeoutMs, arrived, retryNoProgress: false });
+        if (!moved.ok || !await waitUntil(arrived, { timeoutMs: 450, signal: ctx.signal })) {
+          return fail(moved.reason || 'portal_scout_step_unconfirmed');
+        }
+      }
+    } finally {
+      movements.getNeighbors = guarded;
+      restore();
+    }
+    if (!nether.portalSiteOk(bot, site.base, site.axis)) return fail('portal_scout_site_changed');
+    memory.site = site;
+    bot.companionPortalSite = site;
+    ctx.record('portal_site', { base: `${site.base.x},${site.base.y},${site.base.z}`, axis: site.axis, scouted: true });
+    return { ok: true };
+  }
+
   /** One overworld step towards the nether: walk back, build, light or enter the portal. */
   async function toNether(ctx, state) {
     leaveNetherMode();
@@ -160,7 +204,7 @@ function createPortalTrip({ bot, memory, actions = defaultActions, walkOnly = fa
     if (!memory.site || !siteStillUsable()) {
       memory.site = nether.findPortalSite(bot, 16);
       bot.companionPortalSite = memory.site;
-      if (!memory.site) return fail('no_portal_site');
+      if (!memory.site) return scoutOverworldPortal(ctx, state);
       ctx.record('portal_site', { base: `${memory.site.base.x},${memory.site.base.y},${memory.site.base.z}`, axis: memory.site.axis });
     }
     if (siteUnseen() || bot.entity.position.distanceTo(memory.site.base) > 24) {

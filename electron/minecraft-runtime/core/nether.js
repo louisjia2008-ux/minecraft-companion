@@ -11,6 +11,7 @@ const { goals } = require('mineflayer-pathfinder');
 const actions = require('./actions');
 const { waitUntil, runCancellable, sleep } = require('./confirm');
 const { posKey } = require('./blacklist');
+const { skyOpen, standable } = require('./caveRetreat');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -93,6 +94,50 @@ function findPortalSite(bot, radius = 16) {
     }
   }
   return best;
+}
+
+const SCOUT_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+function portalScoutStep(bot, from, to) {
+  const dy = to.y - from.y;
+  const read = (p) => bot.blockAt(p);
+  if (Math.abs(from.x - to.x) + Math.abs(from.z - to.z) !== 1 || Math.abs(dy) > 1
+    || !standable(read, from) || !standable(read, to)) return false;
+  if (!dy) return true;
+  const head = read((dy > 0 ? from : to).offset(0, 2, 0));
+  return passable(head) && !head.shapes?.length && head.getProperties?.()?.waterlogged !== true;
+}
+
+// Probe nearby slopes from the construction stance, rather than guessing a
+// portal base at the bot's present elevation and then hoping for a route.
+function scoutPortalSite(bot) {
+  const from = bot.entity.position.floored();
+  if (!bot.entity.onGround || !standable((p) => bot.blockAt(p), from)) return null;
+  const queue = [{ at: from, prior: null, depth: 0 }];
+  const seen = new Set([posKey(from)]);
+  for (let i = 0; i < queue.length && i < 1800; i += 1) {
+    const node = queue[i];
+    const { at, depth } = node;
+    if (depth) {
+      const base = at.offset(-1, 0, -1);
+      const axis = ['x', 'z'].find((a) => portalSiteOk(bot, base, a));
+      if (axis && skyOpen(bot, at)) {
+        const path = [];
+        for (let n = node; n; n = n.prior) path.push(n.at);
+        return { site: { base, axis }, path: path.reverse() };
+      }
+    }
+    if (depth >= 32) continue;
+    for (const [dx, dz] of SCOUT_SIDES) for (const dy of [0, 1, -1]) {
+      const next = at.offset(dx, dy, dz);
+      const key = posKey(next);
+      if (seen.has(key) || Math.abs(next.y - from.y) > 7
+        || Math.max(Math.abs(next.x - from.x), Math.abs(next.z - from.z)) > 24
+        || !portalScoutStep(bot, at, next)) continue;
+      seen.add(key);
+      queue.push({ at: next, prior: node, depth: depth + 1 });
+    }
+  }
+  return null;
 }
 
 const FACES = [new Vec3(0, -1, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1), new Vec3(0, 1, 0)];
@@ -430,6 +475,7 @@ function lavaNear(bot, range = 2) {
 module.exports = {
   SCAFFOLD,
   netherScaffolding, scaffoldCount, withLavaMarginsLifted,
-  dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
+  dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, scoutPortalSite, portalScoutStep,
+  buildPortalStep, ignite, travel, leavePortal,
   applyNetherMovements, applyWalkOnlyMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };
