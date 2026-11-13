@@ -44,6 +44,11 @@ const MELEE_RANGE = 8;
 const SHELTER_MELEE_RANGE = 5;
 const UNSAFE_ROUTE = 'unsafe_resupply_food_route';
 const APPROACH_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const APPROACH_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
+const AIR = Object.freeze({ name: 'air', boundingBox: 'empty', shapes: [] });
+const noFailedSteps = new Set();
+const dryBlock = (block) => block && !APPROACH_HAZARD.test(block.name) && block.getProperties?.()?.waterlogged !== true;
+const clearBlock = (block) => dryBlock(block) && block.boundingBox === 'empty' && !block.shapes?.length;
 
 function createKit({ bot, items, kb = KNOWLEDGE, resupplyFood }) {
   const carried = (state, r) => Math.min(r.count, countKey(r.key, state.inventory, kb));
@@ -189,31 +194,24 @@ async function onSurfacePath(bot, home, run, accept = () => true) {
 
 // Find the next physical foothold, then let the native follower execute only
 // that leg. An adjacent door can be crossed only after both halves are open.
-function shelterApproach(bot, shelter, from, target, accept, failed) {
-  const read = (p) => bot.blockAt(p);
+function shelterApproach(read, shelter, from, target, accept, failed = noFailedSteps) {
   const door = shelter.position;
   const isDoor = (p) => p.equals(door);
-  const open = (p) => {
-    const block = read(p);
-    return block?.boundingBox === 'empty' && !block.shapes?.length
-      && !/^(water|lava|bubble_column|fire|soul_fire|powder_snow|sweet_berry_bush)$/.test(block.name)
-      && block.getProperties?.()?.waterlogged !== true;
-  };
   const dry = (p) => standable(read, p) || isDoor(p) && shelter.doorOpen() === true
-    && standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? { name: 'air', boundingBox: 'empty', shapes: [] }
-      : read(cell), p);
+    && standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? AIR : read(cell), p);
   const safeLeg = (a, b) => {
     const dy = b.y - a.y;
     if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(dy) > 1 || !dry(a) || !dry(b)) return false;
     if ((isDoor(a) || isDoor(b)) && (a.x !== b.x || dy !== 0)) return false;
-    return (dy === 0 || open((dy > 0 ? a : b).offset(0, 2, 0))) && accept(b.offset(.5, 0, .5), a.offset(.5, 0, .5));
+    return (dy === 0 || clearBlock(read((dy > 0 ? a : b).offset(0, 2, 0))))
+      && accept(b.offset(.5, 0, .5), a.offset(.5, 0, .5));
   };
   const floor = Math.max(door.y - 5, from.y - 1);
   const queue = [{ at: from, first: null, steps: 0 }];
   const seen = new Set([posKey(from)]);
   for (let i = 0; i < queue.length && i < 1200; i += 1) {
     const { at, first, steps } = queue[i];
-    if (at.equals(target)) return first && { first, safeLeg, dry };
+    if (at.equals(target)) return first && { first, safeLeg, dry, steps };
     if (steps >= 28) continue;
     for (const [x, z] of APPROACH_SIDES) for (const y of [0, 1, -1]) {
       const next = at.offset(x, y, z);
@@ -225,6 +223,28 @@ function shelterApproach(bot, shelter, from, target, accept, failed) {
     }
   }
   return null;
+}
+
+// Clear one adjacent dirt block only when that exact cut opens a complete
+// dry approach. Never excavate toward the house through an unproven route.
+function shelterStepRepair(bot, read, home, shelter, from, target, priorCut) {
+  if (!standable(read, from) || !clearBlock(read(from.offset(0, 2, 0)))) return null;
+  const a = home.anchor;
+  let best = null;
+  for (const [x, z] of APPROACH_SIDES) {
+    const p = from.offset(x, 1, z);
+    if (priorCut && !p.equals(priorCut) || p.x >= a.x - 1 && p.x <= a.x + 7 && p.z >= a.z - 1 && p.z <= a.z + 7) continue;
+    const block = read(p);
+    if (!/^(grass_block|dirt|coarse_dirt)$/.test(block?.name || '') || block.diggable !== true
+      || bot.companionHomeSite?.(p) || bot.companionProtectBlock?.(block) || bot.companionPlacedRecently?.(p)
+      || !bot.canDigBlock?.(block)) continue;
+    if (!clearBlock(read(p.offset(0, 1, 0))) || !clearBlock(read(p.offset(0, 2, 0)))
+      || !APPROACH_SIDES.every(([dx, dz]) => dryBlock(read(p.offset(dx, 0, dz))))) continue;
+    const projected = (cell) => cell.equals(p) ? AIR : read(cell);
+    const route = shelterApproach(projected, shelter, from, target, () => true);
+    if (route?.first.equals(p) && (!best || route.steps < best.steps)) best = { position: p, block, steps: route.steps };
+  }
+  return best;
 }
 
 function localFoodSafety(bot, home) {
@@ -361,6 +381,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   let lastFoodWait = null;
   let routeInterrupted = false;
   let routeDestination = null;
+  let homeCut = null;
   const failedApproaches = createBlacklist({ ttlMs: 12000 });
   const nearShelter = (position) => Boolean(shelter && position && typeof actions.goTo === 'function'
     && position.y >= shelter.position.y - 5 && Math.hypot(position.x - shelter.position.x, position.z - shelter.position.z) <= 16);
@@ -368,6 +389,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     && nearShelter(bot.entity?.position);
   const resetRecovery = () => {
     returned = false; checkedChest = false; lastFoodWait = null; routeInterrupted = false; routeDestination = null;
+    homeCut = null;
     failedApproaches.clear();
     clearShelter();
   };
@@ -410,6 +432,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     // move closer to it or enter another shooter's range.
     let routeHome = false;
     let shelterRoute = false;
+    let preparingStep = null;
     let deniedStep = false;
     const radius = returned ? Math.max(LOCAL_FOOD_RADIUS, safety.homeDistance(state.position) + 1) : Infinity;
     let scannedAt = 0;
@@ -422,6 +445,10 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return observed;
     };
     const cover = (position, hostiles) => shelter?.covered({ position, hostiles }) === true;
+    const unsafeToDig = (at, step, hostiles) => hostiles.some((hostile) => {
+      const range = safety.threatRange(hostile, true);
+      return Math.min(at.distanceTo(hostile.position), step.distanceTo(hostile.position)) <= range;
+    });
     const safeStep = (position, from) => {
       if (!critical) return true;
       if (routeDestination && !position.floored().equals(routeDestination)) return false;
@@ -451,6 +478,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       const check = () => {
         const here = bot.entity.position;
         const hostiles = activeThreats();
+        if (preparingStep && unsafeToDig(here, preparingStep, hostiles)) { route.abort(UNSAFE_ROUTE); return; }
         if (cover(here, hostiles)) { last = here.clone(); return; }
         const moving = here.distanceTo(last) > .15;
         for (const threat of hostiles) {
@@ -496,8 +524,24 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       if (open === null) return wait('resupply_door_unconfirmed');
       if (open === false && from.equals(entrance) && bot.entity.onGround) return shelter.setDoor(scoped, true);
       const target = open ? shelter.position.offset(0, 0, 1) : entrance;
-      const path = shelterApproach(bot, shelter, from, target, safeStep, failedApproaches);
-      if (!path) return wait('resupply_no_dry_home_route');
+      const read = (p) => bot.blockAt(p);
+      const path = shelterApproach(read, shelter, from, target, safeStep, failedApproaches);
+      if (!path) {
+        if (shelterApproach(read, shelter, from, target, () => true)) return wait('resupply_home_route_unsafe');
+        const cut = !returned && bot.entity.onGround && actions.digBlock
+          && shelterStepRepair(bot, read, home, shelter, from, target, homeCut);
+        if (!cut) return wait('resupply_no_dry_home_route');
+        if (unsafeToDig(bot.entity.position, cut.position.offset(.5, 0, .5), activeThreats())) return wait('resupply_home_cut_unsafe');
+        const cutKey = `cut:${posKey(cut.position)}`;
+        if (failedApproaches.has(cutKey)) return wait('resupply_home_cut_cooldown');
+        homeCut = cut.position;
+        preparingStep = cut.position.offset(.5, 0, .5);
+        failedApproaches.add(cutKey, 'resupply_home_cut_attempt');
+        const result = await actions.digBlock(bot, scoped, cut.block);
+        const confirmed = result.ok && standable(read, cut.position);
+        scoped.record('resupply_home_cut', { from, position: cut.position, block: cut.block.name, confirmed, reason: result.reason });
+        return confirmed ? { ok: true } : wait(result.reason || 'resupply_home_cut_unconfirmed');
+      }
       const { first, safeLeg, dry } = path;
       const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(first) && dry(first);
       if (!bot.entity.onGround || !safeLeg(from, first)) return wait('resupply_home_step_changed');

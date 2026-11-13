@@ -291,15 +291,22 @@ test('critical home arrival walks the saved ledge and crosses the door from the 
   const bot = Object.assign(fakeBot(), { health: 2.67, food: 0, game: { dimension: 'overworld' },
     entity: { position: ledge.offset(.5, 0, .5), onGround: true }, entities: {}, time: { timeOfDay: 15000 } });
   let open = false;
+  let obstruction = null;
+  let flood = false;
+  let protect = false;
+  bot.canDigBlock = (block) => block.diggable;
+  bot.companionProtectBlock = (block) => protect && block.position.equals(route[1]);
   bot.blockAt = (p) => {
     if (p.equals(door) || p.equals(door.offset(0, 1, 0))) {
       return { name: 'oak_door', boundingBox: 'block', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
         open, facing: 'south', hinge: 'left' }) };
     }
-    const solid = floors.some((floor) => p.equals(floor))
+    if (flood && p.equals(route[1].offset(-1, 0, 0))) return { name: 'water', boundingBox: 'empty', shapes: [] };
+    const needsCut = obstruction?.equals(p);
+    const solid = needsCut || floors.some((floor) => p.equals(floor))
       || house.blocks.some(({ position }) => p.x === position.x && p.y === position.y && p.z === position.z)
       || house.foundation.some((position) => p.x === position.x && p.y === position.y && p.z === position.z);
-    return { name: solid ? 'grass_block' : 'air', boundingBox: solid ? 'block' : 'empty',
+    return { name: solid ? 'grass_block' : 'air', boundingBox: solid ? 'block' : 'empty', position: p, diggable: solid,
       shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
   };
   const operations = [];
@@ -310,6 +317,13 @@ test('critical home arrival walks the saved ledge and crosses the door from the 
   const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
     home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
     actions: { withinReach: () => true, goNear: async () => assert.fail('unconstrained native arrival is not allowed'),
+      digBlock: async (_bot, _ctx, block) => {
+        assert.ok(block.position.equals(route[1]));
+        assert.ok(obstruction.equals(block.position));
+        operations.push('cut');
+        obstruction = null;
+        return { ok: true };
+      },
       goTo: async (_bot, _ctx, destination, options) => {
         const next = route[moves + 1];
         assert.equal(options.retryNoProgress, false);
@@ -322,25 +336,38 @@ test('critical home arrival walks the saved ledge and crosses the door from the 
   const events = [];
   const ctx = { perceive: () => perceive(bot), record: (type, detail) => events.push([type, detail]) };
   assert.equal(goal.ownsRouteRecovery(), true);
-  const expectBlocked = async (name, position) => {
-    bot.entities[22] = { id: 22, name, position };
+  const expectBlocked = async (reason, name, position) => {
+    if (name) bot.entities[22] = { id: 22, name, position };
+    else delete bot.entities[22];
     const controller = new AbortController();
     await assert.rejects(goal.run({ ...ctx, signal: controller.signal, record: (type, detail) => {
       ctx.record(type, detail);
       if (type === 'resupply_home_approach_wait') controller.abort();
     } }), { code: 'aborted' });
-    assert.equal(events.at(-1)[1].reason, 'resupply_no_dry_home_route');
+    assert.equal(events.at(-1)[1].reason, reason);
     assert.equal(moves, 0);
+    assert.deepEqual(operations, []);
   };
-  await expectBlocked('zombie', new Vec3(-68.5, 71, -34.5));
-  await expectBlocked('creeper', new Vec3(-61.2256, 67, -37.502));
-  await expectBlocked('skeleton', new Vec3(-57.5, 72, -36.5));
+  await expectBlocked('resupply_home_route_unsafe', 'zombie', new Vec3(-68.5, 71, -34.5));
+  await expectBlocked('resupply_home_route_unsafe', 'creeper', new Vec3(-61.2256, 67, -37.502));
+  await expectBlocked('resupply_home_route_unsafe', 'skeleton', new Vec3(-57.5, 72, -36.5));
+  // Both unmodified R7/R8 worlds had grass on the first foothold. Its
+  // removal alone must restore the complete physical route to the door.
+  obstruction = route[1];
+  flood = true;
+  await expectBlocked('resupply_no_dry_home_route');
+  flood = false;
+  protect = true;
+  await expectBlocked('resupply_no_dry_home_route');
+  protect = false;
+  await expectBlocked('resupply_home_cut_unsafe', 'skeleton', new Vec3(-54.503, 73, -30.258));
   // The preserved zombie started east/downhill. A six-block separation at
   // the critical first leg must not preclude a physically separated route.
   bot.entities[22] = { id: 22, name: 'zombie', position: new Vec3(-65.6271, 67, -35.9979) };
-  for (let n = 0; n < 13; n += 1) assert.equal((await goal.run(ctx)).ok, true);
+  for (let n = 0; n < 14; n += 1) assert.equal((await goal.run(ctx)).ok, true);
   assert.equal(moves, 10);
-  assert.deepEqual(operations, ['open', 'close', 'chest']);
+  assert.deepEqual(operations, ['cut', 'open', 'close', 'chest']);
+  assert.deepEqual(events.filter(([type]) => type === 'resupply_home_cut').map(([, d]) => [d.position, d.confirmed]), [[route[1], true]]);
   assert.deepEqual(events.filter(([type]) => type === 'resupply_home_step').map(([, d]) => d.to), route.slice(1));
   assert.equal(bot.pathfinder.movements.getNeighbors, nativeNeighbors);
   bot.health = 20;
