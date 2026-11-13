@@ -275,6 +275,11 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return STONE_ROUTE_FAILURES.has(result?.reason) ? { ok: false, reason: 'surface_stone_unreachable' } : result;
   }
 
+  async function leaveQuarry(ctx) {
+    stoneRouteOwnsRecovery = true;
+    return stoneRouteOutcome(await quarry.leave(ctx, surfaceRoute(true)));
+  }
+
   async function returnToStoneSurface(ctx) {
     const house = memory.house;
     const from = bot.entity.position.floored();
@@ -305,12 +310,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const gatheringLogs = step.kind === 'gather' && step.key === 'log';
     const gatheringStone = step.kind === 'gather' && step.key === 'cobblestone';
     const gatheringFoundation = step.kind === 'gather' && step.foundation === true;
+    if (!gatheringStone && quarry.inside()) return leaveQuarry(ctx);
     stoneRouteOwnsRecovery = gatheringStone;
     if (gatheringStone) {
       if (bot.entity.position.y < memory.house.anchor.y - STONE_FLOOR_OFFSET && !quarry.inside()) return returnToStoneSurface(ctx);
       stoneRetreatVisited.clear();
     }
-    if (!gatheringStone && quarry.inside()) return stoneRouteOutcome(await quarry.leave(ctx, surfaceRoute(true)));
     if (step.kind !== 'gather' || gatheringLogs || gatheringFoundation) {
       const up = await surfaceFirst(ctx);
       if (up) return up;
@@ -520,6 +525,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         waiting[task.material] = (waiting[task.material] || 0) + 1;
         continue;
       }
+      if (quarry.inside()) return leaveQuarry(ctx);
       memory.batch = task.batch > 1 ? task.material : null;
       return placeRecorded(ctx, task.position, task.match, task.what, task.options);
     }
@@ -570,7 +576,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   }
 
   async function placeRecorded(ctx, position, match, what, options) {
-    if (quarry.inside()) return stoneRouteOutcome(await quarry.leave(ctx, surfaceRoute(true)));
+    if (quarry.inside()) return leaveQuarry(ctx);
     const up = await surfaceFirst(ctx);
     if (up) return up;
     ctx.record('build', { what, position: posKey(position) });
@@ -605,6 +611,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   async function setDoor(ctx, open) {
     const state = doorOpen();
     if (state === null || state === open) return null;
+    if (quarry.inside()) return leaveQuarry(ctx);
     const position = memory.house.furniture.door.position;
     const door = blockAt(position);
     if (!actions.withinReach(bot, door.position)) {
@@ -801,23 +808,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
         return { ok: true, abandoned: true };
       }
     }
-    // Leave the cut via its own staircase before a planned return home or
-    // night action. Continued daytime stone gathering can use the same cut.
     const evening = Number.isFinite(state.timeOfDay) && state.timeOfDay >= 11800 && state.timeOfDay < 23400;
     const inQuarry = quarry.inside();
-    if (inQuarry) {
-      if (evening || !quarry.active()) return stoneRouteOutcome(await quarry.leave(ctx, surfaceRoute(true)));
-      const hs = houseState();
-      const early = gear.filter((key) => EARLY_GEAR.has(key)).map((key) => ({ key, count: 1 }));
-      const stations = { crafting_table: hs.placed.crafting_table, furnace: hs.placed.furnace };
-      const step = planNext({ requirements: early, inventory: plannerInventory(state), stations, kb });
-      const walls = hs.missing.filter((block) => block.phase === 'walls').length;
-      const continueStone = step?.kind === 'gather' && step.key === 'cobblestone'
-        || !step && walls > 0 && countKey('cobblestone', state.inventory, kb) < Math.min(walls, BATCH);
-      if (!continueStone) return stoneRouteOutcome(await quarry.leave(ctx, surfaceRoute(true)));
-    }
+    if (inQuarry && (evening || !quarry.active())) return leaveQuarry(ctx);
     // Unloaded chunks read as missing blocks; go home before judging the house.
     if ([...memory.house.clearance, ...memory.house.foundation].some((p) => !blockAt(p))) {
+      if (inQuarry) return leaveQuarry(ctx);
       ctx.record('return_home', {});
       return actions.goNear(bot, ctx, new Vec3(memory.house.entrance.x, memory.house.entrance.y, memory.house.entrance.z), 3,
         { timeoutMs: 60000 });
@@ -833,8 +829,8 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       const lowerRowsDone = !hs0.missing.some((b) => b.phase === 'walls' && dy(b) < 2);
       memory.scaffoldActive = (memory.scaffoldActive || lowerRowsDone) && hs0.missing.length > 0;
     }
-    // This run already chose to continue inside the quarry. Site work's
-    // generic surfacing would otherwise walk out before the next stone cut.
+    // Let the normal planner select the next action inside an active quarry.
+    // Site work can resume once that action calls for leaving the quarry.
     if (!inQuarry) {
       const site = await siteStep(ctx);
       if (site) return site;
@@ -857,6 +853,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       if (Math.hypot(at.x - (top.x + 0.5), at.z - (top.z + 0.5)) > 1.5 || at.y > top.y + 0.5 || at.y < top.y - 5) memory.bunker = null;
     }
     if (memory.bunker && !evening) {
+      if (inQuarry) return leaveQuarry(ctx);
       ctx.record('night', { action: 'dig_out' });
       const out = await skills.digOut(bot, ctx, memory.bunker);
       if (out.ok) memory.bunker = null;
@@ -881,6 +878,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       const raw = RAW_MEATS.map((name) => [name, state.inventory[name] || 0]).sort((x, y) => y[1] - x[1])[0];
       const fuel = Object.keys(state.inventory).some((n) => n === 'coal' || n === 'charcoal' || kb.planks.match(n) || kb.log.match(n));
       if (raw[1] >= 3 && fuel && !blacklist.has('cook')) {
+        if (inQuarry) return leaveQuarry(ctx);
         ctx.record('cook', { item: raw[0], count: raw[1] });
         const cooked = await skills.smelt(bot, ctx, { input: raw[0], count: Math.min(raw[1], 8),
           furnacePosition: memory.house.furniture.furnace.position, memory: memory.furnace });
@@ -896,6 +894,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       const near = Object.values(bot.entities || {}).some((e) => FOOD_MOBS.has(e.name) && e.position
         && e.position.distanceTo(bot.entity.position) <= 16 && !blacklist.has(`mob:${e.id}`));
       if (near) {
+        if (inQuarry) return leaveQuarry(ctx);
         ctx.record('stockpile_food', {});
         const hunted = await skills.huntOne(bot, ctx, { mobs: [...FOOD_MOBS], dropMatch: kb.food.match, blacklist, radius: 16 });
         if (!hunted.ok) blacklist.add('stockpile', hunted.reason, 60000);
@@ -930,11 +929,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const build = await buildStep(ctx, hs, state.inventory, { whenBatchReady: false });
     if (build) return build;
     // Furniture is only tried out once the whole house stands.
-    if (buildTasks(hs).length) return { ok: false, reason: 'build_blocked' };
+    if (buildTasks(hs).length) return inQuarry ? leaveQuarry(ctx) : { ok: false, reason: 'build_blocked' };
     // Iron gear once the house is up.
     const late = gear.filter((key) => !EARLY_GEAR.has(key)).map((key) => ({ key, count: 1 }));
     const lateStep = planNext({ requirements: late, inventory, stations, kb });
     if (lateStep) return runPlannerStep(ctx, lateStep, null);
+    if (inQuarry) return leaveQuarry(ctx);
     const verify = await verifyStep(ctx);
     if (verify) return verify;
     return { ok: true, idle: true };

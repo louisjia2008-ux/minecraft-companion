@@ -359,12 +359,13 @@ test('homestead never gathers stone at the deep open-to-sky starting position', 
   assert.deepEqual(result, { ok: true, waited: true, reason: 'stone_surface_wait' });
 });
 
-test('homestead finishes the active stone quarry and protects its floor from exposed gathering', async () => {
+function simulateQuarryHomestead() {
   const sim = simulate({ failRate: 0 });
   const anchor = { x: 0, y: 64, z: 0 };
-  const hole = createStarterHouse(anchor).foundation[0];
-  const key = (p) => p.floored().toString();
-  const blocks = new Map([[new Vec3(hole.x, hole.y, hole.z).toString(), 'air']]);
+  const house = createStarterHouse(anchor);
+  const blocks = new Map();
+  const key = ({ x, y, z }) => `${x},${y},${z}`;
+  const setBlock = (position, name) => blocks.set(key(position), name);
   sim.bot.entity.position = new Vec3(.5, 64, -3.5);
   sim.bot.entity.onGround = true;
   sim.inventory.wooden_pickaxe = 1;
@@ -382,7 +383,7 @@ test('homestead finishes the active stone quarry and protects its floor from exp
     return { ok: true };
   };
   sim.actions.digBlock = async (_bot, _ctx, block) => {
-    blocks.set(key(block.position), 'air');
+    setBlock(block.position, 'air');
     return { ok: true };
   };
   sim.actions.surface = async () => {
@@ -391,12 +392,18 @@ test('homestead finishes the active stone quarry and protects its floor from exp
     sim.bot.entity.position = new Vec3(.5, 64, -3.5);
     return { ok: true };
   };
-  let timeOfDay = 6000;
+  const clock = { timeOfDay: 6000 };
   const ctx = {
-    perceive: () => ({ ...sim.perceive(), timeOfDay }),
+    perceive: () => ({ ...sim.perceive(), timeOfDay: clock.timeOfDay }),
     record: (type, data) => events.push({ type, ...data }),
   };
   const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: ['stone_tier_pickaxe'], skills: sim.skills, actions: sim.actions });
+  return { sim, house, setBlock, events, seen, clock, ctx, goal };
+}
+
+test('homestead finishes the active stone quarry and protects its floor from exposed gathering', async () => {
+  const { sim, house, setBlock, events, seen, clock, ctx, goal } = simulateQuarryHomestead();
+  setBlock(house.foundation[0], 'air');
 
   for (let i = 0; i < 14 && !events.some((e) => e.type === 'quarry_dig' && e.block === 'stone'); i += 1) {
     assert.equal((await goal.run(ctx)).ok, true);
@@ -406,7 +413,7 @@ test('homestead finishes the active stone quarry and protects its floor from exp
   assert.equal(seen('generic_surface'), false);
   assert.equal(seen('site_fill'), false);
 
-  timeOfDay = 12500;
+  clock.timeOfDay = 12500;
   assert.equal((await goal.run(ctx)).ok, true);
   assert.ok(seen('quarry_exit'));
   assert.equal(seen('generic_surface'), false);
@@ -414,9 +421,9 @@ test('homestead finishes the active stone quarry and protects its floor from exp
   const entry = events.find((event) => event.type === 'quarry_start').position;
   const entryFloor = entry.offset(0, -1, 0);
   const exposedStone = entryFloor.offset(0, 0, -12);
-  blocks.set(key(entryFloor), 'stone');
-  blocks.set(key(exposedStone), 'stone');
-  timeOfDay = 6000;
+  setBlock(entryFloor, 'stone');
+  setBlock(exposedStone, 'stone');
+  clock.timeOfDay = 6000;
   for (let i = 0; i < 80 && !seen('quarry_blocked'); i += 1) await goal.run(ctx);
   assert.equal(events.find((event) => event.type === 'quarry_blocked')?.reason, 'quarry_exhausted');
 
@@ -430,4 +437,39 @@ test('homestead finishes the active stone quarry and protects its floor from exp
   };
   for (let i = 0; i < 8 && !checkedExposedTargets; i += 1) assert.equal((await goal.run(ctx)).ok, true);
   assert.ok(checkedExposedTargets);
+});
+
+test('homestead stays in the quarry for furnace stone and returns to craft once it has enough', async () => {
+  const { sim, house, setBlock, events, seen, ctx, goal } = simulateQuarryHomestead();
+  for (const block of house.blocks) setBlock(block.position, block.family === 'planks' ? 'oak_planks' : 'cobblestone');
+  const furniture = house.furniture;
+  setBlock(furniture.crafting_table.position, 'crafting_table');
+  setBlock(furniture.chest.position, 'chest');
+  setBlock(furniture.door.position, 'oak_door');
+  setBlock(furniture.door.upper, 'oak_door');
+  setBlock(furniture.bed.position, 'white_bed');
+  setBlock(furniture.bed.head, 'white_bed');
+  for (const torch of furniture.torches) setBlock(torch, 'torch');
+  sim.inventory.stone_pickaxe = 1;
+  sim.inventory.cooked_chicken = 4;
+  sim.actions.collectDrops = async () => {
+    sim.inventory.cobblestone = (sim.inventory.cobblestone || 0) + 1;
+    return { ok: true };
+  };
+  let crafted = false;
+  sim.skills.craft = async (_bot, _ctx, { item, tablePosition }) => {
+    assert.equal(item, 'furnace');
+    assert.deepEqual(tablePosition, furniture.crafting_table.position);
+    assert.ok(sim.inventory.cobblestone >= 8);
+    assert.ok(sim.bot.entity.position.floored().equals(events.find((e) => e.type === 'quarry_start').position));
+    crafted = true;
+    return { ok: true, usedTable: true };
+  };
+
+  for (let i = 0; i < 70 && !crafted; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(crafted, 'the furnace plan should finish collecting stone and return to its crafting table');
+  const firstExit = events.findIndex((e) => e.type === 'quarry_exit');
+  assert.ok(firstExit > 0);
+  assert.ok(events.slice(0, firstExit).filter((e) => e.type === 'quarry_dig' && e.block === 'stone').length >= 8);
+  assert.equal(seen('generic_surface'), false);
 });
