@@ -984,7 +984,7 @@ test('expedition scout can withdraw from a distant spider while close, ranged an
   const movements = { getNeighbors: native };
   const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
     registry: { entitiesByName: { spider: { metadataKeys: ['mob_flags'] } } },
-    entities: { 1: { metadata: [0] } },
+    entities: { 1: { name: 'spider', metadata: [0] } },
     entity: { position: new Vec3(2.5, 64, 2.5), onGround: true },
     blockAt: (p) => p.y === 63 ? grass : air,
     pathfinder: { movements, *getPathFromTo() { yield { result: { path: [out] } }; } },
@@ -1022,6 +1022,19 @@ test('expedition scout can withdraw from a distant spider while close, ranged an
     hostiles = [hostile];
     assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
   }
+  hostiles = [spider];
+  const entity = bot.entities[1];
+  delete bot.entities[1];
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  bot.entities[1] = entity;
+  const keys = bot.registry.entitiesByName.spider.metadataKeys;
+  bot.registry.entitiesByName.spider.metadataKeys = [];
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  bot.registry.entitiesByName.spider.metadataKeys = keys;
+  bot.entities[1].name = 'drowned';
+  hostiles = [{ ...spider, name: 'drowned' }];
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  bot.entities[1].name = 'spider';
   hostiles = [spider];
   bot.entities[1].metadata[0] = 4;
   assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');

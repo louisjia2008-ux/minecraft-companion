@@ -23,7 +23,7 @@ const SCOUT_LIMIT_MS = 180000;
 const SCOUT_STEPS = 12;
 const DIRECT_HOME_RADIUS = 28;
 const RETREAT_CLEARANCE = 8;
-const RETREAT_MELEE = new Set(['spider', 'cave_spider', 'zombie', 'zombie_villager', 'husk', 'drowned', 'silverfish', 'endermite']);
+const RETREAT_SPIDERS = new Set(['spider', 'cave_spider']);
 const DUSK = 12542;
 const FIELD_MARGIN = 5;
 const MAX_RESERVE_PLOTS = 24;
@@ -88,16 +88,22 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   const onDryGround = () => bot.entity.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava
     && bodyClear(bot.entity.position);
   const threatsNear = (state) => (state.hostiles || []).some(({ distance }) => distance <= 16);
-  const distantMelee = (h) => {
+  const calmSpider = (h) => {
     const entity = bot.entities?.[h.id];
-    const flags = bot.registry?.entitiesByName?.[h.name]?.metadataKeys?.indexOf('mob_flags') ?? -1;
-    return h.position && RETREAT_MELEE.has(h.name) && !h.selfAggressor && !isObservedSelfAggressor(entity)
-      && !(flags >= 0 && (entity?.metadata?.[flags] & 4));
+    if (!h.position || !RETREAT_SPIDERS.has(h.name) || !entity || entity.name !== h.name || entity.isValid === false
+      || h.selfAggressor || isObservedSelfAggressor(entity)) return false;
+    const keys = bot.registry?.entitiesByName?.[h.name]?.metadataKeys;
+    const flagsIndex = keys?.indexOf('mob_flags') ?? -1;
+    if (flagsIndex < 0 || !Array.isArray(entity.metadata)) return false;
+    // Vanilla omits zero-value metadata on a newly observed spider. Require
+    // initialized entity attributes before treating that omission as zero.
+    const flags = entity.metadata[flagsIndex] ?? (Object.keys(entity.attributes || {}).length ? 0 : null);
+    return Number.isInteger(flags) && (flags & 4) === 0;
   };
   const retreatThreats = (state) => (state.hostiles || []).filter(({ distance }) => distance <= 16);
-  const canWithdraw = (state) => state.health >= 12 && retreatThreats(state).every((h) => h.distance > RETREAT_CLEARANCE && distantMelee(h));
+  const canWithdraw = (state) => state.health >= 12 && retreatThreats(state).every((h) => h.distance > RETREAT_CLEARANCE && calmSpider(h));
   const awayFromThreats = (hostiles, from, to) => hostiles.every((h) => {
-    if (!distantMelee(h) || to.distanceTo(h.position) <= RETREAT_CLEARANCE) return false;
+    if (!calmSpider(h) || to.distanceTo(h.position) <= RETREAT_CLEARANCE) return false;
     const start = from.offset(0, -from.y, 0);
     const end = to.offset(0, -to.y, 0);
     const threat = h.position.offset(0, -h.position.y, 0);
