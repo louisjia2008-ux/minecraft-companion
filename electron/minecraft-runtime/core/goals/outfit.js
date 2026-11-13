@@ -194,17 +194,18 @@ async function onSurfacePath(bot, home, run, accept = () => true) {
 
 // Find the next physical foothold, then let the native follower execute only
 // that leg. An adjacent door can be crossed only after both halves are open.
-function shelterApproach(read, shelter, from, target, accept, failed = noFailedSteps) {
+function shelterApproach(read, shelter, from, target, accept, failed = noFailedSteps, farmlandStart = null) {
   const door = shelter.position;
   const isDoor = (p) => p.equals(door);
   const dry = (p) => standable(read, p) || isDoor(p) && shelter.doorOpen() === true
     && standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? AIR : read(cell), p);
   const safeLeg = (a, b) => {
     const dy = b.y - a.y;
-    if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(dy) > 1 || !dry(a) || !dry(b)) return false;
+    const farmOrigin = farmlandStart && a.equals(from);
+    if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(dy) > 1 || (!farmOrigin && !dry(a)) || !dry(b)) return false;
     if ((isDoor(a) || isDoor(b)) && (a.x !== b.x || dy !== 0)) return false;
     return (dy === 0 || clearBlock(read((dy > 0 ? a : b).offset(0, 2, 0))))
-      && accept(b.offset(.5, 0, .5), a.offset(.5, 0, .5));
+      && accept(b.offset(.5, 0, .5), farmOrigin ? farmlandStart : a.offset(.5, 0, .5));
   };
   const floor = Math.max(door.y - 5, from.y - 1);
   const queue = [{ at: from, first: null, steps: 0 }];
@@ -223,6 +224,18 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
     }
   }
   return null;
+}
+
+function farmlandFooting(read, entity) {
+  const at = entity.position;
+  const cell = at.floored();
+  const block = read(cell);
+  const shape = [0, 0, 0, 1, 15 / 16, 1];
+  if (!entity.onGround || block?.name !== 'farmland' || !dryBlock(block)
+    || block.shapes?.length !== 1 || block.shapes[0].length !== shape.length
+    || !block.shapes[0].every((value, i) => value === shape[i]) || Math.abs(at.y - cell.y - shape[4]) > .001
+    || !clearBlock(read(cell.offset(0, 1, 0))) || !clearBlock(read(cell.offset(0, 2, 0)))) return null;
+  return at.clone();
 }
 
 // Clear one adjacent dirt block only when that exact cut opens a complete
@@ -513,22 +526,26 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return { ok: true, waited: true, reason: UNSAFE_ROUTE };
     };
     const approachShelter = async (scoped) => {
-      const from = bot.entity.position.floored();
+      const read = (p) => bot.blockAt(p);
+      const feet = bot.entity.position.floored();
+      const farmlandStart = farmlandFooting(read, bot.entity);
+      // Pathfinder starts at the logical block above the observed farmland
+      // collision surface. Only the initial node may use this partial floor.
+      const from = farmlandStart ? feet.offset(0, 1, 0) : feet;
       const entrance = doorstep.floored();
       const open = shelter.doorOpen();
       const wait = async (reason) => {
-        scoped.record('resupply_home_approach_wait', { reason, position: from });
+        scoped.record('resupply_home_approach_wait', { reason, position: feet });
         await sleep(500, scoped.signal);
         return { ok: true, waited: true, reason };
       };
       if (open === null) return wait('resupply_door_unconfirmed');
       if (open === false && from.equals(entrance) && bot.entity.onGround) return shelter.setDoor(scoped, true);
       const target = open ? shelter.position.offset(0, 0, 1) : entrance;
-      const read = (p) => bot.blockAt(p);
-      const path = shelterApproach(read, shelter, from, target, safeStep, failedApproaches);
+      const path = shelterApproach(read, shelter, from, target, safeStep, failedApproaches, farmlandStart);
       if (!path) {
-        if (shelterApproach(read, shelter, from, target, () => true)) return wait('resupply_home_route_unsafe');
-        const cut = !returned && bot.entity.onGround && actions.digBlock
+        if (shelterApproach(read, shelter, from, target, () => true, noFailedSteps, farmlandStart)) return wait('resupply_home_route_unsafe');
+        const cut = !farmlandStart && !returned && bot.entity.onGround && actions.digBlock
           && shelterStepRepair(bot, read, home, shelter, from, target, homeCut);
         if (!cut) return wait('resupply_no_dry_home_route');
         if (unsafeToDig(bot.entity.position, cut.position.offset(.5, 0, .5), activeThreats())) return wait('resupply_home_cut_unsafe');
@@ -544,7 +561,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       }
       const { first, safeLeg, dry } = path;
       const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(first) && dry(first);
-      if (!bot.entity.onGround || !safeLeg(from, first)) return wait('resupply_home_step_changed');
+      if (!bot.entity.onGround || (farmlandStart && !farmlandFooting(read, bot.entity))
+        || !safeLeg(from, first)) return wait('resupply_home_step_changed');
       routeDestination = first;
       let moved;
       try {
@@ -558,7 +576,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         failedApproaches.add(`${posKey(from)}>${posKey(first)}`, moved.reason || 'resupply_home_step_unconfirmed');
         return wait(moved.reason || 'resupply_home_step_unconfirmed');
       }
-      scoped.record('resupply_home_step', { from, to: first });
+      scoped.record('resupply_home_step', { from: feet, to: first, ...(farmlandStart ? { partialFloor: 'farmland' } : {}) });
       return { ok: true };
     };
     return onSurfacePath(bot, home, async () => {

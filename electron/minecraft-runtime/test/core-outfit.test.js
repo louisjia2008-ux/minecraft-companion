@@ -374,3 +374,68 @@ test('critical home arrival walks the saved ledge and crosses the door from the 
   assert.equal(goal.ownsRouteRecovery(), false);
   await goal.dispose();
 });
+
+test('critical bread return can leave the observed 15/16-height farmland for a dry cardinal step', async () => {
+  const house = createStarterHouse({ x: -68, y: 72, z: -35 });
+  const door = new Vec3(-65, 72, -35);
+  const plot = new Vec3(-81, 70, -34);
+  const ground = new Vec3(-81, 71, -33);
+  const route = [ground, ...Array.from({ length: 11 }, (_, i) => ground.offset(i + 1, 0, 0)),
+    new Vec3(-69, 72, -33), new Vec3(-69, 72, -34), new Vec3(-69, 72, -35), new Vec3(-69, 72, -36),
+    ...Array.from({ length: 4 }, (_, i) => new Vec3(-68 + i, 72, -36))];
+  const base = new Set(route.map((p) => p.offset(0, -1, 0).toString()));
+  const bot = Object.assign(fakeBot([{ name: 'wheat', count: 3 }]), { health: 2.67, food: 5, game: { dimension: 'overworld' },
+    entity: { position: plot.offset(.5, 15 / 16, .5), onGround: true }, entities: {}, time: { timeOfDay: 5000 } });
+  let material = 'farmland';
+  let wet = false;
+  bot.blockAt = (p) => {
+    if (p.equals(door) || p.equals(door.offset(0, 1, 0))) {
+      return { name: 'oak_door', boundingBox: 'block', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
+        open: false, facing: 'south', hinge: 'left' }) };
+    }
+    if (p.equals(plot)) return { name: material, boundingBox: 'block', shapes: [[0, 0, 0, 1, 15 / 16, 1]] };
+    if (wet && p.equals(ground)) return { name: 'water', boundingBox: 'empty', shapes: [] };
+    const solid = base.has(p.toString());
+    return { name: solid ? 'grass_block' : 'air', boundingBox: solid ? 'block' : 'empty',
+      shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const logicalOrigin = plot.offset(0, 1, 0);
+  const nativeNeighbors = () => [ground, ground.offset(1, 0, 1), ground.offset(-1, -1, 0)];
+  bot.pathfinder = { movements: { getNeighbors: nativeNeighbors } };
+  let steps = 0;
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: {
+      goTo: async (_bot, _ctx, destination, options) => {
+        assert.equal(options.retryNoProgress, false);
+        assert.ok(destination.isEnd(ground));
+        assert.deepEqual(bot.pathfinder.movements.getNeighbors(logicalOrigin), [ground]);
+        bot.entity.position = ground.offset(.5, 0, .5);
+        steps++;
+        return { ok: true };
+      },
+      goNear: async () => assert.fail('unexpected generic movement'),
+      digBlock: async () => assert.fail('must preserve farmland'),
+    } });
+  const events = [];
+  const ctx = { perceive: () => perceive(bot), record: (type, detail) => events.push([type, detail]) };
+  const expectWait = async () => {
+    const controller = new AbortController();
+    await assert.rejects(goal.run({ ...ctx, signal: controller.signal, record: (type, detail) => {
+      ctx.record(type, detail);
+      if (type === 'resupply_home_approach_wait') controller.abort();
+    } }), { code: 'aborted' });
+    assert.equal(steps, 0);
+  };
+  material = 'dirt_path';
+  await expectWait();
+  material = 'farmland';
+  wet = true;
+  await expectWait();
+  wet = false;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(steps, 1);
+  assert.deepEqual(events.at(-1), ['resupply_home_step', { from: plot, to: ground, partialFloor: 'farmland' }]);
+  assert.equal(bot.pathfinder.movements.getNeighbors, nativeNeighbors);
+  await goal.dispose();
+});
