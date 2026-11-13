@@ -37,7 +37,7 @@ function actionFixture({ target = cube(), blocked = false, unknown = false, canc
   const module = { exports: {} };
   const fn = new vm.Script('(function(require,module,exports){' + fs.readFileSync(filename, 'utf8') + '\n})', { filename }).runInContext(context);
   fn(fakeRequire, module, module.exports);
-  return { bot, target, signal, counts, attack: (options) => module.exports.attack(bot, { signal: signal.signal, record: (name, data) => counts.records.push({ name, ...data }) }, 7, options) };
+  return { bot, target, signal, counts, now: () => clock.now, attack: (options) => module.exports.attack(bot, { signal: signal.signal, record: (name, data) => counts.records.push({ name, ...data }) }, 7, options) };
 }
 
 test('wide magma in actual eye-to-AABB reach attacks rather than chasing feet until stuck', async () => {
@@ -73,6 +73,83 @@ test('abort during aiming and a target moving out of reach never send a stale at
   const moved = actionFixture({ target: cube(2, 0, 1), moveOnLook: true });
   assert.equal((await moved.attack({ timeoutMs: 1000 })).ok, false);
   assert.equal(moved.counts.attacks, 0);
+});
+
+function scaffoldChase(f, item = { name: 'nether_bricks' }) {
+  const setGoal = f.bot.pathfinder.setGoal;
+  f.bot.pathfinder.setGoal = function (goal) {
+    setGoal.call(this, goal);
+    if (goal) {
+      f.bot.heldItem = item;
+      f.target.position.x = 2;
+    }
+  };
+}
+
+test('a melee chase restores the same sword and allows a fresh cooldown after placing blocks', async () => {
+  for (const hand of [{ name: 'nether_bricks' }, { name: 'diamond_pickaxe' }, null]) {
+    const f = actionFixture({ target: cube(2, 0, 1) });
+    scaffoldChase(f, hand);
+    const sword = f.bot.heldItem;
+    const equips = [];
+    f.bot.equip = async (item, destination) => {
+      equips.push({ item, destination, at: f.now(), goal: f.bot.pathfinder.goal });
+      f.bot.heldItem = item;
+    };
+    const attack = f.bot.attack;
+    f.bot.attack = () => {
+      if (f.counts.attacks > 0) return attack();
+      f.counts.attacks += 1;
+      f.target.position.x = 8;
+    };
+    assert.equal((await f.attack()).died, true);
+    assert.equal(equips.length, 1);
+    assert.equal(equips[0].item, sword);
+    assert.equal(equips[0].destination, 'hand');
+    assert.equal(equips[0].goal, null);
+    const attacks = f.counts.records.filter((record) => record.name === 'combat_attack');
+    assert.deepEqual(attacks.map((record) => record.weapon), ['iron_sword', 'iron_sword']);
+    assert.equal(attacks[0].sinceWeaponSelectionMs, 0);
+    assert.ok(attacks[1].sentAt >= equips[0].at + 625);
+    assert.ok(attacks[1].sincePreviousAttackMs >= 625);
+  }
+});
+
+test('a failed restoration, cancellation or changed target during re-equipping cannot send a stale strike', async () => {
+  for (const changed of ['failed', 'cancelled', 'out_of_reach']) {
+    const f = actionFixture({ target: cube(8, 0, 1) });
+    scaffoldChase(f);
+    const setGoal = f.bot.pathfinder.setGoal;
+    f.bot.pathfinder.setGoal = function (goal) {
+      // A later chase does not return the moved target to reach.
+      if (goal && f.counts.goals.length) this.goal = goal;
+      else setGoal.call(this, goal);
+    };
+    f.bot.equip = async (item) => {
+      if (changed === 'failed') throw Error('slot refused');
+      f.bot.heldItem = item;
+      if (changed === 'cancelled') f.signal.abort('weapon_changed');
+      else f.target.position.x = 12;
+    };
+    const result = f.attack({ timeoutMs: 1200 });
+    if (changed === 'cancelled') await assert.rejects(result, { code: 'aborted' });
+    else assert.equal((await result).reason, changed === 'failed' ? 'weapon_equip_failed' : 'combat_timeout');
+    assert.equal(f.counts.attacks, 0);
+    assert.equal(f.bot.pathfinder.goal, null);
+  }
+});
+
+test('when a chase loses the original sword it uses an available fallback and can still fight without any weapon', async () => {
+  const axe = { name: 'stone_axe', count: 1 };
+  for (const remaining of [axe, null]) {
+    const f = actionFixture({ target: cube(8, 0, 1) });
+    const sword = f.bot.heldItem;
+    scaffoldChase(f, null);
+    f.bot.inventory.items = () => f.counts.goals.length ? (remaining ? [remaining] : []) : [sword];
+    f.bot.equip = async (item) => { f.bot.heldItem = item; };
+    assert.equal((await f.attack()).died, true);
+    assert.equal(f.counts.records.find((record) => record.name === 'combat_attack').weapon, remaining?.name ?? null);
+  }
 });
 
 test('stationary melee attacks in reach and never follows a target that leaves reach during aim', async () => {

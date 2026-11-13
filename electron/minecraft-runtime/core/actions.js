@@ -372,47 +372,53 @@ function weaponScore(name) {
   return -1;
 }
 
-async function equipBestWeapon(bot) {
-  const best = bot.inventory.items()
+function bestHandWeapon(bot) {
+  return bot.inventory.items()
     .map((item) => ({ item, score: weaponScore(item.name) }))
     .filter((entry) => entry.score >= 0)
-    .sort((a, b) => b.score - a.score)[0];
-  if (best && bot.heldItem?.name !== best.item.name) {
-    try { await bot.equip(best.item, 'hand'); } catch { /* fight with whatever is held */ }
+    .sort((a, b) => b.score - a.score)[0]?.item;
+}
+
+async function equipBestWeapon(bot) {
+  const best = bestHandWeapon(bot);
+  if (best && bot.heldItem?.name !== best.name) {
+    try { await bot.equip(best, 'hand'); } catch { /* retry at melee reach */ }
   }
   const shield = bot.inventory.items().find((item) => item.name === 'shield');
   const offhand = bot.inventory.slots?.[45];
   if (shield && offhand?.name !== 'shield') {
     try { await bot.equip(shield, 'off-hand'); } catch { /* optional */ }
   }
+  return best?.name;
 }
 
 // Mobs that a stray sweep turns on the bot, the whole pack at once.
 const BYSTANDERS = new Set(['zombified_piglin', 'piglin', 'enderman', 'villager', 'iron_golem']);
 const bystanderBeside = (bot, target) => Object.values(bot.entities).some((e) => e !== target && BYSTANDERS.has(e.name)
   && e.position && e.position.distanceTo(target.position) <= 2.5 && e.position.distanceTo(bot.entity.position) <= 4.5);
+const MELEE_COOLDOWN_MS = 625;
 
 /** Fights one entity until it is gone, the timeout passes, or the signal aborts. */
 async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3, pursue = true } = {}) {
   const deadline = Date.now() + timeoutMs;
   try {
     if (ctx.signal?.aborted) throw abortError(ctx.signal);
-    await equipBestWeapon(bot);
+    const name = await equipBestWeapon(bot);
     if (ctx.signal?.aborted) throw abortError(ctx.signal);
     if (Date.now() >= deadline) return fail('combat_timeout');
-    const weaponSelectedAt = Date.now();
+    const weapon = { name, selectedAt: Date.now() };
     // Chasing something up on the surface from a pit needs the same climbing allowance.
     const first = bot.entities[entityId];
     if (pursue && first && first.position.y - bot.entity.position.y >= 1.5 && underground(bot)) {
-      return await withClimbing(bot, first.position.y + 4, () => attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt, pursue));
+      return await withClimbing(bot, first.position.y + 4, () => attackLoop(bot, ctx, entityId, deadline, reach, weapon, pursue));
     }
-    return await attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt, pursue);
+    return await attackLoop(bot, ctx, entityId, deadline, reach, weapon, pursue);
   } finally {
     haltBody(bot);
   }
 }
 
-async function attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt, pursue) {
+async function attackLoop(bot, ctx, entityId, deadline, reach, weapon, pursue) {
   // A chase that has not closed in for 8 s is not going to (cliff, water, canopy).
   let closest = Infinity;
   let closestAt = Date.now();
@@ -463,6 +469,24 @@ async function attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt,
         }
       } else {
         bot.pathfinder.setGoal(null);
+        if (weapon.name && bot.heldItem?.name !== weapon.name) {
+          // Pathfinder can leave the selected hand on a pickaxe, a building block
+          // or an exhausted scaffold slot. The original weapon may also have broken.
+          const item = bot.inventory.items().find((item) => item.name === weapon.name) || bestHandWeapon(bot);
+          weapon.name = item?.name;
+          if (item) {
+            if (bot.heldItem?.name !== item.name) {
+              try { await bot.equip(item, 'hand'); } catch { /* confirm the selected item below */ }
+            }
+            if (ctx.signal?.aborted) throw abortError(ctx.signal);
+            if (died) return { ok: true, died, hits };
+            if (bot.heldItem?.name !== item.name) return fail('weapon_equip_failed');
+            weapon.selectedAt = Date.now();
+            await sleep(Math.min(MELEE_COOLDOWN_MS, Math.max(0, deadline - weapon.selectedAt)), ctx.signal);
+            // Let live reach and sight run again after the hand change and cooldown.
+            continue;
+          }
+        }
         const aim = distance > 1e-6 ? geometry.point : target.position.offset(0, geometry.height * 0.5, 0);
         await bot.lookAt(aim, true);
         if (ctx.signal?.aborted) throw abortError(ctx.signal);
@@ -484,12 +508,13 @@ async function attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt,
         // Looking and the optional jump yield to packets. Recheck the same
         // live target and its sightline immediately before the attack packet.
         const fresh = bot.entities[entityId] === target && target.isValid && meleeGeometry(bot.entity, target, bot.registry);
-        if (fresh && fresh.distance <= reach && meleeSight(bot, fresh) === 'clear') {
+        if (Date.now() < deadline && fresh && fresh.distance <= reach && meleeSight(bot, fresh) === 'clear'
+          && (!weapon.name || bot.heldItem?.name === weapon.name)) {
           bot.attack(target);
           const sentAt = Date.now();
           ctx.record?.('combat_attack', { targetId: entityId, mob: target.name, size: fresh.size,
             width: fresh.width, height: fresh.height, feetDistance: fresh.feetDistance, reachDistance: fresh.distance,
-            weapon: bot.heldItem?.name || null, sentAt, sinceWeaponSelectionMs: sentAt - weaponSelectedAt,
+            weapon: bot.heldItem?.name || null, sentAt, sinceWeaponSelectionMs: sentAt - weapon.selectedAt,
             sincePreviousAttackMs: lastSentAt === null ? null : sentAt - lastSentAt });
           lastSentAt = sentAt;
           lastDistance = fresh.distance;
@@ -497,7 +522,7 @@ async function attackLoop(bot, ctx, entityId, deadline, reach, weaponSelectedAt,
           sent = true;
         }
       }
-      await sleep(sent ? 625 : 150, ctx.signal); // existing sword attack cooldown
+      await sleep(sent ? MELEE_COOLDOWN_MS : 150, ctx.signal);
       if (ctx.signal?.aborted) throw abortError(ctx.signal);
       if (died) return { ok: true, died, hits };
     }
