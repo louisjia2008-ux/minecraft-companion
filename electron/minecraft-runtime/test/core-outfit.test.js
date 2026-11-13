@@ -707,18 +707,32 @@ test('expedition reserve uses real ripe plots and replants before seeking new gr
   const { createStockFoodGoal } = require('../core/goals/stockFood');
   const farm = require('../core/farming');
   const plot = { x: 13, y: 63, z: 2 };
+  const field = new Vec3(plot.x, plot.y, plot.z);
+  const bank = field.offset(1, 1, 0);
+  const water = field.offset(-1, 1, 0);
+  const otherFarm = field.offset(0, 1, 1);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const farmland = { name: 'farmland', boundingBox: 'block', shapes: [[0, 0, 0, 1, 15 / 16, 1]] };
+  const neighbors = () => [field.offset(0, 1, 0), otherFarm];
   let crop = 'ripe';
   const bag = {};
   const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
-    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true }, blockAt: () => null });
+    pathfinder: { movements: { getNeighbors: neighbors } },
+    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true }, blockAt: (p) => {
+      if (p.equals(field) || p.equals(otherFarm.offset(0, -1, 0))) return farmland;
+      if (p.equals(water.offset(0, -1, 0))) return { ...air, name: 'water' };
+      return p.y === 63 ? grass : air;
+    } });
   const calls = [];
   t.mock.method(farm, 'plotState', (_bot, p) => {
     assert.ok(p.equals(new Vec3(plot.x, plot.y, plot.z)));
     return crop;
   });
-  t.mock.method(farm, 'harvest', async () => {
+  t.mock.method(farm, 'harvest', async (_bot, ctx, _plot, { collect }) => {
     calls.push('harvest');
     crop = 'empty';
+    await collect(bot, ctx);
     bag.wheat = 3;
     bag.wheat_seeds = 1;
     return { ok: true, gained: 3 };
@@ -731,7 +745,20 @@ test('expedition reserve uses real ripe plots and replants before seeking new gr
   });
   const table = { x: 1, y: 64, z: 1 };
   const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: { ...home, stations: { crafting_table: table } },
-    farmPlots: [plot], skills: {
+    farmPlots: [plot], actions: {
+      goTo: async (_bot, _ctx, target, { arrived }) => {
+        const moves = bot.pathfinder.movements.getNeighbors;
+        assert.deepEqual(moves(water), [], 'cannot enter farmland from water');
+        assert.deepEqual(moves(bank.offset(0, 1, 0)), [], 'cannot drop onto farmland and trample it');
+        assert.deepEqual(moves(bank.offset(1, 0, 0)), [], 'cannot enter farmland across a gap');
+        assert.deepEqual(moves(bank), [field.offset(0, 1, 0)], 'only the wheat pickup target is allowed');
+        assert.ok(target.isEnd(field.offset(0, 1, 0)));
+        bot.entity.position = field.offset(.5, 15 / 16, .5);
+        assert.ok(arrived());
+        bot.entity.position = new Vec3(2.5, 64, 2.5);
+        return { ok: true };
+      },
+    }, skills: {
       takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
       huntOne: async () => ({ ok: false, reason: 'no_mob_in_range' }),
       craft: async (_bot, _ctx, { item, times, tablePosition }) => {
@@ -746,9 +773,58 @@ test('expedition reserve uses real ripe plots and replants before seeking new gr
     } });
   const ctx = { perceive: () => ({ inventory: { ...bag }, health: 20, food: 20, isDay: true }), record() {} };
   for (let i = 0; i < 4; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(bot.pathfinder.movements.getNeighbors, neighbors);
   assert.deepEqual(calls, ['harvest', 'bake', 'plant']);
   assert.equal(goal.progress(ctx.perceive()), 1);
   assert.equal(goal.isDone(ctx.perceive()), false);
+});
+
+test('expedition reserve extends the growing field on nearby hydrated soil and preserves a dry bank', async (t) => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const farm = require('../core/farming');
+  const original = new Vec3(13, 63, 2);
+  const newPlot = original.offset(1, 0, 0);
+  const bank = newPlot.offset(1, 0, 0);
+  const distant = original.offset(6, 0, 0);
+  const source = newPlot.offset(0, 0, -1);
+  const field = new Map([[original.toString(), 'growing']]);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const bag = { cooked_chicken: 3, wheat_seeds: 1, stone_hoe: 1 };
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
+    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true },
+    registry: { blocksByName: { water: { id: 7 } } }, findBlocks: () => [source],
+    blockAt(p) {
+      if (p.equals(source)) return { ...air, name: 'water', position: source, metadata: 0 };
+      if (p.y === 63 && ![newPlot, bank, distant].some((ground) => p.equals(ground))) return { ...grass, name: 'stone' };
+      return p.y === 63 ? grass : air;
+    } });
+  const edits = [];
+  t.mock.method(farm, 'plotState', (_bot, p) => field.get(p.toString()) || 'untilled');
+  t.mock.method(farm, 'till', async (_bot, _ctx, p) => {
+    edits.push(p);
+    field.set(p.toString(), 'empty');
+    return { ok: true };
+  });
+  t.mock.method(farm, 'plant', async (_bot, _ctx, p) => {
+    assert.ok(p.equals(newPlot));
+    field.set(p.toString(), 'growing');
+    delete bag.wheat_seeds;
+    return { ok: true };
+  });
+  const goal = createStockFoodGoal({ bot, target: 12,
+    expeditionHome: { ...home, stations: { crafting_table: home.centre } }, farmPlots: [original], skills: {
+      takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async () => ({ ok: false, reason: 'no_mob_in_range' }),
+    } });
+  const ctx = { perceive: () => ({ inventory: bag, health: 20, food: 20, isDay: true }), record() {} };
+  for (let i = 0; i < 3; i += 1) assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(edits, [newPlot]);
+  bag.wheat_seeds = 1;
+  const result = await goal.run(ctx);
+  assert.equal(result.reason, 'expedition_food_waiting_for_wheat');
+  assert.equal(result.waited, true);
+  assert.deepEqual(edits, [newPlot], 'keep the harvest bank and avoid expanding beyond the original field');
 });
 
 test('expedition reserve re-enters the home range by dry local legs from beyond a loaded route', async () => {

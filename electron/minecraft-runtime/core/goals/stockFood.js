@@ -10,13 +10,16 @@ const farming = require('../farming');
 const { KNOWLEDGE, countKey } = require('../knowledge');
 const { createBlacklist, posKey } = require('../blacklist');
 const { applyWalkOnlyMovements, dimension } = require('../nether');
-const { advanceCaveRetreat, standable } = require('../caveRetreat');
+const { advanceCaveRetreat, farmlandFooting, standable } = require('../caveRetreat');
 const { abortError, sleep, waitUntil } = require('../confirm');
 
 const FOOD_MOBS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const HOME_RADIUS = 48;
 const HOME_FLOOR = 8;
 const SEARCH_REST_MS = 60000;
+const FIELD_MARGIN = 5;
+const MAX_RESERVE_PLOTS = 24;
+const CARDINAL = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const SURFACE_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|campfire|soul_campfire|cactus|powder_snow)$/;
 const asVec = ({ x, y, z }) => new Vec3(x, y, z);
 const foodMatch = (bot, kb, name) => !defaultActions.RISKY_FOODS.has(name)
@@ -24,11 +27,13 @@ const foodMatch = (bot, kb, name) => !defaultActions.RISKY_FOODS.has(name)
 const expeditionFoodCount = (bot, inventory, kb = KNOWLEDGE) => Object.entries(inventory)
   .reduce((sum, [name, amount]) => sum + (foodMatch(bot, kb, name) ? amount : 0), 0);
 
-function createExpeditionFood({ bot, home, farmPlots, actions, skills, kb, blacklist }) {
+function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, kb, blacklist }) {
   const centre = asVec(home.centre);
   const door = home.door && asVec(home.door);
   const floor = centre.y - HOME_FLOOR;
-  const plots = [...new Map(farmPlots.map((p) => [posKey(p), asVec(p)])).values()];
+  const field = [...new Map(farmPlots.map((p) => [posKey(p), asVec(p)])).values()];
+  const plots = field.slice();
+  const banks = new Set();
   const visited = new Set();
   const triedSearch = new Set();
   const furnace = {};
@@ -44,21 +49,51 @@ function createExpeditionFood({ bot, home, farmPlots, actions, skills, kb, black
   const inHouse = (p) => Math.abs(p.x - centre.x) <= 3 && Math.abs(p.z - centre.z) <= 3 && Math.abs(p.y - centre.y) <= 1
     || door && p.x === door.x && p.y === door.y && Math.abs(p.z - door.z) <= 1;
   const supported = (p) => p.y >= floor && !read(p.offset(0, -1, 0))?.name?.endsWith('_leaves') && standable(read, p);
-  const exposed = (p) => {
-    if (!supported(p)) return false;
+  const skyClear = (p) => {
     for (let dy = 2; dy <= Math.max(10, centre.y - p.y + 8); dy += 1) {
       const b = read(p.offset(0, dy, 0));
       if (!dry(b) || (b.boundingBox === 'block' && !b.name.endsWith('_leaves') && !b.name.endsWith('_log'))) return false;
     }
     return true;
   };
+  const exposed = (p) => supported(p) && skyClear(p);
   const threatsNear = (state) => (state.hostiles || []).some(({ distance }) => distance <= 16);
   const wait = async (ctx, reason) => {
     await sleep(1000, ctx.signal);
     return { ok: true, waited: true, reason };
   };
 
-  async function dryWalk(run, accept) {
+  // A same-level bank enters the 15/16 crop surface without a trampling fall.
+  const harvestBanks = (plot) => CARDINAL.map(([dx, dz]) => plot.offset(dx, 1, dz)).filter(exposed);
+
+  function selectExpansion(state) {
+    const short = target - expeditionFoodCount(bot, state.inventory, kb);
+    const limit = Math.min(MAX_RESERVE_PLOTS, short * 3 - (state.inventory.wheat || 0));
+    if (plots.length >= limit || !state.inventory.wheat_seeds || !countKey('hoe', state.inventory, kb)
+      || !bot.registry?.blocksByName?.water || !bot.findBlocks) return null;
+    const planted = new Set(plots.map(posKey));
+    const excluded = (point) => {
+      const p = asVec(point);
+      const key = posKey(p);
+      return distance(p) > HOME_RADIUS || p.y < floor || planted.has(key) || banks.has(key)
+        || blacklist.has(key) || inHouse(p.offset(0, 1, 0))
+        || bot.companionProtectBlock?.(read(p)) || !exposed(p.offset(0, 1, 0))
+        || !field.some((original) => Math.max(Math.abs(original.x - p.x), Math.abs(original.z - p.z)) <= FIELD_MARGIN
+          && Math.abs(original.y - p.y) <= 1)
+        || !harvestBanks(p).some((bank) => !planted.has(posKey(bank.offset(0, -1, 0))));
+    };
+    const candidate = farming.choosePlots((point) => read(asVec(point)), centre, {
+      count: MAX_RESERVE_PLOTS,
+      exclude: excluded,
+      findWater: (position, radius) => farming.findWater(bot, position, radius),
+    }).find((p) => p.hydrated && farming.plotState(bot, p) === 'untilled');
+    if (!candidate) return null;
+    const plot = asVec(candidate);
+    const bank = harvestBanks(plot).find((p) => !planted.has(posKey(p.offset(0, -1, 0))));
+    return { plot, bank: bank.offset(0, -1, 0) };
+  }
+
+  async function dryWalk(run, accept, route) {
     const restore = applyWalkOnlyMovements(bot);
     const movement = bot.pathfinder?.movements;
     const neighbors = movement?.getNeighbors;
@@ -69,6 +104,11 @@ function createExpeditionFood({ bot, home, farmPlots, actions, skills, kb, black
       if (Date.now() - checkedAt >= 250) { checked.clear(); checkedAt = Date.now(); }
       return neighbors.call(this, node, ...args).filter((move) => {
         const p = new Vec3(move.x, move.y, move.z);
+        if (route.pickup?.equals(p)) {
+          const from = new Vec3(node.x, node.y, node.z);
+          return accept(p) && harvestBanks(p.offset(0, -1, 0)).some((bank) => bank.equals(from))
+            && skyClear(p) && Boolean(farmlandFooting(read, { onGround: true, position: p.offset(.5, -1 / 16, .5) }));
+        }
         const key = posKey(p);
         if (!checked.has(key)) checked.set(key, accept(p) && p.y >= floor
           && [-1, 0, 1].every((dy) => dry(read(p.offset(0, dy, 0)))) && (inHouse(p) || exposed(p)));
@@ -81,6 +121,23 @@ function createExpeditionFood({ bot, home, farmPlots, actions, skills, kb, black
       else if (neighbors) delete movement.getNeighbors;
       restore();
     }
+  }
+
+  async function collectWheat(ctx, plot, route) {
+    const target = plot.offset(0, 1, 0);
+    const arrived = () => bot.entity.position.floored().equals(plot) && Boolean(farmlandFooting(read, bot.entity));
+    if (!arrived()) {
+      route.pickup = target;
+      try {
+        const goal = new goals.GoalBlock(target.x, target.y, target.z);
+        const moved = await actions.goTo(bot, ctx, goal, { arrived, timeoutMs: 6000, retryNoProgress: false });
+        if (moved.ok || moved.reason === 'not_arrived') await waitUntil(arrived, { timeoutMs: 550, signal: ctx.signal });
+      } finally {
+        route.pickup = null;
+      }
+    }
+    // Vanilla adds a short item pickup delay after the wheat block disappears.
+    if (arrived()) await sleep(550, ctx.signal);
   }
 
   function go(ctx, target, radius, timeoutMs = 14000) {
@@ -150,7 +207,7 @@ function createExpeditionFood({ bot, home, farmPlots, actions, skills, kb, black
     const feet = here.floored();
     if (dimension(bot) !== 'overworld') return { ok: false, reason: 'expedition_food_wrong_dimension' };
     if (state.inWater || state.health <= 6 || threatsNear(state)) return wait(ctx, 'expedition_food_unsafe');
-    if (!inHouse(feet) && !exposed(feet) && actions.underground?.(bot)) {
+    if (!inHouse(feet) && !exposed(feet) && !farmlandFooting(read, bot.entity) && actions.underground?.(bot)) {
       const result = await advanceCaveRetreat(bot, ctx, actions, centre, { visited,
         avoid: (p) => inHouse(p) || (state.hostiles || []).some((h) => h.position?.distanceTo(p) <= 6) });
       if (result.ok && !result.dug) {
@@ -169,6 +226,7 @@ function createExpeditionFood({ bot, home, farmPlots, actions, skills, kb, black
     const homeTask = cook || bake || checkChest;
     returning ||= distance(feet) > HOME_RADIUS;
     const edge = Math.max(HOME_RADIUS, returning ? distance(feet) + 4 : 0);
+    const route = { pickup: null };
     return dryWalk(async () => {
       if (homeTask || returning) {
         const inside = Math.abs(here.x - centre.x - .5) < 2.6 && Math.abs(here.z - centre.z - .5) < 2.6
@@ -225,15 +283,30 @@ function createExpeditionFood({ bot, home, farmPlots, actions, skills, kb, black
         clearInterval(monitor);
         ctx.signal?.removeEventListener('abort', onAbort);
       }
+      const growing = crafting && plots.some((p) => canTarget(p) && farming.plotState(bot, p) === 'growing');
       if (crafting) {
         const stage = (want) => plots.find((p) => canTarget(p) && !blacklist.has(posKey(p)) && farming.plotState(bot, p) === want);
         const empty = state.inventory.wheat_seeds > 0 && stage('empty');
-        const ripe = stage('ripe');
+        const ripe = plots.find((p) => canTarget(p) && !blacklist.has(posKey(p))
+          && farming.plotState(bot, p) === 'ripe' && harvestBanks(p).length);
         const plot = empty || ripe;
         if (plot) {
-          const result = await (empty ? farming.plant(bot, ctx, plot) : farming.harvest(bot, ctx, plot));
+          const result = await (empty ? farming.plant(bot, ctx, plot) : farming.harvest(bot, ctx, plot,
+            { collect: () => collectWheat(ctx, plot, route) }));
           ctx.record('expedition_food_farm', { action: empty ? 'plant' : 'harvest', plot: posKey(plot), ok: result.ok, gained: result.gained });
           if (!result.ok || !empty && result.gained < 1) blacklist.add(posKey(plot), result.reason || 'wheat_not_collected');
+          return result;
+        }
+        const extension = growing && selectExpansion(state);
+        if (extension) {
+          const result = await farming.till(bot, ctx, extension.plot);
+          ctx.record('expedition_food_farm', { action: 'till', plot: posKey(extension.plot), ok: result.ok });
+          if (result.ok) {
+            plots.push(extension.plot);
+            banks.add(posKey(extension.bank));
+          } else {
+            blacklist.add(posKey(extension.plot), result.reason);
+          }
           return result;
         }
       }
@@ -241,8 +314,11 @@ function createExpeditionFood({ bot, home, farmPlots, actions, skills, kb, black
       const bush = Number.isInteger(berries) && bot.findBlocks?.({ matching: berries, maxDistance: 24, count: 16,
         useExtraInfo: (block) => Number(block.getProperties?.().age) >= 2 })?.find((p) => canTarget(p) && !blacklist.has(`berry:${posKey(p)}`));
       if (bush) return skills.pickBerries(bot, ctx, { position: bush, blacklist });
+      if (growing && plots.some((p) => canTarget(p) && farming.plotState(bot, p) === 'growing' && harvestBanks(p).length)) {
+        return wait(ctx, 'expedition_food_waiting_for_wheat');
+      }
       return search(ctx, here);
-    }, (p) => distance(p) <= edge);
+    }, (p) => distance(p) <= edge, route);
   };
 }
 
@@ -252,7 +328,7 @@ function createStockFoodGoal({ bot, target = 16, skills = defaultSkills, actions
   const blacklist = createBlacklist({ ttlMs: 60000 });
   const exploreMemory = {};
   const count = (state) => expeditionHome ? expeditionFoodCount(bot, state.inventory, kb) : countKey('food', state.inventory, kb);
-  const expedition = expeditionHome && createExpeditionFood({ bot, home: expeditionHome, farmPlots, actions, skills, kb, blacklist });
+  const expedition = expeditionHome && createExpeditionFood({ bot, home: expeditionHome, farmPlots, target, actions, skills, kb, blacklist });
 
   return {
     name: 'stock_food',

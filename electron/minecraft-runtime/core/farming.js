@@ -160,7 +160,7 @@ async function plant(bot, ctx, plot, seed = 'wheat_seeds') {
   return done ? { ok: true } : fail('plant_unconfirmed');
 }
 
-async function harvest(bot, ctx, plot) {
+async function harvest(bot, ctx, plot, { collect = actions.collectDrops } = {}) {
   const moved = await reach(bot, ctx, plot);
   if (!moved.ok) return moved;
   const crop = bot.blockAt(v(plot).offset(0, 1, 0));
@@ -168,7 +168,7 @@ async function harvest(bot, ctx, plot) {
   const before = actions.countItems(bot, (n) => n === 'wheat');
   const dug = await actions.digBlock(bot, ctx, crop);
   if (!dug.ok) return dug;
-  await actions.collectDrops(bot, ctx, crop.position.offset(0.5, 0.5, 0.5), (n) => n === 'wheat' || n === 'wheat_seeds',
+  await collect(bot, ctx, crop.position.offset(0.5, 0.5, 0.5), (n) => n === 'wheat' || n === 'wheat_seeds',
     { radius: 4, timeoutMs: 3000 });
   return { ok: true, gained: actions.countItems(bot, (n) => n === 'wheat') - before };
 }
