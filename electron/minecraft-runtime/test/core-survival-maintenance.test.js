@@ -52,6 +52,48 @@ test('carried food is eaten first, and an unusable risky item does not block saf
   assert.ok(s.behavior('provision').want(risky) > 0);
 });
 
+test('an active cave retreat cooldown allows eating but does not start a new food search', async () => {
+  let hunts = 0;
+  let eats = 0;
+  let underground = true;
+  const s = setup({ skills: { async huntOne() { hunts += 1; return { ok: true }; } }, actions: {
+    underground: () => underground,
+    async eat() {
+      eats += 1;
+      delete s.state.inventory.beef;
+      s.state.food = 20;
+      return { ok: true };
+    },
+  } });
+  s.bot.entity.onGround = true;
+  s.bot.blockAt = () => null;
+  s.bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  const events = [];
+  const brain = createBrain({ perceive: () => s.state, now: () => 1000,
+    behaviors: ['cave_retreat', 'provision', 'eat'].map(s.behavior),
+    onEvent: (event) => events.push(event) });
+  try {
+    await brain.tick();
+    await brain.idle();
+    await brain.tick();
+    assert.ok(events.some((event) => event.behavior === 'cave_retreat' && event.reason === 'cave_retreat_no_dry_route'));
+    assert.deepEqual(brain.status().cooldowns.map(({ name }) => name), ['cave_retreat']);
+    assert.equal(hunts, 0);
+    s.state.inventory.beef = 1;
+    await brain.tick();
+    await brain.idle();
+    assert.equal(eats, 1);
+    assert.equal(hunts, 0);
+    assert.equal(s.behavior('cave_retreat').want({ ...s.state, inWater: true }), 0);
+    assert.ok(s.behavior('breathe').want({ ...s.state, inWater: true, oxygen: 1 }));
+    s.bot.game.dimension = 'the_nether';
+    assert.equal(s.behavior('cave_retreat').want(s.state), 0);
+    s.bot.game.dimension = 'overworld';
+    underground = false;
+    assert.ok(s.behavior('provision').want({ ...s.state, food: 16 }));
+  } finally { await brain.dispose(); }
+});
+
 test('a running device yields to injured provisioning and eating, preserving its goal', async () => {
   let state;
   let hunts = 0;

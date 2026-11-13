@@ -375,6 +375,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
 
   let retreat = null;
+  const retreatCanMove = (state) => !state.inWater && !bot.entity?.isInLava && !state.sheltered;
   const caveSituation = (state) => dryOverworldCritical(state) && !state.sheltered && typeof bot.blockAt === 'function'
     && typeof bot.pathfinder?.movements?.getNeighbors === 'function';
   const caveNeedsExit = (state) => {
@@ -402,7 +403,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.ESCAPE - 1,
     want(state) {
       if (dimensionOf(bot) !== 'overworld') retreat = null;
-      if (state.inWater || bot.entity?.isInLava || state.sheltered) return 0;
+      if (!retreatCanMove(state)) return 0;
       return retreat || caveNeedsExit(state) ? 1 : 0;
     },
     async run(ctx) {
@@ -1052,6 +1053,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // Home resupply has a surface food route of its own. Generic hunting
       // must not pull an injured bot back underground while it restocks.
       if (resupplying() || farmSnack()) return 0;
+      // A failed retreat leg backs off briefly. Keep that pause available for
+      // eating or regeneration without starting a new search deeper in the cave.
+      if (retreat && dimensionOf(bot) === 'overworld' && retreatCanMove(state)) return 0;
       // Hunger alone is not the only reason to get food: below 18 a badly
       // injured bot cannot regenerate, even at food 16. Stop supplying at the
       // same threshold at which recovery can take over, and eat carried food
