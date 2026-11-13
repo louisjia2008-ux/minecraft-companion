@@ -79,3 +79,50 @@ test('a frame begun by an earlier goal is finished by the next one, not left for
   assert.equal(again.memory.site.base, base);
   assert.equal(again.framePlaced(), 6 + corners.size);
 });
+
+test('a portal builder walks into reach before clearing replaceable growth and rechecks that cell', async (t) => {
+  const base = new Vec3(0, 64, 0);
+  const frame = nether.portalFrame(base, 'x');
+  const grass = { name: 'short_grass', boundingBox: 'empty', shapes: [], position: base };
+  const air = { name: 'air', boundingBox: 'empty', position: base };
+  const check = async (changed, expected) => {
+    let cell = grass;
+    let reachable = false;
+    const steps = [];
+    const bot = {
+      entity: { position: base.offset(0, 0, 20) },
+      blockAt(p) {
+        if (p.equals(base)) return cell;
+        if (p.equals(base.offset(0, -1, 0))) return { name: 'stone', boundingBox: 'block', position: p };
+        return air;
+      },
+      inventory: { items: () => [{ name: 'cobblestone' }] },
+      async equip() {},
+      async lookAt() {},
+      async placeBlock() { steps.push('place'); cell = { name: 'cobblestone', boundingBox: 'block', position: base }; },
+    };
+    const work = {
+      withinReach: () => reachable,
+      async goTo(_bot, _ctx, goal) {
+        assert.deepEqual([goal.x, goal.y, goal.z], [frame.stand.x, frame.stand.y, frame.stand.z]);
+        steps.push('approach');
+        reachable = true;
+        bot.entity.position = frame.stand.offset(.5, 0, .5);
+        if (changed) cell = { name: 'bedrock', boundingBox: 'block', position: base };
+        return { ok: true };
+      },
+      async digBlock(_bot, _ctx, block) {
+        assert.equal(reachable, true);
+        assert.equal(block, grass);
+        steps.push('dig');
+        cell = air;
+        return { ok: true };
+      },
+    };
+    const result = await nether.buildPortalStep(bot, { record() {} }, { base, axis: 'x' }, work);
+    assert.deepEqual(steps, expected);
+    assert.equal(result.ok, !changed);
+  };
+  await t.test('approaches, clears the observed grass and places the first corner', () => check(false, ['approach', 'dig', 'place']));
+  await t.test('leaves a solid block that replaced the grass while approaching', () => check(true, ['approach']));
+});

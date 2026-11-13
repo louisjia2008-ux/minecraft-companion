@@ -58,6 +58,7 @@ function portalFrame(base, axis = 'x') {
 
 const passable = (b) => b && (AIR.has(b.name) || (b.boundingBox === 'empty' && !/water|lava|fire/.test(b.name)));
 const ground = (b) => b && b.boundingBox === 'block' && !/lava|water|magma|_leaves|gravel|sand$/.test(b.name);
+const frameClearable = (b) => passable(b) && !b.shapes?.length && b.getProperties?.()?.waterlogged !== true;
 
 /** A site needing no digging: solid ground under the frame and in front, open air above. */
 function portalSiteOk(bot, base, axis) {
@@ -104,7 +105,7 @@ function portalScoutStep(bot, from, to) {
     || !standable(read, from) || !standable(read, to)) return false;
   if (!dy) return true;
   const head = read((dy > 0 ? from : to).offset(0, 2, 0));
-  return passable(head) && !head.shapes?.length && head.getProperties?.()?.waterlogged !== true;
+  return frameClearable(head);
 }
 
 // Probe nearby slopes from the construction stance, rather than guessing a
@@ -146,19 +147,22 @@ const FACES = [new Vec3(0, -1, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Ve
  * Places one block against a known neighbour without a line-of-sight check:
  * the server only checks reach, and the frame's top row faces are above eye level.
  */
-async function placeFrameBlock(bot, ctx, pos, itemMatch, against, stand) {
-  const current = bot.blockAt(pos);
+async function placeFrameBlock(bot, ctx, pos, itemMatch, against, stand, work = actions) {
+  let current = bot.blockAt(pos);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
-  if (current && !AIR.has(current.name)) {
-    if (current.boundingBox !== 'empty') return fail('occupied', { block: current.name });
-    const dug = await actions.digBlock(bot, ctx, current);
-    if (!dug.ok) return dug;
-  }
+  if (current && !frameClearable(current)) return fail('occupied', { block: current.name });
   const item = bot.inventory.items().find((i) => itemMatch(i.name));
   if (!item) return fail('no_material');
-  if (!actions.withinReach(bot, pos, 4.2) || bodyIn(bot, pos)) {
-    const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(stand.x, stand.y, stand.z), { timeoutMs: 20000 });
-    if (!moved.ok && (!actions.withinReach(bot, pos, 4.5) || bodyIn(bot, pos))) return moved;
+  if (!work.withinReach(bot, pos, 4.2) || bodyIn(bot, pos)) {
+    const moved = await work.goTo(bot, ctx, new goals.GoalBlock(stand.x, stand.y, stand.z), { timeoutMs: 20000 });
+    if (!work.withinReach(bot, pos, 4.5) || bodyIn(bot, pos)) return moved.ok ? fail('out_of_reach') : moved;
+  }
+  current = bot.blockAt(pos);
+  if (current && itemMatch(current.name)) return { ok: true, already: true };
+  if (!frameClearable(current)) return fail(current ? 'occupied' : 'portal_frame_unloaded', { block: current?.name });
+  if (!AIR.has(current.name)) {
+    const dug = await work.digBlock(bot, ctx, current);
+    if (!dug.ok) return dug;
   }
   let ref = against ? bot.blockAt(against) : null;
   if (!ref || ref.boundingBox !== 'block') {
@@ -187,7 +191,7 @@ function bodyIn(bot, cell) {
 }
 
 /** Builds one missing frame block per call; ignites once the frame is whole. */
-async function buildPortalStep(bot, ctx, site) {
+async function buildPortalStep(bot, ctx, site, work = actions) {
   const frame = portalFrame(site.base, site.axis);
   if (frame.interior.some((p) => bot.blockAt(p)?.name === 'nether_portal')) return { ok: true, lit: true };
   const stand = frame.stand;
@@ -196,7 +200,7 @@ async function buildPortalStep(bot, ctx, site) {
     const done = cell.corner ? block && block.boundingBox === 'block' : block?.name === 'obsidian';
     if (done) continue;
     const match = cell.corner ? (n) => CORNERS.has(n) : (n) => n === 'obsidian';
-    const result = await placeFrameBlock(bot, ctx, cell.pos, match, cell.against, stand);
+    const result = await placeFrameBlock(bot, ctx, cell.pos, match, cell.against, stand, work);
     return result.ok ? { ok: true, placed: posKey(cell.pos) } : result;
   }
   // Fire needs open air in the frame: clear anything that fell or grew inside.
