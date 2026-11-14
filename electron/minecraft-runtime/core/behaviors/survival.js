@@ -14,7 +14,7 @@ const { findNetherCombatCover, hasNetherCombatCover } = require('../netherCombat
 const { createBlacklist, posKey } = require('../blacklist');
 const { ownedItems } = require('../perception');
 const { meleeGeometry, meleeSight } = require('../entityGeometry');
-const { advanceCaveRetreat, cavePoolBank, evadeInCave, returnFromCave, skyOpen, standable, walkDry } = require('../caveRetreat');
+const { advanceCaveRetreat, caveFootingBank, evadeInCave, returnFromCave, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { goals } = require('mineflayer-pathfinder');
 const { recordObservedSelfAggressor } = require('../../vendor/server/minecraft/entitySemantics');
 
@@ -458,7 +458,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const chasmRecovery = (state, centre) => Boolean(dimensionOf(bot) === 'overworld' && centre && resupplying()
     && state.position.y <= centre.y - 12
     && state.health <= t.healHealth && retreatCanMove(state) && canPlanRetreat()
-    && (actions.underground?.(bot) === true || cavePoolBank(bot)));
+    && (actions.underground?.(bot) === true || caveFootingBank(bot)));
   const caveNeedsExit = (state) => {
     const centre = home();
     if (chasmRecovery(state, centre)) return true;

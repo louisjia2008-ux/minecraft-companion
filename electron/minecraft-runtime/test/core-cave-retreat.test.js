@@ -159,6 +159,28 @@ test('an empty-handed bot clears one checked stair cell and then physically asce
   assert.equal(bot.pathfinder.movements.canDig, true);
 });
 
+test('a cave retreat regains the dry support underneath an off-centre ledge landing', async () => {
+  const { bot, cells, origin } = fixture();
+  const bank = origin.offset(1, 0, 0);
+  const stair = origin.offset(0, 1, 1);
+  cells.set(key(origin.offset(0, -1, 0)), air);
+  for (const p of [bank, bank.offset(0, 1, 0), origin.offset(0, 2, 0), stair, stair.offset(0, 1, 0)]) {
+    cells.set(key(p), air);
+  }
+  bot.entity.position = origin.offset(.801, 0, .5);
+  bot.pathfinder.movements.getNeighbors = () => [bank, stair];
+  const result = await advanceCaveRetreat(bot, { record() {} }, {
+    async goTo(_bot, _ctx, goal) {
+      assert.deepEqual([goal.x, goal.y, goal.z], [bank.x, bank.y, bank.z]);
+      assert.deepEqual(bot.pathfinder.movements.getNeighbors(origin), [bank]);
+      bot.entity.position = bank.offset(.5, 0, .5);
+      return { ok: true };
+    },
+    digBlock: async () => assert.fail('attempted to dig from the unsupported centre cell'),
+  });
+  assert.deepEqual(result, { ok: true, from: origin, to: bank });
+});
+
 test('critical underground escape starts without a nearby threat and excludes the house roof', () => {
   const { bot } = fixture();
   const state = { health: 2, food: 0, position: bot.entity.position, inventory: {}, hostiles: [] };

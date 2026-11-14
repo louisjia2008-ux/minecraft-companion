@@ -65,15 +65,16 @@ function digSafety(bot, read, point, { requireReach = false } = {}) {
   return 'dig';
 }
 
-// The floor of a player's centre cell can be water while the grounded hitbox
-// overlaps an adjacent dry ledge. Know exactly which ledge supports that body.
-function cavePoolBank(bot) {
+// The centre cell can hang over air or water while the grounded hitbox
+// overlaps an adjacent dry ledge. Step onto that support before planning up.
+function caveFootingBank(bot) {
   const entity = bot.entity;
   const at = entity.position;
   const feet = at.floored();
   const read = (p) => bot.blockAt(p);
+  const floor = read(feet.offset(0, -1, 0));
   if (!entity.onGround || entity.isInWater || entity.isInLava || Math.abs(at.y - feet.y) > .02
-    || read(feet.offset(0, -1, 0))?.name !== 'water' || !open(read(feet)) || !open(read(feet.offset(0, 1, 0)))) return null;
+    || !(open(floor) || floor?.name === 'water') || !open(read(feet)) || !open(read(feet.offset(0, 1, 0)))) return null;
   const radius = (entity.width || .6) / 2;
   for (const [dx, dz] of SIDES) {
     const bank = feet.offset(dx, 0, dz);
@@ -322,7 +323,7 @@ async function bridgeCaveGap(bot, ctx, actions, from, home, avoid = () => false)
 async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited, risk, bridgeGap = false, surfaceFloor } = {}) {
   if (ctx.signal?.aborted) throw abortError(ctx.signal);
   const from = bot.entity.position.floored();
-  const bank = Number.isFinite(surfaceFloor) && cavePoolBank(bot);
+  const bank = caveFootingBank(bot);
   if (bank) {
     if (avoid?.(bank)) return fail('cave_retreat_bank_unsafe');
     const result = await stepDry(bot, ctx, actions, bank, avoid, 0);
@@ -439,4 +440,4 @@ async function returnFromCave(bot, ctx, actions, home, avoid) {
     ? { ok: true, atHome: true } : fail(result.reason || 'cave_retreat_home_unconfirmed');
 }
 
-module.exports = { advanceCaveRetreat, cavePoolBank, evadeInCave, farmlandFooting, planRetreat, returnFromCave, skyOpen, standable, walkDry };
+module.exports = { advanceCaveRetreat, caveFootingBank, evadeInCave, farmlandFooting, planRetreat, returnFromCave, skyOpen, standable, walkDry };
