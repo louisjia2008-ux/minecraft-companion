@@ -27,6 +27,7 @@ const SCOUT_STEPS = 12;
 const SCOUT_HUNT_MARGIN_MS = 30000;
 const DIRECT_HOME_RADIUS = 28;
 const RETREAT_CLEARANCE = 8;
+const ZOMBIE_RETREAT_CLEARANCE = 10;
 const RETREAT_SPIDERS = new Set(['spider', 'cave_spider']);
 const DUSK = 12542;
 const FIELD_MARGIN = 5;
@@ -124,9 +125,14 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const flags = entity.metadata[flagsIndex] ?? (Object.keys(entity.attributes || {}).length ? 0 : null);
     return Number.isInteger(flags) && (flags & 4) === 0;
   };
-  const canWithdraw = (state) => state.health >= 12 && retreatThreats(state).every((h) => h.distance > RETREAT_CLEARANCE && calmSpider(h));
+  const retreatClearance = (h) => h.name === 'zombie' && h.position && bot.entities?.[h.id]?.name === h.name
+    && bot.entities[h.id].isValid !== false ? ZOMBIE_RETREAT_CLEARANCE : calmSpider(h) ? RETREAT_CLEARANCE : Infinity;
+  const canWithdraw = (state) => state.health >= 12 && retreatThreats(state).every((h) =>
+    h.distance > retreatClearance(h) && (h.name !== 'zombie' || state.isDay === true));
   const awayFromThreats = (hostiles, from, to) => hostiles.every((h) => {
-    if (!calmSpider(h) || to.distanceTo(h.position) <= RETREAT_CLEARANCE) return false;
+    const clearance = retreatClearance(h);
+    if (!h.position || to.distanceTo(h.position) <= clearance) return false;
+    if (h.name === 'zombie' && to.distanceTo(h.position) < from.distanceTo(h.position) - .02) return false;
     const start = from.offset(0, -from.y, 0);
     const end = to.offset(0, -to.y, 0);
     const threat = h.position.offset(0, -h.position.y, 0);
@@ -535,6 +541,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     if (!to || from.distanceTo(to) > SCOUT_STEPS + 2) return wait(ctx, 'expedition_food_unsafe');
     if (escape) route.escapeCells = escape.cells;
     const centre = to.offset(.5, 0, .5);
+    const directZombieWithdrawal = escape && route.zombieWithdrawal;
     let snapshot = null, sampledAt = 0;
     const observe = (refresh = false) => {
       if (refresh || Date.now() >= sampledAt) {
@@ -549,6 +556,9 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     if (!awayFromThreats(route.withdraw(), began, centre)) return wait(ctx, 'expedition_food_unsafe');
     const abort = new AbortController();
     const signal = ctx.signal ? AbortSignal.any([ctx.signal, abort.signal]) : abort.signal;
+    const pathfinder = directZombieWithdrawal && bot.pathfinder;
+    const shortcut = pathfinder && pathfinder.enablePathShortcut;
+    if (pathfinder) pathfinder.enablePathShortcut = false;
     let previous = began;
     const monitor = setInterval(() => {
       const live = observe(true);
@@ -560,7 +570,8 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     try {
       const label = escape ? 'expedition_food_return_withdraw' : 'expedition_food_scout_withdraw';
       if (await scoutWalk({ ...ctx, signal }, to, label, () => mayMove(observe(true)))) {
-        if (scout) scout.trail.length = scout.trail.indexOf(to);
+        if (scout && !escape) scout.trail.length = scout.trail.indexOf(to);
+        if (scout && escape && scout.trail.at(-1)?.distanceTo(from) < 2) scout.trail.pop();
       } else {
         return wait(ctx, 'expedition_food_unsafe');
       }
@@ -571,6 +582,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       return wait(ctx, 'expedition_food_unsafe');
     } finally {
       clearInterval(monitor);
+      if (pathfinder) pathfinder.enablePathShortcut = shortcut;
     }
   }
 
@@ -707,8 +719,13 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const route = { pickup: null, scouting: Boolean(scout || hostile) };
     return dryWalk(async () => {
       if (hostile) {
-        const escape = fromOutside && savedStartEscape(feet, retreatThreats(state));
-        if (!scout && !escape) return wait(ctx, 'expedition_food_unsafe');
+        const threats = retreatThreats(state);
+        // A distant zombie is still hostile. Allow only the short connected
+        // withdrawal, never a scout hunt or an approach toward the mob.
+        route.zombieWithdrawal = threats.some((h) => h.name === 'zombie');
+        const verifiedEscape = fromOutside || route.zombieWithdrawal;
+        const escape = verifiedEscape && savedStartEscape(feet, threats);
+        if (verifiedEscape && !escape) return wait(ctx, 'expedition_food_unsafe');
         return withdrawFromMelee(ctx, feet, route, escape);
       }
       if (fieldExit) return leaveField(ctx, route);

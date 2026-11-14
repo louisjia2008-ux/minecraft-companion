@@ -1640,6 +1640,57 @@ test('an armed expedition stock restart can leave a calm spider by one bounded d
   assert.equal(movements.allowSprinting, true);
 });
 
+test('expedition stock steps directly away from a distant native zombie and refuses close or mixed threats', async (t) => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const start = new Vec3(-199.5, 92, -190.497020021202);
+  const zombie = { id: 1, name: 'zombie', position: new Vec3(-208.50937430715018, 97, -195.2618923313049) };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const route = [[-200, 92], [-199, 91], [-198, 90], [-197, 90], [-196, 90], [-195, 89], [-194, 89]]
+    .map(([x, y]) => new Vec3(x, y, -191));
+  const movements = { allowSprinting: true, getNeighbors: (p) => [route.find((q) => q.x === p.x + 1), p.offset(-1, 0, 0)]
+    .filter(Boolean) };
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' }, entities: { 1: zombie },
+    entity: { position: start, onGround: true }, pathfinder: { movements, enablePathShortcut: true },
+    blockAt: (p) => route.some((q) => p.equals(q.offset(0, -1, 0))) ? grass : air });
+  const events = [];
+  const goal = createStockFoodGoal({ bot, target: 24, expeditionHome: { ...home, centre: { x: -102, y: 64, z: -179 } },
+    actions: { underground: () => false, goTo: async (_b, _ctx, target, { arrived }) => {
+      const last = route.at(-1);
+      assert.deepEqual([target.x, target.y, target.z], last.toArray());
+      assert.equal(movements.allowSprinting, false);
+      assert.equal(bot.pathfinder.enablePathShortcut, false);
+      for (let index = 0; index < route.length - 1; index += 1) {
+        assert.deepEqual(movements.getNeighbors(route[index]), [route[index + 1]]);
+      }
+      bot.entity.position = last.offset(.5, 0, .5);
+      assert.ok(arrived());
+      return { ok: true };
+    } } });
+  const near = { id: 1, name: 'zombie', position: start.offset(-6, 0, 0) };
+  const skeleton = { id: 2, name: 'skeleton', position: start.offset(-12, 0, 0) };
+  let hostiles = [];
+  let isDay = true;
+  const ctx = { perceive: () => ({ health: 20, food: 19, isDay, timeOfDay: 3000, inventory: { bread: 3, iron_sword: 1 },
+    hostiles: hostiles.map((h) => ({ ...h, distance: bot.entity.position.distanceTo(h.position) })).filter(({ distance }) => distance <= 16) }),
+  record: (type, data) => events.push({ type, ...data }) };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const threats of [[near], [zombie, skeleton], [zombie]]) {
+    hostiles = threats;
+    isDay = threats[0] !== zombie || threats.length > 1;
+    const denied = goal.run(ctx);
+    t.mock.timers.tick(1001);
+    assert.equal((await denied).reason, 'expedition_food_unsafe');
+  }
+  assert.deepEqual(bot.entity.position, start);
+  isDay = true;
+  assert.ok((await goal.run(ctx)).ok);
+  assert.equal(events.at(-1).type, 'expedition_food_return_withdraw');
+  assert.ok(bot.entity.position.distanceTo(zombie.position) > 17);
+  assert.equal(movements.allowSprinting, true);
+  assert.equal(bot.pathfinder.enablePathShortcut, true);
+});
+
 test('expedition stock counts angry and unsynced Endermen as threats, while confirmed calm ones allow supplies', async () => {
   const { createStockFoodGoal } = require('../core/goals/stockFood');
   const at = new Vec3(2.5, 64, 2.5);
