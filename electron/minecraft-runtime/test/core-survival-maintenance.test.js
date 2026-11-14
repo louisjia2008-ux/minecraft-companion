@@ -437,6 +437,57 @@ test('hurt but not badly, with nothing to eat and too full to heal, the bot gets
   assert.equal(s.behavior('provision').want({ ...hurt, food: 18 }), 0);
 });
 
+test('an unarmed home resupply evades a visible witch before critical health and never pursues it', async () => {
+  let resupplying = true;
+  let screened = false;
+  const calls = [];
+  const s = setup({
+    resupplying: () => resupplying,
+    actions: {
+      underground: () => false,
+      async goTo(bot, _ctx, target) {
+        assert.deepEqual([target.x, target.y, target.z], [-1, 64, 0]);
+        calls.push('guarded');
+        bot.entity.position = new Vec3(target.x + .5, target.y, target.z + .5);
+        return { ok: true };
+      },
+      async fleeFrom() { assert.fail('unarmed resupply must use a safe dry edge'); },
+      async attack(_bot, _ctx, id, options) { calls.push([id, options]); return { ok: true }; },
+    },
+  });
+  const witch = { id: 7, name: 'witch', position: new Vec3(8.5, 64, .5), width: .6, height: 1.95, isValid: true };
+  s.bot.entity.position = new Vec3(.5, 64, .5);
+  s.bot.entity.onGround = true;
+  s.bot.entities = { [witch.id]: witch };
+  s.bot.world = { raycast: () => screened ? { boundingBox: 'block' } : null };
+  s.bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  s.bot.blockAt = (p) => {
+    const solid = p.y < 64 || p.y < 66 && (Math.floor(p.z) !== 0 || p.x < -1 || screened && Math.floor(p.x) === 2);
+    const name = solid ? 'stone' : 'air';
+    return { name, boundingBox: solid ? 'block' : 'empty', shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const state = { ...s.state, health: 20, food: 20 };
+  const perceive = () => ({ ...state, position: s.bot.entity.position,
+    hostiles: [{ ...witch, distance: witch.position.distanceTo(s.bot.entity.position) }] });
+  const escape = s.behavior('escape');
+  const defend = s.behavior('defend');
+  assert.equal(escape.want(perceive()), 1);
+  assert.deepEqual((await escape.run({ perceive, record() {} })).to, new Vec3(-1, 64, 0));
+  screened = true;
+  assert.equal(escape.want(perceive()), 0);
+  screened = false;
+  witch.position.x = 4;
+  assert.equal(defend.want(perceive()), 0, 'there is no bare-handed pursuit during recovery');
+  resupplying = false;
+  assert.equal(defend.want(perceive()), 1, 'ordinary surface defense is preserved');
+  assert.equal(escape.want(perceive()), 0);
+  resupplying = true;
+  witch.position.x = 1.5;
+  assert.equal(defend.want(perceive()), 1);
+  await defend.run({ perceive, record() {} });
+  assert.deepEqual(calls, ['guarded', [witch.id, { pursue: false }]]);
+});
+
 test('hunting pearls, an angry enderman is fought rather than hidden from, hurt or not', () => {
   const s = endermanFixture(true);
   s.setGoal('hunt_pearls');

@@ -232,7 +232,7 @@ function incomingBlazeShot(bot, range = 10) {
 const { RISKY_FOODS } = defaultActions;
 const RANGED = new Set(['skeleton', 'stray', 'bogged']);
 const RESUPPLY_RANGED_RANGE = 16;
-const shootsOnSurface = (h) => RANGED.has(h.name) || h.name === 'pillager';
+const shootsOnSurface = (h) => RANGED.has(h.name) || h.name === 'pillager' || h.name === 'witch';
 // Pillagers come in groups from outposts that keep spawning them: keep away.
 const AVOIDED = new Set(['pillager', 'vindicator', 'evoker', 'ravager']);
 // Piglin brutes ignore gold armour and hit for half a heart bar with their axe: keep clear of them too.
@@ -360,6 +360,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const dryOverworldCritical = (state) => dimensionOf(bot) === 'overworld' && !state.inWater
     && !bot.entity?.isInLava && state.health <= t.escapeHealth;
   const criticalHomeResupply = (state) => dryOverworldCritical(state) && resupplying();
+  const defendInPlace = (state, threat) => criticalHomeResupply(state)
+    || threat.name === 'witch' && resupplying() && dimensionOf(bot) === 'overworld' && !armed(state);
   const canStrikeFromHere = (h) => {
     const entity = bot.entities?.[h.id];
     if (!entity?.isValid) return false;
@@ -371,11 +373,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const huntEndermanInReach = (state, h) => h.name === 'enderman' && activeGoal() === 'hunt_pearls'
     && dimensionOf(bot) === 'overworld' && !state.inWater && armed(state) && canStrikeFromHere(h);
   const escapeThreat = (state) => threats(state).find((h) => !huntEndermanInReach(state, h)) || null;
-  const target = (state, stationary = criticalHomeResupply(state)) => {
+  const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
-    if (state.sheltered) return threats(state).find((h) => h.distance <= 2 && (!stationary || canStrikeFromHere(h))) || null;
+    if (state.sheltered) return threats(state).find((h) => h.distance <= 2 && (!defendInPlace(state, h) || canStrikeFromHere(h))) || null;
     return threats(state).find((h) => h.name !== 'creeper' && (!h.selfAggressor || armed(state))
-      && (!stationary || canStrikeFromHere(h))
+      && (!defendInPlace(state, h) || canStrikeFromHere(h))
       && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
       && (huntEndermanInReach(state, h) || h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || ((RANGED.has(h.name) || (h.name === 'pillager' && !avoided(state, h))) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
@@ -407,6 +409,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     const shooter = nearby.find((h) => shootsOnSurface(h) && h.distance <= RESUPPLY_RANGED_RANGE && visibleThreat(h, state.position));
     return shooter || (closest?.distance <= t.escapeRange && visibleThreat(closest, state.position) ? closest : null);
   };
+  const unarmedResupplyWitch = (state) => dimensionOf(bot) === 'overworld' && retreatCanMove(state)
+    && resupplying() && !armed(state) && canPlanRetreat()
+    ? threats(state).find((h) => h.name === 'witch' && h.distance <= RESUPPLY_RANGED_RANGE && visibleThreat(h, state.position))
+    : null;
   const caveRetreat = {
     name: 'cave_retreat',
     // Actual fire, drowning and immediate mob escape still have first use of
@@ -498,6 +504,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (state.sheltered) return 0;
       const caveEvasion = retreat || caveNeedsExit(state);
       if (!caveEvasion && surfaceResupplyEvasion(state)) return resupplyThreat(state) ? 1 : 0;
+      if (!caveEvasion && unarmedResupplyWitch(state)) return 1;
       const threat = caveEvasion ? nearest(state) : escapeThreat(state);
       if (!threat) return 0;
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
@@ -518,8 +525,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     async run(ctx) {
       const state = ctx.perceive();
       const caveEvasion = retreat || caveNeedsExit(state);
-      const resupplyEvasion = !caveEvasion && surfaceResupplyEvasion(state);
-      const threat = resupplyEvasion ? resupplyThreat(state) : caveEvasion ? nearest(state) : escapeThreat(state);
+      const witch = !caveEvasion && unarmedResupplyWitch(state);
+      const resupplyEvasion = !caveEvasion && (surfaceResupplyEvasion(state) || witch);
+      const threat = resupplyEvasion ? resupplyThreat(state) || witch : caveEvasion ? nearest(state) : escapeThreat(state);
       if (criticalHomeResupply(state) && (!threat || state.sheltered)) return { ok: true };
       if (threat && (caveEvasion || resupplyEvasion)) {
         // Keep a critically hurt bot on its ledge while resupply approaches
@@ -555,9 +563,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     want: (state) => (target(state) ? 1 : 0),
     async run(ctx) {
       const state = ctx.perceive();
-      const homeDefense = criticalHomeResupply(state);
-      const threat = target(state, homeDefense);
+      const threat = target(state);
       if (!threat) return { ok: true };
+      const homeDefense = defendInPlace(state, threat);
       const stationary = homeDefense || state.health <= t.escapeHealth && huntEndermanInReach(state, threat);
       ctx.record('defend_target', { mob: threat.name, distance: Math.round(threat.distance), ...(stationary ? { stationary } : {}) });
       let last = threat.position.clone();
