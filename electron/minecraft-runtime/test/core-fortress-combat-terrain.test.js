@@ -10,6 +10,8 @@ const { sleep } = require('../core/confirm');
 const rock = { name: 'nether_bricks', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
 const air = { name: 'air', boundingBox: 'empty', shapes: [] };
 const lava = { name: 'lava', boundingBox: 'empty', shapes: [] };
+const magma = { ...rock, name: 'magma_block' };
+const fire = { ...air, name: 'fire' };
 const portal = { name: 'nether_portal', boundingBox: 'empty', shapes: [] };
 const point = (x, y, z) => new Vec3(x, y, z);
 const move = (x, y, z, toBreak = [], toPlace = []) => Object.assign(point(x, y, z), { toBreak, toPlace });
@@ -131,4 +133,69 @@ test('combat rejects both planning and native displacement beyond its local foot
     assert.equal(signal.reason, 'fortress_combat_move_limit');
   });
   assert.deepEqual(result, { ok: false, reason: 'fortress_combat_move_limit' });
+});
+
+test('unused magma margin off an otherwise supported body permits stationary combat', async () => {
+  const { bot, set } = world();
+  bot.entity.position = point(-300.3, 75, -202.009876);
+  for (const x of [-302, -301]) for (const z of [-203, -202]) set(x, 74, z, rock);
+  set(-302, 74, -203, air);
+  set(-302, 73, -203, magma);
+  set(-300, 76, -202, fire);
+  let used = false;
+  assert.deepEqual(await withFortressCombatTerrain(bot, {}, async () => {
+    used = true;
+    return { ok: true };
+  }), { ok: true });
+  assert.equal(used, true);
+});
+
+test('a grounded magma tile permits only one physically dry adjacent exit and no attack', async () => {
+  const { bot, movements, set } = world();
+  bot.entity.position = point(-301.4595467, 74, -202.5086616);
+  const from = bot.entity.position.floored();
+  const target = move(-301, 75, -203);
+  const hot = move(-302, 75, -204);
+  const bulky = move(-302, 75, -202, [], [{}]);
+  set(-302, 73, -203, magma);
+  for (const p of [target, hot, bulky]) set(p.x, p.y - 1, p.z, rock);
+  set(hot.x, hot.y, hot.z, fire);
+  set(-302, 76, -202, fire);
+  const native = movements.getNeighbors = () => [target, hot, bulky];
+  bot.pathfinder.goto = async (goal) => {
+    assert.deepEqual(movements.getNeighbors(from), [target]);
+    assert.deepEqual(movements.getNeighbors(target), []);
+    assert.ok(goal.isEnd(target));
+    bot.entity.position = point(-301.25, 74.88, -202.5086616);
+    bot.entity.onGround = false;
+    bot.emit('physicsTick');
+    bot.entity.position = target.offset(.5, 0, .5);
+    bot.entity.onGround = true;
+    bot.emit('physicsTick');
+  };
+  const events = [];
+  const result = await withFortressCombatTerrain(bot, { record: (...args) => events.push(args) },
+    () => assert.fail('no attack from magma'));
+  assert.deepEqual(result, { ok: true, repositioned: true });
+  assert.equal(events[0][0], 'fortress_combat_reposition');
+  assert.equal(events[0][1].support, 'magma_block');
+  assert.equal(movements.getNeighbors, native);
+  assert.equal(bot.listenerCount('physicsTick'), 0);
+});
+
+test('withdrawal aborts immediately if the chosen dry support turns unsafe', async () => {
+  const { bot, movements, set } = world();
+  bot.entity.position = point(-301.4595467, 74, -202.5086616);
+  const target = move(-301, 75, -203);
+  set(-302, 73, -203, magma);
+  set(target.x, target.y - 1, target.z, rock);
+  for (const [x, z] of [[-302, -202], [-302, -204], [-303, -203]]) set(x, 74, z, lava);
+  movements.getNeighbors = () => [target];
+  bot.pathfinder.goto = async () => {
+    set(target.x, target.y, target.z, fire);
+    bot.emit('physicsTick');
+  };
+  const result = await withFortressCombatTerrain(bot, {}, () => assert.fail('no attack when escape changes'));
+  assert.deepEqual(result, { ok: false, reason: 'fortress_combat_unsafe_footing' });
+  assert.equal(bot.pathfinder.goal, null);
 });

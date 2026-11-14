@@ -510,10 +510,10 @@ const combatOpen = (block) => lookoutOpen(block) && !COMBAT_PORTAL.test(block.na
 
 function combatFooting(bot, p) {
   return lookoutSupport(bot.blockAt(p.offset(0, -1, 0)))
-    && combatOpen(bot.blockAt(p)) && combatOpen(bot.blockAt(p.offset(0, 1, 0))) && lavaRisk(bot, p) === 0;
+    && combatOpen(bot.blockAt(p)) && combatOpen(bot.blockAt(p.offset(0, 1, 0)));
 }
 
-function combatBodyLane(bot, position, floorY, dx, dz) {
+function combatBodyLane(bot, position, floorY, dx, dz, leaving = () => false) {
   // Native path nodes are centred, but following an entity can cut a corner
   // before that centre. Check the real 0.6-wide body and its braking distance.
   for (const fraction of [0, 0.5, 1]) {
@@ -526,12 +526,79 @@ function combatBodyLane(bot, position, floorY, dx, dz) {
         if (combatOpen(bot.blockAt(cell)) && combatFooting(bot, cell.offset(0, -1, 0))) continue;
         // A full step up or a wall physically stops the horizontal body. It
         // still needs a verified dry supporting face, rather than a fluid.
-        if (lookoutSupport(bot.blockAt(cell))) continue;
+        if (lookoutSupport(bot.blockAt(cell)) || leaving(cell)) continue;
         return false;
       }
     }
   }
   return true;
+}
+
+// A grounded player may already be on magma or brush the rim of an adjacent
+// blocked column. Withdraw from precisely that contact before letting the
+// combat action decide where to move. Do not inherit an unrestricted goal.
+async function leaveCombatFooting(bot, ctx, origin, from) {
+  if (!bot.entity.onGround || bot.entity.isInLava || bot.entity.isInWater) return false;
+  const read = (p) => bot.blockAt(p);
+  if (!combatOpen(read(from)) || !combatOpen(read(from.offset(0, 1, 0)))) return false;
+  const support = read(from.offset(0, -1, 0));
+  if (!combatFooting(bot, from) && support?.name !== 'magma_block') return false;
+  const centre = (p) => p.offset(.5, 0, .5);
+  const touches = (cell) => Math.abs(cell.x + .5 - origin.x) < .8 - 1e-6
+    && Math.abs(cell.z + .5 - origin.z) < .8 - 1e-6;
+  const leaving = (cell) => touches(cell);
+  const safeEdge = (to) => combatFooting(bot, to)
+    && (from.equals(to) || lookoutMoveSafe(bot, from, to, read));
+  const clearLane = (at, to) => combatBodyLane(bot, at, from.y, centre(to).x - at.x, centre(to).z - at.z, leaving);
+  const retry = combatFooting(bot, from) ? [from] : SCOUT_SIDES.flatMap(([x, z]) =>
+    [from.offset(x, 0, z), from.offset(x, 1, z)]);
+  const to = retry.filter((p) => safeEdge(p) && clearLane(origin, p))
+    .sort((a, b) => lavaRisk(bot, a) - lavaRisk(bot, b))[0];
+  if (!to) return false;
+  const target = centre(to);
+  const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(to)
+    && combatFooting(bot, to) && combatBodyLane(bot, bot.entity.position, to.y, 0, 0);
+  const controller = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
+  const check = () => {
+    const at = bot.entity.position;
+    if (!inNether(bot) || bot.entity.isInLava || bot.entity.isInWater || !safeEdge(to)
+      || at.y < from.y - .05 || at.y > Math.max(from.y, to.y) + 1.3
+      || Math.abs(at.x - origin.x) + Math.abs(at.z - origin.z) > 1.65 || !clearLane(at, to)) {
+      controller.abort('fortress_combat_exit_changed');
+      actions.haltBody(bot);
+    }
+  };
+  const movements = bot.pathfinder.movements;
+  const native = movements.getNeighbors;
+  bot.on?.('physicsTick', check);
+  bot.on?.('forcedMove', check);
+  try {
+    if (from.equals(to)) await actions.recentre(bot, { ...ctx, signal });
+    else {
+      movements.getNeighbors = function (node, ...args) {
+        return from.equals(node) ? native.call(this, node, ...args)
+          .filter((move) => to.equals(move) && safeEdge(to) && !move.toBreak?.length && !move.toPlace?.length) : [];
+      };
+      try {
+        await runCancellable(() => bot.pathfinder.goto(new goals.GoalBlock(to.x, to.y, to.z)),
+          { signal, timeoutMs: 2300, cancel: () => actions.haltBody(bot) });
+      } catch (error) {
+        if (isAbort(error)) throw error;
+      }
+    }
+    if (!await waitUntil(arrived, { timeoutMs: 550, signal })) return false;
+    ctx.record?.('fortress_combat_reposition', { from: origin, to: target, support: support?.name });
+    return true;
+  } catch (error) {
+    if (ctx.signal?.aborted || !controller.signal.aborted || !isAbort(error)) throw error;
+    return false;
+  } finally {
+    bot.removeListener?.('physicsTick', check);
+    bot.removeListener?.('forcedMove', check);
+    movements.getNeighbors = native;
+    actions.haltBody(bot);
+  }
 }
 
 /** Keep combat, pursuit and drop recovery on nearby, loaded Nether footing. */
@@ -555,7 +622,7 @@ async function withFortressCombatTerrain(bot, ctx, run) {
     actions.haltBody(bot);
     ctx.record?.('fortress_combat_terrain_blocked', { reason, origin, position: bot.entity?.position, floorY });
   };
-  if (!inNether(bot) || !bot.entity.onGround || !combatFooting(bot, atFoot(origin)) || !combatBodyLane(bot, origin, floorY, 0, 0)) {
+  if (!inNether(bot) || !bot.entity.onGround || bot.entity.isInLava || bot.entity.isInWater) {
     stop('fortress_combat_unsafe_footing');
     return fail(controller.signal.reason);
   }
@@ -586,12 +653,19 @@ async function withFortressCombatTerrain(bot, ctx, run) {
     .map(([owner, key, value]) => [owner, key, Object.hasOwn(owner, key), value]);
   for (const [owner, key] of saved) owner[key] = false;
   bot.setControlState?.('sprint', false);
-  bot.on?.('physicsTick', check);
-  bot.on?.('forcedMove', check);
   try {
+    const from = atFoot(origin);
+    if (!combatFooting(bot, from) || !combatBodyLane(bot, origin, floorY, 0, 0)) {
+      if (await leaveCombatFooting(bot, ctx, origin, from)) return { ok: true, repositioned: true };
+      stop('fortress_combat_unsafe_footing');
+      return fail(controller.signal.reason);
+    }
+    bot.on?.('physicsTick', check);
+    bot.on?.('forcedMove', check);
     check();
     if (!controller.signal.aborted) {
       const accept = (move) => !move.toBreak?.length && combatFooting(bot, new Vec3(move.x, move.y, move.z))
+        && lavaRisk(bot, new Vec3(move.x, move.y, move.z)) === 0
         && new Vec3(move.x + .5, move.y, move.z + .5).distanceTo(origin) <= FORTRESS_COMBAT_RADIUS;
       const result = await withLookoutTerrain(bot, () => run({ ...ctx, signal }), accept);
       if (ctx.signal?.aborted) throw abortError(ctx.signal);
