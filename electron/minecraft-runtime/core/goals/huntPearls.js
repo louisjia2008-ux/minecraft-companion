@@ -57,6 +57,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   const endermen = () => Object.values(bot.entities || {}).filter((e) => e?.name === 'enderman' && e.position);
   const read = (p) => bot.blockAt(p, false);
   const outdoors = (p) => standable(read, p) && skyOpen(bot, p);
+  const targetOutdoors = (p) => standable(read, p) && skyOpen(bot, p, { allowLeafCanopy: true });
   const restingAtHome = (p, centre) => centre && p.distanceTo(centre) <= 6;
   const readyToHunt = (state) => state.health >= ENGAGE_HEALTH && state.food >= ENGAGE_FOOD
     && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe'));
@@ -295,7 +296,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
       // it teleported off: fourteen nights of chasing brought one pearl.
       // Angry, it comes to the bot, where defend fights it and keeps the pearl.
       const targets = endermen().filter((e) => e.position.distanceTo(state.position) <= Math.min(radius, STARE_FAR)
-        && outdoors(e.position.floored()) && visible(e));
+        && visible(e) && targetOutdoors(e.position.floored()));
       const stared = await stare(ctx, targets);
       if (stared) return stared;
       const close = targets.filter((e) => e.position.distanceTo(state.position) <= STARE_NEAR);

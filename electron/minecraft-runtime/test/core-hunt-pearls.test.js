@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
 const { createHuntPearlsGoal } = require('../core/goals/huntPearls');
+const { skyOpen } = require('../core/caveRetreat');
 
 const AIR = { name: 'air', boundingBox: 'empty', shapes: [], skyLight: 15 };
 const STONE = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
@@ -115,6 +116,41 @@ test('once the stared enderman turns, the bot looks at the ground so it does not
   const result = records.find((r) => r.t === 'enderman_stare_result');
   assert.equal(result.came, true);
   assert.equal(result.angry, true);
+});
+
+test('a visible Enderman below dry leaves can be stared at without opening that cell to scouts', async () => {
+  const position = new Vec3(0, 64, 0);
+  const target = new Vec3(12, 64, 0);
+  const man = { id: 7, name: 'enderman', position: target };
+  const records = [];
+  const bot = { ...terrain, entity: { position }, entities: { 7: man },
+    blockAt(p) {
+      if (p.equals(target.offset(0, 1, 0))) return { ...AIR, skyLight: 10 };
+      if (p.equals(target.offset(0, 3, 0))) return { ...STONE, name: 'oak_leaves' };
+      return terrain.blockAt(p);
+    },
+    lookAt: async () => { man.position = new Vec3(4, 64, 0); },
+  };
+  assert.equal(skyOpen(bot, target), false);
+  const goal = createHuntPearlsGoal({ bot, actions: { haltBody() {} } });
+  await goal.run({ signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => nightState(position) });
+  assert.ok(records.some((r) => r.type === 'enderman_stare_result' && r.came));
+});
+
+test('dim sky alone, a roof over leaves and wet foliage do not qualify an Enderman', () => {
+  const feet = new Vec3(0, 64, 0);
+  const leaves = { ...STONE, name: 'oak_leaves' };
+  for (const [canopy, higher] of [[AIR, AIR], [leaves, STONE],
+    [{ ...leaves, getProperties: () => ({ waterlogged: true }) }, AIR], [leaves, null]]) {
+    const bot = { ...terrain, blockAt(p) {
+      if (p.y === 65) return { ...AIR, skyLight: 10 };
+      if (p.y === 67) return canopy;
+      if (p.y === 68) return higher;
+      return terrain.blockAt(p);
+    } };
+    assert.equal(skyOpen(bot, feet, { allowLeafCanopy: true }), false);
+  }
 });
 
 test('an injured or unarmed hunter does not aggro a visible Enderman', async () => {

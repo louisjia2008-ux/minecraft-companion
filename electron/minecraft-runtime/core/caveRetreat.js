@@ -34,18 +34,23 @@ function farmlandFooting(read, entity) {
   return at.clone();
 }
 
-function skyOpen(bot, feet) {
+function skyOpen(bot, feet, { allowLeafCanopy = false } = {}) {
   const head = bot.blockAt(feet.offset(0, 1, 0));
   // Sky light comes from the server's dimension light data and is independent
   // of the time of day. Check the vertical column as well, since the light can
   // enter horizontally or briefly lag a dig.
-  if (!open(head) || head.skyLight !== 15) return false;
+  if (!open(head)) return false;
+  const fullSky = head.skyLight === 15;
+  if (!fullSky && !(allowLeafCanopy && Number.isInteger(head.skyLight) && head.skyLight > 0 && head.skyLight < 15)) return false;
+  let foundLeaves = false;
   const top = (bot.game?.minY ?? -64) + (bot.game?.height ?? 384);
   for (let y = feet.y + 2; y < top; y += 1) {
     const b = bot.blockAt(feet.offset(0, y - feet.y, 0));
-    if (!open(b) && !(b?.name.endsWith('_leaves') && !hazard(b))) return false;
+    if (open(b)) continue;
+    if (!b?.name.endsWith('_leaves') || hazard(b)) return false;
+    foundLeaves = true;
   }
-  return true;
+  return fullSky || foundLeaves;
 }
 
 function digSafety(bot, read, point, { requireReach = false } = {}) {
