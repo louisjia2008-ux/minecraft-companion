@@ -60,6 +60,27 @@ test('home recovery leaves normal gather idle until it physically returns and re
   assert.deepEqual(operations, ['walk', 'resupply_home_arrived', 'read-chest', 'resupply_chest_read', 'device_materials', 'gather']);
 });
 
+test('a healthy recovery with a missing food reserve can withdraw existing water for dry known wheat', async () => {
+  const farm = new Vec3(8, 63, 2);
+  const bot = Object.assign(fakeBot([{ name: 'stone_sword', count: 1 }, { name: 'bread', count: 1 }]),
+    { health: 20, food: 18, game: { dimension: 'overworld' }, entity: { position: new Vec3(2.5, 64, 2.5), onGround: true },
+      entities: {}, time: { timeOfDay: 5000 } });
+  bot.blockAt = (p) => p.equals(farm) ? { name: 'farmland', getProperties: () => ({ moisture: 0 }) }
+    : p.equals(farm.offset(0, 1, 0)) ? { name: 'wheat', getProperties: () => ({ age: 4 }) } : { name: 'air' };
+  let read = false;
+  const goal = createOutfitGoal({ bot, home, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    farmPlots: [farm], skills: {
+      takeItems: async (_b, _c, { itemMatch }) => {
+        read = true;
+        assert.equal(itemMatch('water_bucket'), true);
+        assert.equal(itemMatch('lava_bucket'), false);
+        return { ok: true, taken: 1 };
+      },
+    } });
+  await goal.run({ perceive: () => perceive(bot), record() {} });
+  assert.equal(read, true);
+});
+
 test('critically hurt home recovery closes the real door before nighttime provisioning', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const door = house.furniture.door.position;

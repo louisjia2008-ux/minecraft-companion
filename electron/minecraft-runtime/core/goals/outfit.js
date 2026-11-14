@@ -386,12 +386,19 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmP
   const farm = new Vec3(home.centre.x - 15, home.centre.y, home.centre.z);
   const explore = { around: { x: home.centre.x, z: home.centre.z, radius: 48 } };
   const harvestedPlots = new Map();
-  const irrigation = createResupplyIrrigation({ bot, actions, skills, centre: home.centre });
+  const irrigation = createResupplyIrrigation({ bot, actions, skills, centre: home.centre, anchor: home.anchor });
   const find = (name, point, maxDistance, count, useExtraInfo) => {
     const id = bot.registry?.blocksByName?.[name]?.id;
     return Number.isInteger(id) && typeof bot.findBlocks === 'function'
       ? bot.findBlocks({ matching: id, point, maxDistance, count, ...(useExtraInfo ? { useExtraInfo } : {}) }) : [];
   };
+  const knownCrops = farmPlots.map(({ x, y, z }) => new Vec3(x, y + 1, z));
+  const localCrops = () => [...new Map([...find('wheat', safety.centre, 24, 64), ...knownCrops].map((p) => [posKey(p), p])).values()]
+    .filter((p) => safety.local(p, LOCAL_FOOD_RADIUS - 2));
+  const canWaterFarm = () => localCrops().some((crop) => {
+    const plot = crop.offset(0, -1, 0);
+    return farming.plotState(bot, plot) === 'growing' && Number(bot.blockAt(plot)?.getProperties?.()?.moisture) === 0;
+  });
   const plan = (state, critical, keepLocalFarm = false) => {
     const inventory = state.inventory;
     if (home.stations?.crafting_table && countKey('wheat', inventory, kb) >= 3) return { kind: 'bread' };
@@ -407,10 +414,9 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmP
     }
     // The native scan visits chunk sections in Manhattan order. A nearby plot
     // across both horizontal borders and one section down can be missed.
-    const discovered = find('wheat', local ? safety.centre : farm, 24, 64);
-    const known = farmPlots.map(({ x, y, z }) => new Vec3(x, y + 1, z));
-    const crops = [...new Map([...discovered, ...known].map((p) => [posKey(p), p])).values()]
-      .filter((p) => local ? safety.local(p, LOCAL_FOOD_RADIUS - 2) : permitted(p))
+    const positions = local ? localCrops()
+      : [...new Map([...find('wheat', farm, 24, 64), ...knownCrops].map((p) => [posKey(p), p])).values()].filter(permitted);
+    const crops = positions
       .map((p) => ({ position: p, plot: p.offset(0, -1, 0), state: farming.plotState(bot, p.offset(0, -1, 0)) }));
     const crop = crops.find(({ position, state }) => state === 'ripe'
       && !blacklist.has(posKey(position)) && permitted(position.offset(.5, 0, .5)));
@@ -455,7 +461,7 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmP
     if (target.kind === 'animal' || hunted.ok || hunted.reason !== 'no_mob_in_range') return hunted;
     return skills.explore(bot, ctx, explore);
   };
-  return { plan, run };
+  return { plan, run, canWaterFarm };
 }
 
 /** `items`: [{ key, count }] in the knowledge's keys; `home`: { chest, stations, centre } of the finished house. */
@@ -913,6 +919,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       if (!checkedChest) {
         const wanted = items.filter(({ key, count }) => countKey(key, state.inventory, kb) < count);
         if (wanted.length) {
+          const waterForReserve = !state.inventory.water_bucket && (critical
+            || wanted.some(({ key }) => key === 'food') && resupplyFood.canWaterFarm());
           const chest = new Vec3(home.chest.x, home.chest.y, home.chest.z);
           const hostiles = guardRoute && inside ? activeThreats() : [];
           const stationary = guardRoute && inside && !cover(state.position, hostiles)
@@ -920,7 +928,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           const result = await guarded('read_home_chest', (scoped) => skills.takeItems(bot, scoped, { position: home.chest,
             ...(stationary && { stationary: true }),
             itemMatch: (name) => wanted.some(({ key }) => kb[key].match(name))
-              || (name === 'water_bucket' && critical && !state.inventory.water_bucket)
+              || (name === 'water_bucket' && waterForReserve)
               || /^(stick|wheat|cobblestone|cobbled_deepslate|coal|charcoal)$/.test(name)
               || kb.log.match(name) || kb.planks.match(name) }), false, false, stationary);
           ctx.record('resupply_chest_read', { ok: result.ok, reason: result.reason, taken: result.taken });
