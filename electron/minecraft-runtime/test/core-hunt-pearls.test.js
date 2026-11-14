@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
-const { createHuntPearlsGoal } = require('../core/goals/huntPearls');
+const { createHuntPearlsGoal, pearlTetherRecoveryNeeded, scoutSectorOf } = require('../core/goals/huntPearls');
 const { skyOpen } = require('../core/caveRetreat');
 
 const AIR = { name: 'air', boundingBox: 'empty', shapes: [], skyLight: 15 };
@@ -382,6 +382,61 @@ test('the requested sector follows supported legs around a river even when its f
   for (let i = 0; i < 4; i += 1) await goal.run(ctx);
   assert.deepEqual(records.filter((e) => e.scoutSector).map((e) => [e.target.x, e.target.z]), [[5, 2], [5, -5], [5, -12], [5, -14]]);
   assert.equal(goal.memory.scoutCoverage.north, 2);
+});
+
+test('dawn keeps an outlying hunter on the dry route back inside the known home tether', async () => {
+  const home = new Vec3(-102, 64, -179);
+  const start = new Vec3(-122, 63, -229);
+  const entry = new Vec3(-122, 63, -222);
+  const wet = start.offset(1, 0, 0);
+  const bank = Array.from({ length: 9 }, (_, i) => start.offset(0, 0, i));
+  const native = (p) => bank.filter((q) => p.distanceTo(q) === 1).concat(p.equals(start) ? [wet] : []);
+  const movements = { getNeighbors: native, canDig: true, allowParkour: true };
+  const bot = { ...terrain, entity: { position: start.offset(.5, 0, .5), onGround: true }, companionHomeAt: () => home,
+    pathfinder: { movements }, blockAt(p) {
+      if (p.y !== 62) return AIR;
+      return bank.some((q) => q.x === p.x && q.z === p.z) ? STONE : { ...AIR, name: 'water' };
+    } };
+  const records = [];
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, target, options) => {
+    assert.equal(target.isEnd(entry), true);
+    assert.deepEqual(movements.getNeighbors(start), [bank[1]]);
+    assert.equal(movements.canDig, false);
+    assert.equal(movements.allowParkour, false);
+    assert.equal(options.arrived(bot.entity.position), false);
+    bot.entity.position = entry.offset(.5, 0, .5);
+    assert.equal(options.arrived(bot.entity.position), true);
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: true }) };
+  goal.memory.sawNight = true;
+  assert.equal(pearlTetherRecoveryNeeded(home, start), true);
+  assert.equal(pearlTetherRecoveryNeeded(home, home.offset(0, 0, 59)), false);
+  assert.equal(scoutSectorOf(start, home), 'north');
+  assert.equal(goal.isDone(ctx.perceive()), false);
+  await goal.run(ctx);
+  assert.deepEqual(goal.memory.centre, home);
+  assert.equal(goal.isDone(ctx.perceive()), true);
+  assert.deepEqual(records, [{ type: 'pearl_scout_tether_return', from: start, to: entry, centre: home }]);
+  assert.equal(movements.getNeighbors, native);
+});
+
+test('an outlying hunter launched at dawn stops attempting recovery after two guarded route failures', async () => {
+  const home = new Vec3(0, 64, 0);
+  const start = home.offset(0, 0, -54);
+  const bot = { ...terrain, entity: { position: start, onGround: true }, companionHomeAt: () => home,
+    pathfinder: { movements: { getNeighbors: () => [] } } };
+  const goal = createHuntPearlsGoal({ bot, actions: {} });
+  const ctx = { signal: new AbortController().signal, record() {},
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: true }) };
+  assert.equal(goal.isDone(ctx.perceive()), false);
+  assert.equal((await goal.run(ctx)).reason, 'pearl_scout_tether_blocked');
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal(goal.isDone(ctx.perceive()), false);
+  assert.equal((await goal.run(ctx)).reason, 'pearl_scout_tether_blocked');
+  assert.equal(goal.isDone(ctx.perceive()), true);
+  assert.deepEqual(goal.memory.centre, home);
 });
 
 test('a hunter starting inside the known house walks out through an observed door', async () => {

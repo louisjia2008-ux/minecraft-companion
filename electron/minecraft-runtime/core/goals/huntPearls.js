@@ -58,6 +58,12 @@ function pearlCaveRecoveryNeeded(bot, house, position) {
   return position.y < house.y - 7 || !skyOpen(bot, feet);
 }
 
+function pearlTetherRecoveryNeeded(house, position) {
+  if (!house || !position) return false;
+  const distance = flatDistance(position, house);
+  return Number.isFinite(distance) && distance > SCOUT_RADIUS && distance <= SCOUT_RADIUS + SCOUT_LEG;
+}
+
 function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
   if (scoutSector !== undefined && (typeof scoutSector !== 'string' || !Object.hasOwn(DOOR_DIRECTIONS, scoutSector))) {
@@ -67,6 +73,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   const memory = { centre: null, scoutPositions: [], scoutCoverage: {}, nights: 0, hunted: 0, sawNight: false, ascending: false };
   const landedScoutCells = new Set();
   let sectorRoute;
+  let recoveringTether = false;
+  let tetherFailures = 0;
   const caveVisited = new Set();
   const pearls = (state) => state.inventory.ender_pearl || 0;
 
@@ -207,6 +215,65 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   function safeScoutMoves(dry, point) {
     return dry.getNeighbors(Object.assign(point.clone(), { remainingBlocks: 0 })).filter((move) => !move.parkour
       && !move.toBreak?.length && !move.toPlace?.length && Math.abs(move.y - point.y) <= 1 && flatDistance(point, move) <= Math.SQRT2);
+  }
+
+  const tetheredOutside = (centre, feet) => tetherFailures < 2
+    && (pearlTetherRecoveryNeeded(centre, feet) || pearlTetherRecoveryNeeded(centre, bot.entity.position))
+    && bot.entity.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava && scoutGround(feet);
+
+  function tetherEntry(from, centre) {
+    const dry = dryScoutMovements();
+    if (!dry) return null;
+    const distance = flatDistance(from, centre);
+    const nodes = [{ point: from, steps: 0 }];
+    const seen = new Set([pointKey(from)]);
+    let better = null;
+    let nearest = distance - 2;
+    for (const { point, steps } of nodes) {
+      if (steps >= SCOUT_LEG) continue;
+      for (const move of safeScoutMoves(dry, point)) {
+        if (nodes.length >= SCOUT_NODES) return better;
+        const key = pointKey(move);
+        const d = flatDistance(move, centre);
+        if (seen.has(key) || d > distance + 1) continue;
+        seen.add(key);
+        const p = new Vec3(move.x, move.y, move.z);
+        if (!scoutGround(p)) continue;
+        // The pathfinder can stop anywhere inside the block. Rejoin with
+        // both the physical body centre and the floor cell inside the tether.
+        if (d <= SCOUT_RADIUS && [p.offset(1, 0, 0), p.offset(0, 0, 1), p.offset(1, 0, 1)]
+          .every((corner) => flatDistance(corner, centre) <= SCOUT_RADIUS)) return p;
+        nodes.push({ point: p, steps: steps + 1 });
+        if (d < nearest) { better = p; nearest = d; }
+      }
+    }
+    return better;
+  }
+
+  async function recoverScoutTether(ctx, from, centre) {
+    recoveringTether = true;
+    const target = tetherEntry(from, centre);
+    if (target) {
+      const limit = flatDistance(from, centre) + 1;
+      const arrived = (p) => bot.entity.onGround === true && p.floored().equals(target) && scoutGround(target);
+      const surface = new Map();
+      const avoid = (p) => {
+        if (flatDistance(p, centre) > limit || flatDistance(p, from) > SCOUT_LEG + 3) return true;
+        const key = pointKey(p);
+        if (!surface.has(key)) surface.set(key, scoutGround(p));
+        return !surface.get(key);
+      };
+      await walkDry(bot, ctx, actions, new goals.GoalBlock(target.x, target.y, target.z), { avoid, arrived });
+      const landed = () => arrived(bot.entity.position);
+      if (bot.entity.position.floored().equals(target)
+        && (landed() || await waitUntil(landed, { timeoutMs: 500, signal: ctx.signal }))) {
+        tetherFailures = 0;
+        ctx.record('pearl_scout_tether_return', { from, to: target, centre });
+        return { ok: true, waited: true };
+      }
+    }
+    tetherFailures += 1;
+    return wait(ctx, 'pearl_scout_tether_blocked');
   }
 
   function planSectorRoute(from) {
@@ -366,11 +433,12 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   return {
     name: 'hunt_pearls',
     memory,
-    ownsRouteRecovery: () => memory.sawNight || memory.ascending,
+    ownsRouteRecovery: () => memory.sawNight || memory.ascending || recoveringTether,
     // Endermen appear and vanish: a quiet stretch is normal, not a stall.
     noProgressLimit: 40,
     isDone: (state) => !memory.ascending && !pearlCaveRecoveryNeeded(bot, home(), state.position)
-      && (pearls(state) >= count || (memory.sawNight && state.isDay !== false)),
+      && (pearls(state) >= count || ((memory.sawNight || recoveringTether) && state.isDay !== false
+        && !tetheredOutside(home(), bot.entity.position.floored()))),
     progress: (state) => pearls(state) * 10 + memory.hunted,
     async run(ctx) {
       const state = ctx.perceive();
@@ -384,6 +452,15 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       if (house && (memory.ascending || pearlCaveRecoveryNeeded(bot, house, state.position))) {
         memory.ascending = true;
         return regainSurface(ctx, state, house);
+      }
+      if (!state.inWater && tetheredOutside(house, feet)) {
+        memory.centre = house;
+        sectorRoute = undefined;
+        if (state.isDay === false && !memory.sawNight) { memory.sawNight = true; memory.nights += 1; }
+        return recoverScoutTether(ctx, feet, house);
+      }
+      if (state.isDay === false && tetherFailures >= 2 && pearlTetherRecoveryNeeded(house, feet)) {
+        return wait(ctx, 'pearl_scout_tether_blocked');
       }
       if (state.isDay !== false) {
         // Set during the day: wait for dusk at home. Where the night's hunt
@@ -433,4 +510,4 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   };
 }
 
-module.exports = { createHuntPearlsGoal, pearlCaveRecoveryNeeded };
+module.exports = { createHuntPearlsGoal, pearlCaveRecoveryNeeded, pearlTetherRecoveryNeeded, scoutSectorOf };
