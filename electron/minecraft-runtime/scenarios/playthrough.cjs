@@ -72,6 +72,7 @@ const REARM = ARMOR.concat([{ key: 'iron_pickaxe', count: 1 }]);
 const RECOVERY_BASE_KIT = [
   { key: 'stone_tier_pickaxe', count: 1 }, { key: 'stone_sword', count: 1 }, { key: 'food', count: 3 },
 ];
+const PEARL_REARM = [...IRON_ARMOR, { key: 'iron_pickaxe', count: 1 }, { key: 'food', count: 3 }];
 const WORN_ARMOR = [[5, 'helmet'], [6, 'chestplate'], [7, 'leggings'], [8, 'boots']];
 const fullArmorWorn = (bot) => WORN_ARMOR.every(([slot, kind]) =>
   ['iron', 'diamond', 'netherite'].some((material) => bot.inventory?.slots?.[slot]?.name === `${material}_${kind}`))
@@ -346,10 +347,15 @@ async function runDeathRecovery(context, index, entry) {
   }
   const home = homeOf(companion.director.memory);
   if (!home) return false;
-  const recoveryItems = recovery.phase === 'base' ? RECOVERY_BASE_KIT : REARM;
+  // A hunter stays within the home area and can revisit its farm. The long
+  // Nether and End approaches still need their expedition reserves.
+  const base = recovery.phase === 'base';
+  const pearlRearm = !base && entry.id === 'pearls';
+  const recoveryItems = base ? RECOVERY_BASE_KIT : pearlRearm ? PEARL_REARM : REARM;
   const ready = recovery.phase === 'base'
     ? kitDone(bot, recoveryItems) && homeResupplyReady(state.lastPerceive, home)
-    : expeditionKitDone(bot, recoveryItems) && fullArmorWorn(bot);
+    : expeditionKitDone(bot, recoveryItems) && fullArmorWorn(bot)
+      && (!pearlRearm || homeResupplyReady(state.lastPerceive, home));
   if (ready) {
     write('playthrough_death_recovery_verified', { death: death.id, phase: recovery.phase, position: positionOf(bot),
       health: state.lastPerceive.health, food: state.lastPerceive.food, inventory: bagOf(bot) });
@@ -372,7 +378,7 @@ async function runDeathRecovery(context, index, entry) {
     }
     return true;
   }
-  const args = recovery.phase === 'base'
+  const args = base || pearlRearm
     ? { items: recoveryItems, recoverAtHome: true, farmPlots: farmPlotPositions(state) }
     : expeditionKitArgs(recoveryItems, state);
   recovery.attempts += 1;

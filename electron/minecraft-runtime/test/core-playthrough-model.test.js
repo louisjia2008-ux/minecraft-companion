@@ -312,6 +312,28 @@ test('gear and eyes ask for the full safe food reserve using the known farm plot
   }
 });
 
+test('pearl rearm verifies a full iron kit and local rations back at the house', async () => {
+  const { context, asked, state } = modelContext({
+    step: 'pearls', armour: ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots'],
+  });
+  const { bot, companion } = context;
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  companion.director = { memory: { homestead: { memory: { house } } } };
+  bot.inventory.slots[45] = { name: 'shield', count: 1 };
+  bot.inventory.items = () => [{ name: 'iron_pickaxe', count: 1 }, { name: 'iron_sword', count: 1 }, { name: 'bread', count: 3 }];
+  state.audit = { deaths: [{ id: 1, at: 1, respawn: { alive: true } }], taskEvents: [] };
+  state.deathRecovery = { death: 1, phase: 'iron', attempts: 0 };
+  bot.entity.position = new Vec3(48, 64, 0);
+  await playthroughNatural.onTick(context);
+  assert.equal(state.deathRecovery.phase, 'iron');
+  assert.equal(asked[0].args.recoverAtHome, true);
+  assert.equal(asked[0].args.items.find(({ key }) => key === 'food').count, 3);
+  bot.entity.position = new Vec3(3.5, 64, 3.5);
+  await playthroughNatural.onTick(context);
+  assert.equal(state.deathRecovery.phase, 'done');
+  assert.equal(asked[1].task, 'huntPearls');
+});
+
 test('unexpected Nether entry during rearm returns through the portal before taking another outfit', async () => {
   const { context, asked, state } = modelContext({ step: 'nether' });
   const { bot, companion } = context;
