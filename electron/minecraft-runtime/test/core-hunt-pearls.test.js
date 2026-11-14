@@ -330,6 +330,44 @@ test('scouting avoids leaf floors and can leave one via a directly reachable gra
   assert.equal(records.at(-1), 'pearl_scout_ground_bank');
 });
 
+test('a hunter pushed under leaves can step down onto nearby open grass even after dawn', async () => {
+  const home = new Vec3(-102, 64, -179);
+  const start = new Vec3(-140, 64, -210);
+  const bank = new Vec3(-140, 63, -209);
+  const water = start.offset(0, 0, -1);
+  const roof = new Vec3(start.x, 67, start.z);
+  const leaves = { ...STONE, name: 'oak_leaves' };
+  let cover = STONE;
+  const native = (p) => p.equals(start) ? [bank, water] : [];
+  const movements = { getNeighbors: native, canDig: true };
+  const bot = { ...terrain, entity: { position: start.offset(.5, 0, .5), onGround: true }, companionHomeAt: () => home,
+    pathfinder: { movements }, blockAt(p) {
+      if (p.equals(roof)) return cover;
+      if (p.equals(start.offset(0, -1, 0)) || p.equals(bank.offset(0, -1, 0))) return { ...STONE, name: 'grass_block' };
+      if (p.equals(water.offset(0, -1, 0))) return { ...AIR, name: 'water' };
+      if (p.equals(start)) return { ...AIR, name: 'leaf_litter' };
+      return AIR;
+    } };
+  const actions = { goTo: async (_bot, _ctx, target, options) => {
+    assert.equal(target.isEnd(bank), true);
+    assert.deepEqual(movements.getNeighbors(start), [bank]);
+    assert.equal(movements.canDig, false);
+    bot.entity.position = bank.offset(.5, 0, .5);
+    assert.equal(options.arrived(bot.entity.position), true);
+    return { ok: true };
+  } };
+  const goal = createHuntPearlsGoal({ bot, actions });
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record(type, payload) { records.push({type, ...payload}); },
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: true }) };
+  assert.equal(pearlHomeReturnNeeded(home, bot.entity.position, bot), false, 'never use the same move under a solid roof');
+  cover = leaves;
+  assert.equal(pearlHomeReturnNeeded(home, bot.entity.position, bot), true);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(records, [{ type: 'pearl_scout_ground_bank', from: start, to: bank }]);
+  assert.equal(movements.getNeighbors, native);
+});
+
 test('an unobstructed dry column admits scouting with low live sky light, but a roof or unloaded column does not', async () => {
   const start = new Vec3(0, 64, 0);
   const candidate = new Vec3(-1, 64, 0);

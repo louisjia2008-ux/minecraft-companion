@@ -81,13 +81,17 @@ function scoutGround(bot, p) {
   return standable(read, p) && !read(p.offset(0, -1, 0))?.name.endsWith('_leaves') && openScoutColumn(bot, p);
 }
 
+const dryLeafCanopy = (bot, feet) => skyOpen(bot, feet, { allowLeafCanopy: true });
+
 function pearlHomeReturnNeeded(house, position, bot) {
   if (!house || !position) return false;
   const radius = flatDistance(position, house);
   if (radius <= HOME_RANGE || radius > HOME_RETURN_RANGE || !Number.isFinite(radius)) return false;
   if (!bot?.blockAt) return false;
+  const feet = new Vec3(position.x, position.y, position.z).floored();
+  const read = (at) => bot.blockAt(at, false);
   return bot.entity?.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava
-    && scoutGround(bot, new Vec3(position.x, position.y, position.z).floored());
+    && (scoutGround(bot, feet) || standable(read, feet) && dryLeafCanopy(bot, feet));
 }
 
 function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skills = defaultSkills, actions = defaultActions } = {}) {
@@ -329,6 +333,10 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
 
   async function returnInDaylight(ctx, from, centre) {
     homeward = true;
+    if (bot.entity.onGround && !bot.entity.isInLava && !bot.entity.isInWater && needsGroundBank(from)) {
+      const bank = await stepToGroundBank(ctx, from, centre);
+      if (bank) return bank;
+    }
     if (bot.entity.onGround && !bot.entity.isInLava && !bot.entity.isInWater && scoutGroundAt(from)) {
       if (!homeRoute.length) homeRoute = await planHomeRoute(ctx, centre);
       const leg = homeRoute.slice(0, HOME_RETURN_LEG);
@@ -424,26 +432,32 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     return best || transfer;
   }
 
+  const needsGroundBank = (from) => standable(read, from) && !scoutGroundAt(from) && dryLeafCanopy(bot, from);
+
+  // A hunter pushed under dry leaves can take one supported step into the open.
+  async function stepToGroundBank(ctx, from, centre) {
+    const dry = dryScoutMovements();
+    const adjacent = dry ? safeScoutMoves(dry, from) : [];
+    const step = adjacent.filter((p) => flatDistance(from, p) === 1 && scoutGroundAt(p))
+      .sort((a, b) => centre ? flatDistance(a, centre) - flatDistance(b, centre) : 0)[0];
+    const bank = step && new Vec3(step.x, step.y, step.z);
+    if (!bank) return null;
+    const arrived = (p) => bot.entity.onGround && p.floored().equals(bank) && scoutGroundAt(bank);
+    const moved = await walkDry(bot, ctx, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
+      { adjacent: bank, timeoutMs: 2000, arrived });
+    if (moved.ok && arrived(bot.entity.position)) {
+      ctx.record('pearl_scout_ground_bank', { from, to: bank });
+      return { ok: true, waited: true };
+    }
+    return null;
+  }
+
   async function scout(ctx, state, focus) {
     const from = bot.entity.position.floored();
     const house = home();
     if (state.inWater || bot.entity.onGround === false) return wait(ctx, 'pearl_wait_for_dry_ground');
-    if (leafFloor(from) && standable(read, from) && clearColumn(from)) {
-      // An already stranded hunter can step onto an immediately adjacent dry
-      // bank, but ordinary scouting must never climb back onto the canopy.
-      const adjacent = dryScoutMovements()?.getNeighbors(Object.assign(from.clone(), { remainingBlocks: 0 })) || [];
-      const step = adjacent.find((p) => flatDistance(from, p) === 1 && Math.abs(p.y - from.y) <= 1
-        && !p.parkour && !p.toBreak?.length && !p.toPlace?.length && scoutGroundAt(p));
-      const bank = step && new Vec3(step.x, step.y, step.z);
-      if (!bank) return wait(ctx, 'pearl_wait_for_ground_bank');
-      const arrived = (p) => bot.entity.onGround && p.floored().equals(bank) && scoutGroundAt(bank);
-      const moved = await walkDry(bot, ctx, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
-        { adjacent: bank, timeoutMs: 2000, arrived });
-      if (moved.ok && arrived(bot.entity.position)) {
-        ctx.record('pearl_scout_ground_bank', { from, to: bank });
-        return { ok: true, waited: true };
-      }
-      return wait(ctx, moved.reason || 'pearl_ground_bank_not_arrived');
+    if (needsGroundBank(from)) {
+      return await stepToGroundBank(ctx, from, house) || wait(ctx, 'pearl_wait_for_ground_bank');
     }
     if (!scoutGroundAt(from)) {
       // On a natural lip the grounded collision box can overlap the support
