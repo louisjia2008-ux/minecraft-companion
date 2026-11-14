@@ -81,6 +81,79 @@ test('a healthy recovery with a missing food reserve can withdraw existing water
   assert.equal(read, true);
 });
 
+test('home recovery takes a bounded dry ascent after a failed open-sky ravine return', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const door = house.furniture.door.position;
+  const start = new Vec3(8, 57, 3);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [], skyLight: 15 };
+  const stone = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]], diggable: true };
+  const cleared = new Set();
+  const bot = Object.assign(fakeBot([{ name: 'stone_pickaxe', count: 1 }]), {
+    game: { dimension: 'overworld', minY: 50, height: 30 }, health: 20, food: 17, time: { timeOfDay: 5000 }, entities: {},
+    canDigBlock: () => true,
+    entity: { position: start.offset(.5, 0, .5), onGround: true },
+    blockAt(p) {
+      if (p.x === door.x && p.z === door.z && [door.y, door.y + 1].includes(p.y)) return {
+        name: 'oak_door', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper', open: false, facing: 'north', hinge: 'left' }),
+      };
+      if (!cleared.has(p.toString()) && (p.equals(start.offset(0, -1, 0)) || p.x >= 9 && p.y <= 61)) return { ...stone, position: p };
+      return air;
+    },
+  });
+  const movements = { getNeighbors(homeward) {
+    return [...[-1, 0, 1].flatMap((dy) => [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => homeward.offset(dx, dy, dz))),
+      homeward.offset(1, -3, 0)];
+  } };
+  bot.pathfinder = { movements };
+  const events = [];
+  const ctx = { perceive: () => perceive(bot), record: (type, details) => events.push({ type, ...details }) };
+  let attempts = 0;
+  let digs = 0;
+  let chest = 0;
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: {
+      withinReach: () => false,
+      goNear: async () => {
+        attempts += 1;
+        if (bot.entity.position.y < 62) return { ok: false, reason: 'NoPath' };
+        const { x, y, z } = house.interiorCenter;
+        bot.entity.position = new Vec3(x + .5, y, z + .5);
+        return { ok: true };
+      },
+      digBlock: async (_bot, _ctx, block) => {
+        assert.ok(block.position.x >= 9);
+        assert.ok(block.position.y > bot.entity.position.y);
+        cleared.add(block.position.toString());
+        digs += 1;
+        return { ok: true };
+      },
+      goTo: async (_bot, _ctx, { x, y, z }) => {
+        const from = bot.entity.position.floored();
+        const to = new Vec3(x, y, z);
+        assert.deepEqual(movements.getNeighbors(from), [to]);
+        assert.ok(to.y >= from.y - 1 && to.y <= from.y + 1);
+        bot.entity.position = to.offset(.5, 0, .5);
+        return { ok: true };
+      },
+    },
+    skills: { takeItems: async () => { chest += 1; return { ok: false, reason: 'chest_empty' }; } },
+  });
+  assert.equal(goal.ownsRouteRecovery(), false);
+  await goal.run(ctx);
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.deepEqual(events[0], { type: 'resupply_ravine_ascent', from: start, floor: 62 });
+  bot.entities[1] = { id: 1, name: 'skeleton', position: start.offset(0, 5, 0) };
+  assert.equal((await goal.run(ctx)).reason, 'resupply_ravine_unsafe');
+  assert.equal(digs, 0);
+  delete bot.entities[1];
+  for (let i = 0; i < 32 && !chest; i += 1) await goal.run(ctx);
+  assert.equal(chest, 1);
+  assert.equal(attempts, 2);
+  assert.ok(digs > 0);
+  assert.equal(goal.ownsRouteRecovery(), false);
+});
+
 test('critically hurt home recovery closes the real door before nighttime provisioning', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const door = house.furniture.door.position;

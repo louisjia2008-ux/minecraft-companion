@@ -26,7 +26,7 @@ const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { upgrades } = require('../armor');
 const { entityDimensions } = require('../entityGeometry');
 const { isHostile, perceive } = require('../perception');
-const { farmlandFooting, standable } = require('../caveRetreat');
+const { advanceCaveRetreat, farmlandFooting, skyOpen, standable } = require('../caveRetreat');
 const { createResupplyIrrigation } = require('./resupplyFarm');
 
 // Tools and weapons stay in the bag as they are made: stored, the bot spent
@@ -46,6 +46,8 @@ const SHELTER_MELEE_RANGE = 5;
 const UNSAFE_ROUTE = 'unsafe_resupply_food_route';
 const HOME_DETOUR_RADIUS = 28;
 const HOME_DETOUR_STEPS = 80;
+const RAVINE_HOME_RADIUS = 22;
+const RAVINE_HOME_STEPS = 32;
 const APPROACH_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const APPROACH_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
 const isPortal = (block) => block?.name === 'nether_portal' || block?.name === 'end_portal';
@@ -508,10 +510,11 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   let daylightExit = null;
   let detourRemaining = null;
   let homeCut = null;
+  let ravine = null;
   const failedApproaches = createBlacklist({ ttlMs: 12000 });
   const nearShelter = (position) => Boolean(shelter && position && typeof actions.goTo === 'function'
     && position.y >= shelter.position.y - 5 && Math.hypot(position.x - shelter.position.x, position.z - shelter.position.z) <= 16);
-  goal.ownsRouteRecovery = () => ownsGatherRoute() || ownsShelterRoute || ownsReserveRoute
+  goal.ownsRouteRecovery = () => ownsGatherRoute() || ownsShelterRoute || ownsReserveRoute || ravine?.steps > 0
     || dimension(bot) === 'overworld' && bot.health > 0 && bot.health < HOME_HEALTH && nearShelter(bot.entity?.position);
   const resetRecovery = () => {
     returned = false; checkedChest = false; lastFoodWait = null; routeInterrupted = false; routeDestination = null;
@@ -520,6 +523,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     daylightExit = null;
     detourRemaining = null;
     homeCut = null;
+    ravine = null;
     failedApproaches.clear();
     clearShelter();
   };
@@ -537,7 +541,16 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const state = ctx.perceive();
     const read = (p) => bot.blockAt(p);
     if (dimension(bot) !== 'overworld') return fail('resupply_wrong_dimension');
-    if (state.position.y < home.centre.y - 8 && defaultActions.underground(bot)) {
+    const ascentFloor = home.centre.y - 2;
+    const outsideHouse = (p) => !home.anchor || (p.x < home.anchor.x || p.x >= home.anchor.x + 7
+      || p.z < home.anchor.z || p.z >= home.anchor.z + 7) && !farmPlots.some((plot) => p.x === plot.x && p.z === plot.z);
+    const safeAscentStart = (current) => home.anchor && shelter && typeof actions.digBlock === 'function'
+      && typeof actions.goTo === 'function' && current.health > 6 && bot.entity.onGround && !current.inWater
+      && safety.homeDistance(current.position) <= RAVINE_HOME_RADIUS && outsideHouse(current.position.floored())
+      && standable(read, current.position.floored());
+    if (ravine && (atResupplyHome(state, home) || safety.homeDistance(state.position) > RAVINE_HOME_RADIUS
+      || state.position.y >= ascentFloor && skyOpen(bot, state.position.floored()))) ravine = null;
+    if (!(ravine?.steps > 0) && state.position.y < home.centre.y - 8 && defaultActions.underground(bot)) {
       // The high priority cave retreat owns the way out while critically hurt.
       // A healthy bot may also start rearm away from home after a death.
       if (state.health <= 6) { await sleep(1000, ctx.signal); return { ok: true, waited: true }; }
@@ -608,7 +621,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const holdShelter = waitForDay || waitForFood || waitForHealing || (critical || localReserve) && routeInterrupted;
     const guardedArrival = !returned && !inside && !needsProtection && !unarmed && nearShelter(state.position)
       && shelter.doorOpen() !== null;
-    const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover || guardedArrival || detourRemaining > 0;
+    const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover || guardedArrival
+      || detourRemaining > 0 || ravine?.steps > 0;
     ownsShelterRoute = (missingDoor && nearShelter(state.position) || detourRemaining > 0) && (!inside || holdShelter);
     if (shelter && holdShelter) bot.companionResupplySheltered = shelterWitness;
     else clearShelter();
@@ -881,14 +895,53 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return { ok: true };
     };
     return onSurfacePath(bot, home, async () => {
+      if (ravine?.steps > 0) {
+        const from = state.position.floored();
+        const origin = state.position;
+        const avoid = (p) => {
+          const position = p.offset(.5, 0, .5);
+          const adjacent = Math.abs(p.x - from.x) + Math.abs(p.z - from.z) <= 1;
+          return p.y < ravine.high - 1 || safety.homeDistance(position) > RAVINE_HOME_RADIUS || !outsideHouse(p)
+            || !portalFree(read, adjacent ? origin : position, position) || unsafeToDig(origin, position, activeThreats());
+        };
+        if (!safeAscentStart(state) || avoid(from)) {
+          await sleep(500, ctx.signal);
+          return { ok: true, waited: true, reason: 'resupply_ravine_unsafe' };
+        }
+        preparingStep = origin;
+        let result;
+        try {
+          ravine.steps -= 1;
+          result = await guarded('ravine_ascent', (scoped) => advanceCaveRetreat(bot, scoped, actions, safety.centre,
+            { avoid, visited: ravine.visited, surfaceFloor: ascentFloor }));
+        } finally {
+          preparingStep = null;
+        }
+        if (result.to && !result.dug) {
+          ravine.visited.add(posKey(from));
+          ravine.high = Math.max(ravine.high, result.to.y);
+        }
+        ctx.record('resupply_ravine_step', { from, to: result.to, dug: result.dug, ok: result.ok, reason: result.reason });
+        return result;
+      }
       if (!inside && goal.memory.gather?.leaveSurfaceQuarry && (needsProtection || nightStone || unarmedShelter || localReserve)) {
         const left = await guarded('leave_supply_quarry', (scoped) => goal.memory.gather?.leaveSurfaceQuarry?.(scoped), true);
         if (left) return left;
       }
       if (!returned || completeKit || holdShelter || foodTarget?.kind === 'bread') {
         if (!inside) {
-          const goHome = (action, cardinal = false) => guarded(
-            foodTarget?.kind === 'bread' ? 'return_for_bread' : 'return_home', action, true, cardinal);
+          const goHome = async (action, cardinal = false) => {
+            const result = await guarded(foodTarget?.kind === 'bread' ? 'return_for_bread' : 'return_home', action, true, cardinal);
+            if (!ravine && (result.reason === 'NoPath' || result.reason === 'resupply_no_dry_home_route')) {
+              const current = ctx.perceive();
+              if (current.position.y >= home.centre.y - 4 || !safeAscentStart(current)) return result;
+              const from = current.position.floored();
+              ravine = { high: from.y, steps: RAVINE_HOME_STEPS, visited: new Set() };
+              ctx.record('resupply_ravine_ascent', { from, floor: ascentFloor });
+              return { ok: true };
+            }
+            return result;
+          };
           if ((guardRoute || missingDoor) && (nearShelter(state.position) || detourRemaining > 0)) {
             return goHome(approachShelter, true);
           }
