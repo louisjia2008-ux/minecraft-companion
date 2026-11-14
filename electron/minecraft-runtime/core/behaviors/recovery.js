@@ -18,7 +18,7 @@ const { upgrades } = require('../armor');
 
 const PATH_FAILURES = new Set(['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck', 'leg_blocked']);
 // Never wanted by any goal; thrown away first when the bag is full.
-const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff', 'calcite', 'dripstone_block',
+const JUNK = new Set(['gravel', 'andesite', 'diorite', 'granite', 'tuff', 'calcite', 'dripstone_block',
   'pointed_dripstone', 'rotten_flesh', 'poisonous_potato', 'spider_eye', 'cobweb', 'dead_bush',
   // Ground cover broken on the way: a bag once held 37 wildflowers and 20 leaf litter.
   'wildflowers', 'leaf_litter', 'pink_petals', 'short_grass', 'tall_grass', 'fern', 'big_dripleaf', 'small_dripleaf',
@@ -30,6 +30,7 @@ const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff
 // A stack of netherrack is the nether's building block: bridges, steps out of lava.
 const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64, stick: 64, egg: 16,
   coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16, redstone: 64, clay_ball: 16,
+  flint: 16, // Four arrows per flint, so sixteen is enough for a stack.
   // Nether scaffolding comes home by the stack; seeds pile up at every harvest.
   basalt: 32, blackstone: 32, nether_bricks: 16, wheat_seeds: 32 };
 // A tool or weapon more than once is a slot each: one is kept.

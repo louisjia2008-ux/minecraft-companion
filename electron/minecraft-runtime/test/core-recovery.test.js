@@ -98,6 +98,14 @@ test('discardable lists junk first, then whatever exceeds one stack, never what 
     [{ name: 'white_wool', count: 15 }, { name: 'black_wool', count: 3 }, { name: 'clay_ball', count: 48 }]);
 });
 
+test('inventory cleanup keeps the flint for a stack of arrows', () => {
+  const clutter = { gravel: 5, leaf_litter: 48, cobblestone: 70 };
+  const ammo = { flint: 16, stick: 16, feather: 16, arrow: 64 };
+  const discard = [{ name: 'gravel', count: 5 }, { name: 'leaf_litter', count: 48 }, { name: 'cobblestone', count: 6 }];
+  assert.deepEqual(discardable({ ...clutter, ...ammo }), discard);
+  assert.deepEqual(discardable({ ...clutter, ...ammo, flint: 19 }), [...discard, { name: 'flint', count: 3 }]);
+});
+
 test('two path failures in a row unstick the body, for any goal', async () => {
   const bot = fakeBot();
   let unsticks = 0;
