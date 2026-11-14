@@ -607,7 +607,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     };
     const threshold = shelter?.position;
     const insideDoor = threshold?.offset(0, 0, 1);
-    const screenedChest = (position, hostiles) => shelter?.doorOpen() === false && bot.entity.onGround
+    const screenedInterior = (position, hostiles) => shelter?.doorOpen() === false && bot.entity.onGround
       && atResupplyHome({ position }, home, { verticalSlack: 0 })
       && standable(read, position.floored()) && fullBlock(read(position.floored().offset(0, 2, 0)))
       && hostiles.every((hostile) => !atResupplyHome({ position: hostile.position }, home)
@@ -638,7 +638,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     if (!checkedChest || needsProtection || !unarmed || state.isDay !== true || !shelter
       || !exitIntact() || !ranged.length) daylightExit = null;
     else if (!daylightExit && inside && bot.entity.onGround && shelter.doorOpen() === false
-      && shelter.refuge({ position: state.position, hostiles: nearbyHostiles })
+      && (shelter.refuge({ position: state.position, hostiles: nearbyHostiles })
+        || screenedInterior(state.position, nearbyHostiles))
       && hasScreenedThreshold()) {
       daylightExit = new Set(ranged.map((hostile) => hostile.id));
     }
@@ -712,7 +713,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     // This exception belongs to the stationary interaction, never an approach.
     const chestRefuge = (position, hostiles) => bot.entity.onGround && shelter?.doorOpen() === false
       && !hostiles.some((hostile) => hostile.name === 'creeper' && position.distanceTo(hostile.position) <= MELEE_RANGE)
-      && (shelter.refuge({ position, hostiles }) || screenedChest(position, hostiles));
+      && (shelter.refuge({ position, hostiles }) || screenedInterior(position, hostiles));
     const screenedByRoof = (hostile, from, to, livePosition) => shelterRoute
       && shelter?.overheadPhantom(hostile, from, to, livePosition) === true;
     const unsafeToDig = (at, step, hostiles) => hostiles.some((hostile) => {
