@@ -601,13 +601,27 @@ test('homestead defers foundation work and generic recovery until the guarded ca
   const run = () => goal.run({ ...ctx, perceive: () => ({ ...ctx.perceive(), health: 17, food: 13 }) });
   goal.recover();
   assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal(goal.ownsCaveAscent(), false);
   assert.equal((await run()).ok, true);
+  assert.equal(goal.ownsCaveAscent(), true);
   assert.equal((await run()).ok, true);
   assert.equal(cuts.length, 2);
   assert.equal(repairs, 0);
   assert.equal(seen('generic_surface'), false);
   assert.ok(events.some(({ type, ok }) => type === 'homestead_cave_recovery' && ok));
-  sim.bot.entity.position = new Vec3(.5, 64, -3.5);
+  sim.bot.entity.position = feet.offset(.5, 31, .5);
+  assert.equal(goal.ownsCaveAscent(), true, 'supported covered ascent remains active above the original depth gate');
+  const blockAt = sim.bot.blockAt;
+  sim.bot.blockAt = () => null;
+  const wait = new AbortController();
+  await assert.rejects(goal.run({ ...ctx, signal: wait.signal, record(type, data) {
+    ctx.record(type, data);
+    if (type === 'homestead_cave_recovery') wait.abort();
+  } }), { code: 'aborted' });
+  assert.equal(goal.ownsCaveAscent(), false, 'a blocked ascent releases provisioning');
+  assert.equal(repairs, 0);
+  sim.bot.blockAt = blockAt;
+  sim.bot.entity.position = new Vec3(1.5, 64, 1.5);
   assert.equal(goal.ownsRouteRecovery(), false);
   assert.equal((await run()).ok, true);
   assert.equal(repairs, 1);

@@ -24,7 +24,7 @@ const { chooseSite, siteWork, isSolid } = require('../site');
 const { createBlacklist, posKey } = require('../blacklist');
 const { sleep, waitUntil } = require('../confirm');
 const { applyWalkOnlyMovements } = require('../nether');
-const { advanceCaveRetreat, standable } = require('../caveRetreat');
+const { advanceCaveRetreat, skyOpen, standable } = require('../caveRetreat');
 const { exposed } = require('../mining');
 const { createStoneQuarry } = require('./stoneQuarry');
 
@@ -69,6 +69,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   const quarry = createStoneQuarry({ bot, actions, avoid: nearHouseColumn, blacklist });
   const stoneRetreatVisited = new Set();
   let stoneRouteOwnsRecovery = false;
+  let caveAscent = null;
   let woolRouteOwnsRecovery = false;
   let woolSector = 0;
 
@@ -311,8 +312,13 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
   }
 
   function needsCaveAscent() {
-    return memory.house && bot.entity.position.y < memory.house.anchor.y - STONE_FLOOR_OFFSET
-      && !quarry.inside() && (actions.underground || defaultActions.underground)(bot);
+    if (!memory.house || quarry.inside() || String(bot.game?.dimension || 'overworld').replace(/^minecraft:/, '') !== 'overworld') return false;
+    if (!caveAscent) return bot.entity.position.y < memory.house.anchor.y - STONE_FLOOR_OFFSET
+      && (actions.underground || defaultActions.underground)(bot);
+    const body = bot.entity;
+    const feet = body.position.floored();
+    return !(body.onGround && !body.isInLava && !body.isInWater
+      && (insideRoom(feet) || standable(blockAt, feet) && skyOpen(bot, feet)));
   }
 
   async function runPlannerStep(ctx, step, requirement) {
@@ -887,6 +893,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     maintenance,
     protects,
     ownsRouteRecovery: () => Boolean(stoneRouteOwnsRecovery || woolRouteOwnsRecovery || needsCaveAscent()),
+    ownsCaveAscent: () => Boolean(caveAscent?.viable && needsCaveAscent()),
     isDone: (state) => complete(state),
     progress: () => memory.steps,
     async run(ctx) {
@@ -894,6 +901,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       if (ascending) {
         protectSite();
         memory.recovery = false;
+        caveAscent ||= { viable: false };
+      } else if (caveAscent) {
+        caveAscent = null;
+        stoneRetreatVisited.clear();
       }
       if (memory.recovery && !ascending) {
         memory.recovery = false;
@@ -909,7 +920,13 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       }
       // A site interaction can start a long path even when a surface attempt
       // just failed. Finish the guarded climb before sending that path.
-      const result = ascending ? await returnToSurface(ctx, 'homestead_cave') : await runOnce(ctx);
+      let result;
+      if (ascending) {
+        try { result = await returnToSurface(ctx, 'homestead_cave'); }
+        finally { caveAscent.viable = Boolean(result?.ok && !result.waited); }
+      } else {
+        result = await runOnce(ctx);
+      }
       // Waiting (for dusk, out the night) is not progress: counting it would
       // refill the stall budget of a step that keeps failing every morning.
       if (result.ok && !result.waited) {

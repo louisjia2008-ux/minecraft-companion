@@ -186,6 +186,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     resupplying: () => goalOwner?.goal?.recoverAtHome === true,
     farmSnack: () => !paused && goalOwner?.goal?.farmSnack === true && brain?.status().goal?.name === 'farm',
     expeditionStocking: (state) => !paused && goalOwner?.goal?.expeditionStocking?.(state) === true,
+    homesteadCaveAscent: () => !paused && goalOwner?.goal?.ownsCaveAscent?.() === true,
     activeGoal: () => brain?.status().goal?.name,
     home: () => (director ? homeOf(director.memory)?.centre || null : null) }), ...recovery.behaviors,
     nightRest, homeMaintenance, ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];

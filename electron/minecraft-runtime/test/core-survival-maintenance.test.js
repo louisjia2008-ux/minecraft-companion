@@ -52,6 +52,22 @@ test('carried food is eaten first, and an unusable risky item does not block saf
   assert.ok(s.behavior('provision').want(risky) > 0);
 });
 
+test('only viable homestead ascent holds food searches, with food and emergencies still available', () => {
+  let ownsAscent = true;
+  const s = setup({ homesteadCaveAscent: () => ownsAscent });
+  const hunger = { ...s.state, health: 17, food: 12 };
+  const provision = s.behavior('provision');
+  assert.equal(provision.want(hunger), 0);
+  assert.ok(s.behavior('eat').want({ ...hunger, inventory: { cooked_beef: 1 } }) > 0);
+  assert.ok(s.behavior('breathe').want({ ...hunger, inWater: true, oxygen: 1 }) > 0);
+  s.bot.entity.isInLava = true;
+  assert.ok(s.behavior('leave_lava').want(hunger) > 0);
+  s.bot.entity.isInLava = false;
+  assert.ok(provision.want({ ...hunger, food: 6 }) > 0);
+  ownsAscent = false;
+  assert.ok(provision.want(hunger) > 0);
+});
+
 test('an active cave retreat cooldown allows eating but does not start a new food search', async () => {
   let hunts = 0;
   let eats = 0;
