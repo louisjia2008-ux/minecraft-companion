@@ -590,6 +590,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       } finally {
         clearInterval(tracker);
       }
+      if (result.repositioned) return result;
       if (guardTerrain && !result.ok) unsafePursuits.add(threat.id, result.reason);
       if (result.ok) {
         // What fell where it died (a skull lost to lava shows here as nothing).
@@ -1412,7 +1413,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           const go = (combat) => actions.goTo(bot, combat, new goals.GoalBlock(spot.x, spot.y, spot.z), { timeoutMs: 8000 });
           if (netherExpedition()) {
             const moved = await withFortressCombatTerrain(bot, ctx, go);
-            if (!moved.ok) return moved;
+            if (!moved.ok || moved.repositioned) return moved;
           } else {
             await go(ctx);
           }

@@ -770,6 +770,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
         mobs, radius: FORTRESS_HUNT_RANGE, blacklist, dropMatch: (n) => n === 'blaze_rod' || n === 'wither_skeleton_skull',
         accept: canHunt,
       }));
+      if (result.repositioned) return result;
       if (result.ok) {
         memory.kills[name] = (memory.kills[name] || 0) + 1;
         ctx.record('kill', { mob: name, kills: memory.kills[name], gained: result.gained });
@@ -1095,6 +1096,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     ctx.record('loot', { item: name, distance: Math.round(drop.position.distanceTo(bot.entity.position)) });
     const moved = await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
       actions.goNear(bot, combat, drop.position.clone(), 0.5, { timeoutMs: 12000, retryNoProgress: false }));
+    if (moved.repositioned) return moved;
     await waitUntil(() => count() > before || !bot.entities[drop.id], { timeoutMs: 1500, signal: ctx.signal });
     if (count() > before) return { ok: true, looted: name };
     blacklist.add(`loot:${drop.id}`, moved.reason || 'not_picked', 30000);
