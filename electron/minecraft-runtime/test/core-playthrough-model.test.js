@@ -187,6 +187,28 @@ test('only safe edible food prevents a snack detour to the existing ripe farm', 
   assert.deepEqual(asked[1].args.items.find(({ key }) => key === 'food'), { key: 'food', count: 12 });
 });
 
+test('an angry Enderman must finish the fight before a hungry pearl hunter returns to the farm', async () => {
+  const { context, asked, state } = modelContext({ step: 'pearls', goal: { name: 'hunt_pearls' },
+    armour: ['iron_helmet', 'iron_chestplate'], pick: true });
+  const house = createStarterHouse({ x: -105, y: 64, z: -182 });
+  context.companion.director = { memory: { homestead: { memory: { house } } } };
+  state.snackEnd = 0;
+  context.bot.health = 13;
+  context.bot.food = 16;
+  context.bot.registry = { entitiesByName: { enderman: { metadataKeys: ['creepy', 'health'] } } };
+  context.bot.entities = { 7: { name: 'enderman', type: 'hostile', position: new Vec3(3, 64, 0), metadata: [true, 16] } };
+  state.goals.farm = { memory: { center: new Vec3(-117, 64, -179),
+    plots: [new Vec3(-113, 62, -180), new Vec3(-113, 62, -178), new Vec3(-113, 62, -177)] } };
+  context.bot.blockAt = () => ({ name: 'wheat', getProperties: () => ({ age: 7 }) });
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked, []);
+  assert.equal(state.snack, undefined);
+  context.bot.entities[7].metadata[1] = 0;
+  await playthroughNatural.onTick(context);
+  assert.equal(asked[0].task, 'farm');
+  assert.equal(state.snack, true);
+});
+
 test('a lost bow after eyes preparation restocks the End weapons without recrafting spent eyes', async () => {
   const { context, asked, state } = modelContext({ step: 'end', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
   state.rearm = true;

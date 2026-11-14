@@ -37,6 +37,7 @@ const { homeOf } = require('../core/goals/registry');
 const { homeResupplyReady } = require('../core/goals/outfit');
 const { pearlCaveRecoveryNeeded } = require('../core/goals/huntPearls');
 const { expeditionFoodCount } = require('../core/goals/stockFood');
+const { isThreateningMobEntity } = require('../vendor/server/minecraft/entitySemantics');
 
 const MINUTE = 60 * 1000;
 // Twelve portal frames plus two eyes lost during the seed 2 stronghold scouting run.
@@ -161,6 +162,14 @@ const safeFood = (bot) => (bot.inventory?.items?.() || []).some((item) => item.c
 function hungry({ bot }) {
   return (bot.food <= 12 || bot.health < 16 && bot.food < 18)
     && !safeFood(bot) && dimensionOf(bot) === 'overworld';
+}
+
+function fightingEnderman(bot, goal) {
+  if (goal?.name !== 'hunt_pearls') return false;
+  const here = bot.entity?.position;
+  return here && Object.values(bot.entities || {}).some((entity) =>
+    entity.name === 'enderman' && entity.position?.distanceTo(here) <= 16
+    && isThreateningMobEntity(entity, bot.registry));
 }
 
 function snackFarm(context) {
@@ -559,7 +568,8 @@ const playthroughNatural = {
       // The farm may still be running: the step asked again replaces it.
       state.replace = Boolean(goal);
       entry.asks = Math.max(0, entry.asks - 1);
-    } else if (!state.snack && hungry(context) && state.steps[1].doneAt && step.id !== 'farm' && !state.rearm
+    } else if (!state.snack && !fightingEnderman(bot, goal) && hungry(context)
+      && state.steps[1].doneAt && step.id !== 'farm' && !state.rearm
       && Date.now() - (state.snackEnd || 0) > SNACK_MS) {
       const args = snackFarm(context);
       if (args) {
