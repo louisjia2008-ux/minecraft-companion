@@ -1640,6 +1640,36 @@ test('an armed expedition stock restart can leave a calm spider by one bounded d
   assert.equal(movements.allowSprinting, true);
 });
 
+test('expedition stock counts angry and unsynced Endermen as threats, while confirmed calm ones allow supplies', async () => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const at = new Vec3(2.5, 64, 2.5);
+  const mob = { id: 7, name: 'enderman', type: 'hostile', position: at.offset(12, -2, 0), metadata: [] };
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' }, entities: { 7: mob },
+    registry: { entitiesByName: { enderman: { type: 'hostile', metadataKeys: ['creepy', 'stared_at'] } } },
+    entity: { position: at, onGround: true },
+  });
+  const controller = new AbortController();
+  let seenHits = false;
+  let chestReads = 0;
+  const ctx = { signal: controller.signal, record() {}, perceive: () => ({ inventory: { bread: 3, iron_sword: 1 },
+    health: 20, food: 15, isDay: true, hostiles: [{ id: 7, name: 'enderman', distance: 12.2, selfAggressor: seenHits }] }) };
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: home, skills: {
+    takeItems: async () => { chestReads += 1; return { ok: true, gained: 1 }; },
+  } });
+  const cases = [[], [true, false], [false, true], [2, false]];
+  for (const metadata of cases) {
+    mob.metadata = metadata;
+    assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  }
+  mob.attributes = { movement_speed: { value: .3, modifiers: [] } };
+  mob.metadata = [];
+  seenHits = true;
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  seenHits = false;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(chestReads, 1);
+});
+
 test('healthy home recovery waits for its growing food reserve instead of exploring and harvests when ripe', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const crop = new Vec3(-10, 64, 3);

@@ -7,7 +7,7 @@ const { goals } = require('mineflayer-pathfinder');
 const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const farming = require('../farming');
-const { isObservedSelfAggressor } = require('../../vendor/server/minecraft/entitySemantics');
+const { isObservedSelfAggressor, isThreateningMobEntity } = require('../../vendor/server/minecraft/entitySemantics');
 const { KNOWLEDGE, countKey } = require('../knowledge');
 const { createBlacklist, posKey } = require('../blacklist');
 const { applyWalkOnlyMovements, dimension } = require('../nether');
@@ -94,7 +94,20 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   };
   const onDryGround = () => bot.entity.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava
     && bodyClear(bot.entity.position);
-  const threatsNear = (state) => (state.hostiles || []).some(({ distance }) => distance <= 16);
+  const isThreat = (h) => {
+    if (h.name !== 'enderman' || h.selfAggressor) return true;
+    const entity = bot.entities?.[h.id];
+    if (entity?.name !== h.name || !entity.position || !Array.isArray(entity.metadata)) return true;
+    const keys = bot.registry?.entitiesByName?.enderman?.metadataKeys;
+    const flags = ['creepy', 'stared_at'].map((key) => keys?.indexOf(key) ?? -1);
+    if (flags.some((index) => index < 0) || isThreateningMobEntity(entity, bot.registry)) return true;
+    const values = flags.map((index) => entity.metadata[index]);
+    // Vanilla omits neutral defaults once the living entity has synced.
+    const synced = Object.keys(entity.attributes || {}).length > 0;
+    return !values.every((value) => value === false || value === 0 || value === undefined && synced);
+  };
+  const retreatThreats = (state) => (state.hostiles || []).filter((h) => h.distance <= 16 && isThreat(h));
+  const threatsNear = (state) => retreatThreats(state).length > 0;
   const detour = createExpeditionReturnDetour({ bot, centre, floor, exposed, actions,
     safe: (state, starting) => state.health >= 12 && state.food >= 12 && (!starting || state.isDay === true)
       && !state.inWater && !bot.entity.isInWater && !bot.entity.isInLava && !threatsNear(state)
@@ -111,7 +124,6 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const flags = entity.metadata[flagsIndex] ?? (Object.keys(entity.attributes || {}).length ? 0 : null);
     return Number.isInteger(flags) && (flags & 4) === 0;
   };
-  const retreatThreats = (state) => (state.hostiles || []).filter(({ distance }) => distance <= 16);
   const canWithdraw = (state) => state.health >= 12 && retreatThreats(state).every((h) => h.distance > RETREAT_CLEARANCE && calmSpider(h));
   const awayFromThreats = (hostiles, from, to) => hostiles.every((h) => {
     if (!calmSpider(h) || to.distanceTo(h.position) <= RETREAT_CLEARANCE) return false;
@@ -673,7 +685,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     if (!scout && !inHouse(feet) && !exposed(feet) && !farmlandFooting(read, bot.entity) && actions.underground?.(bot)) {
       const result = await advanceCaveRetreat(bot, ctx, actions, centre, { visited,
         bridgeGap: true,
-        avoid: (p) => inHouse(p) || (state.hostiles || []).some((h) => h.position?.distanceTo(p) <= 6) });
+        avoid: (p) => inHouse(p) || (state.hostiles || []).some((h) => h.position?.distanceTo(p) <= 6 && isThreat(h)) });
       if (result.ok && !result.dug) {
         visited.add(posKey(feet));
         if (visited.size > 64) visited.delete(visited.values().next().value);
