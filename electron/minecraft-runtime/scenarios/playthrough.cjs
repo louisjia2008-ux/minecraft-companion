@@ -117,7 +117,12 @@ const STEPS = [
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }), patient: true,
     done: ({ bot }) => have(bot, 'blaze_rod') >= BLAZE_RODS && dimensionOf(bot) === 'overworld' },
   { id: 'pearls', task: 'huntPearls', args: ({ bot }) => ({ count: Math.max(1, EYES - have(bot, 'ender_eye')) }),
-    when: ({ bot }) => bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000,
+    when: ({ bot, companion }) => {
+      if (bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000) return true;
+      const home = companion?.director && houseOf(companion)?.interiorCenter;
+      const p = bot.entity?.position;
+      return Boolean(home && p && p.y < home.y - 7 && Math.hypot(p.x - home.x, p.z - home.z) <= 48);
+    },
     done: ({ bot }) => have(bot, 'ender_pearl') + have(bot, 'ender_eye') >= EYES, nightly: true },
   { id: 'eyes', task: 'outfit', args: ({ state } = {}) => state?.endWeaponsRestock
     ? { items: END_WEAPONS } : expeditionKitArgs(EYE_KIT, state),

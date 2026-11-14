@@ -31,6 +31,18 @@ function modelContext({ armour = [], step = 'pearls', goal = null, pick = false 
   return { context: { companion, bot, state, server, username: 'x', write() {}, elapsedMs: 0 }, asked, state };
 }
 
+test('a pearl hunt already below the home can recover on the daylight tick', () => {
+  const hunt = STEPS.find((step) => step.id === 'pearls');
+  const { context } = modelContext({ step: 'pearls' });
+  const house = createStarterHouse({ x: -105, y: 64, z: -182 });
+  context.companion.director = { memory: { homestead: { memory: { house } } } };
+  context.bot.time.timeOfDay = 1000;
+  context.bot.entity.position = new Vec3(-102, 34, -183);
+  assert.equal(hunt.when(context), true);
+  context.bot.entity.position.y = 64;
+  assert.equal(hunt.when(context), false);
+});
+
 test('a living Nether food return refills the carried reserve and resumes the same rod goal', async () => {
   const { context, asked, state } = modelContext({ step: 'nether', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
   const bag = [{ name: 'iron_pickaxe', count: 1 }, { name: 'blaze_rod', count: 4 }, { name: 'bread', count: 2 }];

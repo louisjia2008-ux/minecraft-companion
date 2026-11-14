@@ -13,7 +13,7 @@ const { createBlacklist } = require('../blacklist');
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const defaultActions = require('../actions');
-const { skyOpen, standable, walkDry } = require('../caveRetreat');
+const { advanceCaveRetreat, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { meleeSight } = require('../entityGeometry');
 const { applyWalkOnlyMovements } = require('../nether');
 const { sleep, waitUntil } = require('../confirm');
@@ -42,6 +42,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
   const blacklist = createBlacklist({ ttlMs: 60000 });
   const memory = { centre: null, scoutPositions: [], nights: 0, hunted: 0, sawNight: false };
+  const caveVisited = new Set();
   const pearls = (state) => state.inventory.ender_pearl || 0;
 
   const creepyIndex = () => bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
@@ -100,6 +101,27 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   function home() {
     const at = bot.companionHomeAt?.();
     return at ? new Vec3(at.x, at.y, at.z) : null;
+  }
+
+  function belowHome(house, p) {
+    return house && p && p.y < house.y - 7 && flatDistance(p, house) <= SCOUT_RADIUS;
+  }
+
+  async function regainSurface(ctx, state, house) {
+    const from = bot.entity.position.floored();
+    if (!bot.entity.onGround || state.inWater || bot.entity.isInLava) return wait(ctx, 'pearl_wait_for_dry_ground');
+    const avoid = (p) => bot.companionHomeSite?.(p) || flatDistance(p, house) > SCOUT_RADIUS
+      || (ctx.perceive().hostiles || []).some((h) => h.position?.distanceTo(p.offset(.5, 0, .5)) <= 5);
+    const result = await advanceCaveRetreat(bot, ctx, actions, house, {
+      visited: caveVisited, avoid, bridgeGap: true, surfaceFloor: house.y - 2,
+    });
+    if (!result.ok) return wait(ctx, result.reason);
+    if (!result.dug) {
+      caveVisited.add(pointKey(from));
+      if (caveVisited.size > 80) caveVisited.delete(caveVisited.values().next().value);
+      ctx.record('pearl_cave_ascent', { from, to: result.to });
+    }
+    return { ...result, waited: true };
   }
 
   async function leaveHouse(ctx, from, centre) {
@@ -234,15 +256,16 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     ownsRouteRecovery: () => memory.sawNight,
     // Endermen appear and vanish: a quiet stretch is normal, not a stall.
     noProgressLimit: 40,
-    isDone: (state) => pearls(state) >= count || (memory.sawNight && state.isDay !== false),
+    isDone: (state) => pearls(state) >= count || (memory.sawNight && state.isDay !== false && !belowHome(home(), state.position)),
     progress: (state) => pearls(state) * 10 + memory.hunted,
     async run(ctx) {
       const state = ctx.perceive();
+      const house = home();
+      if (belowHome(house, bot.entity.position)) return regainSurface(ctx, state, house);
       if (state.isDay !== false) {
         // Set during the day: wait for dusk at home. Where the night's hunt
         // ended was once a flooded cave thirty blocks down, and the bot
         // waited the day out there, coming up for air every few seconds.
-        const house = home();
         if (house && (state.inWater || state.position.distanceTo(house) > HOME_RANGE)) {
           ctx.record('pearl_wait', { where: 'home' });
           const back = await actions.goNear(bot, ctx, house, 4, { timeoutMs: 120000 });
