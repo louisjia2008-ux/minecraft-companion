@@ -286,19 +286,19 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     return stoneRouteOutcome(await quarry.leave(ctx, surfaceRoute(true)));
   }
 
-  async function returnToStoneSurface(ctx) {
+  async function returnToSurface(ctx, reason = 'stone_surface') {
     const house = memory.house;
     const from = bot.entity.position.floored();
     const state = ctx.perceive();
     if (state.health <= 6 || typeof actions.goTo !== 'function') {
       await sleep(500, ctx.signal);
-      return { ok: true, waited: true, reason: 'stone_surface_wait' };
+      return { ok: true, waited: true, reason: `${reason}_wait` };
     }
     const result = await advanceCaveRetreat(bot, ctx, actions, house.interiorCenter, {
       visited: stoneRetreatVisited,
       avoid: (p) => nearHouseColumn(p) || state.hostiles?.some((h) => h.position?.distanceTo(p) < 6),
     });
-    ctx.record('stone_surface_recovery', { from, ok: result.ok, reason: result.reason || null });
+    ctx.record(`${reason}_recovery`, { from, ok: result.ok, reason: result.reason || null });
     if (result.ok) {
       if (!result.dug) {
         stoneRetreatVisited.add(posKey(from));
@@ -307,7 +307,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       return result;
     }
     await sleep(500, ctx.signal);
-    return { ok: true, waited: true, reason: 'stone_surface_wait' };
+    return { ok: true, waited: true, reason: `${reason}_wait` };
+  }
+
+  function needsCaveAscent() {
+    return memory.house && bot.entity.position.y < memory.house.anchor.y - STONE_FLOOR_OFFSET
+      && !quarry.inside() && (actions.underground || defaultActions.underground)(bot);
   }
 
   async function runPlannerStep(ctx, step, requirement) {
@@ -319,7 +324,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     if (!gatheringStone && quarry.inside()) return leaveQuarry(ctx);
     stoneRouteOwnsRecovery = gatheringStone;
     if (gatheringStone) {
-      if (bot.entity.position.y < memory.house.anchor.y - STONE_FLOOR_OFFSET && !quarry.inside()) return returnToStoneSurface(ctx);
+      if (bot.entity.position.y < memory.house.anchor.y - STONE_FLOOR_OFFSET && !quarry.inside()) return returnToSurface(ctx);
       stoneRetreatVisited.clear();
     }
     if (step.kind !== 'gather' || gatheringLogs || gatheringFoundation) {
@@ -881,11 +886,16 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     memory,
     maintenance,
     protects,
-    ownsRouteRecovery: () => stoneRouteOwnsRecovery || woolRouteOwnsRecovery,
+    ownsRouteRecovery: () => Boolean(stoneRouteOwnsRecovery || woolRouteOwnsRecovery || needsCaveAscent()),
     isDone: (state) => complete(state),
     progress: () => memory.steps,
     async run(ctx) {
-      if (memory.recovery) {
+      const ascending = needsCaveAscent();
+      if (ascending) {
+        protectSite();
+        memory.recovery = false;
+      }
+      if (memory.recovery && !ascending) {
         memory.recovery = false;
         ctx.record('recovery', { at: bot.entity.position.floored() });
         if (!stoneRouteOwnsRecovery && !woolRouteOwnsRecovery) {
@@ -897,7 +907,9 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
           return { ok: true };
         }
       }
-      const result = await runOnce(ctx);
+      // A site interaction can start a long path even when a surface attempt
+      // just failed. Finish the guarded climb before sending that path.
+      const result = ascending ? await returnToSurface(ctx, 'homestead_cave') : await runOnce(ctx);
       // Waiting (for dusk, out the night) is not progress: counting it would
       // refill the stall budget of a step that keeps failing every morning.
       if (result.ok && !result.waited) {

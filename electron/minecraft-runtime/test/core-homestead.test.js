@@ -570,6 +570,49 @@ function simulateQuarryHomestead() {
   return { sim, house, setBlock, events, seen, clock, ctx, goal };
 }
 
+test('homestead defers foundation work and generic recovery until the guarded cave ascent', async () => {
+  const { sim, house, setBlock, events, seen, ctx, goal } = simulateQuarryHomestead();
+  const feet = new Vec3(12, 33, -12);
+  sim.bot.entity.position = feet.offset(.5, 0, .5);
+  sim.bot.canDigBlock = () => true;
+  sim.inventory.dirt = 4;
+  setBlock(house.foundation[0], 'air');
+  setBlock(feet, 'air');
+  setBlock(feet.offset(0, 1, 0), 'air');
+  const lavaWall = feet.offset(0, 0, 1);
+  setBlock(lavaWall, 'lava');
+  const cuts = [];
+  const dig = sim.actions.digBlock;
+  sim.actions.digBlock = async (...args) => {
+    const { position } = args[2];
+    assert.ok(position.distanceTo(feet) < 4);
+    assert.notEqual(position.distanceTo(lavaWall), 1, 'keep the lava wall sealed');
+    cuts.push(position);
+    return dig(...args);
+  };
+  let repairs = 0;
+  sim.skills.placeAt = async (_bot, _ctx, target) => {
+    assert.deepEqual(target, house.foundation[0]);
+    repairs++;
+    return { ok: true };
+  };
+  sim.actions.unstick = async () => assert.fail('generic unstick could walk into the cave hazard');
+  sim.actions.goNear = async () => assert.fail('cannot route directly to a repair from the cave');
+  const run = () => goal.run({ ...ctx, perceive: () => ({ ...ctx.perceive(), health: 17, food: 13 }) });
+  goal.recover();
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal((await run()).ok, true);
+  assert.equal((await run()).ok, true);
+  assert.equal(cuts.length, 2);
+  assert.equal(repairs, 0);
+  assert.equal(seen('generic_surface'), false);
+  assert.ok(events.some(({ type, ok }) => type === 'homestead_cave_recovery' && ok));
+  sim.bot.entity.position = new Vec3(.5, 64, -3.5);
+  assert.equal(goal.ownsRouteRecovery(), false);
+  assert.equal((await run()).ok, true);
+  assert.equal(repairs, 1);
+});
+
 test('homestead finishes the active stone quarry and protects its floor from exposed gathering', async () => {
   const { sim, house, setBlock, events, seen, clock, ctx, goal } = simulateQuarryHomestead();
   setBlock(house.foundation[0], 'air');
