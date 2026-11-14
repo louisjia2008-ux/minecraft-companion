@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
-const { createHuntPearlsGoal, pearlTetherRecoveryNeeded, scoutSectorOf } = require('../core/goals/huntPearls');
+const { createHuntPearlsGoal, pearlTetherRecoveryNeeded, pearlHomeReturnNeeded, scoutSectorOf } = require('../core/goals/huntPearls');
 const { skyOpen } = require('../core/caveRetreat');
 
 const AIR = { name: 'air', boundingBox: 'empty', shapes: [], skyLight: 15 };
@@ -417,14 +417,14 @@ test('dawn keeps an outlying hunter on the dry route back inside the known home 
   assert.equal(goal.isDone(ctx.perceive()), false);
   await goal.run(ctx);
   assert.deepEqual(goal.memory.centre, home);
-  assert.equal(goal.isDone(ctx.perceive()), true);
+  assert.equal(goal.isDone(ctx.perceive()), false, 'the dawn return continues toward the house');
   assert.deepEqual(records, [{ type: 'pearl_scout_tether_return', from: start, to: entry, centre: home }]);
   assert.equal(movements.getNeighbors, native);
 });
 
 test('an outlying hunter launched at dawn stops attempting recovery after two guarded route failures', async () => {
   const home = new Vec3(0, 64, 0);
-  const start = home.offset(0, 0, -54);
+  const start = home.offset(0, 0, -56);
   const bot = { ...terrain, entity: { position: start, onGround: true }, companionHomeAt: () => home,
     pathfinder: { movements: { getNeighbors: () => [] } } };
   const goal = createHuntPearlsGoal({ bot, actions: {} });
@@ -437,6 +437,50 @@ test('an outlying hunter launched at dawn stops attempting recovery after two gu
   assert.equal((await goal.run(ctx)).reason, 'pearl_scout_tether_blocked');
   assert.equal(goal.isDone(ctx.perceive()), true);
   assert.deepEqual(goal.memory.centre, home);
+});
+
+
+test('dawn returns to the house in short confirmed dry legs and can begin with a detour', async () => {
+  const house = new Vec3(0, 64, 0);
+  const start = house.offset(0, 0, -26);
+  const route = [start.offset(0, 0, -1), start.offset(1, 0, -1), start.offset(2, 0, -1)];
+  for (let z = -26; z <= -5; z += 1) route.push(house.offset(2, 0, z));
+  const bank = [start, ...route];
+  const native = (p) => bank.filter((at) => p.distanceTo(at) === 1);
+  const bot = { ...terrain, entity: { position: start.offset(.5, 0, .5), onGround: true },
+    companionHomeAt: () => house, pathfinder: { movements: { getNeighbors: native },
+      *getPathFromTo(movements, position, end) {
+        assert.deepEqual(movements.getNeighbors(position.floored()), [route[0]]);
+        assert.ok(end.isEnd(route.at(-1)));
+        yield { result: { status: 'success', path: route } };
+      } },
+    blockAt(p) {
+      if (p.y === 63 && !bank.some((at) => at.x === p.x && at.z === p.z)) return { ...AIR, name: 'water' };
+      return terrain.blockAt(p);
+    } };
+  const records = [];
+  let reached = 0;
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, target, options) => {
+    const leg = route.slice(reached, reached += 7);
+    const next = leg.at(-1);
+    assert.ok(target.isEnd(next));
+    assert.equal(bot.pathfinder.movements.canDig, false);
+    assert.ok(bot.pathfinder.movements.getNeighbors(bot.entity.position.floored()).every((p) => leg.includes(p)));
+    bot.entity.position = next.offset(.5, 0, .5);
+    assert.equal(options.arrived(bot.entity.position), true);
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: true }) };
+  assert.equal(pearlHomeReturnNeeded(house, bot.entity.position, bot), true);
+  for (let i = 0; i < 4; ++i) {
+    assert.equal(goal.isDone(ctx.perceive()), false);
+    assert.equal((await goal.run(ctx)).ok, true);
+  }
+  assert.equal(goal.isDone(ctx.perceive()), true);
+  assert.equal(records.length, 4);
+  assert.ok(records.every(({ type }) => type === 'pearl_daylight_home_leg'));
+  assert.equal(records.at(-1).remaining, 0);
 });
 
 test('a hunter starting inside the known house walks out through an observed door', async () => {

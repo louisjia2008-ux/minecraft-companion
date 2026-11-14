@@ -46,6 +46,26 @@ test('a pearl hunt already below the home can recover on the daylight tick', () 
   assert.equal(hunt.when(context), false);
 });
 
+test('daylight can dispatch a surfaced hunter home and will back off a failed route for the same day', () => {
+  const hunt = STEPS.find((step) => step.id === 'pearls');
+  const { context, state } = modelContext({ step: 'pearls' });
+  const house = createStarterHouse({ x: -105, y: 64, z: -182 });
+  context.companion.director = { memory: { homestead: { memory: { house } } } };
+  context.bot.entity = { position: new Vec3(-115.5, 66, -221.5), onGround: true };
+  context.bot.blockAt = (p) => p.y < 66 ? { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] }
+    : { name: 'air', boundingBox: 'empty', shapes: [] };
+  context.bot.time = { timeOfDay: 2000, day: 6 };
+  assert.equal(hunt.when(context), true);
+  state.goals.pearls = { memory: { homeReturnBlockedDay: 6 } };
+  assert.equal(hunt.when(context), false);
+  context.bot.time.timeOfDay = 14000;
+  assert.equal(hunt.when(context), true);
+  context.bot.time = { timeOfDay: 1000, day: 7 };
+  assert.equal(hunt.when(context), true);
+  context.bot.entity.isInWater = true;
+  assert.equal(hunt.when(context), false);
+});
+
 test('a living Nether food return refills the carried reserve and resumes the same rod goal', async () => {
   const { context, asked, state } = modelContext({ step: 'nether', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
   const bag = [{ name: 'iron_pickaxe', count: 1 }, { name: 'blaze_rod', count: 4 }, { name: 'bread', count: 2 }];

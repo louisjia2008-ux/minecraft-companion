@@ -35,7 +35,7 @@ const { countKey } = require('../core/knowledge');
 const { RISKY_FOODS } = require('../core/actions');
 const { homeOf } = require('../core/goals/registry');
 const { homeResupplyReady } = require('../core/goals/outfit');
-const { pearlCaveRecoveryNeeded } = require('../core/goals/huntPearls');
+const { pearlCaveRecoveryNeeded, pearlHomeReturnNeeded } = require('../core/goals/huntPearls');
 const { expeditionFoodCount } = require('../core/goals/stockFood');
 const { isThreateningMobEntity } = require('../vendor/server/minecraft/entitySemantics');
 
@@ -129,10 +129,13 @@ const STEPS = [
       .sort((a, b) => (coverage[a] || 0) - (coverage[b] || 0))[0];
     return { count: Math.max(1, EYES - have(bot, 'ender_eye')), ...(Object.keys(coverage).length ? { scoutSector } : {}) };
   },
-    when: ({ bot, companion }) => {
-      if (bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000) return true;
+    when: ({ bot, companion, state }) => {
+      const { timeOfDay, day } = bot.time || {};
+      if (timeOfDay >= 12500 && timeOfDay < 23000) return true;
       const home = companion?.director && houseOf(companion)?.interiorCenter;
-      return pearlCaveRecoveryNeeded(bot, home, bot.entity?.position);
+      return pearlCaveRecoveryNeeded(bot, home, bot.entity?.position)
+        || (Number.isFinite(timeOfDay) && timeOfDay < 12500 && (!Number.isFinite(day) || state?.goals?.pearls?.memory?.homeReturnBlockedDay !== day)
+          && pearlHomeReturnNeeded(home, bot.entity?.position, bot));
     },
     done: ({ bot }) => have(bot, 'ender_pearl') + have(bot, 'ender_eye') >= EYES, nightly: true },
   { id: 'eyes', task: 'outfit', args: ({ state } = {}) => state?.endWeaponsRestock
