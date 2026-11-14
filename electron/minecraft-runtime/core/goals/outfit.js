@@ -26,7 +26,7 @@ const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { upgrades } = require('../armor');
 const { entityDimensions } = require('../entityGeometry');
 const { isHostile, perceive } = require('../perception');
-const { advanceCaveRetreat, farmlandFooting, skyOpen, standable, walkDry } = require('../caveRetreat');
+const { advanceCaveRetreat, caveFootingBank, farmlandFooting, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { createResupplyIrrigation } = require('./resupplyFarm');
 
 // Tools and weapons stay in the bag as they are made: stored, the bot spent
@@ -806,6 +806,27 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         await sleep(500, scoped.signal);
         return { ok: true, waited: true, reason };
       };
+      const bank = caveFootingBank(bot);
+      if (bank) {
+        const origin = bot.entity.position;
+        const safe = (p) => p.equals(bank) && portalFree(read, origin, p.offset(.5, 0, .5))
+          && safeStep(p.offset(.5, 0, .5), origin);
+        if (!safe(bank)) return wait('resupply_home_bank_unsafe');
+        const landed = () => bot.entity.onGround && bot.entity.position.floored().equals(bank) && standable(read, bank);
+        routeDestination = bank;
+        destinationStillSafe = () => standable(read, bank) && safe(bank);
+        try {
+          const result = await walkDry(bot, scoped, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
+            { adjacent: bank, maxDrop: 0, arrived: landed, avoid: (p) => !safe(p) });
+          if (!(result.ok || result.reason === 'not_arrived')
+            || !await waitUntil(landed, { timeoutMs: 500, signal: scoped.signal })) return wait('resupply_home_bank_unconfirmed');
+        } finally {
+          routeDestination = null;
+          destinationStillSafe = null;
+        }
+        scoped.record('resupply_home_bank', { from: feet, to: bank });
+        return { ok: true };
+      }
       if (missingDoor) {
         const hostiles = activeThreats().filter((h) => h.position.distanceTo(state.position) <= RANGED_RANGE
           || h.position.distanceTo(safety.centre) <= RANGED_RANGE);
