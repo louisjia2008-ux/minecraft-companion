@@ -802,6 +802,21 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     }
     let step = planNext({ requirements: reqs, inventory, stations: placedStations(), kb });
     bowRouteOwnsRecovery = bowHunt(step);
+    // Reuse iron previously deposited as mining loot before opening another
+    // shaft for an outfit. Take only the current recipe's shortfall.
+    if (countWorn && !surfaceOnly && step?.kind === 'gather' && step.key === 'raw_iron') {
+      const ingredient = ['iron_ingot', 'raw_iron'].find((name) => memory.chest[name] > 0 && !blacklist.has(`reserve:${name}`));
+      if (ingredient) {
+        const up = await climbOut(ctx);
+        if (up) return up;
+        const count = Math.min(step.count, memory.chest[ingredient]);
+        const taken = await skills.takeItems(bot, ctx, { position: chest, count, itemMatch: (name) => name === ingredient });
+        ctx.record('outfit_take_iron', { ingredient, count, taken: taken.taken || 0, reason: taken.reason });
+        memory.chest = null;
+        if (!taken.ok) blacklist.add(`reserve:${ingredient}`, taken.reason);
+        return taken;
+      }
+    }
     // About to go (back) down a mine from up top: take its supplies along.
     // Down there, running out of stone pickaxes sends the bot to the depot,
     // and only up for more when the depot cannot help.

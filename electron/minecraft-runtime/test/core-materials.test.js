@@ -206,6 +206,29 @@ async function runGoal(sim, goal, { limit = 5000, dieWhen = () => false } = {}) 
 const STATIONS = { crafting_table: { x: 1, y: 0, z: 0 }, furnace: { x: 2, y: 0, z: 0 } };
 const COBBLEGEN = [{ key: 'water_bucket', count: 1 }, { key: 'lava_bucket', count: 1 }, { key: 'cobblestone', count: 10 }];
 
+test('an outfit reuses only the iron needed from the home chest before mining', async () => {
+  const sim = simulate({ failRate: 0 });
+  Object.assign(sim.inventory, { raw_iron: 1, stone_pickaxe: 1, coal: 1 });
+  sim.chest.raw_iron = 7;
+  sim.world.set('2,0,0', 'furnace');
+  sim.skills.gatherOne = () => assert.fail('stored iron covers the current recipe');
+  sim.skills.takeItems = async (_bot, _ctx, { itemMatch, count }) => {
+    assert.equal(itemMatch('raw_iron'), true);
+    assert.equal(itemMatch('water_bucket'), false);
+    assert.equal(count, 4);
+    sim.chest.raw_iron -= count;
+    sim.inventory.raw_iron += count;
+    return { ok: true, taken: count };
+  };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'iron_helmet', count: 1 }], stations: STATIONS, skills: sim.skills,
+    actions: sim.actions, countWorn: true });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  for (let i = 0; i < 4; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(sim.chest.raw_iron, 3);
+  assert.equal(sim.inventory.iron_ingot, 5);
+});
+
 test('surface resupply skips deep and buried stone and refuses a branch-mining requirement', async () => {
   const sim = simulate({ failRate: 0 });
   sim.inventory.stone_pickaxe = 1;
