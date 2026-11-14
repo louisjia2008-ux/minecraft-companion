@@ -45,14 +45,17 @@ function fireBodyCells(bot, at = bot.entity?.position) {
 }
 const fireContacts = (bot, at) => fireBodyCells(bot, at).filter((p) => FIRE.has(bot.blockAt(p)?.name));
 
-// Only one same-height, straight neighbour edge (or the current cell centre).
-// Every swept body voxel is loaded and open; only the fire already touching
-// the starting body may be crossed while leaving it. No planner can detour.
-function fireEdgeSafe(bot, from, to, allowedFire) {
+// Check the full swept body. Only fire already touching the starting body
+// may be crossed, and only while leaving it.
+function fireEdgeSafe(bot, from, to, allowedFire, lip = null) {
   const start = from.floored(), target = to.floored();
   if (!bot.entity.onGround || Math.abs(from.y - start.y) > 0.05 || start.y !== target.y
-    || Math.abs(start.x - target.x) + Math.abs(start.z - target.z) > 1
-    || !fullFireFloor(bot.blockAt(start.offset(0, -1, 0))) || !fullFireFloor(bot.blockAt(target.offset(0, -1, 0)))) return false;
+    || !fullFireFloor(bot.blockAt(target.offset(0, -1, 0)))) return false;
+  if (lip) {
+    const touching = (p) => fireBodyCells(bot, p).some((cell) => cell.equals(lip) || cell.equals(target));
+    if (!fullFireFloor(bot.blockAt(lip.offset(0, -1, 0))) || !touching(from) || !touching(to)) return false;
+  } else if (Math.abs(start.x - target.x) + Math.abs(start.z - target.z) > 1
+    || !fullFireFloor(bot.blockAt(start.offset(0, -1, 0)))) return false;
   const first = fireBodyCells(bot, from), last = fireBodyCells(bot, to);
   if (!first.length || !last.length) return false;
   const points = [...first, ...last];
@@ -66,6 +69,25 @@ function fireEdgeSafe(bot, from, to, allowedFire) {
     }
   }
   return true;
+}
+
+// At a stair lip the centre can hang over air while the real body stands
+// on the burning tile behind it. Recover along two continuous same-height
+// supports; the straight swept path cannot lose overlap with that solid row.
+function fireLipExit(bot, from, contacts, allowedFire) {
+  if (dimensionOf(bot) !== 'the_nether') return null;
+  const feet = from.floored();
+  const under = bot.blockAt(feet.offset(0, -1, 0));
+  if (under?.name !== 'air' && under?.name !== 'cave_air') return null;
+  for (const lip of contacts) {
+    if (lip.y !== feet.y || Math.abs(lip.x - feet.x) + Math.abs(lip.z - feet.z) !== 1) continue;
+    for (const side of SIDES) {
+      if ((lip.x - feet.x) * side.x + (lip.z - feet.z) * side.z) continue;
+      const to = lip.plus(side).offset(.5, 0, .5);
+      if (!fireContacts(bot, to).length && fireEdgeSafe(bot, from, to, allowedFire, lip)) return { lip, to };
+    }
+  }
+  return null;
 }
 
 function nearbyGhast(bot, range) {
@@ -1042,24 +1064,30 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         const contacts = fireContacts(bot), allowedFire = new Set(contacts.map(fireKey));
         if (!contacts.length) return finish(false, 'fire_contact_changed');
         const candidates = [feet, ...SIDES.map((side) => feet.plus(side))].map((p) => p.offset(0.5, 0, 0.5));
-        const target = candidates.find((p) => !fireContacts(bot, p).length && fireEdgeSafe(bot, from, p, allowedFire));
+        const direct = candidates.find((p) => !fireContacts(bot, p).length && fireEdgeSafe(bot, from, p, allowedFire));
+        const lipExit = !direct && fireLipExit(bot, from, contacts, allowedFire);
+        const target = direct || lipExit?.to;
         if (!target) return finish(false, 'no_safe_fire_exit');
         const targetCell = target.floored();
+        const lip = lipExit?.lip;
+        const safe = (position) => {
+          const cell = position.floored();
+          return (cell.equals(feet) || cell.equals(targetCell) || (lip && cell.equals(lip)))
+            && fireEdgeSafe(bot, position, target, allowedFire, lip);
+        };
         if (m) Object.assign(m, { canDig: false, allowParkour: false, allow1by1towers: false,
           scafoldingBlocks: [], maxDropDown: 0, allowSprinting: false, companionWalkOnly: true });
         ctx.record?.('fire_escape_start', { from: fireKey(from), target: fireKey(target),
-          mode: targetCell.equals(feet) ? 'recentre' : 'neighbour', contacts: contacts.map(fireKey) });
+          mode: lip ? 'supported_lip' : targetCell.equals(feet) ? 'recentre' : 'neighbour', contacts: contacts.map(fireKey) });
         bot.companionSneaking = true;
         for (let i = 0; i < 40; i++) {
           if (ctx.signal?.aborted) throw abortError(ctx.signal);
-          const here = bot.entity.position, cell = here.floored();
-          if ((!cell.equals(feet) && !cell.equals(targetCell)) || !fireEdgeSafe(bot, here, target, allowedFire)) {
-            return finish(false, 'fire_escape_changed');
-          }
-          if (!fireContacts(bot).length) return finish(true);
+          const here = bot.entity.position;
+          if (!safe(here)) return finish(false, 'fire_escape_changed');
+          if (!fireContacts(bot).length && (!lip || here.distanceTo(target) <= .19)) return finish(true);
           await bot.lookAt(target.offset(0, 1.6, 0), true);
           if (ctx.signal?.aborted) throw abortError(ctx.signal);
-          if (!fireEdgeSafe(bot, bot.entity.position, target, allowedFire)) return finish(false, 'fire_escape_changed');
+          if (!safe(bot.entity.position)) return finish(false, 'fire_escape_changed');
           bot.setControlState('sneak', true);
           bot.setControlState('forward', true);
           await sleep(50, ctx.signal);

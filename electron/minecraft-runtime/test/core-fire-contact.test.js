@@ -150,3 +150,37 @@ test('cancellation restores the raw sprint preference behind the hunger-gated ge
   assert.equal(f.movements.sprintSetting, true); assert.equal(f.movements.allowSprinting, false);
   f.bot.food = 20; assert.equal(f.movements.allowSprinting, true);
 });
+
+function fortressLip() {
+  const f = fixture();
+  const position = new Vec3(-276.6450096938778, 76, -162.1539409771996);
+  const fire = new Vec3(-277, 76, -162);
+  const exit = new Vec3(-276, 76, -162);
+  f.bot.entity.position = position;
+  f.cells.set(f.key(fire), 'fire');
+  for (const pos of [fire, exit]) f.cells.set(f.key(pos.offset(0, -1, 0)), 'nether_bricks');
+  return { ...f, fire, exit };
+}
+
+test('a fire contact on the original fortress lip can retreat diagonally along continuous full support', async () => {
+  const f = fortressLip();
+  assert.ok(f.behavior().want(f.state) > 0);
+  assert.equal((await f.behavior().run(f.ctx)).ok, true);
+  assert.ok(f.bot.entity.position.floored().equals(f.exit));
+  assert.ok(f.bot.entity.position.distanceTo(f.exit.offset(.5, 0, .5)) <= .19);
+  assert.equal(f.events.find((e) => e.type === 'fire_escape_start').mode, 'supported_lip');
+});
+
+for (const hazard of ['missing_floor', 'new_fire', 'airborne', 'outside_nether']) {
+  test(`fire lip retreat refuses ${hazard} before movement`, async () => {
+    const f = fortressLip();
+    if (hazard === 'missing_floor') f.cells.delete(f.key(f.fire.offset(0, -1, 0)));
+    if (hazard === 'new_fire') f.cells.set(f.key(f.exit.offset(0, 1, 0)), 'fire');
+    if (hazard === 'airborne') f.bot.entity.onGround = false;
+    if (hazard === 'outside_nether') f.bot.game.dimension = 'overworld';
+    let pulses = 0;
+    f.beforeForward(() => { pulses += 1; });
+    assert.equal((await f.behavior().run(f.ctx)).reason, 'no_safe_fire_exit');
+    assert.equal(pulses, 0);
+  });
+}
