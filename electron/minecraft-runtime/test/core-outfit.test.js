@@ -258,6 +258,44 @@ test('daylight rearm can cross the north door above a screened archer under live
   await goal.dispose();
 });
 
+test('a grounded unarmed return can descend a screened two-level ridge to the original door', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const { door, chest } = house.furniture;
+  const westBreach = new Vec3(0, 64, 1);
+  const houseCells = new Set([...house.blocks.map(({ position }) => position), ...house.foundation]
+    .map(({ x, y, z }) => new Vec3(x, y, z).toString()));
+  for (const cell of [westBreach, westBreach.offset(0, 1, 0)]) houseCells.delete(cell.toString());
+  const route = [new Vec3(-1, 66, 1), new Vec3(-1, 66, 0), new Vec3(-1, 66, -1), new Vec3(0, 65, -1),
+    new Vec3(1, 65, -1), new Vec3(2, 65, -1), new Vec3(3, 64, -1), new Vec3(3, 64, 0), new Vec3(3, 64, 1)];
+  for (const cell of route.slice(0, 7)) houseCells.add(cell.offset(0, -1, 0).toString());
+  const archer = { id: 4, name: 'skeleton', position: new Vec3(3.5, 55, 4.5), width: .6, height: 1.99 };
+  const bot = Object.assign(fakeBot(), { health: 20, food: 20, game: { dimension: 'overworld' },
+    entity: { position: route[0].offset(.5, 0, .5), onGround: true }, time: { timeOfDay: 3000 }, entities: { 4: archer } });
+  bot.blockAt = (p) => {
+    if (p.x === door.position.x && p.z === door.position.z && [64, 65].includes(p.y)) {
+      return { name: 'birch_door', getProperties: () => ({ half: p.y === 64 ? 'lower' : 'upper',
+        open: true, facing: 'north', hinge: 'left' }) };
+    }
+    const solid = houseCells.has(p.toString()) || p.y === 62;
+    return { name: solid ? 'cobblestone' : 'air', boundingBox: solid ? 'block' : 'empty',
+      shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const visited = [];
+  const goal = createOutfitGoal({ bot, recoverAtHome: true, items: [{ key: 'stone_sword', count: 1 }],
+    home: { chest: chest.position, centre: house.interiorCenter, anchor: house.anchor, door: door.position },
+    actions: { async goTo(_bot, _ctx, target) {
+      const pos = new Vec3(target.x, target.y, target.z);
+      visited.push(pos);
+      bot.entity.position = pos.offset(.5, 0, .5);
+      return { ok: true };
+    } },
+  });
+  const ctx = { perceive: () => perceive(bot), record() {} };
+  for (const _step of route.slice(1)) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(visited, route.slice(1));
+  await goal.dispose();
+});
+
 test('a destroyed doorstep uses supported covered interior and refuses missing floor or visible shooter', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const door = new Vec3(3, 64, 0);
