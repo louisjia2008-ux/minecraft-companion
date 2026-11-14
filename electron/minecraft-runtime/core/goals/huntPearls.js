@@ -25,6 +25,8 @@ const STARE_FAR = 48;
 const STARE_MS = 12000;
 const STARE_TURN_MS = 2200;
 const STARE_AGAIN_MS = 30000;
+const LURE_HOLD_MS = 8000;
+const FIGHT_RADIUS = 3;
 const ENDERMAN_EYES = 2.55;
 const ENGAGE_HEALTH = 14;
 const ENGAGE_FOOD = 15;
@@ -61,8 +63,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   const restingAtHome = (p, centre) => centre && p.distanceTo(centre) <= 6;
   const readyToHunt = (state) => state.health >= ENGAGE_HEALTH && state.food >= ENGAGE_FOOD
     && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe'));
-  const visible = (entity) => {
-    const eye = bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
+  const visible = (entity, from = bot.entity.position) => {
+    const eye = from.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
     const point = entity.position.offset(0, ENDERMAN_EYES, 0);
     return meleeSight(bot, { eye, point, distance: eye.distanceTo(point) }) === 'clear';
   };
@@ -70,6 +72,20 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     await sleep(750, ctx.signal);
     return { ok: true, waited: true, reason };
   };
+
+  function fightFooting(feet) {
+    const firm = (p) => standable(read, p) && !read(p.offset(0, -1, 0))?.name.endsWith('_leaves');
+    if (!firm(feet)) return false;
+    // An Enderman can teleport around the hunter, so leave room to absorb
+    // knockback in any direction with a drop of at most one block.
+    for (let x = -FIGHT_RADIUS; x <= FIGHT_RADIUS; x += 1) {
+      for (let z = -FIGHT_RADIUS; z <= FIGHT_RADIUS; z += 1) {
+        if (x * x + z * z > FIGHT_RADIUS * FIGHT_RADIUS) continue;
+        if (![0, -1, 1].some((y) => firm(feet.offset(x, y, z)))) return false;
+      }
+    }
+    return true;
+  }
 
   // Stared at, an enderman turns on the player; but one that is angry and
   // still looked at stands frozen (within 16 blocks it waits out the stare).
@@ -100,6 +116,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
       await sleep(100, ctx.signal);
     }
     const came = Boolean(bot.entities?.[e.id]) && e.position.distanceTo(bot.entity.position) <= STARE_NEAR;
+    if (turnedAt) memory.lured = { id: e.id, until: Date.now() + LURE_HOLD_MS };
     ctx.record('enderman_stare_result', { id: e.id, came, angry: angry(e), turnedMs: turnedAt ? turnedAt - started : null,
       gone: !bot.entities?.[e.id], distance: Math.round(e.position.distanceTo(bot.entity.position)) });
     return { ok: true, progress: came, waited: !came };
@@ -187,9 +204,10 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
         }
         // Prefer broader sight coverage when a straight compass ray can lie
         // across water or underneath a dense canopy.
-        const rank = aim ? flatDistance(from, aim) - flatDistance(next, aim)
+        const rank = aim ? -(steps + 1) - next.distanceTo(aim) * .1
           : Math.min(...visited.map((p) => flatDistance(p, next))) + flatDistance(next, memory.centre) * .85 - (steps + 1) * .1;
-        if ((!aim || rank >= 1) && rank > highest) { best = next; highest = rank; }
+        if (rank > highest && (!aim || next.distanceTo(aim) <= STARE_FAR && fightFooting(next)
+          && visible(focus, next.offset(.5, 0, .5)))) { best = next; highest = rank; }
       }
     }
     return best || transfer;
@@ -292,14 +310,20 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
       // Let survival eat and heal before starting a new fight. An already
       // angry Enderman in reach is still handled by defense.
       if (!readyToHunt(state)) return wait(ctx, 'pearl_wait_for_combat_readiness');
+      const lured = bot.entities?.[memory.lured?.id];
+      if (lured && angry(lured) && Date.now() < memory.lured.until && lured.position.distanceTo(bot.entity.position) <= STARE_FAR) {
+        return wait(ctx, 'pearl_wait_for_lured_enderman');
+      }
+      memory.lured = null;
       // One in sight but far: stare at its head and let it come. Chased,
       // it teleported off: fourteen nights of chasing brought one pearl.
       // Angry, it comes to the bot, where defend fights it and keeps the pearl.
       const targets = endermen().filter((e) => e.position.distanceTo(state.position) <= Math.min(radius, STARE_FAR)
         && visible(e) && targetOutdoors(e.position.floored()));
-      const stared = await stare(ctx, targets);
+      const camp = !state.inWater && bot.entity.onGround !== false && fightFooting(bot.entity.position.floored());
+      const stared = camp ? await stare(ctx, targets) : null;
       if (stared) return stared;
-      const close = targets.filter((e) => e.position.distanceTo(state.position) <= STARE_NEAR);
+      const close = camp ? targets.filter((e) => e.position.distanceTo(state.position) <= STARE_NEAR) : [];
       if (close.length) {
         const restore = applyWalkOnlyMovements(bot);
         try {

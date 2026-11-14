@@ -182,6 +182,49 @@ test('with an angry enderman already at hand, no other one is stared at', async 
   assert.equal(stared, 0);
 });
 
+test('a hunter steps back from a drop to a dry fight position before staring', async () => {
+  const start = new Vec3(0, 64, 0);
+  const openCamp = new Vec3(0, 64, -5);
+  const man = { id: 9, name: 'enderman', position: new Vec3(14, 64, 0) };
+  const path = { getNeighbors: (p) => p.z > openCamp.z ? [p.offset(0, 0, -1)] : [] };
+  let looks = 0;
+  const bot = { ...terrain, entity: { position: start, onGround: true }, entities: { 9: man }, pathfinder: { movements: path },
+    blockAt(p) {
+      if (p.y >= 55 && p.y < 64 && p.z > 0 && Math.abs(p.x) <= 3) return AIR;
+      return terrain.blockAt(p);
+    },
+    lookAt: async () => { looks += 1; man.position = new Vec3(3, 64, -5); },
+  };
+  const actions = { haltBody() {}, goTo: async (_bot, _ctx, goal) => {
+    assert.ok(goal.z <= -3);
+    bot.entity.position = new Vec3(goal.x, goal.y, goal.z);
+    return { ok: true };
+  } };
+  const goal = createHuntPearlsGoal({ bot, actions });
+  const ctx = { signal: new AbortController().signal, record() {}, perceive: () => nightState(bot.entity.position) };
+  await goal.run(ctx);
+  assert.equal(looks, 0);
+  await goal.run(ctx);
+  assert.equal(looks, 1);
+});
+
+test('after an angry Enderman approaches, the hunter lets it close instead of scouting away', async () => {
+  const position = new Vec3(0, 64, 0);
+  const player = { position, onGround: true };
+  const man = { id: 9, name: 'enderman', position: new Vec3(12, 64, 0), metadata: {} };
+  const bot = { ...terrain, entity: player, entities: { 9: man },
+    registry: { entitiesByName: { enderman: { metadataKeys: ['creepy'] } } },
+    lookAt: async () => { man.metadata[0] = true; },
+    look: async () => { man.position = new Vec3(4, 60, 0); },
+  };
+  const goal = createHuntPearlsGoal({ bot, actions: { haltBody() {}, goTo: () => assert.fail('left the lure site') } });
+  const ctx = { signal: new AbortController().signal, record() {}, perceive: () => nightState(position) };
+  await goal.run(ctx);
+  assert.equal((await goal.run(ctx)).reason, 'pearl_wait_for_lured_enderman');
+  goal.memory.lured.until = Date.now() - 1;
+  assert.equal((await goal.run(ctx)).reason, 'pearl_scout_no_dry_route');
+});
+
 test('scouting owns short dry surface legs and skips underground targets', async () => {
   const player = new Vec3(0, 64, 0);
   const safe = new Vec3(8, 64, 0);
