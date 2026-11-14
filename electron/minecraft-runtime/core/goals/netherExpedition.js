@@ -64,7 +64,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   memory.crumbs = [];
   const dropCrumb = () => {
     const e = bot.entity;
-    if (!e?.position || !e.onGround || e.isInLava || !nether.inNether(bot)) return;
+    if (memory.returning || !e?.position || !e.onGround || e.isInLava || !nether.inNether(bot)) return;
     const last = memory.crumbs[memory.crumbs.length - 1];
     if (last && last.distanceTo(e.position) < 6) return;
     memory.crumbs.push(e.position.floored());
@@ -384,7 +384,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
     if (bot.entity.onGround && bot.entity.position.distanceTo(crumb) < start.distanceTo(crumb) - 2) {
       memory.retraceMisses = 0;
-      memory.crumbAt = index;
+      if (bot.entity.position.distanceTo(crumb) <= 3.5) memory.crumbAt = index;
       return result.ok ? result : { ok: true, moved: true };
     }
     blacklist.add(`crumb:${posKey(crumb)}`, result.reason || 'not_moved');
@@ -437,6 +437,63 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const joined = targets.find((p) => p.distanceTo(best.point) <= 2);
       memory.crumbAt = memory.crumbs.indexOf(joined);
       memory.leftSpawner = true;
+    }
+    return result;
+  }
+
+  async function retraceDryTrail(ctx, portal) {
+    const finder = bot.pathfinder;
+    const here = bot.entity.position.floored();
+    if (!bot.entity.onGround || typeof finder?.getPathFromTo !== 'function' || !finder.movements) return null;
+    const distance = (p) => p.distanceTo(portal);
+    const usable = (p, index) => (memory.crumbAt == null || index < memory.crumbAt)
+      && p.distanceTo(here) <= 66 && distance(here) - distance(p) >= 5
+      && !blacklist.has(`dry_crumb:${posKey(p)}`);
+    const cache = new Map();
+    const read = (p) => {
+      const key = posKey(p);
+      if (!cache.has(key)) cache.set(key, bot.blockAt(p));
+      return cache.get(key);
+    };
+    const candidates = memory.crumbs.map((point, index) => ({ point, index }))
+      .filter(({ point, index }) => usable(point, index) && nether.lavaRisk({ blockAt: read }, point) === 0)
+      .sort((a, b) => distance(a.point) - distance(b.point)).slice(0, 12);
+    if (distance(here) <= 66 && distance(here) > 4) candidates.unshift({ point: portal, index: -1 });
+    if (!candidates.length && !memory.dryReturn?.from.equals(here)) return null;
+    if (!memory.dryReturn?.route.length || !memory.dryReturn.from.equals(here)) {
+      const profile = Object.create(finder.movements);
+      profile.getNeighbors = (point) => nether.lookoutCardinalMoves(bot, point, read).filter((move) =>
+        move.distanceTo(here) <= 86 && safeSpawnerMove(move, read)
+        && !blacklist.has(`dry_return:${posKey(point)}>${posKey(move)}`));
+      const pick = (point) => candidates.find((entry) => entry.point.distanceTo(point) <= 2);
+      const goal = { isEnd: (point) => Boolean(pick(point)),
+        heuristic: (point) => Math.max(0, Math.min(...candidates.map(({ point: p }) => p.distanceTo(point))) - 2) };
+      for (const { result } of finder.getPathFromTo(profile, here, goal, { timeout: 1200, tickTimeout: 22, optimizePath: false })) {
+        if (result.status === 'success' && result.path.length) {
+          const target = pick(result.path.at(-1));
+          if (!target) break;
+          memory.dryReturn = { from: here, target, route: result.path.map(({ x, y, z }) => new Vec3(x, y, z)) };
+          ctx.record('retrace_dry_route', { from: here, to: target.point, index: target.index, legs: result.path.length });
+          break;
+        }
+        if (result.status !== 'partial') break;
+        await sleep(0, ctx.signal);
+      }
+    }
+    const plan = memory.dryReturn;
+    if (!plan?.from.equals(here)) return null;
+    const segment = plan.route.slice(0, 8);
+    const result = await walkFortressRoute(ctx, segment, 'dry_return');
+    if (result.moved) {
+      plan.route.splice(0, segment.length);
+      plan.from = bot.entity.position.floored();
+      if (!plan.route.length) {
+        memory.crumbAt = plan.target.index;
+        memory.dryReturn = null;
+        ctx.record('retrace_dry_joined', { at: plan.from, to: plan.target.point, index: plan.target.index });
+      }
+    } else {
+      memory.dryReturn = null;
     }
     return result;
   }
@@ -1246,11 +1303,17 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // whole way, and build with the cobblestone too. Again after a fall:
     // one bot lost its footing digging the deck it stood on and landed in
     // the lava sea 40 blocks under the portal with nothing to climb with.
+    memory.returning = true;
     const portal = memory.netherPortal;
     const here = bot.entity.position;
-    if (memory.spawner) {
+    if (memory.spawner && (here.distanceTo(memory.spawner) <= SPAWNER_CLEAR || memory.spawnerExitStarted)) {
+      memory.spawnerExitStarted = true;
       const exit = await leaveFortressByTrail(ctx, memory.spawner);
       if (exit) return exit;
+    }
+    if (portal && here.distanceTo(portal) > 4) {
+      const dry = await retraceDryTrail(ctx, portal);
+      if (dry) return dry;
     }
     const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
     if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
