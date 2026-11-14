@@ -13,6 +13,7 @@ const { withFortressCombatTerrain, descendCombatStep } = require('../nether');
 const { findNetherCombatCover, hasNetherCombatCover } = require('../netherCombatCover');
 const { createBlacklist, posKey } = require('../blacklist');
 const { ownedItems } = require('../perception');
+const { canUseFarmCover, screenedFarmThreat } = require('../goals/outfit');
 const { meleeGeometry, meleeSight } = require('../entityGeometry');
 const { advanceCaveRetreat, caveFootingBank, evadeInCave, returnFromCave, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { goals } = require('mineflayer-pathfinder');
@@ -442,6 +443,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2 && (!defendInPlace(state, h) || canStrikeFromHere(h))) || null;
     return threats(state).find((h) => h.name !== 'creeper' && (!h.selfAggressor || armed(state))
       && (!defendInPlace(state, h) || canStrikeFromHere(h))
+      && !(resupplying() && dimensionOf(bot) === 'overworld' && !h.selfAggressor && canUseFarmCover(state)
+        && screenedFarmThreat(bot, h, state.position))
       && (!woundedUnderFire(state) || canStrikeFromHere(h))
       && (!inNetherCombat() || !unsafePursuits.has(h.id) || canStrikeFromHere(h))
       && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))

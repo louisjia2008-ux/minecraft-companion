@@ -89,6 +89,11 @@ function screenedFarmThreat(bot, hostile, position) {
     && blocksThreat(bot, hostile, position);
 }
 
+function canUseFarmCover(state, kb = KNOWLEDGE) {
+  return state.isDay === true && state.health >= HOME_HEALTH && state.food >= HOME_FOOD
+    && countKey('stone_sword', state.inventory, kb) > 0;
+}
+
 function createKit({ bot, items, kb, resupplyFood, expedition, actions, skills }) {
   const carried = (state, r) => Math.min(r.count, expedition && r.key === 'food'
     ? expeditionFoodCount(bot, state.inventory, kb) : countKey(r.key, state.inventory, kb));
@@ -423,8 +428,7 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmP
     if (home.stations?.crafting_table && countKey('wheat', inventory, kb) >= 3) return { kind: 'bread' };
     const local = critical || keepLocalFarm;
     const hostiles = local ? safety.threats(state) : [];
-    const screenedReserve = keepLocalFarm && !critical && state.isDay === true && state.health >= HOME_HEALTH
-      && state.food >= HOME_FOOD && countKey('stone_sword', state.inventory, kb) > 0;
+    const screenedReserve = keepLocalFarm && !critical && canUseFarmCover(state, kb);
     const permitted = local ? (p) => safety.local(p, LOCAL_FOOD_RADIUS - 2) && hostiles.every((hostile) =>
       !safety.exposed(p, [hostile], true) || screenedReserve && screenedFarmThreat(bot, hostile, p))
       : (p) => p.y >= home.centre.y - 7;
@@ -708,8 +712,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return Math.min(at.distanceTo(hostile.position), step.distanceTo(hostile.position)) <= range;
     });
     const screenedByWall = (hostile, position) => missingDoor && blocksThreat(bot, hostile, position);
-    const screenedOnFarmRoute = (hostile, position) => localReserve && !needsProtection && !unarmed
-      && bot.health >= HOME_HEALTH && bot.food >= HOME_FOOD && ctx.perceive().isDay === true
+    const screenedOnFarmRoute = (hostile, position) => localReserve && canUseFarmCover(ctx.perceive(), kb)
       && screenedFarmThreat(bot, hostile, position);
     const screenedDoorTravel = () => leavingUnderCover || daylightReturn && shelterRoute;
     const houseBody = (p) => p.x >= home.anchor.x && p.x < home.anchor.x + 7
@@ -1174,4 +1177,4 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   return goal;
 }
 
-module.exports = { createOutfitGoal, homeResupplyReady, upgrades };
+module.exports = { createOutfitGoal, homeResupplyReady, canUseFarmCover, screenedFarmThreat, upgrades };
