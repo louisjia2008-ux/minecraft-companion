@@ -471,6 +471,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     }
     if (!scout && !inHouse(feet) && !exposed(feet) && !farmlandFooting(read, bot.entity) && actions.underground?.(bot)) {
       const result = await advanceCaveRetreat(bot, ctx, actions, centre, { visited,
+        bridgeGap: true,
         avoid: (p) => inHouse(p) || (state.hostiles || []).some((h) => h.position?.distanceTo(p) <= 6) });
       if (result.ok && !result.dug) {
         visited.add(posKey(feet));

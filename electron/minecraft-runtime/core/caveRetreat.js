@@ -213,11 +213,90 @@ async function walkDry(bot, ctx, actions, goal, { timeoutMs = 5000, maxDrop = 1,
   }
 }
 
-async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited, risk } = {}) {
+const CAVE_BRIDGE_BLOCKS = /^(cobblestone|cobbled_deepslate|dirt)$/;
+const CAVE_BRIDGE_LIMIT = 6;
+
+function caveBridgePlan(bot, from, home, avoid) {
+  const read = (p) => bot.blockAt(p);
+  if (!standable(read, from)) return null;
+  const available = bot.inventory.items().reduce((count, item) => count + (CAVE_BRIDGE_BLOCKS.test(item.name) ? item.count : 0), 0);
+  const footprint = [{ feet: from, first: null, distance: 0 }];
+  const seen = new Set([key(from)]);
+  let plan = null;
+  for (const node of footprint) {
+    for (const [dx, dz] of SIDES) {
+      const direction = new Vec3(dx, 0, dz);
+      if (node.distance < 2) {
+        const adjacent = node.feet.plus(direction);
+        if (!seen.has(key(adjacent)) && !avoid(adjacent) && standable(read, adjacent)) {
+          seen.add(key(adjacent));
+          footprint.push({ feet: adjacent, first: node.first || adjacent, distance: node.distance + 1 });
+        }
+      }
+      for (let gap = 0; gap <= Math.min(CAVE_BRIDGE_LIMIT, available); gap += 1) {
+        const feet = node.feet.plus(direction.scaled(gap + 1));
+        const floor = read(feet.offset(0, -1, 0));
+        if (!open(read(feet)) || !open(read(feet.offset(0, 1, 0))) || hazard(floor) || avoid(feet)
+          || FACES.some(([x, y, z]) => hazard(read(feet.offset(x, y, z))))) break;
+        if (open(floor)) continue;
+        if (gap && standable(read, feet) && planRetreat(bot, feet, home, avoid)) {
+          const next = { bank: feet, first: node.first, distance: node.distance, gap };
+          if (!plan || next.gap < plan.gap || next.gap === plan.gap && next.distance < plan.distance) plan = next;
+        }
+        break;
+      }
+    }
+  }
+  return plan;
+}
+
+async function bridgeCaveGap(bot, ctx, actions, from, home, avoid = () => false) {
+  const read = (p) => bot.blockAt(p);
+  const quiet = () => {
+    const state = ctx.perceive();
+    return state.health >= 12 && state.food >= 12 && !state.inWater && !(state.hostiles || []).some((h) => h.distance <= 16);
+  };
+  if (!bot.entity.onGround || bot.entity.isInLava || !quiet()) return fail('cave_retreat_no_dry_route');
+  const plan = caveBridgePlan(bot, from, home, avoid);
+  if (!plan) return fail('cave_retreat_no_dry_route');
+  if (plan.first) return stepDry(bot, ctx, actions, plan.first, avoid);
+  const direction = new Vec3(Math.sign(plan.bank.x - from.x), 0, Math.sign(plan.bank.z - from.z));
+  const prefix = [from];
+  const retreat = async (failure) => {
+    while (quiet() && prefix.length > 1 && prefix.at(-1).equals(bot.entity.position.floored())) {
+      prefix.pop();
+      const walked = await stepDry(bot, ctx, actions, prefix.at(-1), avoid);
+      if (!walked.ok) break;
+    }
+    return failure;
+  };
+  for (let i = 1; i <= plan.gap + 1; i += 1) {
+    const previous = prefix.at(-1);
+    const next = previous.plus(direction);
+    const validateNext = ({ feet, ahead, phase }) => {
+      const at = bot.entity.position.floored();
+      const mayStand = phase === 'before_clear' ? !hazard(read(next.offset(0, -1, 0))) : standable(read, next);
+      return quiet() && bot.entity.onGround && !bot.entity.isInLava && (at.equals(previous) || at.equals(next))
+        && feet.equals(previous) && ahead.equals(next) && !avoid(next) && standable(read, at)
+        && mayStand && open(read(next)) && open(read(next.offset(0, 1, 0))) && standable(read, plan.bank)
+        && !FACES.some(([x, y, z]) => hazard(read(next.offset(x, y, z))))
+        ? { ok: true } : fail('cave_bridge_changed');
+    };
+    const step = await require('./end').bridgeStep(bot, ctx, plan.bank.offset(.5, 0, .5),
+      { blocks: CAVE_BRIDGE_BLOCKS, avoidLiquids: true, keepWalls: true, validateNext });
+    const reached = bot.entity.onGround && next.equals(bot.entity.position.floored()) && standable(read, next);
+    if (reached) prefix.push(next);
+    if (!step.ok || !reached) return retreat(step.ok ? fail('cave_bridge_unconfirmed') : step);
+  }
+  ctx.record('cave_retreat_bridge', { from, to: plan.bank, gap: plan.gap });
+  return { ok: true, from, to: plan.bank };
+}
+
+async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited, risk, bridgeGap = false } = {}) {
   if (ctx.signal?.aborted) throw abortError(ctx.signal);
   const from = bot.entity.position.floored();
   const plan = planRetreat(bot, from, home, avoid, visited, risk);
-  if (!plan) return fail('cave_retreat_no_dry_route');
+  if (!plan) return bridgeGap ? bridgeCaveGap(bot, ctx, actions, from, home, avoid) : fail('cave_retreat_no_dry_route');
   const read = (p) => bot.blockAt(p);
   if (plan.kind === 'stairs') {
     // One block per invocation. The next invocation uses a fresh terrain and

@@ -35,6 +35,74 @@ test('a liquid touching a proposed cut rules out that heading', () => {
   assert.notEqual(plan.target.x, 1);
 });
 
+test('provisioning may cross a short dry gap onto a supported bank with an uphill route', async (t) => {
+  const cells = new Map();
+  const origin = new Vec3(0, 40, 0), bank = new Vec3(5, 40, 0);
+  cells.set('0,39,0', stone);
+  cells.set('5,39,0', stone);
+  cells.set('6,40,0', stone);
+  const bot = {
+    entity: { position: origin.offset(.5, 0, .5), onGround: true },
+    game: { dimension: 'overworld' },
+    blockAt: (p) => ({ ...(cells.get(key(p)) || air), position: p }),
+    inventory: { items: () => [{ name: 'cobblestone', count: 6 }] },
+  };
+  const moved = [];
+  t.mock.method(require('../core/end'), 'bridgeStep', async (_bot, _ctx, target, { validateNext }) => {
+    assert.deepEqual(target, bank.offset(.5, 0, .5));
+    const feet = bot.entity.position.floored(), ahead = feet.offset(1, 0, 0);
+    assert.equal(validateNext({ feet, ahead, phase: 'before_clear' }).ok, true);
+    if (!cells.has(key(ahead.offset(0, -1, 0)))) {
+      assert.equal(validateNext({ feet, ahead, phase: 'before_pulse' }).ok, false, 'no motion before the placed floor is visible');
+      cells.set(key(ahead.offset(0, -1, 0)), stone);
+    }
+    assert.equal(validateNext({ feet, ahead, phase: 'before_pulse' }).ok, true);
+    bot.entity.position = ahead.offset(.5, 0, .5);
+    moved.push(ahead);
+    return { ok: true };
+  });
+  assert.equal(planRetreat(bot, origin, bank), null);
+  const ctx = { perceive: () => ({ health: 20, food: 17, hostiles: [] }), record() {} };
+  assert.equal((await advanceCaveRetreat(bot, ctx, {}, bank)).reason, 'cave_retreat_no_dry_route');
+  cells.set('3,40,1', water);
+  assert.equal((await advanceCaveRetreat(bot, ctx, {}, bank, { bridgeGap: true })).reason, 'cave_retreat_no_dry_route');
+  assert.deepEqual(moved, []);
+  cells.delete('3,40,1');
+  const result = await advanceCaveRetreat(bot, ctx, {}, bank, { bridgeGap: true });
+  assert.deepEqual(result, { ok: true, from: origin, to: bank });
+  assert.deepEqual(moved.map(key), ['1,40,0', '2,40,0', '3,40,0', '4,40,0', '5,40,0']);
+});
+
+test('a dry bridge placement failure returns along previously supported steps', async (t) => {
+  const { bot, cells } = fixture();
+  const origin = new Vec3(0, 40, 0), bank = new Vec3(4, 40, 0);
+  cells.clear();
+  cells.set('0,39,0', stone);
+  cells.set('4,39,0', stone);
+  cells.set('5,40,0', stone);
+  bot.entity.position = origin.offset(.5, 0, .5);
+  bot.blockAt = (p) => ({ ...(cells.get(key(p)) || air), position: p });
+  bot.inventory.items = () => [{ name: 'cobblestone', count: 3 }];
+  let placed = 0;
+  t.mock.method(require('../core/end'), 'bridgeStep', async () => {
+    if (placed) return { ok: false, reason: 'bridge_place_failed' };
+    cells.set('1,39,0', stone);
+    bot.entity.position.x += 1;
+    placed += 1;
+    return { ok: true };
+  });
+  const ctx = { perceive: () => ({ health: 20, food: 17, hostiles: [] }), record() {} };
+  const actions = { async goTo(_bot, _ctx, target) {
+    assert.equal(key(target), key(origin));
+    bot.entity.position = origin.offset(.5, 0, .5);
+    return { ok: true };
+  } };
+  assert.deepEqual(await advanceCaveRetreat(bot, ctx, actions, bank, { bridgeGap: true }),
+    { ok: false, reason: 'bridge_place_failed' });
+  assert.equal(placed, 1);
+  assert.ok(bot.entity.position.floored().equals(origin));
+});
+
 test('a projected staircase into a chamber loses to a narrower cut with solid side cover', () => {
   const { bot, cells, origin } = fixture();
   const home = new Vec3(15, 8, 0);
