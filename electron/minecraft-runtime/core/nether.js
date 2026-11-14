@@ -513,6 +513,50 @@ function combatFooting(bot, p) {
     && combatOpen(bot.blockAt(p)) && combatOpen(bot.blockAt(p.offset(0, 1, 0)));
 }
 
+/** Cross one known dry, full-block step down using a bounded movement pulse. */
+async function descendCombatStep(bot, ctx, from, to, work = actions) {
+  const liveTerrain = () => inNether(bot) && portalScoutStep(bot, from, to)
+    && combatFooting(bot, from) && combatFooting(bot, to) && lavaRisk(bot, to) === 0;
+  if (to.y !== from.y - 1 || !bot.entity.onGround || !bot.entity.position.floored().equals(from)
+    || !liveTerrain()) return false;
+  const origin = from.offset(.5, 0, .5);
+  const target = to.offset(.5, 0, .5);
+  const heading = new Vec3(to.x - from.x, 0, to.z - from.z);
+  const settled = () => bot.entity.onGround && bot.entity.position.floored().equals(from)
+    && Math.hypot(bot.entity.velocity?.x || 0, bot.entity.velocity?.z || 0) <= .025;
+  const centred = () => Math.hypot(bot.entity.position.x - origin.x, bot.entity.position.z - origin.z) <= .15;
+  const body = () => {
+    const at = bot.entity.position;
+    const delta = at.minus(origin);
+    return { at, along: delta.dot(heading), lateral: Math.abs(delta.x * heading.z - delta.z * heading.x) };
+  };
+  const safe = ({ at, along, lateral }) => liveTerrain() && !bot.entity.isInWater && !bot.entity.isInLava
+    && at.y >= to.y - .02 && at.y <= from.y + .08 && along >= -.2 && along <= 1.24 && lateral <= .15;
+  work.haltBody(bot);
+  try {
+    if (!await waitUntil(settled, { timeoutMs: 400, signal: ctx.signal })) return false;
+    if (!centred()) await work.recentre(bot, ctx, { accept: (p) => p.equals(from) && liveTerrain() });
+    if (!await waitUntil(settled, { timeoutMs: 400, signal: ctx.signal }) || !centred() || !safe(body())) return false;
+    await bot.lookAt(target.offset(0, from.y - to.y + (bot.entity.eyeHeight || 1.62), 0), true);
+    // Stay on the axis of the two adjoining footholds and brake as the
+    // player's collision box clears the upper block.
+    for (let i = 0; i < 24; i += 1) {
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      const current = body();
+      if (!safe(current)) return false;
+      if (bot.entity.onGround && current.at.floored().equals(to)
+        && Math.hypot(current.at.x - target.x, current.at.z - target.z) <= .21) return true;
+      const advance = bot.entity.velocity?.dot(heading) || 0;
+      bot.setControlState('forward', current.along < .83 && current.along + Math.max(0, advance) * 3 < .94);
+      await sleep(50, ctx.signal);
+      bot.setControlState('forward', false);
+    }
+    return false;
+  } finally {
+    work.haltBody(bot);
+  }
+}
+
 function combatBodyLane(bot, position, floorY, dx, dz, leaving = () => false) {
   // Native path nodes are centred, but following an entity can cut a corner
   // before that centre. Check the real 0.6-wide body and its braking distance.
@@ -765,5 +809,6 @@ module.exports = {
   netherScaffolding, scaffoldCount, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, scoutPortalSite, portalScoutStep,
   buildPortalStep, ignite, travel, leavePortal,
-  applyNetherMovements, applyWalkOnlyMovements, withLookoutTerrain, withFortressCombatTerrain, lookoutCardinalMoves, lavaRisk, lavaNear, NEVER_BREAK,
+  applyNetherMovements, applyWalkOnlyMovements, withLookoutTerrain, withFortressCombatTerrain, descendCombatStep,
+  lookoutCardinalMoves, lavaRisk, lavaNear, NEVER_BREAK,
 };

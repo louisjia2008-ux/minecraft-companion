@@ -126,44 +126,6 @@ function createNetherSpawnerStaging({ bot, actions = actionsDefault }) {
   let active = null;
   const clear = () => { active = null; };
 
-  async function descendToSupport(ctx, from, to, block) {
-    const target = center(to);
-    const origin = center(from);
-    const heading = new Vec3(to.x - from.x, 0, to.z - from.z);
-    const liveTerrain = () => drySteps(bot, read, from).some((p) => p.equals(to)) && rubble.test(read(block)?.name || '');
-    const body = () => {
-      const here = bot.entity.position;
-      const delta = here.minus(origin);
-      const along = delta.dot(heading);
-      const lateral = Math.abs(delta.x * heading.z - delta.z * heading.x);
-      return { here, along, lateral };
-    };
-    const safe = ({ here, along, lateral }) => liveTerrain() && !bot.entity.isInWater && !bot.entity.isInLava
-      && here.y >= to.y - .02 && here.y <= from.y + .08 && along >= -.2 && along <= 1.15 && lateral <= .15;
-    if (!bot.entity.onGround || !safe(body())) return false;
-    actions.haltBody(bot);
-    try {
-      await bot.lookAt(target.offset(0, from.y - to.y + (bot.entity.eyeHeight || 1.62), 0), true);
-      // Stay on the axis of the two adjoining footholds. With controls
-      // released between pulses, coast only far enough to land on this step.
-      for (let i = 0; i < 24; i += 1) {
-        const current = body();
-        if (ctx.signal?.aborted) throw abortError(ctx.signal);
-        if (!safe(current)) return false;
-        if (bot.entity.onGround && current.here.floored().equals(to)
-          && Math.hypot(current.here.x - target.x, current.here.z - target.z) <= .21) return true;
-        const velocity = bot.entity.velocity;
-        const advance = velocity ? velocity.dot(heading) : 0;
-        bot.setControlState('forward', current.along < .83 && current.along + Math.max(0, advance) * 3 < .94);
-        await sleep(50, ctx.signal);
-        bot.setControlState('forward', false);
-      }
-      return false;
-    } finally {
-      actions.haltBody(bot);
-    }
-  }
-
   async function place(ctx, plan) {
     const { from, block, base, stair, view } = plan;
     const dir = stair.minus(from);
@@ -241,7 +203,7 @@ function createNetherSpawnerStaging({ bot, actions = actionsDefault }) {
     if (!await waitUntil(settled, { timeoutMs: 400, signal: ctx.signal }) || !centred()) return fail('spawner_staging_uncentred');
     const onNewSupport = active.block && active.from.equals(here) && active.stair.equals(next);
     const moved = onNewSupport
-      ? await descendToSupport(ctx, here, next, active.block) ? { ok: true } : fail('spawner_staging_new_step_unconfirmed')
+      ? await nether.descendCombatStep(bot, ctx, here, next, actions) ? { ok: true } : fail('spawner_staging_new_step_unconfirmed')
       : await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
         actions.goTo(bot, combat, new goals.GoalBlock(next.x, next.y, next.z),
           { arrived, timeoutMs: 2800, retryNoProgress: false }));

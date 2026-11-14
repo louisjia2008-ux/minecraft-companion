@@ -64,7 +64,7 @@ function hasNetherCombatCover({ bot, threats, position = bot.entity?.position })
 }
 
 /** Finds a short route to solid observed cover. Movement still needs the live combat guard. */
-function findNetherCombatCover({ bot, threats }) {
+function findNetherCombatCover({ bot, threats, blocked = () => false }) {
   if (!inNether(bot) || !bot.entity?.onGround || bot.entity.isInLava || bot.entity.isInWater
     || !hasFeet(bot.entity.position)) return null;
   const origins = shooterRays(bot, threats);
@@ -101,7 +101,7 @@ function findNetherCombatCover({ bot, threats }) {
     for (const neighbor of lookoutCardinalMoves(bot, point, read)) {
       const step = new Vec3(neighbor.x, neighbor.y, neighbor.z);
       const key = posKey(step);
-      if (queue.length >= MAX_CELLS || seen.has(key) || neighbor.toBreak.length || !dry(read, step)
+      if (queue.length >= MAX_CELLS || seen.has(key) || blocked(point, step) || neighbor.toBreak.length || !dry(read, step)
         || at.distanceTo(cellCentre(step)) > MAX_DISTANCE || lavaRisk(world, step) !== 0) continue;
       queue.push({ point: step, previous: node, depth: depth + 1 });
       seen.add(key);

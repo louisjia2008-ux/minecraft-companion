@@ -9,9 +9,9 @@ const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
 const { sleep, waitUntil, abortError } = require('../confirm');
 const { isFireResistancePotion, hasEffect } = require('../netherStructures');
-const { withFortressCombatTerrain } = require('../nether');
+const { withFortressCombatTerrain, descendCombatStep } = require('../nether');
 const { findNetherCombatCover, hasNetherCombatCover } = require('../netherCombatCover');
-const { createBlacklist } = require('../blacklist');
+const { createBlacklist, posKey } = require('../blacklist');
 const { ownedItems } = require('../perception');
 const { meleeGeometry, meleeSight } = require('../entityGeometry');
 const { advanceCaveRetreat, cavePoolBank, evadeInCave, returnFromCave, skyOpen, standable } = require('../caveRetreat');
@@ -376,6 +376,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     && dimensionOf(bot) === 'overworld' && !state.inWater && armed(state) && canStrikeFromHere(h);
   const inNetherCombat = () => dimensionOf(bot) === 'the_nether';
   const unsafePursuits = createBlacklist({ ttlMs: 3500 });
+  const failedCoverSteps = createBlacklist({ ttlMs: 6000 });
+  const coverEdgeKey = (from, to) => `${posKey(from)}>${posKey(to)}`;
   let netherEscapeRetryAt = 0;
   let coverRetryAt = 0;
   const fireThreats = (state) => threats(state).filter((h) => (h.name === 'blaze' || h.name === 'ghast') && h.distance <= 18);
@@ -593,7 +595,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       const state = ctx.perceive();
-      const plan = findNetherCombatCover({ bot, threats: fireThreats(state) });
+      const plan = findNetherCombatCover({ bot, threats: fireThreats(state),
+        blocked: (from, to) => failedCoverSteps.has(coverEdgeKey(from, to)) });
       if (!plan) {
         coverRetryAt = Date.now() + 2500;
         return { ok: true, waited: true };
@@ -604,14 +607,20 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       for (const next of plan.waypoints) {
         if (onCover()) break;
         if (incomingBlazeShot(bot, 4)) return { ok: true, waited: true };
+        const from = bot.entity.position.floored();
         const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(next);
-        const moved = await withFortressCombatTerrain(bot, ctx, (combat) =>
-          actions.goTo(bot, combat, new goals.GoalBlock(next.x, next.y, next.z),
-            { arrived, timeoutMs: 2500, retryNoProgress: false }));
+        const moved = next.y === from.y - 1
+          ? await descendCombatStep(bot, ctx, from, next, actions) ? { ok: true } : { ok: false, reason: 'nether_cover_descent_blocked' }
+          : await withFortressCombatTerrain(bot, ctx, (combat) =>
+            actions.goTo(bot, combat, new goals.GoalBlock(next.x, next.y, next.z),
+              { arrived, timeoutMs: 2500, retryNoProgress: false }));
         if (moved.repositioned) return moved;
         const landed = (moved.ok || moved.reason === 'not_arrived')
           && await waitUntil(arrived, { timeoutMs: 600, signal: ctx.signal });
         if (!landed) {
+          failedCoverSteps.add(coverEdgeKey(from, next), moved.reason);
+          ctx.record('nether_combat_cover_step_failed', { from, to: next, at: bot.entity.position.clone(),
+            onGround: bot.entity.onGround, reason: moved.reason || 'nether_cover_step_not_arrived' });
           coverRetryAt = Date.now() + 1200;
           return moved.ok ? { ok: false, reason: 'nether_cover_step_not_arrived' } : moved;
         }

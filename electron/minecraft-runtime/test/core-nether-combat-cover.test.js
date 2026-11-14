@@ -32,6 +32,10 @@ test('a sheltered floor around a wall yields a short observed cardinal route', (
   assert.ok(plan);
   assert.deepEqual(plan.position, place(0, 74, -3));
   assert.deepEqual(plan.waypoints, [place(0, 74, -1), place(0, 74, -2), plan.position]);
+  const alternate = findNetherCombatCover({ bot, threats: [threat],
+    blocked: (from, to) => from.equals(place(0, 74, 0)) && to.equals(plan.waypoints[0]) });
+  assert.ok(alternate?.waypoints.length > plan.waypoints.length);
+  assert.ok(!alternate.waypoints[0].equals(plan.waypoints[0]));
   assert.equal(hasNetherCombatCover({ bot, threats: [threat], position: plan.position }), true);
   bot.entity.position = plan.position.offset(.5, 0, .5);
   assert.deepEqual(findNetherCombatCover({ bot, threats: [threat] }), { position: plan.position, waypoints: [] });
