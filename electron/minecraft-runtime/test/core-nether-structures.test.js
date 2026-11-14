@@ -257,7 +257,16 @@ test('a hoglin is fought when it comes close, not run from, while the bot is arm
 
 test('a skull left lying after a fight is fetched before anything else', async () => {
   const items = [{ name: 'diamond_sword', count: 1 }];
-  const bot = { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items }, equip: async () => {} };
+  const bot = { ...world(row('nether_bricks', 0, 4)), game: { dimension: 'the_nether' },
+    inventory: { slots: [], items: () => items }, equip: async () => {} };
+  const read = bot.blockAt;
+  bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.entity.position = new Vec3(.5, 65, .5);
+  bot.entity.onGround = true;
+  bot.pathfinder = { movements: { companionNether: true, getNeighbors: () => [] } };
   bot.entities = { 7: { id: 7, name: 'item', position: new Vec3(3, 65, 0), getDroppedItem: () => ({ name: 'wither_skeleton_skull' }) } };
   const actions = {
     haltBody() {},
@@ -974,7 +983,7 @@ for (const { ends, targets } of [
   goal.memory.explore.index = 5;
   const ctx = { record() {}, perceive: () => ({ inventory: { iron_sword: 1 }, health: 20, food: 20 }) };
   try {
-    for (const _target of targets) await goal.run(ctx);
+    for (let attempt = 0; attempt < targets.length; attempt += 1) await goal.run(ctx);
     assert.deepEqual(calls.map(({ target }) => target), targets);
     assert.ok(calls.every(({ guarded, towers, retry }) => guarded && !towers && !retry));
   } finally { goal.dispose(); }

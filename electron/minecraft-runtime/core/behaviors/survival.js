@@ -9,6 +9,7 @@ const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
 const { sleep, waitUntil, abortError } = require('../confirm');
 const { isFireResistancePotion, hasEffect } = require('../netherStructures');
+const { withFortressCombatTerrain } = require('../nether');
 const { createBlacklist } = require('../blacklist');
 const { ownedItems } = require('../perception');
 const { meleeGeometry, meleeSight } = require('../entityGeometry');
@@ -372,12 +373,15 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // hold only when this hunter is armed and can already land a native hit.
   const huntEndermanInReach = (state, h) => h.name === 'enderman' && activeGoal() === 'hunt_pearls'
     && dimensionOf(bot) === 'overworld' && !state.inWater && armed(state) && canStrikeFromHere(h);
+  const netherExpedition = () => activeGoal() === 'nether_expedition' && dimensionOf(bot) === 'the_nether';
+  const unsafePursuits = createBlacklist({ ttlMs: 3500 });
   const escapeThreat = (state) => threats(state).find((h) => !huntEndermanInReach(state, h)) || null;
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2 && (!defendInPlace(state, h) || canStrikeFromHere(h))) || null;
     return threats(state).find((h) => h.name !== 'creeper' && (!h.selfAggressor || armed(state))
       && (!defendInPlace(state, h) || canStrikeFromHere(h))
+      && (!netherExpedition() || !unsafePursuits.has(h.id) || canStrikeFromHere(h))
       && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
       && (huntEndermanInReach(state, h) || h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
         || ((RANGED.has(h.name) || (h.name === 'pillager' && !avoided(state, h))) && h.distance <= (state.isDay === false ? t.nightRangedRange : t.rangedRange)
@@ -575,15 +579,18 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       if (!threat) return { ok: true };
       const homeDefense = defendInPlace(state, threat);
       const stationary = homeDefense || state.health <= t.escapeHealth && huntEndermanInReach(state, threat);
+      const guardTerrain = netherExpedition();
       ctx.record('defend_target', { mob: threat.name, distance: Math.round(threat.distance), ...(stationary ? { stationary } : {}) });
       let last = threat.position.clone();
       const tracker = setInterval(() => { const e = bot.entities?.[threat.id]; if (e) last = e.position.clone(); }, 100);
+      const withTerrain = (run) => guardTerrain ? withFortressCombatTerrain(bot, ctx, run) : run(ctx);
       let result;
       try {
-        result = await actions.attack(bot, ctx, threat.id, stationary ? { pursue: false } : undefined);
+        result = await withTerrain((combat) => actions.attack(bot, combat, threat.id, stationary ? { pursue: false } : undefined));
       } finally {
         clearInterval(tracker);
       }
+      if (guardTerrain && !result.ok) unsafePursuits.add(threat.id, result.reason);
       if (result.ok) {
         // What fell where it died (a skull lost to lava shows here as nothing).
         if (result.died && SKULL_DROPPERS.has(threat.name)) await sleep(600, ctx.signal);
@@ -593,7 +600,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // Spiders drop string (wool where there are no sheep); blazes and wither
       // skeletons fought off in a fortress drop what the expedition is there for.
       if (result.ok && !homeDefense && typeof actions.collectDrops === 'function') {
-        await actions.collectDrops(bot, ctx, last, (n) => KEPT_DROPS.has(n), { radius: 6, timeoutMs: 4000 });
+        await withTerrain((combat) => actions.collectDrops(bot, combat, last, (n) => KEPT_DROPS.has(n), { radius: 6, timeoutMs: 4000 }));
       }
       return result;
     },
@@ -1402,8 +1409,15 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const spot = coverSpot(bot, ghast);
       try {
         if (spot) {
-          await actions.goTo(bot, ctx, new goals.GoalBlock(spot.x, spot.y, spot.z), { timeoutMs: 8000 });
+          const go = (combat) => actions.goTo(bot, combat, new goals.GoalBlock(spot.x, spot.y, spot.z), { timeoutMs: 8000 });
+          if (netherExpedition()) {
+            const moved = await withFortressCombatTerrain(bot, ctx, go);
+            if (!moved.ok) return moved;
+          } else {
+            await go(ctx);
+          }
         } else {
+          if (netherExpedition() && !bot.entity.onGround) return { ok: false, reason: 'fortress_combat_unsafe_footing' };
           const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => SEALS.has(n) || n === 'netherrack' });
           if (dug.ok) {
             await sleep(8000, ctx.signal);

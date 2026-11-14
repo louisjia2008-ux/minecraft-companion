@@ -31,6 +31,7 @@ const ARMOR_RANK = ['leather', 'golden', 'chainmail', 'iron', 'diamond', 'nether
 const SCAN_EVERY_MS = 10000;
 // Below this the fortress is left to its mobs until health is back.
 const HUNT_HEALTH = 15;
+const FORTRESS_HUNT_RANGE = 12;
 // How far above or below the bot a wither skeleton is still hunted.
 const HUNT_DY_WITHER = 12;
 const BLAZE_SPAWN_RANGE = 15;
@@ -732,7 +733,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const apples = bot.inventory.items().filter((i) => /golden_apple$/.test(i.name)).reduce((n, i) => n + i.count, 0);
       if (near && !(apples >= 2 && inFortress())) {
         ctx.record('fall_back', { health: Math.round(state.health), from: near.name });
-        const moved = await actions.fleeFrom(bot, ctx, near.position, { distance: 16, timeoutMs: 10000 });
+        const moved = await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
+          actions.fleeFrom(bot, combat, near.position, { distance: 9, timeoutMs: 10000 }));
         return moved.ok || bot.entity.position.distanceTo(here) >= 4 ? { ok: true, waited: true } : moved;
       }
       actions.haltBody(bot);
@@ -744,8 +746,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // or drop. A fortress gave 25 kills in 85 minutes while patrols walked
     // past those below. Blazes float, so theirs stays level.
     const reach = (e) => (e.name === 'wither_skeleton' ? HUNT_DY_WITHER : 6);
+    const canHunt = (e) => Math.abs(e.position.y - bot.entity.position.y) <= reach(e);
     const target = Object.values(bot.entities).find((e) => mobs.includes(e.name) && e.position
-      && e.position.distanceTo(here) <= 40 && Math.abs(e.position.y - here.y) <= reach(e) && !blacklist.has(`mob:${e.id}`));
+      && e.position.distanceTo(here) <= FORTRESS_HUNT_RANGE && canHunt(e) && !blacklist.has(`mob:${e.id}`));
     if (!target && mobs.includes('wither_skeleton')) {
       const seen = Object.values(bot.entities).filter((e) => e.name === 'wither_skeleton' && e.position && e.position.distanceTo(here) <= 64);
       if (seen.length && Date.now() - (memory.sightedAt || 0) > 30000) {
@@ -763,14 +766,15 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // Boxed in (a pillar under a blaze it cannot reach): get somewhere first.
     if (target && !boxedIn()) {
       const name = target.name;
-      const result = await skills.huntOne(bot, ctx, {
-        mobs, radius: 40, blacklist, dropMatch: (n) => n === 'blaze_rod' || n === 'wither_skeleton_skull',
-        accept: (e) => Math.abs(e.position.y - bot.entity.position.y) <= reach(e),
-      });
+      const result = await nether.withFortressCombatTerrain(bot, ctx, (combat) => skills.huntOne(bot, combat, {
+        mobs, radius: FORTRESS_HUNT_RANGE, blacklist, dropMatch: (n) => n === 'blaze_rod' || n === 'wither_skeleton_skull',
+        accept: canHunt,
+      }));
       if (result.ok) {
         memory.kills[name] = (memory.kills[name] || 0) + 1;
         ctx.record('kill', { mob: name, kills: memory.kills[name], gained: result.gained });
       }
+      if (/^fortress_combat_/.test(result.reason || '')) blacklist.add(`mob:${target.id}`, result.reason, 3500);
       return result;
     }
     const onDeck = inFortress();
@@ -1089,7 +1093,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const count = () => bot.inventory.items().filter((i) => i.name === name).reduce((n, i) => n + i.count, 0);
     const before = count();
     ctx.record('loot', { item: name, distance: Math.round(drop.position.distanceTo(bot.entity.position)) });
-    const moved = await withScaffolding(() => actions.goNear(bot, ctx, drop.position.clone(), 0.5, { timeoutMs: 30000 }));
+    const moved = await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
+      actions.goNear(bot, combat, drop.position.clone(), 0.5, { timeoutMs: 12000, retryNoProgress: false }));
     await waitUntil(() => count() > before || !bot.entities[drop.id], { timeoutMs: 1500, signal: ctx.signal });
     if (count() > before) return { ok: true, looted: name };
     blacklist.add(`loot:${drop.id}`, moved.reason || 'not_picked', 30000);
