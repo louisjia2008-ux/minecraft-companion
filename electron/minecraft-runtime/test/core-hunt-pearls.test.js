@@ -478,6 +478,52 @@ test('an outlying hunter launched at dawn stops attempting recovery after two gu
 });
 
 
+test('a long quiet hunt revisits a near camp it actually landed at, then still hunts a visible target', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const home = new Vec3(0, 64, 0);
+  const start = home.offset(0, 0, -10);
+  const previous = home.offset(0, 0, -22);
+  const target = { id: 29, name: 'enderman', position: start.offset(4, 0, 0) };
+  const entities = {};
+  const movements = { getNeighbors: (p) => [p.offset(0, 0, -1), p.offset(0, 0, 1)] };
+  const bot = { ...terrain, entity: { position: start.offset(.5, 0, .5), onGround: true }, entities,
+    companionHomeAt: () => home, pathfinder: { movements, *getPathFromTo(dry, at, goal) {
+      assert.equal(dry.canDig, false);
+      assert.ok(goal.isEnd(start));
+      assert.ok(at.floored().equals(previous));
+      const path = Array.from({ length: 12 }, (_, i) => previous.offset(0, 0, i + 1));
+      yield { result: { status: 'success', path } };
+    } } };
+  const records = [];
+  let hunted = 0;
+  const actions = { goTo: async (_bot, _ctx, goal) => {
+    bot.entity.position = new Vec3(goal.x + .5, goal.y, goal.z + .5);
+    return { ok: true };
+  } };
+  const goal = createHuntPearlsGoal({ bot, actions, skills: { huntOne: async (_b, _c, options) => {
+    assert.equal(options.accept(target), true);
+    hunted += 1;
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => nightState(bot.entity.position) };
+  await goal.run(ctx);
+  bot.entity.position = previous.offset(.5, 0, .5);
+  t.mock.timers.tick(71000);
+  await goal.run(ctx);
+  assert.equal(records.at(-1).remaining, 5);
+  await goal.run(ctx);
+  assert.equal(records.at(-1).remaining, 0);
+  const watch = goal.run(ctx);
+  await Promise.resolve();
+  t.mock.timers.tick(750);
+  assert.equal((await watch).reason, 'pearl_near_scout_watch');
+  entities[target.id] = target;
+  await goal.run(ctx);
+  assert.equal(hunted, 1);
+  assert.deepEqual(records.filter(({ type }) => type === 'pearl_near_scout_watch').map(({ at }) => at), [start]);
+});
+
 test('dawn returns to the house in short confirmed dry legs and can begin with a detour', async () => {
   const house = new Vec3(0, 64, 0);
   const start = house.offset(0, 0, -26);

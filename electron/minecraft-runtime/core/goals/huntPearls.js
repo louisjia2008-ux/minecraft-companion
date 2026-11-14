@@ -41,6 +41,11 @@ const SECTOR_DEPTH = 14;
 const SECTOR_SEARCH_STEPS = 32;
 const SECTOR_SEARCH_NODES = 1200;
 const SECTOR_LEG = 7;
+const NEAR_SCOUT_MIN = 6;
+const NEAR_SCOUT_MAX = 18;
+const NEAR_SCOUT_REPEAT_MS = 70000;
+const NEAR_SCOUT_BUDGET_MS = 35000;
+const NEAR_SCOUT_WATCH_MS = 6000;
 const DOOR_DIRECTIONS = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
 
 const MOBS = ['enderman'];
@@ -108,6 +113,9 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   let homeward = false;
   let homeRoute = [];
   let homeFailures = 0;
+  const nearCamps = [];
+  let nextNearScout = 0;
+  let nearScout;
   const caveVisited = new Set();
   const pearls = (state) => state.inventory.ender_pearl || 0;
 
@@ -308,20 +316,19 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
         : pearlHomeReturnNeeded(house, bot.entity.position, bot));
   }
 
-  async function planHomeRoute(ctx, centre) {
+  async function planDryRoute(ctx, centre, goal, radius = HOME_RETURN_RANGE + 1) {
     const dry = dryScoutMovements();
     if (!dry || typeof bot.pathfinder.getPathFromTo !== 'function') return [];
-    const homeBank = new goals.GoalNear(centre.x, centre.y, centre.z, HOME_RETURN_NEAR);
     const safe = new Map();
     const accepted = (p) => {
-      if (flatDistance(p, centre) > HOME_RETURN_RANGE + 1) return false;
+      if (flatDistance(p, centre) > radius) return false;
       const key = pointKey(p);
       if (!safe.has(key)) safe.set(key, scoutGroundAt(p));
       return safe.get(key);
     };
     const native = Object.create(dry);
     native.getNeighbors = (p) => safeScoutMoves(dry, p).filter(accepted);
-    const route = bot.pathfinder.getPathFromTo(native, bot.entity.position, homeBank,
+    const route = bot.pathfinder.getPathFromTo(native, bot.entity.position, goal,
       { timeout: 1100, tickTimeout: 25, searchRadius: 96, optimizePath: false });
     for (const { result } of route) {
       if (result.status === 'success') return result.path.map((p) => new Vec3(p.x, p.y, p.z));
@@ -331,6 +338,22 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     return [];
   }
 
+  async function walkRouteLeg(ctx, from, route) {
+    const leg = route.slice(0, HOME_RETURN_LEG);
+    const next = leg.at(-1);
+    if (!next) return null;
+    const allowed = new Set([pointKey(from), ...leg.map(pointKey)]);
+    const arrived = (p) => bot.entity.onGround === true && p.floored().equals(next) && scoutGroundAt(next);
+    await walkDry(bot, ctx, actions, new goals.GoalBlock(next.x, next.y, next.z), {
+      avoid: (p) => !allowed.has(pointKey(p)) || !scoutGroundAt(p), arrived,
+    });
+    const landed = () => arrived(bot.entity.position);
+    if (!bot.entity.position.floored().equals(next)
+      || !(landed() || await waitUntil(landed, { timeoutMs: 500, signal: ctx.signal }))) return null;
+    route.splice(0, leg.length);
+    return next;
+  }
+
   async function returnInDaylight(ctx, from, centre) {
     homeward = true;
     if (bot.entity.onGround && !bot.entity.isInLava && !bot.entity.isInWater && needsGroundBank(from)) {
@@ -338,25 +361,17 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       if (bank) return bank;
     }
     if (bot.entity.onGround && !bot.entity.isInLava && !bot.entity.isInWater && scoutGroundAt(from)) {
-      if (!homeRoute.length) homeRoute = await planHomeRoute(ctx, centre);
-      const leg = homeRoute.slice(0, HOME_RETURN_LEG);
-      const next = leg.at(-1);
-      if (next) {
-        const allowed = new Set([pointKey(from), ...leg.map(pointKey)]);
-        const arrived = (p) => bot.entity.onGround === true && p.floored().equals(next) && scoutGroundAt(next);
-        await walkDry(bot, ctx, actions, new goals.GoalBlock(next.x, next.y, next.z), {
-          avoid: (p) => !allowed.has(pointKey(p)) || !scoutGroundAt(p), arrived,
-        });
-        const landed = () => arrived(bot.entity.position);
-        if (bot.entity.position.floored().equals(next)
-          && (landed() || await waitUntil(landed, { timeoutMs: 500, signal: ctx.signal }))) {
-          homeRoute.splice(0, leg.length);
-          homeFailures = 0;
-          ctx.record('pearl_daylight_home_leg', { from, to: next, centre, remaining: homeRoute.length });
-          return { ok: true, waited: true };
-        }
-        homeRoute = [];
+      if (!homeRoute.length) {
+        const homeBank = new goals.GoalNear(centre.x, centre.y, centre.z, HOME_RETURN_NEAR);
+        homeRoute = await planDryRoute(ctx, centre, homeBank);
       }
+      const next = await walkRouteLeg(ctx, from, homeRoute);
+      if (next) {
+        homeFailures = 0;
+        ctx.record('pearl_daylight_home_leg', { from, to: next, centre, remaining: homeRoute.length });
+        return { ok: true, waited: true };
+      }
+      homeRoute = [];
     }
     homeFailures += 1;
     if (homeFailures >= 2) {
@@ -452,6 +467,42 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     return null;
   }
 
+  function rememberNearCamp(centre, p) {
+    if (!centre || flatDistance(p, centre) < NEAR_SCOUT_MIN || flatDistance(p, centre) > NEAR_SCOUT_MAX
+      || nearCamps.length >= 6 || nearCamps.some((camp) => flatDistance(p, camp) < 5) || !fightFooting(p)) return;
+    nearCamps.push(p);
+  }
+
+  async function revisitNearCamps(ctx, from, centre) {
+    const now = Date.now();
+    if (!nearScout) {
+      if (!centre || now < nextNearScout || !nearCamps.length) return null;
+      nextNearScout = now + NEAR_SCOUT_REPEAT_MS;
+      const camp = nearCamps.shift();
+      nearCamps.push(camp);
+      if (!fightFooting(camp) || !scoutGroundAt(camp)) return null;
+      const route = from.equals(camp) ? [] : await planDryRoute(ctx, centre,
+        new goals.GoalBlock(camp.x, camp.y, camp.z), SCOUT_RADIUS);
+      if (!route.length && !from.equals(camp)) return null;
+      nearScout = { camp, route, until: now + NEAR_SCOUT_BUDGET_MS, watchUntil: 0 };
+    }
+    if (Date.now() >= nearScout.until) { nearScout = null; return null; }
+    if (nearScout.route.length) {
+      const next = await walkRouteLeg(ctx, from, nearScout.route);
+      if (!next) { nearScout = null; return null; }
+      ctx.record('pearl_near_scout_leg', { from, to: next, camp: nearScout.camp, remaining: nearScout.route.length });
+      return { ok: true, waited: true };
+    }
+    if (!from.equals(nearScout.camp) || !fightFooting(from)) { nearScout = null; return null; }
+    if (!nearScout.watchUntil) {
+      nearScout.watchUntil = now + NEAR_SCOUT_WATCH_MS;
+      ctx.record('pearl_near_scout_watch', { at: from });
+    }
+    if (now < nearScout.watchUntil) return wait(ctx, 'pearl_near_scout_watch');
+    nearScout = null;
+    return null;
+  }
+
   async function scout(ctx, state, focus) {
     const from = bot.entity.position.floored();
     const house = home();
@@ -483,6 +534,16 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     }
     if (!memory.centre) memory.centre = house && flatDistance(from, house) <= SCOUT_RADIUS ? house : from;
     const centre = memory.centre;
+    const hasHomeCentre = house && centre.equals(house);
+    if (hasHomeCentre && bot.entity.onGround === true) {
+      rememberNearCamp(house, from);
+      if (!focus) {
+        const revisit = await revisitNearCamps(ctx, from, house);
+        if (revisit) return revisit;
+      } else {
+        nearScout = null;
+      }
+    }
     if (!memory.scoutPositions.at(-1)?.equals(from)) {
       memory.scoutPositions.push(from);
       if (memory.scoutPositions.length > SCOUT_HISTORY) memory.scoutPositions.shift();
@@ -526,6 +587,13 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     return wait(ctx, result.reason || 'pearl_scout_no_progress');
   }
 
+  function startNight() {
+    if (memory.sawNight) return;
+    memory.sawNight = true;
+    memory.nights += 1;
+    nextNearScout = Date.now() + NEAR_SCOUT_REPEAT_MS;
+  }
+
   return {
     name: 'hunt_pearls',
     memory,
@@ -552,7 +620,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       if (!state.inWater && !homeward && tetheredOutside(house, feet)) {
         memory.centre = house;
         sectorRoute = undefined;
-        if (state.isDay === false && !memory.sawNight) { memory.sawNight = true; memory.nights += 1; }
+        if (state.isDay === false) startNight();
         return recoverScoutTether(ctx, feet, house);
       }
       if (state.isDay === false && tetherFailures >= 2 && pearlTetherRecoveryNeeded(house, feet)) {
@@ -575,7 +643,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       homeward = false;
       homeRoute = [];
       homeFailures = 0;
-      if (!memory.sawNight) { memory.sawNight = true; memory.nights += 1; }
+      startNight();
       // Let survival eat and heal before starting a new fight. An already
       // angry Enderman in reach is still handled by defense.
       if (!readyToHunt(state)) return wait(ctx, 'pearl_wait_for_combat_readiness');
@@ -591,7 +659,13 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
         && visible(e) && targetOutdoors(e.position.floored()));
       const camp = !state.inWater && bot.entity.onGround !== false && fightFooting(bot.entity.position.floored());
       const stared = camp ? await stare(ctx, targets) : null;
-      if (stared) return stared;
+      if (stared) {
+        if (stared.progress) {
+          nearScout = null;
+          nextNearScout = Date.now() + NEAR_SCOUT_REPEAT_MS;
+        }
+        return stared;
+      }
       const close = camp ? targets.filter((e) => e.position.distanceTo(state.position) <= STARE_NEAR) : [];
       if (close.length) {
         const restore = applyWalkOnlyMovements(bot);
