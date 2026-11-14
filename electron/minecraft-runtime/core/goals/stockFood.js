@@ -15,6 +15,7 @@ const { advanceCaveRetreat, farmlandFooting, standable } = require('../caveRetre
 const { abortError, sleep, waitUntil } = require('../confirm');
 const { createExpeditionReturnDetour } = require('./expeditionReturnDetour');
 const { NEAR_HUNT, planScoutFoodApproach } = require('./scoutFoodApproach');
+const { createStockWaterReturn } = require('./stockWaterReturn');
 
 const FOOD_MOBS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const HOME_RADIUS = 48;
@@ -350,6 +351,9 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     ? ((DUSK - state.timeOfDay + 24000) % 24000) * 50 : 0;
   const scoutFit = (state) => state.health >= 12 && state.food >= 14
     && expeditionFoodCount(bot, state.inventory, kb) >= 2;
+  const waterReturn = createStockWaterReturn({ bot, centre, exposed, actions,
+    safe: (state) => state.health >= 16 && scoutFit(state) && !threatsNear(state)
+      && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe')) });
   const scoutTimeLeft = (state, spareMs = 0) => {
     const elapsed = Date.now() - scout.started;
     return elapsed + spareMs < SCOUT_LIMIT_MS && daylightMs(state) > Math.max(30000, elapsed + 20000) + spareMs;
@@ -586,7 +590,8 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
         returnLeg = 0;
         return { ok: true };
       }
-      if (!scout && returnLeg % headings.length === 0 && await detour.plan(ctx)) return { ok: true };
+      if (!scout && returnLeg % headings.length === 0
+        && (await detour.plan(ctx) || await waterReturn.plan(ctx))) return { ok: true };
       return result.ok ? { ok: false, reason: 'expedition_food_return_leg_blocked' } : result;
     }
     returnLeg = 0;
@@ -627,6 +632,11 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const here = bot.entity.position;
     const feet = here.floored();
     if (dimension(bot) !== 'overworld') return { ok: false, reason: 'expedition_food_wrong_dimension' };
+    if (waterReturn.pending()) {
+      const outcome = await waterReturn.advance(ctx);
+      if (!waterReturn.pending()) returnLeg = 0;
+      return outcome;
+    }
     const hostile = threatsNear(state);
     const fromOutside = !scout && state.isDay === true && distance(feet) > HOME_RADIUS && distance(feet) <= SCOUT_RINGS.at(-1)
       && scoutFit(state) && Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'));
