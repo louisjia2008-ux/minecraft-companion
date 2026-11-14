@@ -174,7 +174,7 @@ test('death during active expedition prep holds gear until home supplies and wor
   bot.entity.position = new Vec3(3.5, 64, 3.5);
   await playthroughNatural.onTick(context);
   await playthroughNatural.onTick(context);
-  assert.deepEqual(requests[1], { task: 'outfit', args: { items: REARM } });
+  assert.deepEqual(requests[1], { task: 'outfit', args: { items: REARM, expeditionFood: true, farmPlots: [] } });
   items.push(...REARM.filter(({ key }) => key !== 'food').map(({ key }) => ({ name: key, count: 1 })));
   await playthroughNatural.onTick(context);
   assert.equal(requests.length, 2, 'carrying the armour without wearing it cannot release the gear gate');
@@ -182,6 +182,11 @@ test('death during active expedition prep holds gear until home supplies and wor
     bot.inventory.slots[i === 4 ? 45 : 5 + i] = { name, count: 1 };
     items.splice(items.findIndex((item) => item.name === name), 1);
   });
+  const reserve = items.find(({ name }) => name === 'bread');
+  reserve.name = 'chicken';
+  await playthroughNatural.onTick(context);
+  assert.equal(state.deathRecovery.phase, 'iron', 'unsafe food does not complete the expedition kit');
+  reserve.name = 'bread';
   await playthroughNatural.onTick(context);
   assert.equal(requests[2].task, 'outfit');
   assert.ok(requests[2].args.items.some(({ key }) => key === 'obsidian'));

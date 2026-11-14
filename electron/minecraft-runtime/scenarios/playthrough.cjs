@@ -283,7 +283,7 @@ async function observeRecovery(context) {
         clientInventory: bagOf(bot), note: 'Life confirmed by server; equipment recovery is separate.' });
     }
   }
-  if (death.respawn && !death.kitObserved && kitDone(bot, REARM)) {
+  if (death.respawn && !death.kitObserved && expeditionKitDone(bot, REARM)) {
     death.kitObserved = { at: Date.now(), clientInventory: bagOf(bot), phase: activeStage(state) };
     write('playthrough_kit_observed', { death: death.id, ...death.kitObserved,
       note: 'Client-observed rearm kit; does not prove original drops were recovered.' });
@@ -314,7 +314,7 @@ async function runDeathRecovery(context, index, entry) {
   const recoveryItems = recovery.phase === 'base' ? RECOVERY_BASE_KIT : REARM;
   const ready = recovery.phase === 'base'
     ? kitDone(bot, recoveryItems) && homeResupplyReady(state.lastPerceive, home)
-    : kitDone(bot, recoveryItems) && fullArmorWorn(bot);
+    : expeditionKitDone(bot, recoveryItems) && fullArmorWorn(bot);
   if (ready) {
     write('playthrough_death_recovery_verified', { death: death.id, phase: recovery.phase, position: positionOf(bot),
       health: state.lastPerceive.health, food: state.lastPerceive.food, inventory: bagOf(bot) });
@@ -337,7 +337,7 @@ async function runDeathRecovery(context, index, entry) {
     }
     return true;
   }
-  const args = { items: recoveryItems, ...(recovery.phase === 'base' ? { recoverAtHome: true } : {}) };
+  const args = recovery.phase === 'base' ? { items: recoveryItems, recoverAtHome: true } : expeditionKitArgs(recoveryItems, state);
   recovery.attempts += 1;
   state.activeStage = 'rearm';
   write('model_ask', { step: 'rearm', phase: recovery.phase, death: death.id, task: 'outfit', args, ask: recovery.attempts });
