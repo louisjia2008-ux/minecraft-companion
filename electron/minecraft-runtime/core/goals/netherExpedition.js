@@ -802,6 +802,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
         const leg = await pursueSpawner(ctx, here);
         if (leg) return leg;
       }
+    } else if (onDeck && !memory.spawner) {
+      // Skull-only patrols still avoid the original nearby blaze spawners.
+      memory.spawner = structures.findSpawners(bot, memory.fortress, 96)[0] || null;
+      if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner) });
     }
     const byspawner = memory.spawner && rods(state) < blazeRods && here.distanceTo(memory.spawner) <= BLAZE_SPAWN_RANGE;
     if (!onDeck && !byspawner) {
