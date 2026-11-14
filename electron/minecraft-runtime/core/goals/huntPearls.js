@@ -34,6 +34,10 @@ const SCOUT_RADIUS = 48;
 const SCOUT_LEG = 10;
 const SCOUT_NODES = 320;
 const SCOUT_HISTORY = 64;
+const SECTOR_DEPTH = 14;
+const SECTOR_SEARCH_STEPS = 32;
+const SECTOR_SEARCH_NODES = 1200;
+const SECTOR_LEG = 7;
 const DOOR_DIRECTIONS = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
 
 const MOBS = ['enderman'];
@@ -41,16 +45,28 @@ const isPearl = (n) => n === 'ender_pearl';
 const pointKey = (p) => `${p.x},${p.y},${p.z}`;
 const flatDistance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
+function scoutSectorOf(position, centre) {
+  const dx = position.x - centre.x, dz = position.z - centre.z;
+  if (Math.hypot(dx, dz) < 8) return null;
+  if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? 'east' : 'west';
+  return dz > 0 ? 'south' : 'north';
+}
+
 function pearlCaveRecoveryNeeded(bot, house, position) {
   if (!house || !position || position.y >= house.y - 2 || flatDistance(position, house) > SCOUT_RADIUS) return false;
   const feet = new Vec3(position.x, position.y, position.z).floored();
   return position.y < house.y - 7 || !skyOpen(bot, feet);
 }
 
-function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSkills, actions = defaultActions } = {}) {
+function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
+  if (scoutSector !== undefined && (typeof scoutSector !== 'string' || !Object.hasOwn(DOOR_DIRECTIONS, scoutSector))) {
+    throw new TypeError('invalid pearl scout sector');
+  }
   const blacklist = createBlacklist({ ttlMs: 60000 });
-  const memory = { centre: null, scoutPositions: [], nights: 0, hunted: 0, sawNight: false, ascending: false };
+  const memory = { centre: null, scoutPositions: [], scoutCoverage: {}, nights: 0, hunted: 0, sawNight: false, ascending: false };
+  const landedScoutCells = new Set();
+  let sectorRoute;
   const caveVisited = new Set();
   const pearls = (state) => state.inventory.ender_pearl || 0;
 
@@ -188,6 +204,38 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
       allow1by1towers: false, scafoldingBlocks: [], maxDropDown: 2, infiniteLiquidDropdownDistance: false });
   }
 
+  function safeScoutMoves(dry, point) {
+    return dry.getNeighbors(Object.assign(point.clone(), { remainingBlocks: 0 })).filter((move) => !move.parkour
+      && !move.toBreak?.length && !move.toPlace?.length && Math.abs(move.y - point.y) <= 1 && flatDistance(point, move) <= Math.SQRT2);
+  }
+
+  function planSectorRoute(from) {
+    const dry = dryScoutMovements();
+    if (!dry) return [];
+    const centre = memory.centre;
+    const inSector = (p) => scoutSectorOf(p, centre) === scoutSector && flatDistance(p, centre) >= SECTOR_DEPTH;
+    if (inSector(from)) return [];
+    const nodes = [{ point: from, steps: 0, previous: null }];
+    const seen = new Set([pointKey(from)]);
+    for (const node of nodes) {
+      if (inSector(node.point)) {
+        const route = [];
+        for (let n = node; n.previous; n = n.previous) if (n === node || n.steps % SECTOR_LEG === 0) route.unshift(n.point);
+        return route;
+      }
+      if (node.steps >= SECTOR_SEARCH_STEPS || nodes.length >= SECTOR_SEARCH_NODES) continue;
+      for (const move of safeScoutMoves(dry, node.point)) {
+        if (nodes.length >= SECTOR_SEARCH_NODES) break;
+        const key = pointKey(move);
+        if (seen.has(key) || flatDistance(move, centre) > SCOUT_RADIUS) continue;
+        seen.add(key);
+        const p = new Vec3(move.x, move.y, move.z);
+        if (scoutGround(p)) nodes.push({ point: p, steps: node.steps + 1, previous: node });
+      }
+    }
+    return [];
+  }
+
   function scoutTarget(from, accept, focus) {
     const dry = dryScoutMovements();
     if (!dry) return null;
@@ -202,11 +250,10 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     let leastRecent = visited.length;
     for (const { point, steps } of nodes) {
       if (steps >= SCOUT_LEG) continue;
-      for (const move of dry.getNeighbors(Object.assign(point.clone(), { remainingBlocks: 0 }))) {
+      for (const move of safeScoutMoves(dry, point)) {
         if (nodes.length >= SCOUT_NODES) return best || transfer;
         const key = pointKey(move);
-        if (seen.has(key) || move.parkour || move.toBreak?.length || move.toPlace?.length
-          || Math.abs(move.y - point.y) > 1 || flatDistance(point, move) > Math.SQRT2 || !accept(move)) continue;
+        if (seen.has(key) || !accept(move)) continue;
         seen.add(key);
         const next = new Vec3(move.x, move.y, move.z);
         nodes.push({ point: next, steps: steps + 1 });
@@ -284,19 +331,32 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
       if (!surface.has(key)) surface.set(key, scoutGround(p));
       return surface.get(key);
     };
-    let target = scoutTarget(from, accept, focus);
+    let target = focus && scoutTarget(from, accept, focus);
     if (focus && !target) {
       blacklist.add(`approach:${focus.id}`, 'pearl_approach_blocked', 15000);
       focus = null;
-      target = scoutTarget(from, accept);
     }
+    if (!focus && scoutSector && sectorRoute === undefined) sectorRoute = planSectorRoute(from);
+    const sectorHop = !focus && sectorRoute?.[0];
+    if (!target) target = sectorHop || scoutTarget(from, accept);
     if (!target) return wait(ctx, 'pearl_scout_no_dry_route');
     const goal = new goals.GoalBlock(target.x, target.y, target.z);
-    ctx.record('pearl_surface_scout', { from, target, centre, towardEnderman: Boolean(focus) });
+    ctx.record('pearl_surface_scout', { from, target, centre, towardEnderman: Boolean(focus), ...(sectorHop ? { scoutSector } : {}) });
     surface.clear();
     const result = await walkDry(bot, ctx, actions, goal, { timeoutMs: 5000, avoid: (p) => !accept(p) });
     const at = bot.entity.position.floored();
-    if (at.equals(target)) return { ok: true, waited: true };
+    const landed = () => bot.entity.onGround === true && bot.entity.position.floored().equals(target) && scoutGround(target);
+    if (at.equals(target) && (landed() || await waitUntil(landed, { timeoutMs: 500, signal: ctx.signal }))) {
+      const key = pointKey(target);
+      if (!landedScoutCells.has(key)) {
+        const sector = scoutSectorOf(target, centre);
+        landedScoutCells.add(key);
+        if (sector) memory.scoutCoverage[sector] = (memory.scoutCoverage[sector] || 0) + 1;
+      }
+      if (sectorHop) sectorRoute.shift();
+      return { ok: true, waited: true };
+    }
+    if (sectorHop) sectorRoute = [];
     blacklist.add(`scout:${pointKey(target)}`, result.reason || 'pearl_scout_not_arrived', 15000);
     if (flatDistance(at, from) >= 2) return { ok: true, waited: true };
     if (focus) blacklist.add(`approach:${focus.id}`, result.reason || 'pearl_approach_blocked', 15000);

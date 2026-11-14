@@ -22,7 +22,7 @@ const GOAL_SCHEMAS = Object.freeze({
     target: integer(1, 64), size: integer(4, 32) }),
   gatherMaterials: schema({ chest: position, requirements }, ['chest', 'requirements']),
   outfit: schema({ items: requirements }, ['items']),
-  huntPearls: schema({ count: integer(), radius: integer(1, 512) }),
+  huntPearls: schema({ count: integer(), radius: integer(1, 512), scoutSector: facing }),
   cobbleGenerator: schema({ anchor: position, facing, harvest: integer(), collector: { type: 'boolean' } }),
   autoSmelter: schema({ ...device, input: item, output: item, fuel: item }),
   caneFarm: schema(device), mobFarm: schema(device), ironFarm: schema(device),

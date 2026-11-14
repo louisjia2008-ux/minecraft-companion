@@ -119,7 +119,16 @@ const STEPS = [
     done: ({ bot, state }) => state.gearDone || expeditionKitDone(bot, TRIP) },
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }), patient: true,
     done: ({ bot }) => have(bot, 'blaze_rod') >= BLAZE_RODS && dimensionOf(bot) === 'overworld' },
-  { id: 'pearls', task: 'huntPearls', args: ({ bot }) => ({ count: Math.max(1, EYES - have(bot, 'ender_eye')) }),
+  { id: 'pearls', task: 'huntPearls', args: ({ bot, state }) => {
+    const coverage = pearlScoutCoverage(state);
+    const directions = ['north', 'east', 'south', 'west'];
+    const previous = state?.goals?.pearls?.memory?.scoutCoverage || {};
+    const mostSampled = directions.reduce((best, d) => (previous[d] || 0) > (previous[best] || 0) ? d : best, 'north');
+    const opposite = directions[(directions.indexOf(mostSampled) + 2) % directions.length];
+    const scoutSector = [opposite, ...directions.filter((d) => d !== opposite)]
+      .sort((a, b) => (coverage[a] || 0) - (coverage[b] || 0))[0];
+    return { count: Math.max(1, EYES - have(bot, 'ender_eye')), ...(Object.keys(coverage).length ? { scoutSector } : {}) };
+  },
     when: ({ bot, companion }) => {
       if (bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000) return true;
       const home = companion?.director && houseOf(companion)?.interiorCenter;
@@ -198,6 +207,14 @@ function machinesDone(companion, bot) {
   return Boolean(m.cobbleGenerator?.isDone(state) && m.autoSmelter?.isDone(state));
 }
 
+function pearlScoutCoverage(state) {
+  const coverage = { ...state?.pearlScoutCoverage };
+  for (const [sector, count] of Object.entries(state?.goals?.pearls?.memory?.scoutCoverage || {})) {
+    coverage[sector] = (coverage[sector] || 0) + count;
+  }
+  return coverage;
+}
+
 async function dispatch(context, step, entry) {
   const { companion, write, bot } = context;
   context.state.activeStage = step.id;
@@ -209,9 +226,11 @@ async function dispatch(context, step, entry) {
     return;
   }
   const args = step.args(context);
+  const coverage = step.id === 'pearls' ? pearlScoutCoverage(context.state) : null;
   write('model_ask', { step: step.id, task: step.task, args, ask: entry.asks, position: bot.entity?.position?.floored?.() });
   console.log(`    model: ${step.task}${entry.asks > 1 ? ` (again, ${entry.asks})` : ''}`);
   context.state.goals[step.id] = await companion.submitTask(step.task, args);
+  if (coverage) context.state.pearlScoutCoverage = coverage;
 }
 
 const positionOf = (bot) => bot.entity?.position ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z } : null;

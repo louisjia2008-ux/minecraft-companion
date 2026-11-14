@@ -70,7 +70,7 @@ test('tools are bounded data schemas and cannot inject bot/actions or arbitrary 
 test('journey preparation tools accept bounded data and reject hidden overrides', () => {
   for (const [name, args] of [
     ['outfit', { items: [{ key: 'iron_helmet', count: 1 }, { key: 'food', count: 12 }] }],
-    ['huntPearls', {}], ['huntPearls', { count: 12, radius: 64 }],
+    ['huntPearls', {}], ['huntPearls', { count: 12, radius: 64, scoutSector: 'north' }],
     ['netherExpedition', { blazeRods: 7, witherSkulls: 0, trades: 0, skullTries: 30, roam: 400 }],
     ['endJourney', { withCity: false, home: true }],
   ]) validateTool(name, args);
@@ -82,6 +82,7 @@ test('journey preparation tools accept bounded data and reject hidden overrides'
     ['outfit', { items: [{ key: 'food', count: 1, actions: {} }] }],
     ['outfit', { items: [{ key: 'food', count: 1 }], home: {} }],
     ['huntPearls', { count: 0 }], ['huntPearls', { radius: 513 }], ['huntPearls', { skills: {} }],
+    ['huntPearls', { scoutSector: 'up' }],
     ['netherExpedition', { blazeRods: -1 }], ['netherExpedition', { trades: 1.5 }],
     ['netherExpedition', { skullTries: 4097 }], ['netherExpedition', { roam: 0 }],
     ['netherExpedition', { actions: {} }], ['endJourney', { home: 'true' }],

@@ -358,6 +358,32 @@ test('an unobstructed dry column admits scouting with low live sky light, but a 
   assert.deepEqual(visits, [candidate]);
 });
 
+test('the requested sector follows supported legs around a river even when its first leg moves east', async () => {
+  const start = new Vec3(0, 64, 4);
+  const shore = [start];
+  for (let x = 1; x <= 5; x += 1) shore.push(new Vec3(x, 64, 4));
+  for (let z = 3; z >= -15; z -= 1) shore.push(new Vec3(5, 64, z));
+  const native = (at) => shore.filter((p) => p.y === at.y && Math.abs(at.x - p.x) + Math.abs(at.z - p.z) === 1);
+  const bot = { ...terrain, entity: { position: start, onGround: true }, companionHomeAt: () => new Vec3(0, 64, 0),
+    pathfinder: { movements: { getNeighbors: native } }, blockAt(p) {
+      if (p.y === 63 && !shore.some((at) => at.x === p.x && at.z === p.z)) return { ...AIR, name: 'water' };
+      return terrain.blockAt(p);
+    } };
+  const records = [];
+  const goal = createHuntPearlsGoal({ bot, scoutSector: 'north', actions: { goTo: async (_bot, _ctx, hop) => {
+    const target = shore.find((p) => hop.isEnd(p));
+    assert.ok(target);
+    assert.ok(target.distanceTo(bot.entity.position) <= 7);
+    bot.entity.position = target;
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => nightState(bot.entity.position) };
+  for (let i = 0; i < 4; i += 1) await goal.run(ctx);
+  assert.deepEqual(records.filter((e) => e.scoutSector).map((e) => [e.target.x, e.target.z]), [[5, 2], [5, -5], [5, -12], [5, -14]]);
+  assert.equal(goal.memory.scoutCoverage.north, 2);
+});
+
 test('a hunter starting inside the known house walks out through an observed door', async () => {
   const player = new Vec3(0, 64, 0);
   const position = new Vec3(0, 64, -2);

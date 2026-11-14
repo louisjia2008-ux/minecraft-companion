@@ -312,6 +312,16 @@ test('gear and eyes ask for the full safe food reserve using the known farm plot
   }
 });
 
+test('a later pearl hunt prefers a fresh sector opposite the last observed search', () => {
+  const { context, state } = modelContext({ step: 'pearls' });
+  const pearls = STEPS.find((step) => step.id === 'pearls');
+  assert.equal(pearls.args(context).scoutSector, undefined);
+  state.goals.pearls = { memory: { scoutCoverage: { south: 30, east: 8 } } };
+  assert.equal(pearls.args(context).scoutSector, 'north');
+  state.pearlScoutCoverage = { north: 15 };
+  assert.equal(pearls.args(context).scoutSector, 'west');
+});
+
 test('pearl rearm verifies a full iron kit and local rations back at the house', async () => {
   const { context, asked, state } = modelContext({
     step: 'pearls', armour: ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots'],
