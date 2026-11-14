@@ -213,3 +213,24 @@ test('gear and eyes ask for the full safe food reserve using the known farm plot
     assert.equal(step.done(context), true);
   }
 });
+
+test('unexpected Nether entry during rearm returns through the portal before taking another outfit', async () => {
+  const { context, asked, state } = modelContext({ step: 'nether' });
+  const { bot, companion } = context;
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  companion.director = { memory: { homestead: { memory: { house } } } };
+  let goal = { name: 'outfit', generation: 1 };
+  companion.status = () => ({ goal });
+  companion.submitTask = async (task, args) => {
+    asked.push({ task, args });
+    goal = { name: task, generation: goal.generation + 1 };
+  };
+  state.audit = { deaths: [{ id: 1, at: 1, respawn: { alive: true } }], taskEvents: [] };
+  bot.game.dimension = 'minecraft:the_nether';
+  await playthroughNatural.onTick(context);
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked, [{ task: 'netherExpedition', args: { blazeRods: 0, witherSkulls: 0, trades: 0 } }]);
+  bot.game.dimension = 'minecraft:overworld';
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked[1], { task: 'outfit', args: { items: RECOVERY_BASE_KIT, recoverAtHome: true } });
+});

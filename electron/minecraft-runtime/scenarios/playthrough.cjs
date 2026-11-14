@@ -302,15 +302,33 @@ async function runDeathRecovery(context, index, entry) {
   const recovery = state.deathRecovery;
   if (recovery.phase === 'done') return false;
   if (!death.respawn?.alive || !state.lastPerceive.alive) return true;
+  const status = companion.status();
+  if (dimensionOf(bot) === 'the_nether') {
+    if (status.goal && status.goal.generation === recovery.returnGoal) return true;
+    if ((recovery.returnAsks || 0) >= RETRIES) {
+      if (!entry.stuck) {
+        entry.stuck = true;
+        write('model_stuck', { step: entry.id, recovery: 'return_overworld', death: death.id, asks: recovery.returnAsks });
+      }
+      return true;
+    }
+    // A resupply walk can be interrupted by portal transit. The expedition
+    // with no targets uses the existing return route without hunting mobs.
+    const args = { blazeRods: 0, witherSkulls: 0, trades: 0 };
+    recovery.returnAsks = (recovery.returnAsks || 0) + 1;
+    write('model_ask', { step: 'rearm', phase: 'return_overworld', death: death.id, task: 'netherExpedition', args, ask: recovery.returnAsks });
+    await companion.submitTask('netherExpedition', args);
+    recovery.returnGoal = companion.status().goal?.generation;
+    return true;
+  }
   // A dimension-specific task already in flight owns its way out. While the
   // respawn is outside the Overworld, don't advance or start a new stage.
   if (dimensionOf(bot) !== 'overworld') {
-    if (companion.status().paused) await companion.resumeTask();
+    if (status.paused) await companion.resumeTask();
     return true;
   }
   const home = homeOf(companion.director.memory);
   if (!home) return false;
-  const status = companion.status();
   const recoveryItems = recovery.phase === 'base' ? RECOVERY_BASE_KIT : REARM;
   const ready = recovery.phase === 'base'
     ? kitDone(bot, recoveryItems) && homeResupplyReady(state.lastPerceive, home)
