@@ -261,22 +261,27 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
   const isDoor = (p) => p.equals(door);
   const dry = (p) => standable(read, p) || isDoor(p) && shelter.doorOpen() === true
     && standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? AIR : read(cell), p);
+  const farm = (p) => farmlandStart && farmlandFooting(read, { onGround: true, position: p.offset(.5, -1 / 16, .5) });
   const safeLeg = (a, b, actualOrigin) => {
     const dy = b.y - a.y;
-    const farmOrigin = farmlandStart && a.equals(from);
-    if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(dy) > 1 || (!farmOrigin && !dry(a)) || !dry(b)) return false;
+    const farmOrigin = farm(a);
+    const farmDestination = farm(b);
+    if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(dy) > 1 || (!farmOrigin && !dry(a))) return false;
+    // Walk out of the field along its level surface. Once on a full block,
+    // the approach cannot enter farmland again or jump onto a crop.
+    if (farmDestination ? !farmOrigin || dy !== 0 : !dry(b)) return false;
     // A full bank one level up is 17/16 blocks above this observed farm surface.
     if (farmOrigin && dy < 0) return false;
     if ((isDoor(a) || isDoor(b)) && (a.x !== b.x || dy !== 0)) return false;
     return (dy === 0 || clearBlock(read((dy > 0 ? a : b).offset(0, 2, 0))))
-      && accept(b.offset(.5, 0, .5), actualOrigin || (farmOrigin ? farmlandStart : a.offset(.5, 0, .5)));
+      && accept(farmDestination || b.offset(.5, 0, .5), actualOrigin || farmOrigin || a.offset(.5, 0, .5));
   };
   const floor = Math.max(door.y - 5, from.y - 1);
   const queue = [{ at: from, first: null, steps: 0 }];
   const seen = new Set([posKey(from)]);
   for (let i = 0; i < queue.length && i < 1200; i += 1) {
     const { at, first, steps } = queue[i];
-    if (first && (typeof target === 'function' ? target(at) : at.equals(target))) return { first, safeLeg, dry, steps };
+    if (first && dry(at) && (typeof target === 'function' ? target(at) : at.equals(target))) return { first, safeLeg, dry, farm, steps };
     if (steps >= 28) continue;
     for (const [x, z] of APPROACH_SIDES) for (const y of [0, 1, -1]) {
       const next = at.offset(x, y, z);
@@ -629,7 +634,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       const feet = bot.entity.position.floored();
       const farmlandStart = farmlandFooting(read, bot.entity);
       // Pathfinder starts at the logical block above the observed farmland
-      // collision surface. Only the initial node may use this partial floor.
+      // collision surface. Contiguous level farmland may lead to a dry bank.
       const from = farmlandStart ? feet.offset(0, 1, 0) : feet;
       const entrance = doorstep.floored();
       const open = shelter.doorOpen();
@@ -695,23 +700,30 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return followStep(scoped, path, from, feet, farmlandStart, open, target, wait);
     };
     const followStep = async (scoped, path, from, feet, farmlandStart, open, target, wait) => {
-      const { first, safeLeg, dry } = path;
-      const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(first) && dry(first);
+      const { first, safeLeg, dry, farm } = path;
+      const ontoFarm = Boolean(farm(first));
+      const arrived = () => bot.entity.onGround && (ontoFarm
+        ? bot.entity.position.floored().equals(first.offset(0, -1, 0)) && Boolean(farmlandFooting(read, bot.entity))
+        : bot.entity.position.floored().equals(first) && dry(first));
       const throughDoor = open === true && from.equals(shelter.position) && first.equals(target);
-      const actualOrigin = throughDoor ? bot.entity.position : undefined;
+      const actualOrigin = throughDoor || farmlandStart ? bot.entity.position : undefined;
       if (!bot.entity.onGround || (farmlandStart && !farmlandFooting(read, bot.entity))
         || !safeLeg(from, first, actualOrigin)) return wait('resupply_home_step_changed');
       if (throughDoor) {
         inwardDoorStep = { from: actualOrigin.clone(), to: first.offset(.5, 0, .5) };
       }
       routeDestination = first;
-      destinationStillSafe = () => dry(first);
+      destinationStillSafe = () => ontoFarm ? Boolean(farm(first)) : dry(first);
+      const movement = ontoFarm && bot.pathfinder?.movements;
+      const sprint = movement && (movement.sprintSetting ?? movement.allowSprinting);
+      if (movement && sprint !== undefined) movement.allowSprinting = false;
       let moved;
       try {
         moved = await actions.goTo(bot, scoped, new goals.GoalBlock(first.x, first.y, first.z),
-          { timeoutMs: 6500, retryNoProgress: false });
-        if (moved.ok) await waitUntil(arrived, { timeoutMs: 600, signal: scoped.signal });
+          { timeoutMs: 6500, retryNoProgress: false, ...(ontoFarm ? { arrived } : {}) });
+        if (moved.ok || ontoFarm && moved.reason === 'not_arrived') await waitUntil(arrived, { timeoutMs: 600, signal: scoped.signal });
       } finally {
+        if (movement && sprint !== undefined) movement.allowSprinting = sprint;
         routeDestination = null;
         destinationStillSafe = null;
       }

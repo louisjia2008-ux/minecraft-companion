@@ -578,6 +578,79 @@ test('critical bread return can leave observed 15/16-height farmland for a dry c
 
 test('critical bread return can jump from observed farmland onto a full bank with overhead clearance', () => checkFarmlandExit(1));
 
+test('guarded bread return follows level farmland to a dry bank without jumping on crops', async () => {
+  const plot = new Vec3(-113, 62, -180);
+  const otherPlot = plot.offset(1, 0, 0);
+  const logicalOther = otherPlot.offset(0, 1, 0);
+  const bank = logicalOther.offset(1, 0, 0);
+  const house = createStarterHouse({ x: -105, y: 64, z: -182 });
+  const door = new Vec3(-102, 64, -182);
+  const path = [bank, ...Array.from({ length: 5 }, (_, i) => bank.offset(i + 1, 0, 0)),
+    new Vec3(-106, 64, -181), new Vec3(-106, 64, -182), new Vec3(-106, 64, -183),
+    ...Array.from({ length: 4 }, (_, i) => new Vec3(-105 + i, 64, -183))];
+  const support = new Set(path.map((p) => p.offset(0, -1, 0).toString()));
+  const farmland = { name: 'farmland', boundingBox: 'block', shapes: [[0, 0, 0, 1, 15 / 16, 1]] };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const stone = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const bot = Object.assign(fakeBot([{ name: 'wheat', count: 3 }]), { health: 2.67, food: 5, game: { dimension: 'overworld' },
+    entity: { position: plot.offset(.5, 15 / 16, .5), onGround: true }, entities: {}, time: { timeOfDay: 5000 } });
+  let flood = true;
+  bot.blockAt = (p) => {
+    if (p.equals(plot) || p.equals(otherPlot)) return farmland;
+    if (p.equals(logicalOther)) return { ...air, name: flood ? 'water' : 'wheat' };
+    if (p.equals(door) || p.equals(door.offset(0, 1, 0))) {
+      return { name: 'oak_door', boundingBox: 'block', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
+        open: false, facing: 'south', hinge: 'left' }) };
+    }
+    return support.has(p.toString()) ? stone : air;
+  };
+  const logicalPlot = plot.offset(0, 1, 0);
+  const nativeNeighbors = (p) => p.equals(logicalPlot)
+    ? [logicalOther, logicalOther.offset(0, 1, 0), bank] : [bank, logicalPlot];
+  const movement = { getNeighbors: nativeNeighbors, allowSprinting: true };
+  bot.pathfinder = { movements: movement };
+  const moves = [];
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: {
+      goTo: async (_bot, _ctx, target, { arrived }) => {
+        if (!moves.length) {
+          assert.ok(target.isEnd(logicalOther));
+          assert.deepEqual(movement.getNeighbors(logicalPlot), [logicalOther]);
+          assert.equal(movement.allowSprinting, false);
+          assert.equal(arrived(), false);
+          bot.entity.position = otherPlot.offset(.5, 15 / 16, .5);
+          assert.equal(arrived(), true);
+          moves.push(logicalOther);
+        } else {
+          assert.ok(target.isEnd(bank));
+          assert.equal(movement.allowSprinting, true);
+          bot.entity.position = bank.offset(.5, 0, .5);
+          moves.push(bank);
+        }
+        return { ok: true };
+      },
+      goNear: async () => assert.fail('unexpected generic movement'),
+      digBlock: async () => assert.fail('must preserve farmland'),
+    } });
+  const abort = new AbortController();
+  const ctx = { perceive: () => perceive(bot), record() {} };
+  await assert.rejects(goal.run({ ...ctx, signal: abort.signal, record(type, { reason }) {
+    if (type === 'resupply_home_approach_wait') {
+      assert.equal(reason, 'resupply_no_dry_home_route');
+      abort.abort();
+    }
+  } }), { code: 'aborted' });
+  assert.deepEqual(moves, []);
+  flood = false;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(moves, [logicalOther, bank]);
+  assert.equal(movement.allowSprinting, true);
+  assert.equal(movement.getNeighbors, nativeNeighbors);
+  await goal.dispose();
+});
+
 test('critical resupply steps inward only while a continuous roof separates the doorway from a phantom', async () => {
   const house = createStarterHouse({ x: -68, y: 72, z: -35 });
   const door = new Vec3(-65, 72, -35);
