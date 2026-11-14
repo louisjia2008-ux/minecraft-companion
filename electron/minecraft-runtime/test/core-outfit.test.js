@@ -917,6 +917,65 @@ test('expedition reserve extends the growing field on nearby hydrated soil and p
   assert.deepEqual(edits, [newPlot], 'keep the harvest bank and avoid expanding beyond the original field');
 });
 
+test('expedition wheat uses a bounded level farm path and preserves its way back after a threat', async (t) => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const farm = require('../core/farming');
+  const bank = new Vec3(10, 64, 2);
+  const plots = [1, 2, 3].map((x) => bank.offset(x, -1, 0));
+  const cells = [bank, ...plots.map((p) => p.offset(0, 1, 0))];
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const support = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const soil = { ...support, name: 'farmland', shapes: [[0, 0, 0, 1, 15 / 16, 1]] };
+  const nativeNeighbors = () => [...cells, bank.offset(0, 0, 1)];
+  const movement = { getNeighbors: nativeNeighbors, allowSprinting: true };
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' }, pathfinder: { movements: movement },
+    entity: { position: new Vec3(2.5, 64, 2.5), onGround: true }, blockAt(p) {
+      if (plots.some((plot) => p.equals(plot))) return soil;
+      if (cells.slice(1).some((cell) => p.equals(cell))) return { ...air, name: 'wheat' };
+      if (p.y === 63) return p.equals(bank.offset(0, -1, 0)) ? support : { ...air, name: 'water' };
+      return air;
+    } });
+  let hostiles = [];
+  let abortNext = true;
+  let harvested = 0;
+  const traveled = [];
+  t.mock.method(farm, 'plotState', (_bot, p) => p.equals(plots[2]) ? 'ripe' : 'growing');
+  t.mock.method(farm, 'harvest', async (_bot, _ctx, p) => {
+    assert.ok(bot.entity.position.floored().equals(p));
+    harvested += 1;
+    return { ok: true, gained: 1 };
+  });
+  const ctx = { perceive: () => ({ inventory: {}, health: 20, food: 20, isDay: true, hostiles }), record() {} };
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: { ...home, stations: { crafting_table: home.centre } },
+    farmPlots: plots, actions: { goTo: async (_bot, _ctx, target, { arrived }) => {
+      const pos = new Vec3(target.x, target.y, target.z);
+      const at = bot.entity.position.floored();
+      if (pos.x !== bank.x || at.x > bank.x) {
+        const logical = at.x > bank.x ? at.offset(0, 1, 0) : at;
+        assert.deepEqual(movement.getNeighbors(logical), [pos]);
+        assert.equal(movement.allowSprinting, false);
+      }
+      bot.entity.position = pos.offset(.5, pos.x > bank.x ? -1 / 16 : 0, .5);
+      assert.ok(arrived());
+      traveled.push(pos.x);
+      if (abortNext && pos.x === bank.x + 2) {
+        abortNext = false;
+        hostiles = [{ name: 'zombie', distance: 4 }];
+      }
+      return { ok: true };
+    } }, skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async () => ({ ok: false, reason: 'no_mob_in_range' }) } });
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_field_unreachable');
+  assert.equal(harvested, 0);
+  assert.deepEqual(traveled, [10, 11, 12]);
+  hostiles = [];
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(traveled, [10, 11, 12, 11, 10]);
+  assert.equal(movement.allowSprinting, true);
+  assert.equal(movement.getNeighbors, nativeNeighbors);
+});
+
 test('expedition reserve re-enters the home range by dry local legs from beyond a loaded route', async () => {
   const { createStockFoodGoal } = require('../core/goals/stockFood');
   const floor = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };

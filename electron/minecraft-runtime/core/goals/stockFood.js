@@ -27,9 +27,11 @@ const RETREAT_SPIDERS = new Set(['spider', 'cave_spider']);
 const DUSK = 12542;
 const FIELD_MARGIN = 5;
 const MAX_RESERVE_PLOTS = 24;
+const MAX_FIELD_WALK = 5;
 const CARDINAL = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const WATER_BLOCK = /^(water|flowing_water|bubble_column|kelp|kelp_plant|seagrass|tall_seagrass)$/;
 const SURFACE_HAZARD = /^(lava|fire|soul_fire|magma_block|campfire|soul_campfire|cactus|powder_snow)$/;
+const PORTAL = /^(nether_portal|end_portal)$/;
 const asVec = ({ x, y, z }) => new Vec3(x, y, z);
 const foodMatch = (bot, kb, name) => !defaultActions.RISKY_FOODS.has(name)
   && (bot.registry?.foodsByName ? Boolean(bot.registry.foodsByName[name]) : kb.food.match(name));
@@ -55,6 +57,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   let scout = null;
   let scoutAgainAt = 0;
   let scoutHeading = 0;
+  let fieldExit = null;
   const distance = (p) => Math.hypot(p.x - centre.x, p.z - centre.z);
   const read = (p) => bot.blockAt(p);
   const watery = (block) => block && (WATER_BLOCK.test(block.name) || block.isWaterlogged
@@ -117,6 +120,37 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
 
   // A same-level bank enters the 15/16 crop surface without a trampling fall.
   const harvestBanks = (plot) => CARDINAL.map(([dx, dz]) => plot.offset(dx, 1, dz)).filter(exposed);
+  const farmDry = (point) => {
+    const block = read(point);
+    return dry(block) && !PORTAL.test(block.name);
+  };
+  const fieldClear = (p) => [-1, 0, 1].every((dy) => farmDry(p.offset(0, dy, 0)));
+  const farmStance = (p) => fieldClear(p) && skyClear(p)
+    && farmlandFooting(read, { onGround: true, position: p.offset(.5, -1 / 16, .5) });
+  const fieldStance = (p) => Boolean(farmStance(p) || exposed(p) && fieldClear(p));
+  const adjacent = (p) => CARDINAL.map(([dx, dz]) => p.offset(dx, 0, dz));
+
+  // Walk backwards from the crop to the closest verified full bank. Each
+  // intermediate node is an already known crop at the same walking height.
+  function fieldPath(plot) {
+    const target = plot.offset(0, 1, 0);
+    if (!farmStance(target)) return null;
+    const known = new Set(plots.map((p) => posKey(p.offset(0, 1, 0))));
+    const seen = new Set([posKey(target)]);
+    const pending = [[target]];
+    for (const [head, ...trail] of pending) {
+      const bank = harvestBanks(head.offset(0, -1, 0)).find(fieldStance);
+      if (bank) return [bank, head, ...trail];
+      if (trail.length + 1 >= MAX_FIELD_WALK) continue;
+      for (const next of adjacent(head)) {
+        const key = posKey(next);
+        if (!known.has(key) || seen.has(key) || !farmStance(next)) continue;
+        seen.add(key);
+        pending.push([next, head, ...trail]);
+      }
+    }
+    return null;
+  }
 
   function selectExpansion(state) {
     const short = target - expeditionFoodCount(bot, state.inventory, kb);
@@ -158,6 +192,12 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       if (Date.now() - checkedAt >= 250) { checked.clear(); checkedAt = Date.now(); }
       return neighbors.call(this, node, ...args).filter((move) => {
         const p = new Vec3(move.x, move.y, move.z);
+        if (route.fieldStep) {
+          const from = new Vec3(node.x, node.y, node.z);
+          return route.fieldStep.from.equals(from) && route.fieldStep.to.equals(p)
+            && accept(p) && fieldStance(from) && fieldStance(p);
+        }
+        if (route.fieldApproach && !fieldClear(p)) return false;
         if (route.scouting) {
           const from = new Vec3(node.x, node.y, node.z);
           if (Math.abs(p.x - node.x) + Math.abs(p.z - node.z) !== 1) return false;
@@ -204,6 +244,89 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     }
     // Vanilla adds a short item pickup delay after the wheat block disappears.
     if (arrived()) await sleep(550, ctx.signal);
+  }
+
+  async function walkField(ctx, route, from, to) {
+    const arrived = () => bot.entity.onGround && !bot.entity.isInWater && !bot.entity.isInLava
+      && (farmStance(to) ? bot.entity.position.floored().equals(to.offset(0, -1, 0)) && farmlandFooting(read, bot.entity)
+        : bot.entity.position.floored().equals(to) && exposed(to));
+    if (!fieldStance(from) || !fieldStance(to)) return false;
+    const movement = bot.pathfinder.movements;
+    const sprint = movement.sprintSetting ?? movement.allowSprinting;
+    movement.allowSprinting = false;
+    route.fieldStep = { from, to };
+    const guard = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, guard.signal]) : guard.signal;
+    const monitor = setInterval(() => {
+      if (!fieldStance(from) || !fieldStance(to) || bot.entity.isInWater || bot.entity.isInLava
+        || threatsNear(ctx.perceive())) guard.abort('expedition_food_field_unsafe');
+    }, 100);
+    try {
+      const result = await actions.goTo(bot, { ...ctx, signal }, new goals.GoalBlock(to.x, to.y, to.z),
+        { arrived, timeoutMs: 2400, retryNoProgress: false });
+      return (result.ok || result.reason === 'not_arrived') && await waitUntil(arrived, { timeoutMs: 450, signal });
+    } catch (error) {
+      if (!guard.signal.aborted || ctx.signal?.aborted) throw error;
+      return false;
+    } finally {
+      clearInterval(monitor);
+      route.fieldStep = null;
+      movement.allowSprinting = sprint;
+    }
+  }
+
+  const fieldFailure = () => ({ ok: false, reason: 'expedition_food_field_unreachable' });
+  const fieldActive = (ctx) => !ctx.signal?.aborted && onDryGround() && !threatsNear(ctx.perceive());
+  async function leaveField(ctx, route) {
+    const feet = bot.entity.position.floored();
+    const at = farmlandFooting(read, bot.entity) ? feet.offset(0, 1, 0) : feet;
+    const index = fieldExit?.findIndex((p) => p.equals(at));
+    if (index >= 0 && bot.entity.onGround) fieldExit.length = index + 1;
+    else if (onDryGround() && exposed(at)) fieldExit = null;
+    else return fieldFailure();
+    while (fieldExit?.length > 1) {
+      const last = fieldExit.at(-1);
+      if (!fieldActive(ctx) || !bot.entity.position.floored().equals(last.offset(0, -1, 0))
+        || !await walkField(ctx, route, last, fieldExit.at(-2))) return fieldFailure();
+      fieldExit.pop();
+    }
+    fieldExit = null;
+    return { ok: true };
+  }
+
+  async function harvestField(ctx, plot, path, route) {
+    const [bank, ...steps] = path;
+    const atBank = () => onDryGround() && bot.entity.position.floored().equals(bank) && exposed(bank);
+    if (!atBank()) {
+      route.fieldApproach = true;
+      try {
+        const approach = await actions.goTo(bot, ctx, new goals.GoalBlock(bank.x, bank.y, bank.z),
+          { arrived: atBank, timeoutMs: 8000, retryNoProgress: false });
+        if (!(approach.ok || approach.reason === 'not_arrived')
+          || !await waitUntil(atBank, { timeoutMs: 450, signal: ctx.signal })) return fieldFailure();
+      } finally {
+        route.fieldApproach = false;
+      }
+    }
+    fieldExit = [bank];
+    let result = fieldFailure();
+    for (const next of steps) {
+      if (!fieldActive(ctx)) break;
+      const previous = fieldExit.at(-1);
+      fieldExit.push(next);
+      if (!await walkField(ctx, route, previous, next)) break;
+    }
+    let replanted = null;
+    if (fieldActive(ctx) && farmlandFooting(read, bot.entity) && bot.entity.position.floored().equals(plot)
+      && farming.plotState(bot, plot) === 'ripe') {
+      result = await farming.harvest(bot, ctx, plot, { collect: () => sleep(550, ctx.signal) });
+      if (result.ok && fieldActive(ctx) && ctx.perceive().inventory.wheat_seeds > 0 && farming.plotState(bot, plot) === 'empty') {
+        replanted = (await farming.plant(bot, ctx, plot)).ok;
+      }
+    }
+    const left = await leaveField(ctx, route);
+    if (result.ok) return { ...result, replanted };
+    return left.ok ? result : left;
   }
 
   function go(ctx, target, radius, timeoutMs = 14000) {
@@ -498,6 +621,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
         if (!scout && !escape) return wait(ctx, 'expedition_food_unsafe');
         return withdrawFromMelee(ctx, feet, route, escape);
       }
+      if (fieldExit) return leaveField(ctx, route);
       if (homeTask || returning) {
         const inside = Math.abs(here.x - centre.x - .5) < 2.6 && Math.abs(here.z - centre.z - .5) < 2.6
           && Math.abs(here.y - centre.y) < .8;
@@ -573,11 +697,18 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
         const empty = state.inventory.wheat_seeds > 0 && stage('empty');
         const ripe = plots.find((p) => canTarget(p) && !blacklist.has(posKey(p))
           && farming.plotState(bot, p) === 'ripe' && harvestBanks(p).length);
-        const plot = empty || ripe;
+        let path = null;
+        const indirect = !empty && !ripe && typeof bot.pathfinder?.movements?.getNeighbors === 'function'
+          && plots.find((p) => canTarget(p) && !blacklist.has(posKey(p)) && farming.plotState(bot, p) === 'ripe'
+            && (path = fieldPath(p)));
+        const plot = empty || ripe || indirect;
         if (plot) {
-          const result = await (empty ? farming.plant(bot, ctx, plot) : farming.harvest(bot, ctx, plot,
+          const result = await (empty ? farming.plant(bot, ctx, plot) : indirect ? harvestField(ctx, plot, path, route) : farming.harvest(bot, ctx, plot,
             { collect: () => collectWheat(ctx, plot, route) }));
           ctx.record('expedition_food_farm', { action: empty ? 'plant' : 'harvest', plot: posKey(plot), ok: result.ok, gained: result.gained });
+          if (result.replanted !== null && result.replanted !== undefined) {
+            ctx.record('expedition_food_farm', { action: 'plant', plot: posKey(plot), ok: result.replanted });
+          }
           if (!result.ok || !empty && result.gained < 1) blacklist.add(posKey(plot), result.reason || 'wheat_not_collected');
           return result;
         }
