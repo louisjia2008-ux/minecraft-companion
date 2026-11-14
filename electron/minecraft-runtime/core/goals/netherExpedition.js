@@ -940,7 +940,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
           actions.goTo(bot, combat, new goals.GoalBlock(next.x, next.y, next.z), { arrived, timeoutMs: 2500, retryNoProgress: false }));
       }
       if (result.repositioned) return result;
-      if (!(result.ok || result.reason === 'not_arrived') || !await waitUntil(arrived, { timeoutMs: 600, signal: ctx.signal })) {
+      actions.haltBody?.(bot);
+      const settled = () => arrived() && Math.hypot(bot.entity.velocity?.x || 0, bot.entity.velocity?.z || 0) <= .025;
+      if (!(result.ok || result.reason === 'not_arrived') || !await waitUntil(settled, { timeoutMs: 650, signal: ctx.signal })) {
         blacklist.add(`patrol_edge:${posKey(from)}>${posKey(next)}`, result.reason, 9000);
         return result.ok ? fail('fortress_patrol_step_unconfirmed') : result;
       }
