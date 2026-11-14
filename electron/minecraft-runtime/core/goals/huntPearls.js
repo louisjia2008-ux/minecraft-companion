@@ -154,6 +154,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
   let homeRoute = [];
   let homeFailures = 0;
   let waterFailures = 0;
+  let nextWaterRecovery = 0;
   let recoveringWater = false;
   let widePlan;
   let wideTried = false;
@@ -810,6 +811,15 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
       const bank = pendingWaterBank(house);
       if (bank) return regainDryBank(ctx, house, bank, feet);
       if (!bot.entity.isInWater) waterFailures = 0;
+      else if (house && flatDistance(feet, house) <= operatingRadius() && Date.now() >= nextWaterRecovery
+        && typeof actions.swimToNearbyBank === 'function') {
+        nextWaterRecovery = Date.now() + 2000;
+        if (await actions.swimToNearbyBank(bot, ctx)) {
+          recoveringWater = true;
+          ctx.record('pearl_swim_dry_bank', { from: feet, to: bot.entity.position.floored() });
+          return { ok: true, waited: true };
+        }
+      }
       if (memory.ascending && (!house || flatDistance(feet, house) > operatingRadius()
         || (feet.y >= house.y - 2 && bot.entity.onGround && outdoors(feet) && !state.inWater && !bot.entity.isInLava))) {
         memory.ascending = false;

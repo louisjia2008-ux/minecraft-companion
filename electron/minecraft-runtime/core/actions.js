@@ -12,7 +12,7 @@ const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { ownedItems } = require('./perception');
 const { dropReturnPosition } = require('./pathReturn');
 const { meleeGeometry, meleeSight, MeleeFollowGoal, entitySizeEvidence } = require('./entityGeometry');
-const { standable } = require('./caveRetreat');
+const { standable, walkDry } = require('./caveRetreat');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -747,6 +747,20 @@ async function unstick(bot, ctx) {
 /** Digs the block over the bot's head and those beside its head. True if any went. */
 const SEA = new Set(['water', 'kelp', 'kelp_plant', 'seagrass', 'tall_seagrass', 'bubble_column']);
 const OPEN_AIR = /^(air|cave_air|void_air)$/;
+const SHORE_SAND = new Set(['sand', 'red_sand']);
+
+function backedSand(read, feet) {
+  const support = feet.offset(0, -1, 0);
+  const sand = (block) => SHORE_SAND.has(block?.name) && block.shapes?.length === 1
+    && block.shapes[0].length === 6 && block.shapes[0].every((value, i) => value === Number(i >= 3));
+  if (!sand(read(support))) return false;
+  for (let depth = 1; depth <= 4; depth += 1) {
+    const backing = read(support.offset(0, -depth, 0));
+    if (sand(backing)) continue;
+    return standable((p) => p.equals(support) ? backing : read(p), feet);
+  }
+  return false;
+}
 
 // After surfacing for air, stay in control until a nearby observed bank is
 // reached. Returning immediately can let the body sink between breath cycles.
@@ -760,26 +774,52 @@ async function swimToNearbyBank(bot, ctx) {
   };
   const dry = (p) => standable(read, p) && !read(p.offset(0, -1, 0)).name.endsWith('_leaves')
     && clear(p.offset(0, 2, 0));
+  const sand = (p) => clear(p) && clear(p.offset(0, 1, 0)) && clear(p.offset(0, 2, 0)) && backedSand(read, p);
+  const shoreSteps = (bank) => {
+    const queue = [{ at: bank, steps: [] }];
+    const seen = new Set([bank.toString()]);
+    for (const { at, steps } of queue) {
+      if (steps.length >= 3) continue;
+      for (const [dx, dz] of SIDES) for (const dy of [0, 1, -1]) {
+        const p = at.offset(dx, dy, dz);
+        const key = p.toString();
+        if (seen.has(key) || dy && !clear((dy > 0 ? at : p).offset(0, 2, 0))) continue;
+        if (dry(p)) return [...steps, p];
+        if (!sand(p)) continue;
+        seen.add(key);
+        queue.push({ at: p, steps: [...steps, p] });
+      }
+    }
+    return null;
+  };
   const feet = bot.entity.position.floored();
-  const from = [feet, feet.offset(0, 1, 0), feet.offset(0, 2, 0)].find(surface);
+  const from = [feet, feet.offset(0, 1, 0), feet.offset(0, 2, 0), feet.offset(0, 3, 0)].find(surface);
   const nearSurface = () => {
     const position = bot.entity.position;
     return position.y >= from.y - 1.5 && clear(position.offset(0, bot.entity.eyeHeight ?? 1.62, 0).floored());
   };
-  if (!from || !nearSurface()) return false;
+  if (!from) return false;
   let route;
+  let sandRoute;
   for (const [dx, dz] of SIDES) {
     const water = [from];
     for (let distance = 1; distance <= 6 && distance < (route?.water.length ?? Infinity); distance += 1) {
       const p = from.offset(dx * distance, 0, dz * distance);
       const bank = [p, p.offset(0, 1, 0)].find(dry);
       if (bank) { route = { water, bank }; break; }
+      const beach = [p, p.offset(0, 1, 0)].find(sand);
+      if (beach) {
+        const steps = shoreSteps(beach);
+        if (steps && water.length < (sandRoute?.water.length ?? Infinity)) sandRoute = { water, bank: beach, steps };
+        break;
+      }
       if (!surface(p)) break;
       water.push(p);
     }
   }
+  route ||= sandRoute;
   if (!route) return false;
-  const { bank, water } = route;
+  const { bank, water, steps } = route;
   const nextToBank = water.at(-1);
   const target = nextToBank.offset(.5, 0, .5);
   const forward = bank.minus(nextToBank);
@@ -792,7 +832,11 @@ async function swimToNearbyBank(bot, ctx) {
       : [Math.floor(position.x - radius), Math.floor(position.x + radius)].map((x) => new Vec3(x, from.y, p.z));
     return skirt.every(surface);
   };
-  const valid = () => dry(bank) && water.every(surface) && !bot.entity.isInLava && nearSurface() && laneOpen(bot.entity.position);
+  const acceptingBank = steps ? sand : dry;
+  const clearStep = (a, b) => a.y === b.y || clear((b.y > a.y ? a : b).offset(0, 2, 0));
+  const acceptsStep = (p, i) => (i === steps.length - 1 ? dry(p) : sand(p)) && clearStep(i === 0 ? bank : steps[i - 1], p);
+  const valid = () => acceptingBank(bank) && (!steps || steps.every(acceptsStep)) && water.every(surface)
+    && !bot.entity.isInLava && laneOpen(bot.entity.position);
   if (!valid()) return false;
   ctx.record?.('breathe_bank_route', { from, bank, distance: water.length });
   try {
@@ -800,12 +844,34 @@ async function swimToNearbyBank(bot, ctx) {
       const position = bot.entity.position;
       const cell = position.floored();
       if (!water.some((p) => p.x === cell.x && p.z === cell.z)) return false;
+      if (!nearSurface()) {
+        bot.setControlState('forward', false);
+        bot.setControlState('jump', true);
+        await sleep(50, ctx.signal);
+        continue;
+      }
       const centered = Math.hypot(position.x - target.x, position.z - target.z) <= .35;
       const aligned = centered && nearLane(position);
       if (aligned && bank.y <= cell.y + 1) {
-        const landed = await swimAshore(bot, ctx, { maxTicks: 50, bank, acceptBank: dry, surfaceY: from.y });
+        const landed = await swimAshore(bot, ctx, { maxTicks: 50, bank,
+          acceptBank: (p) => acceptingBank(p) && (!steps || steps.every(acceptsStep)), surfaceY: from.y });
         ctx.record?.('breathe_bank_result', { bank, landed });
-        return landed;
+        if (!landed || !steps) return landed;
+        let previous = bank;
+        for (const [i, p] of steps.entries()) {
+          const accepts = i === steps.length - 1 ? dry : sand;
+          if (!bot.entity.position.floored().equals(previous) || !sand(previous) || !acceptsStep(p, i)) return false;
+          const arrived = (pos) => bot.entity.onGround === true && !bot.entity.isInWater && pos.floored().equals(p) && accepts(p);
+          const moved = await walkDry(bot, ctx, { goTo }, new goals.GoalBlock(p.x, p.y, p.z), {
+            adjacent: p, supports: (_read, point) => accepts(point), arrived, timeoutMs: 2500,
+          });
+          if (!(moved.ok || moved.reason === 'not_arrived') || !await waitUntil(() => arrived(bot.entity.position), {
+            timeoutMs: 600, signal: ctx.signal,
+          })) return false;
+          ctx.record?.('breathe_sand_bank_step', { from: previous, to: p });
+          previous = p;
+        }
+        return true;
       }
       if (!aligned) await bot.lookAt(new Vec3(target.x, position.y + (bot.entity.eyeHeight ?? 1.62), target.z), true);
       ctx.signal?.throwIfAborted();

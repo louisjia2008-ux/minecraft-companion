@@ -357,6 +357,26 @@ test('regaining air in an open pool keeps the body until it reaches a checked ba
   assert.deepEqual(s.bot.entity.position.floored(), bank);
 });
 
+test('a shallow shore never accepts sand without solid backing and a route to stable dry footing', async () => {
+  const start = new Vec3(0.5, 62, 0.5);
+  const full = (name) => ({ name, boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] });
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const water = { name: 'water', boundingBox: 'empty', shapes: [], getProperties: () => ({ level: 0 }) };
+  const s = setup({ actions: { swimToNearbyBank } });
+  Object.assign(s.bot.entity, { position: start, isInWater: true, onGround: false });
+  let solidBacking = false;
+  Object.assign(s.bot, { blockAt(p) {
+    if (p.x === 0 && p.z >= 0 && p.y === 62) return water;
+    if (p.x === 0 && p.z === -1 && p.y === 62) return full('sand');
+    if (p.x === 0 && p.z === -1 && p.y === 61 && solidBacking) return full('stone');
+    return air;
+  } });
+  const ctx = { record: () => assert.fail('began moving with no proven stable shore') };
+  assert.equal(await swimToNearbyBank(s.bot, ctx), false);
+  solidBacking = true;
+  assert.equal(await swimToNearbyBank(s.bot, ctx), false);
+});
+
 test('a goal that brings its own food (the farm) keeps provisioning out of its way', () => {
   let feeding = false;
   const s = setup({ feeding: () => feeding });
