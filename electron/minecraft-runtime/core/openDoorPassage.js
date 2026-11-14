@@ -1,6 +1,27 @@
 'use strict';
 
 const installed = new WeakMap();
+const isDoor = (block) => !!block && /_door$/.test(block.name || '');
+const DOOR_AXIS = { north: 'z', south: 'z', east: 'x', west: 'x' };
+
+// Swept 0.6-wide player body. The centre follows the door normal and its
+// tangent stays between .2 and .8 across both loaded halves.
+function openDoorPassage(at, point) {
+  const lower = at(point);
+  if (!isDoor(lower)) return null;
+  const lo = lower.getProperties();
+  const axis = DOOR_AXIS[lo.facing];
+  if (lo.half !== 'lower' || lo.open !== true || !axis) return null;
+  const upper = at(lower.position.offset(0, 1, 0));
+  if (!upper || upper.type !== lower.type || !isDoor(upper)) return null;
+  const hi = upper.getProperties();
+  if (hi.half !== 'upper' || ['open', 'facing', 'hinge', 'powered'].some((key) => hi[key] !== lo[key])) return null;
+  const intersects = (s) => s[1] < 1 && s[4] > 0 && (axis === 'x' ? s[2] < .8 && s[5] > .2 : s[0] < .8 && s[3] > .2);
+  if (![lower, upper].every((block) => Array.isArray(block.shapes) && block.shapes.length > 0
+    && block.shapes.every((s) => Array.isArray(s) && s.length === 6 && s.every(Number.isFinite) && !intersects(s)))) return null;
+  return { lower, upper, axis };
+}
+
 function uninstallOpenDoorPassage(bot, movements) {
   const current = installed.get(bot);
   if (current && (!movements || current.movements === movements)) current.dispose();
@@ -15,26 +36,8 @@ function installOpenDoorPassage(bot, movements) {
   previous?.dispose();
   let disposed = false;
   const waypoint = Symbol('validatedOpenDoorWaypoint');
-  const isDoor = (block) => !!block && /_door$/.test(block.name || '');
   const at = (point) => bot.blockAt(point, false);
-  const axis = { north: 'z', south: 'z', east: 'x', west: 'x' };
-  // Swept 0.6-wide player body, not merely the centre point: movement spans
-  // the whole door cell along its normal, while the tangent stays .2..8.
-  const intersectsPassage = (shape, normal) => shape[1] < 1 && shape[4] > 0 &&
-    (normal === 'x' ? shape[2] < .8 && shape[5] > .2 : shape[0] < .8 && shape[3] > .2);
-  function passage(point) {
-    const lower = at(point);
-    if (!isDoor(lower)) return null;
-    const lo = lower.getProperties();
-    if (lo.half !== 'lower' || lo.open !== true || !axis[lo.facing]) return null;
-    const upper = at(lower.position.offset(0, 1, 0));
-    if (!upper || upper.type !== lower.type || !isDoor(upper)) return null;
-    const hi = upper.getProperties();
-    if (hi.half !== 'upper' || ['open', 'facing', 'hinge', 'powered'].some((key) => hi[key] !== lo[key])) return null;
-    if (![lower, upper].every((block) => Array.isArray(block.shapes) && block.shapes.length > 0 &&
-      block.shapes.every((shape) => Array.isArray(shape) && shape.length === 6 && shape.every(Number.isFinite) && !intersectsPassage(shape, axis[lo.facing])))) return null;
-    return { lower, upper, axis: axis[lo.facing] };
-  }
+  const passage = (point) => openDoorPassage(at, point);
   // One step through a door along its normal: level, or a drop out of the
   // door cell, or a jump up into it (a doorstep one lower than the floor,
   // as natural ground often is). Never through a door's side.
@@ -159,4 +162,4 @@ function installOpenDoorPassage(bot, movements) {
   installed.set(bot, record);
   return movements;
 }
-module.exports = { installOpenDoorPassage, uninstallOpenDoorPassage };
+module.exports = { installOpenDoorPassage, openDoorPassage, uninstallOpenDoorPassage };

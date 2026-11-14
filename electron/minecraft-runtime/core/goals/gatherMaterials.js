@@ -26,9 +26,10 @@ const { planNext } = require('../planner');
 const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { materialsFor } = require('../materials');
 const { createBlacklist, posKey } = require('../blacklist');
-const { sleep, waitUntil } = require('../confirm');
+const { abortError, runCancellable, sleep, waitUntil } = require('../confirm');
 const mining = require('../mining');
 const { skyOpen, standable, walkDry } = require('../caveRetreat');
+const { openDoorPassage } = require('../openDoorPassage');
 const { createStoneQuarry } = require('./stoneQuarry');
 const obsidian = require('../obsidian');
 const nether = require('../nether');
@@ -49,6 +50,9 @@ const MINE_SITE_LIMIT = 14;
 const MINE_SCOUT_LEG = 12;
 const MINE_SCOUT_LEGS = 2;
 const MINE_PORTAL = /^(nether_portal|end_portal|end_gateway)$/;
+const TIMBER_DOOR = /^(?!iron_)[a-z_]+_door$/;
+const RANGED_MINE_EXIT = /^(skeleton|stray|bogged|pillager|witch)$/;
+const CLEAR_AIR = Object.freeze({ name: 'air', boundingBox: 'empty', shapes: [] });
 // Further below the chest than this, home is reached by going up first.
 const HOME_BELOW = 8;
 const SUPPLY_STONE_RADIUS = 24;
@@ -88,7 +92,7 @@ const MINE_SITE_COLUMNS = Array.from({ length: 33 }, (_, x) => x - 16)
   .filter(([, , distance]) => distance <= 16).sort((a, b) => a[2] - b[2]);
 const MINE_SITE_HEIGHTS = [0, ...Array.from({ length: 24 }, (_, i) => [i + 1, -i - 1]).flat()];
 
-function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
+function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blueprint = null, stations = {},
   skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20, carry = () => false, reserved = {},
   countWorn = false, surfaceOnly = false } = {}) {
   if (!chest || ![chest.x, chest.y, chest.z].every(Number.isInteger)) throw new TypeError('chest must have integer x, y, z');
@@ -335,7 +339,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     return { sites, unloaded };
   }
 
-  async function walkToRestartSite(ctx, sites, { avoid, timeoutMs, arrived }) {
+  async function walkToRestartSite(ctx, sites, { avoid, timeoutMs, arrived, supports }) {
     const pathfinder = bot.pathfinder;
     const movements = pathfinder?.movements;
     if (!movements?.getNeighbors) return { ok: false, reason: 'mine_restart_no_pathfinder' };
@@ -350,7 +354,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     pathfinder.enablePathShortcut = false;
     try {
       const goal = new goals.GoalCompositeAny(sites.map((p) => new goals.GoalBlock(p.x, p.y, p.z)));
-      return await walkDry(bot, ctx, actions, goal, { avoid, timeoutMs, arrived });
+      return await walkDry(bot, ctx, actions, goal, { avoid, timeoutMs, arrived, supports });
     } finally {
       if (owned) movements.getNeighbors = getNeighbors;
       else delete movements.getNeighbors;
@@ -359,9 +363,83 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     }
   }
 
+  async function leaveRestartHome(ctx, state) {
+    const anchor = home?.anchor;
+    if (!anchor || !home.door || typeof actions.goTo !== 'function') return null;
+    const door = new Vec3(home.door.x, home.door.y, home.door.z);
+    if (door.y !== anchor.y || door.z !== anchor.z || door.x <= anchor.x || door.x >= anchor.x + 6) return null;
+    const from = bot.entity.position.floored();
+    const insideHome = (p) => p.y === door.y && p.x > anchor.x && p.x < anchor.x + 6
+      && p.z > anchor.z && p.z < anchor.z + 6;
+    if (!insideHome(from) && !from.equals(door)) return null;
+    const inside = door.offset(0, 0, 1), outside = door.offset(0, 0, -1);
+    const at = (p) => bot.blockAt(p, false);
+    const floor = (read, p) => standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? CLEAR_AIR : read(cell), p);
+    const supportedDoor = () => restartFooting(inside) && restartFooting(outside) && floor(at, door);
+    const admits = (current) => current.health >= 10 && current.food > 12 && current.isDay !== false
+      && !(current.hostiles || []).some((h) => h.distance <= (RANGED_MINE_EXIT.test(h.name) ? 16 : 8));
+    const wait = async (reason) => {
+      if (memory.mineRestart.homeWait !== reason) ctx.record('mine_relocate_home_wait', { at: posKey(from), reason });
+      memory.mineRestart.homeWait = reason;
+      await sleep(1200, ctx.signal);
+      return { ok: true, waited: true, reason };
+    };
+    if (!admits(state) || !bot.entity.onGround || !supportedDoor()) return wait('mine_restart_home_exit_unsafe');
+    const lower = at(door), upper = at(door.offset(0, 1, 0));
+    const lo = lower?.getProperties?.(), hi = upper?.getProperties?.();
+    if (!TIMBER_DOOR.test(lower?.name || '') || upper?.name !== lower.name || lo?.half !== 'lower' || hi?.half !== 'upper'
+      || typeof lo.open !== 'boolean'
+      || !['north', 'south'].includes(lo.facing) || ['open', 'facing', 'hinge', 'powered'].some((key) => lo[key] !== hi[key])) {
+      return wait('mine_restart_home_door_unconfirmed');
+    }
+    const open = () => openDoorPassage(at, door)?.axis === 'z';
+    if (lo.open === true && !open()) return wait('mine_restart_home_door_unsafe');
+    if (lo.open === false && from.equals(inside)) {
+      if (typeof bot.activateBlock !== 'function' || !defaultActions.withinReach(bot, door)) return wait('mine_restart_home_door_unreachable');
+      try {
+        await runCancellable(() => bot.activateBlock(lower), { signal: ctx.signal, timeoutMs: 1200, timeoutCode: 'door_activation_timeout' });
+      } catch (error) {
+        if (error.code === 'aborted') throw error;
+        return wait('mine_restart_home_door_unchanged');
+      }
+      if (!await waitUntil(open, { timeoutMs: 1000, signal: ctx.signal })) return wait('mine_restart_home_door_unchanged');
+      return { ok: true, progress: false };
+    }
+    const target = lo.open === true ? outside : inside;
+    const supports = (read, p) => p.equals(door) ? open() && floor(read, p) : standable(read, p);
+    const avoid = (p) => !insideHome(p) && !p.equals(door) && !p.equals(outside)
+      || (!p.equals(door) && !restartFooting(p));
+    const arrived = (p) => p.floored().equals(target) && groundedAt(target) && restartFooting(target);
+    const safety = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, safety.signal]) : safety.signal;
+    const check = () => {
+      if (!admits(ctx.perceive()) || !supportedDoor() || target.equals(outside) && !open()) safety.abort('mine_restart_home_exit_changed');
+    };
+    const monitor = setInterval(check, 100);
+    let result, landed;
+    try {
+      check();
+      if (signal.aborted) throw abortError(signal);
+      result = await walkToRestartSite({ ...ctx, signal }, [target], { avoid, timeoutMs: 6500, arrived, supports });
+      landed = (result.ok || result.reason === 'not_arrived') && await waitUntil(() => arrived(bot.entity.position), { timeoutMs: 450, signal });
+      if (signal.aborted) throw abortError(signal);
+    } catch (error) {
+      if (!safety.signal.aborted || ctx.signal?.aborted || error.code !== 'aborted') throw error;
+      return wait('mine_restart_home_exit_changed');
+    } finally {
+      clearInterval(monitor);
+    }
+    if (!landed) return wait(result.reason || 'mine_restart_home_exit_unconfirmed');
+    memory.mineRestart.homeWait = null;
+    if (target.equals(outside)) ctx.record('mine_relocate_home_exit', { from: posKey(from), to: posKey(outside), door: posKey(door) });
+    return { ok: true, progress: false };
+  }
+
   async function relocateMine(ctx) {
     const restart = memory.mineRestart;
     const state = ctx.perceive();
+    const departure = await leaveRestartHome(ctx, state);
+    if (departure) return departure;
     if ((actions.underground || defaultActions.underground)(bot)) {
       // The permanent critical-health retreat owns the route out. A normal
       // mine restart may surface, but must not open another shaft down here.

@@ -727,6 +727,72 @@ function modelMineRelocation(sim, move) {
   };
 }
 
+test('mine relocation exits through the verified home doorway before scouting for a new shaft', async () => {
+  const sim = simulate({ failRate: 0 });
+  Object.assign(sim.inventory, { stone_pickaxe: 5, stick: 9, torch: 4 });
+  const anchor = new Vec3(-105, 64, -182);
+  const door = anchor.offset(3, 0, 0);
+  const chest = anchor.offset(4, 0, 5);
+  const outside = door.offset(0, 0, -1);
+  const inside = door.offset(0, 0, 1);
+  const start = anchor.offset(5, 0, 3);
+  let open = false, blocked = false;
+  const air = { name: 'air', skyLight: 15, boundingBox: 'empty', shapes: [] };
+  const ground = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  sim.bot.entity.position = start.offset(.5, 0, .5);
+  sim.bot.entity.onGround = true;
+  sim.bot.blockAt = (p) => {
+    if (p.equals(door) || p.equals(door.offset(0, 1, 0))) return {
+      name: 'oak_door', type: 12, position: p, boundingBox: 'block',
+      shapes: open && !blocked ? [[0, 0, 0, 3 / 16, 1, 1]] : [[0, 0, 0, 1, 1, 3 / 16]],
+      getProperties: () => ({ open, half: p.y === anchor.y ? 'lower' : 'upper', facing: 'north', hinge: 'left', powered: false }),
+    };
+    if (p.equals(chest)) return { ...ground, name: 'chest' };
+    return p.y === anchor.y - 1 ? ground : air;
+  };
+  let activations = 0;
+  sim.bot.activateBlock = async ({ position }) => { assert.ok(position.equals(door)); open = true; activations += 1; };
+  const moves = [];
+  modelMineRelocation(sim, ([p], { arrived }) => {
+    const profile = sim.bot.pathfinder.movements;
+    const from = sim.bot.entity.position.floored();
+    const neighbors = profile.getNeighbors(from);
+    if (p.equals(outside)) assert.deepEqual(neighbors, [door], 'only the one registered two-block doorway is admissible');
+    sim.bot.entity.position = p.offset(.5, 0, .5);
+    assert.ok(arrived(sim.bot.entity.position));
+    moves.push(p);
+    return { ok: true };
+  });
+  sim.bot.pathfinder.movements.getNeighbors = () => [door, door.offset(1, 0, 0), new Vec3(-500, 64, 0)];
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, home: { anchor, door }, requirements: [{ key: 'raw_iron', count: 2 }],
+    skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  goal.memory.mineRestart = { barren: 1, attempt: 0, avoid: [start.offset(20, 0, 0)] };
+  const events = [];
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, food: 17, isDay: true }), record: (name, data) => events.push([name, data]) };
+  assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(moves, [inside]);
+  assert.ok((await goal.run(ctx)).ok);
+  assert.equal(activations, 1);
+  blocked = true;
+  const unsafe = new AbortController();
+  await assert.rejects(goal.run({ ...ctx, signal: unsafe.signal, record(name, data) {
+    if (name === 'mine_relocate_home_wait') {
+      assert.equal(data.reason, 'mine_restart_home_door_unsafe');
+      unsafe.abort();
+    }
+  } }), { code: 'aborted' });
+  assert.deepEqual(moves, [inside]);
+  blocked = false;
+  assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(moves, [inside, outside]);
+  assert.equal(events.find(([name]) => name === 'mine_relocate_home_exit')[1].door, posKey(door));
+  assert.equal(goal.memory.mineRestart.attempt, 0, 'leave the home before using a sector attempt');
+  assert.ok((await goal.run(ctx)).ok);
+  assert.equal(events.at(-1)[0], 'mine_relocate_landed');
+  assert.ok(goal.memory.mineRestart.arrived.distanceTo(door) >= 8);
+});
+
 test('a mine that comes to nothing is started again on another side of the house, farther out', async () => {
   const mining = require('../core/mining');
   const sim = simulate({ seed: 2, failRate: 0 });

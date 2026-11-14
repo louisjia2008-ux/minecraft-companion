@@ -214,7 +214,8 @@ function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), 
   return best ? { kind: 'walk', target: best.first } : null;
 }
 
-async function walkDry(bot, ctx, actions, goal, { timeoutMs = 5000, maxDrop = 1, avoid = () => false, adjacent, arrived } = {}) {
+async function walkDry(bot, ctx, actions, goal, { timeoutMs = 5000, maxDrop = 1, avoid = () => false, adjacent, arrived,
+  supports = standable } = {}) {
   const movements = bot.pathfinder?.movements;
   if (!movements || typeof movements.getNeighbors !== 'function') return fail('cave_retreat_no_pathfinder');
   const saved = Object.fromEntries(['canDig', 'allowParkour', 'allow1by1towers', 'scafoldingBlocks', 'maxDropDown',
@@ -224,7 +225,7 @@ async function walkDry(bot, ctx, actions, goal, { timeoutMs = 5000, maxDrop = 1,
   const guardedNeighbors = function (node) {
     return saved.getNeighbors.call(this, node).filter((move) => !move.toBreak?.length && !move.toPlace?.length
       && !move.parkour && move.y >= node.y - maxDrop && move.y <= node.y + 1 && !avoid(move)
-      && (!adjacent || move.equals(adjacent)) && standable(read, move));
+      && (!adjacent || move.equals(adjacent)) && supports(read, move));
   };
   Object.assign(movements, { canDig: false, allowParkour: false, allow1by1towers: false,
     scafoldingBlocks: [], maxDropDown: Math.min(saved.maxDropDown ?? 2, maxDrop + 1),

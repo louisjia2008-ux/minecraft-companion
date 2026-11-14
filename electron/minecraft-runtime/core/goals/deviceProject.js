@@ -71,7 +71,7 @@ function createDeviceProjectGoal({ bot, name, device, home, skills = defaultSkil
       // The bag's own share is counted already: only the shortfall is asked for.
       const reserved = Object.fromEntries(Object.entries(state.inventory)
         .filter(([n, c]) => c > 0 && lack.some((r) => kb[r.key].match(n))));
-      memory.gather = createGather({ bot, chest: home.chest, stations: home.stations || {}, requirements: lack, kb, carry, reserved, countWorn });
+      memory.gather = createGather({ bot, home, chest: home.chest, stations: home.stations || {}, requirements: lack, kb, carry, reserved, countWorn });
       if (memory.gather.memory) Object.assign(memory.gather.memory, { mine: memory.mine, mineDir: memory.mineDir });
     }
     if (!memory.gather.isDone(state)) {
