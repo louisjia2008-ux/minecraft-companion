@@ -30,6 +30,24 @@ function modelContext({ armour = [], step = 'pearls', goal = null, pick = false 
   return { context: { companion, bot, state, server, username: 'x', write() {}, elapsedMs: 0 }, asked, state };
 }
 
+test('a living Nether food return refills the carried reserve and resumes the same rod goal', async () => {
+  const { context, asked, state } = modelContext({ step: 'nether', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
+  const bag = [{ name: 'iron_pickaxe', count: 1 }, { name: 'blaze_rod', count: 4 }, { name: 'bread', count: 2 }];
+  context.bot.inventory.items = () => bag;
+  const receipt = { type: 'expedition_resupply_required', behavior: 'goal:nether_expedition', rods: 4 };
+  playthroughNatural.onEvent(receipt, state);
+  await playthroughNatural.onTick(context);
+  assert.equal(asked[0].task, 'outfit');
+  assert.deepEqual(asked[0].args.items, [{ key: 'food', count: 12 }]);
+  playthroughNatural.onEvent(receipt, state);
+  assert.equal(state.netherFoodRestock.asks, 1);
+  bag.find((item) => item.name === 'bread').count = 12;
+  await playthroughNatural.onTick(context);
+  assert.equal(state.netherFoodRestock, null);
+  assert.deepEqual(asked[1], { task: 'netherExpedition', args: { blazeRods: 7, witherSkulls: 0, trades: 0 } });
+  assert.equal(bag.find((item) => item.name === 'blaze_rod').count, 4);
+});
+
 test('armour worn through: the model asks for a new set before the next step, and only once an hour', async () => {
   const { context, asked, state } = modelContext({ armour: [] });
   await playthroughNatural.onTick(context);

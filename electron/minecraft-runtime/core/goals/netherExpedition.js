@@ -23,6 +23,7 @@ const { createNetherSpawnerStaging } = require('../netherSpawnerStaging');
 const { createPortalTrip } = require('../netherTrip');
 const { createBlacklist, posKey } = require('../blacklist');
 const { waitUntil, runCancellable, sleep } = require('../confirm');
+const { expeditionFoodCount } = require('./stockFood');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -32,6 +33,7 @@ const ARMOR_RANK = ['leather', 'golden', 'chainmail', 'iron', 'diamond', 'nether
 const SCAN_EVERY_MS = 10000;
 // Below this the fortress is left to its mobs until health is back.
 const HUNT_HEALTH = 15;
+const FORTRESS_RETURN_FOOD = 2;
 const FORTRESS_HUNT_RANGE = 12;
 // How far above or below the bot a wither skeleton is still hunted.
 const HUNT_DY_WITHER = 12;
@@ -369,8 +371,18 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const crumb = crumbs[index];
     ctx.record('retrace', { to: posKey(crumb), index, of: crumbs.length });
     const start = here.clone();
-    const result = await withScaffolding(() => actions.goNear(bot, ctx, crumb, 2, { timeoutMs: 45000 }), { cobble: true });
-    if (bot.entity.position.distanceTo(start) >= 3) {
+    let result;
+    try {
+      result = await structureWalk(() => actions.goNear(bot, ctx, crumb, 2, { timeoutMs: 14000, retryNoProgress: false }));
+    } catch (error) {
+      // After cover or a shield interrupts a local retreat, give the next
+      // witnessed approach a turn instead of reselecting the same ledge.
+      if (isAbort(error) && start.distanceTo(bot.entity.position) < 2) {
+        blacklist.add(`crumb:${posKey(crumb)}`, 'retrace_interrupted', 12000);
+      }
+      throw error;
+    }
+    if (bot.entity.onGround && bot.entity.position.distanceTo(crumb) < start.distanceTo(crumb) - 2) {
       memory.retraceMisses = 0;
       memory.crumbAt = index;
       return result.ok ? result : { ok: true, moved: true };
@@ -1220,12 +1232,16 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await stockScaffolding(ctx, 16);
     }
     if (allDone(state)) return headHome(ctx);
-    // Hurt with nothing to eat: health does not come back short of 18 food,
-    // and a bot at 8 health stood 40 minutes by a fortress waiting for it.
-    // Home to eat (provision hunts there), then back.
-    if (state.health < HUNT_HEALTH && state.food < 18 && typeof actions.pickFood === 'function' && !actions.pickFood(bot)) {
-      if (Date.now() - (memory.hungryAt || 0) > 60000) ctx.record('retreat', { health: Math.round(state.health), food: state.food });
-      memory.hungryAt = Date.now();
+    // Save enough food to heal on the return trail. Commit to returning
+    // before a meal moving health above the hunt threshold restarts combat.
+    const carriedFood = expeditionFoodCount(bot, state.inventory);
+    if (memory.returnForFood || typeof actions.pickFood === 'function' && fortressWork(state)
+      && (carriedFood <= FORTRESS_RETURN_FOOD && Number.isFinite(state.food) && state.food < 20
+        || state.health < HUNT_HEALTH && state.food < 18 && !actions.pickFood(bot))) {
+      if (!memory.returnForFood) {
+        memory.returnForFood = true;
+        ctx.record('retreat', { health: Math.round(state.health), food: state.food, carriedFood, reason: 'food_reserve' });
+      }
       return headHome(ctx);
     }
     const lost = lostKit(state);
@@ -1294,6 +1310,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       }
       trip.leaveNetherMode();
       if (allDone(state)) return { ok: true };
+      if (memory.returnForFood) {
+        ctx.record('expedition_resupply_required', { reason: 'food_reserve', rods: rods(state) });
+        return fail('expedition_food_resupply_required');
+      }
       // Respawned without it: going back through to the fortress only dies again.
       const lost = lostKit(state);
       if (lost) return fail(lost);

@@ -465,6 +465,8 @@ const playthroughNatural = {
       state.audit.taskEvents.push(evidence);
       state.writeAudit?.('playthrough_task_event', evidence);
     }
+    if (event.type === 'expedition_resupply_required' && event.behavior === 'goal:nether_expedition'
+      && activeStage(state) === 'nether') state.netherFoodRestock ||= { asks: 0 };
     if (event.type !== 'goal_failed' || event.goal !== 'nether_expedition' || !state.steps) return;
     const reasons = event.reasons || [];
     const short = reasons.filter((r) => r === 'missing_obsidian' || r === 'missing_flint_and_steel').length;
@@ -491,6 +493,28 @@ const playthroughNatural = {
     const step = STEPS[index];
     const entry = state.steps[index];
     if (await runDeathRecovery(context, index, entry) || context.signal?.aborted) return;
+    if (step.id === 'nether' && state.netherFoodRestock && dimensionOf(bot) === 'overworld' && !step.done(context)) {
+      const restock = state.netherFoodRestock;
+      const status = companion.status();
+      if (expeditionKitDone(bot, [TRIP_FOOD])) {
+        state.netherFoodRestock = null;
+        if (status.goal) await companion.cancelTask('playthrough_nether_food_restock_complete');
+        state.replace = true;
+      } else {
+        if (restock.generation != null && restock.generation === status.goal?.generation) return;
+        if (restock.asks >= RETRIES) {
+          entry.stuck = true;
+          write('model_stuck', { step: 'nether', recovery: 'food_restock', asks: restock.asks });
+          return;
+        }
+        const args = expeditionKitArgs([TRIP_FOOD], state);
+        restock.asks += 1;
+        write('model_ask', { step: 'nether_food_restock', task: 'outfit', args, ask: restock.asks });
+        await companion.submitTask('outfit', args);
+        restock.generation = companion.status().goal?.generation;
+        return;
+      }
+    }
     // These are readbacks after an explicit task request, never completion
     // flags imported from the pre-dragon stage.
     if (entry.asks > 0 && step.id === 'house_after_end'
