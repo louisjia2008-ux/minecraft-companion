@@ -10,6 +10,7 @@ const { BAND } = require('../brain');
 const { sleep, waitUntil, abortError } = require('../confirm');
 const { isFireResistancePotion, hasEffect } = require('../netherStructures');
 const { withFortressCombatTerrain } = require('../nether');
+const { findNetherCombatCover, hasNetherCombatCover } = require('../netherCombatCover');
 const { createBlacklist } = require('../blacklist');
 const { ownedItems } = require('../perception');
 const { meleeGeometry, meleeSight } = require('../entityGeometry');
@@ -376,12 +377,17 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const netherExpedition = () => activeGoal() === 'nether_expedition' && dimensionOf(bot) === 'the_nether';
   const unsafePursuits = createBlacklist({ ttlMs: 3500 });
   let netherEscapeRetryAt = 0;
+  let coverRetryAt = 0;
+  const fireThreats = (state) => threats(state).filter((h) => (h.name === 'blaze' || h.name === 'ghast') && h.distance <= 18);
+  const woundedUnderFire = (state) => netherExpedition() && !state.inWater && !bot.entity.isInLava && state.health < 16
+    && (state.food < 20 || burning(bot)) && threats(state).some((h) => h.name === 'blaze' && h.distance <= 16);
   const escapeThreat = (state) => threats(state).find((h) => !huntEndermanInReach(state, h)) || null;
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
     if (state.sheltered) return threats(state).find((h) => h.distance <= 2 && (!defendInPlace(state, h) || canStrikeFromHere(h))) || null;
     return threats(state).find((h) => h.name !== 'creeper' && (!h.selfAggressor || armed(state))
       && (!defendInPlace(state, h) || canStrikeFromHere(h))
+      && (!woundedUnderFire(state) || canStrikeFromHere(h))
       && (!netherExpedition() || !unsafePursuits.has(h.id) || canStrikeFromHere(h))
       && !((avoided(state, h) && h.distance > 2.5) || (CHARGERS.has(h.name) && h.distance > BRUTE_FIGHT && !standing(state, h)))
       && (huntEndermanInReach(state, h) || h.distance <= (NEUTRAL.has(h.name) ? 2.5 : t.defendRange)
@@ -578,6 +584,51 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
 
+  const netherCombatRecovery = {
+    name: 'nether_combat_recovery',
+    band: BAND.ESCAPE,
+    want(state) {
+      return Date.now() >= coverRetryAt && woundedUnderFire(state) && bot.entity.onGround
+        && !incomingBlazeShot(bot, 4) ? 1.4 : 0;
+    },
+    async run(ctx) {
+      const state = ctx.perceive();
+      const plan = findNetherCombatCover({ bot, threats: fireThreats(state) });
+      if (!plan) {
+        coverRetryAt = Date.now() + 1800;
+        return { ok: true, waited: true };
+      }
+      ctx.record('nether_combat_cover', { from: state.position.floored(), to: plan.position, legs: plan.waypoints.length });
+      const onCover = () => bot.entity.onGround && bot.entity.position.floored().equals(plan.position)
+        && hasNetherCombatCover({ bot, threats: fireThreats(ctx.perceive()), position: bot.entity.position });
+      for (const next of plan.waypoints) {
+        if (onCover()) break;
+        if (incomingBlazeShot(bot, 4)) return { ok: true, waited: true };
+        const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(next);
+        const moved = await withFortressCombatTerrain(bot, ctx, (combat) =>
+          actions.goTo(bot, combat, new goals.GoalBlock(next.x, next.y, next.z),
+            { arrived, timeoutMs: 2500, retryNoProgress: false }));
+        if (moved.repositioned) return moved;
+        if (!moved.ok || !arrived()) {
+          coverRetryAt = Date.now() + 1200;
+          return moved.ok ? { ok: false, reason: 'nether_cover_step_not_arrived' } : moved;
+        }
+      }
+      if (!onCover()) {
+        coverRetryAt = Date.now() + 500;
+        return { ok: true, waited: true };
+      }
+      const ready = ctx.perceive();
+      if (ready.food < 20 && hasSafeFood(ready, desperateForFood(ready))) {
+        const result = await actions.eat(bot, ctx);
+        if (result.ok) ctx.record('nether_combat_cover_ate', { position: bot.entity.position, food: ctx.perceive().food });
+        return result;
+      }
+      await sleep(500, ctx.signal);
+      return { ok: true, waited: true };
+    },
+  };
+
   const droppedNear = (at, radius) => Object.values(bot.entities || {})
     .filter((e) => e.name === 'item' && e.position && e.position.distanceTo(at) <= radius)
     .map((e) => { try { return e.getDroppedItem?.()?.name || '?'; } catch { return '?'; } });
@@ -590,7 +641,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const threat = target(state);
       if (!threat) return { ok: true };
       const homeDefense = defendInPlace(state, threat);
-      const stationary = homeDefense || state.health <= t.escapeHealth && huntEndermanInReach(state, threat);
+      const stationary = homeDefense || woundedUnderFire(state) || state.health <= t.escapeHealth && huntEndermanInReach(state, threat);
       const guardTerrain = netherExpedition();
       ctx.record('defend_target', { mob: threat.name, distance: Math.round(threat.distance), ...(stationary ? { stationary } : {}) });
       let last = threat.position.clone();
@@ -1455,7 +1506,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
   deflect.dispose = disposeNether;
 
-  return [quench, leaveLava, leaveFire, heal, escape, breathe, deflect, block, hide, caveRetreat, defend, cover, avoid, eat, provision, recover, recoverDrops];
+  return [quench, leaveLava, leaveFire, heal, escape, netherCombatRecovery, breathe, deflect, block, hide,
+    caveRetreat, defend, cover, avoid, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };

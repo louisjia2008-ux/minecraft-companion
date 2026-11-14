@@ -305,6 +305,36 @@ test('a blaze volley is taken on a raised shield', async () => {
   assert.equal(block.want({}), 0, 'fire resistance takes the fireball');
 });
 
+test('an injured Nether explorer eats under verified cover before chasing blazes again', async () => {
+  const terrain = row('nether_bricks', -2, 10, 63);
+  terrain['2,64,0'] = terrain['2,65,0'] = 'nether_bricks';
+  const bot = { ...world(terrain), game: { dimension: 'the_nether' } };
+  const read = bot.blockAt;
+  bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.entity.position = new Vec3(.5, 64, .5);
+  bot.entity.onGround = true;
+  bot.entities[1] = { id: 1, name: 'blaze', isValid: true, position: new Vec3(4.5, 64, .5), width: .6, height: 1.8 };
+  const state = { alive: true, health: 14, food: 17, inventory: { iron_sword: 1, cooked_porkchop: 1 },
+    position: bot.entity.position, hostiles: [{ ...bot.entities[1], distance: 4 }] };
+  bot.registry = { ...bot.registry, foodsByName: { cooked_porkchop: {} } };
+  let ate = 0;
+  const behaviors = createSurvivalBehaviors({ bot, activeGoal: () => 'nether_expedition',
+    actions: { eat: async () => { ate += 1; state.food = 20; return { ok: true }; } } });
+  const recovery = behaviors.find((behavior) => behavior.name === 'nether_combat_recovery');
+  assert.equal(behaviors.find((behavior) => behavior.name === 'defend').want(state), 0);
+  bot.entities[2] = { id: 2, name: 'small_fireball', position: new Vec3(3, 65, .5), velocity: new Vec3(-1, 0, 0) };
+  assert.equal(recovery.want(state), 0);
+  delete bot.entities[2];
+  const events = [];
+  assert.ok(recovery.want(state) > 0);
+  assert.equal((await recovery.run({ perceive: () => state, record: (type) => events.push(type) })).ok, true);
+  assert.equal(ate, 1);
+  assert.ok(events.includes('nether_combat_cover_ate'));
+});
+
 test('respawned at home without a weapon, the expedition stops instead of going back to die', async () => {
   const bot = { ...world({}), game: { dimension: 'overworld' }, inventory: { slots: [], items: () => [] }, equip: async () => {} };
   const goal = createNetherExpeditionGoal({ bot, blazeRods: 2, witherSkulls: 0, trades: 0 });
