@@ -7,6 +7,7 @@ const { perceive } = require('../core/perception');
 const { createStarterHouse } = require('../core/blueprints/starterHouse');
 const { sleep } = require('../core/confirm');
 const { takeItems } = require('../core/skills');
+const { withinReach } = require('../core/actions');
 const { Vec3 } = require('vec3');
 
 function fakeBot(items = []) {
@@ -486,7 +487,7 @@ test('an unarmed respawn reads a reachable chest from a screened part of a damag
   });
 });
 
-test('daylight rearm can cross a south-facing door on the north wall above a screened archer', async () => {
+test('daylight rearm approaches and crosses a distant closed door above a screened archer', async () => {
   const house = createStarterHouse({ x: 5, y: 64, z: -13 });
   const { door, chest } = house.furniture;
   const doorway = new Vec3(8, 64, -13);
@@ -501,7 +502,7 @@ test('daylight rearm can cross a south-facing door on the north wall above a scr
   const movements = { getNeighbors: neighbors };
   let open = false;
   const bot = Object.assign(fakeBot(), { health: 20, food: 20, game: { dimension: 'overworld' },
-    entity: { position: new Vec3(9.5, 64, -11.5), onGround: true }, time: { timeOfDay: 5000 },
+    entity: { position: new Vec3(9.5, 64, -7.5), onGround: true }, time: { timeOfDay: 5000 },
     entities: { 7: skeleton }, pathfinder: { movements } });
   bot.blockAt = (p) => {
     if (p.x === doorway.x && p.z === doorway.z && (p.y === doorway.y || p.y === doorway.y + 1)) {
@@ -514,10 +515,20 @@ test('daylight rearm can cross a south-facing door on the north wall above a scr
   };
   bot.activateBlock = async () => { open = !open; };
   const operations = [];
+  const steps = [];
   let replaced = false;
   const goal = createOutfitGoal({ bot, recoverAtHome: true, items: [{ key: 'stone_sword', count: 1 }],
     home: { chest: chest.position, centre: house.interiorCenter, anchor: house.anchor, door: door.position },
     skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }) },
+    actions: { withinReach, async goTo(_bot, _ctx, target) {
+      const from = bot.entity.position.floored();
+      const to = new Vec3(target.x, target.y, target.z);
+      assert.equal(open, false);
+      assert.ok(movements.getNeighbors(from).some((cell) => cell.equals(to)));
+      steps.push(to);
+      bot.entity.position = to.offset(.5, 0, .5);
+      return { ok: true };
+    } },
     createGather: () => ({ isDone: () => false, progress: () => 0,
       async run(ctx) {
         operations.push('gather');
@@ -540,6 +551,11 @@ test('daylight rearm can cross a south-facing door on the north wall above a scr
   const ctx = { perceive: () => perceive(bot), record() {} };
   await goal.run(ctx);
   await goal.run(ctx);
+  assert.equal(open, false);
+  assert.deepEqual(steps, [new Vec3(8, 64, -8)]);
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(steps, [new Vec3(8, 64, -8), new Vec3(8, 64, -9)]);
   assert.equal(open, true);
   assert.equal((await goal.run(ctx)).ok, true);
   assert.ok(bot.entity.position.equals(outside.offset(.5, 0, .5)));

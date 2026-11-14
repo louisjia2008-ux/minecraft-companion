@@ -735,8 +735,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       && approvedDoorEdge(at, from) && hostiles.every((hostile) =>
         Math.min(at.distanceTo(hostile.position), from.distanceTo(hostile.position)) > safety.threatRange(hostile));
     const safeStep = (position, from) => {
-      if (!guardRoute && !shelterRoute) return true;
       if (routeDestination && !position.floored().equals(routeDestination)) return false;
+      if (!guardRoute && !shelterRoute) return true;
       const hostiles = activeThreats();
       if (detouring) return safeDetour(position, from, hostiles);
       if (safety.homeDistance(position) > radius) return false;
@@ -1011,6 +1011,20 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       scoped.record('resupply_home_step', { from: feet, to: first, ...(farmlandStart ? { partialFloor: 'farmland' } : {}) });
       return { ok: true };
     };
+    const openHomeDoor = () => guarded(leavingUnderCover ? 'daylight_exit_door' : 'open_shelter', async (scoped) => {
+      if (actions.withinReach(bot, threshold)) return shelter.setDoor(scoped, true);
+      const from = bot.entity.position.floored();
+      const stayInside = (position, origin) => position.y === threshold.y && houseBody(position.floored())
+        && safeStep(position, origin);
+      const wait = async (reason) => {
+        scoped.record('resupply_home_approach_wait', { reason, position: from });
+        await sleep(500, scoped.signal);
+        return { ok: true, waited: true, reason };
+      };
+      const path = shelterApproach(read, shelter, from, insideDoor, stayInside, failedApproaches);
+      if (!path) return wait('resupply_door_no_dry_approach');
+      return followStep(scoped, path, from, from, null, false, insideDoor, wait);
+    }, false, true);
     const startRavine = (from) => {
       ravine = { high: from.y, steps: RAVINE_HOME_STEPS, visited: new Set() };
       ctx.record('resupply_ravine_ascent', { from, floor: ascentFloor });
@@ -1170,7 +1184,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         lastFoodWait = null;
         if (shelter?.doorOpen() === false && inside) {
           clearShelter();
-          return shelter.setDoor(ctx, true);
+          return openHomeDoor();
         }
         if (!critical && !localReserve) return resupplyFood.run(ctx, foodTarget);
         const { kind, plot, position } = foodTarget;
@@ -1178,7 +1192,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         return guarded(kind, (scoped) => resupplyFood.run(scoped, foodTarget));
       }
       if (shelter?.doorOpen() === false && inside) {
-        return leavingUnderCover ? guarded('daylight_exit_door', (scoped) => shelter.setDoor(scoped, true)) : shelter.setDoor(ctx, true);
+        return openHomeDoor();
       }
       return leavingUnderCover ? guarded('daylight_exit_rearm', runOutfit) : runOutfit(ctx);
     }, safeStep);
