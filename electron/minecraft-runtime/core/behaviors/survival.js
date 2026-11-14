@@ -405,6 +405,28 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const fireThreats = (state) => threats(state).filter((h) => (h.name === 'blaze' || h.name === 'ghast') && h.distance <= 18);
   const woundedUnderFire = (state) => inNetherCombat() && !state.inWater && !bot.entity.isInLava && state.health < 16
     && (state.food < 20 || burning(bot)) && threats(state).some((h) => h.name === 'blaze' && h.distance <= 16);
+  const creeperMetadata = bot.registry?.entitiesByName?.creeper?.metadataKeys || [];
+  const swell = creeperMetadata.indexOf('swell_dir');
+  const ignited = creeperMetadata.indexOf('is_ignited');
+  const primingCreeper = (state, id = null) => dimensionOf(bot) === 'overworld' && !state.inWater && !bot.entity?.isInLava
+    ? state.hostiles.find((h) => {
+      if (h.name !== 'creeper' || h.distance > 6 || (id !== null && h.id !== id)) return false;
+      const live = bot.entities?.[h.id];
+      return live?.isValid && live.name === 'creeper' && ((swell >= 0 && live.metadata?.[swell] > 0)
+        || (ignited >= 0 && live.metadata?.[ignited] === true));
+    }) || null : null;
+  const fastCreeperStep = { async goTo(body, ctx, goal, options) {
+    const deadline = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, deadline.signal]) : deadline.signal;
+    // Bound the complete move, including native recentring before pathing.
+    const timer = setTimeout(() => deadline.abort('creeper_evasion_deadline'), 700);
+    try {
+      return await actions.goTo(body, { ...ctx, signal }, goal, { ...options, timeoutMs: 700 });
+    } catch (error) {
+      if (!deadline.signal.aborted || ctx.signal?.aborted) throw error;
+      return { ok: false, reason: 'creeper_evasion_deadline' };
+    } finally { clearTimeout(timer); }
+  } };
   const escapeThreat = (state) => threats(state).find((h) => !huntEndermanInReach(state, h)) || null;
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
@@ -545,6 +567,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.ESCAPE,
     want(state) {
       if (state.sheltered) return 0;
+      if (primingCreeper(state)) return 1.3;
       const caveEvasion = retreat || caveNeedsExit(state);
       if (!caveEvasion && surfaceResupplyEvasion(state)) return resupplyThreat(state) ? 1 : 0;
       if (!caveEvasion && unarmedResupplyWitch(state)) return 1;
@@ -568,10 +591,34 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       const state = ctx.perceive();
+      const priming = !state.sheltered && primingCreeper(state);
+      if (priming && canPlanRetreat() && actions.underground?.(bot)) {
+        const live = () => primingCreeper(ctx.perceive(), priming.id);
+        ctx.record('escape_primed_creeper', { at: state.position, id: priming.id, distance: priming.distance });
+        if (bot.entity.onGround) {
+          const result = await evadeInCave(bot, ctx, fastCreeperStep, priming, visibleThreat, live);
+          if (result.ok) return result;
+        }
+        const current = live();
+        if (!current) return { ok: true, waited: true };
+        // There may be no dry edge before the fuse ends. Face the explosion
+        // with the already equipped shield instead of pathing down the pit.
+        if (bot.inventory?.slots?.[45]?.name === 'shield') {
+          (actions.haltBody || defaultActions.haltBody)(bot);
+          try {
+            bot.activateItem(true);
+            await bot.lookAt(current.position.offset(0, 1, 0), true);
+            ctx.record('escape_creeper_shield', { id: current.id, distance: current.distance });
+            await waitUntil(() => !live(), { timeoutMs: 1700, intervalMs: 100, signal: ctx.signal });
+          } finally { bot.deactivateItem(); }
+          return { ok: true, waited: true };
+        }
+        return actions.fleeFrom(bot, ctx, current.position);
+      }
       const caveEvasion = retreat || caveNeedsExit(state);
       const witch = !caveEvasion && unarmedResupplyWitch(state);
       const resupplyEvasion = !caveEvasion && (surfaceResupplyEvasion(state) || witch);
-      const threat = resupplyEvasion ? resupplyThreat(state) || witch : caveEvasion ? nearest(state) : escapeThreat(state);
+      const threat = priming || (resupplyEvasion ? resupplyThreat(state) || witch : caveEvasion ? nearest(state) : escapeThreat(state));
       if (criticalHomeResupply(state) && (!threat || state.sheltered)) return { ok: true };
       if (threat && (caveEvasion || resupplyEvasion)) {
         // Keep a critically hurt bot on its ledge while resupply approaches

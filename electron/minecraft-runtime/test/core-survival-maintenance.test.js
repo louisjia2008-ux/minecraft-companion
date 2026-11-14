@@ -9,9 +9,9 @@ const { sleep } = require('../core/confirm');
 const { EventEmitter } = require('node:events');
 const minecraftData = require('minecraft-data');
 
-function setup(options = {}) {
+function setup(options = {}, registry = { foodsByName: { beef: {}, cooked_beef: {}, rotten_flesh: {} } }) {
   const bot = { entity: { position: new Vec3(0, 64, 0) }, game: { dimension: 'overworld' },
-    registry: { foodsByName: { beef: {}, cooked_beef: {}, rotten_flesh: {} } }, inventory: { slots: [] } };
+    registry, inventory: { slots: [] } };
   const state = { alive: true, health: 2.5, food: 16, inventory: {}, hostiles: [], isDay: true,
     sheltered: false, position: bot.entity.position };
   const behaviors = createSurvivalBehaviors({ bot, ...options });
@@ -496,6 +496,67 @@ test('hunting pearls, an angry enderman is fought rather than hidden from, hurt 
   assert.equal(s.behavior('hide').want({ ...s.state, health: 8 }), 0, 'a hole dug mid-fight is death');
   s.setGoal('outfit');
   assert.ok(s.behavior('hide').want(s.state) > 0, 'other work hides as before');
+});
+
+function creeperFixture({ blocked = false } = {}) {
+  const calls = [];
+  const registry = minecraftData('1.21.8');
+  const s = setup({ actions: {
+    underground: () => true,
+    async goTo(bot, _ctx, step, { timeoutMs }) {
+      assert.equal(timeoutMs, 700);
+      calls.push('guarded');
+      bot.entity.position = new Vec3(step.x + .5, step.y, step.z + .5);
+      return { ok: true };
+    },
+    async fleeFrom(_bot, _ctx, target) { calls.push(['flee', target]); return { ok: true }; },
+    haltBody() { calls.push('halt'); },
+  } }, registry);
+  const { bot } = s;
+  const keys = registry.entitiesByName.creeper.metadataKeys;
+  const creeper = { id: 4, isValid: true, name: 'creeper', position: new Vec3(4.25, 64, .5), metadata: [] };
+  const zombie = { id: 5, isValid: true, name: 'zombie', position: new Vec3(2, 64, .5) };
+  bot.entity.position = new Vec3(.5, 64, .5);
+  bot.entity.onGround = true;
+  bot.entities = { 4: creeper, 5: zombie };
+  bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  bot.blockAt = (p) => {
+    const solid = p.y < 64 || p.y >= 66 || (blocked && (p.x < 0 || p.z < 0 || p.z >= 1));
+    return { name: solid ? 'stone' : 'air', boundingBox: solid ? 'block' : 'empty', shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const prime = (value) => { creeper.metadata[keys.indexOf('swell_dir')] = value; };
+  const perceive = () => ({ ...s.state, health: 18, food: 16, position: bot.entity.position, inventory: { iron_sword: 1 },
+    hostiles: Object.values(bot.entities).map((mob) => ({ ...mob, distance: mob.position.distanceTo(bot.entity.position) }))
+      .sort((a, b) => a.distance - b.distance) });
+  return { ...s, creeper, zombie, calls, perceive, prime, escape: s.behavior('escape') };
+}
+
+test('native creeper priming takes priority over a closer zombie while underground', async () => {
+  const f = creeperFixture();
+  const events = [];
+  f.prime(-1);
+  assert.equal(f.escape.want(f.perceive()), 0, 'ordinary mixed-mob targeting still favors the zombie');
+  f.prime(1);
+  assert.ok(f.escape.want(f.perceive()) > 0);
+  assert.equal(f.escape.want({ ...f.perceive(), inWater: true }), 0);
+  assert.equal(f.escape.want({ ...f.perceive(), sheltered: true }), 0);
+  const result = await f.escape.run({ perceive: f.perceive, record: (type, data) => events.push({ type, ...data }) });
+  assert.equal(result.ok, true);
+  assert.ok(f.bot.entity.position.distanceTo(f.creeper.position) > 3.75);
+  assert.deepEqual(f.calls, ['guarded']);
+  assert.equal(events.find(({ type }) => type === 'escape_primed_creeper').id, f.creeper.id);
+});
+
+test('a primed creeper in a cramped cave raises the already equipped shield when no safe step exists', async () => {
+  const f = creeperFixture({ blocked: true });
+  const { bot, creeper, calls } = f;
+  bot.inventory.slots[45] = { name: 'shield' };
+  bot.activateItem = (offHand) => { calls.push(['activate', offHand]); };
+  bot.lookAt = async (p) => { calls.push(['look', p]); f.prime(-1); };
+  bot.deactivateItem = () => { calls.push('deactivate'); };
+  f.prime(1);
+  assert.deepEqual(await f.escape.run({ perceive: f.perceive, record() {} }), { ok: true, waited: true });
+  assert.deepEqual(calls, ['halt', ['activate', true], ['look', creeper.position.offset(0, 1, 0)], 'deactivate']);
 });
 
 test('a confirmed native Enderman attacker in reach gets a stationary counter, with other threats preserved', async () => {
