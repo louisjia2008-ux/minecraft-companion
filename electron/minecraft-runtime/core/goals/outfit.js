@@ -309,12 +309,15 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
   // A higher first leg may still need to descend to the verified doorstep.
   // Keep the same physical one-block limit on each individual leg.
   const floor = detourSteps ? door.y - 5 : Math.max(door.y - 5, knownDoor ? Math.min(door.y, from.y - 1) : from.y - 1);
+  // Leaving a low field along level crops can add a few steps before the
+  // ordinary route starts on firm ground. Still require the complete route.
+  const maxSteps = detourSteps || (farmlandStart ? 32 : 28);
   const queue = [{ at: from, first: null, steps: 0 }];
   const seen = new Set([posKey(from)]);
   for (let i = 0; i < queue.length && i < (detourSteps ? 3600 : 1200); i += 1) {
     const { at, first, steps } = queue[i];
     if (first && dry(at) && (typeof target === 'function' ? target(at) : at.equals(target))) return { first, safeLeg, dry, farm, steps };
-    if (steps >= (detourSteps || 28)) continue;
+    if (steps >= maxSteps) continue;
     for (const [x, z] of APPROACH_SIDES) for (const y of [0, 1, -1]) {
       const next = at.offset(x, y, z);
       const id = posKey(next);
