@@ -607,6 +607,12 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     };
     const threshold = shelter?.position;
     const insideDoor = threshold?.offset(0, 0, 1);
+    const screenedChest = (position, hostiles) => shelter?.doorOpen() === false && bot.entity.onGround
+      && atResupplyHome({ position }, home, { verticalSlack: 0 })
+      && standable(read, position.floored()) && fullBlock(read(position.floored().offset(0, 2, 0)))
+      && hostiles.every((hostile) => !atResupplyHome({ position: hostile.position }, home)
+        && (!safety.exposed(position, [hostile], true)
+          || screenedFarmThreat(bot, hostile, position)));
     const exitFloor = (p) => standable((cell) => cell.equals(threshold) || cell.equals(threshold.offset(0, 1, 0))
       ? AIR : isPortal(read(cell)) ? null : read(cell), p);
     const exitCells = threshold && [insideDoor, threshold, doorstep.floored()];
@@ -706,7 +712,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     // This exception belongs to the stationary interaction, never an approach.
     const chestRefuge = (position, hostiles) => bot.entity.onGround && shelter?.doorOpen() === false
       && !hostiles.some((hostile) => hostile.name === 'creeper' && position.distanceTo(hostile.position) <= MELEE_RANGE)
-      && shelter.refuge({ position, hostiles });
+      && (shelter.refuge({ position, hostiles }) || screenedChest(position, hostiles));
     const screenedByRoof = (hostile, from, to, livePosition) => shelterRoute
       && shelter?.overheadPhantom(hostile, from, to, livePosition) === true;
     const unsafeToDig = (at, step, hostiles) => hostiles.some((hostile) => {
