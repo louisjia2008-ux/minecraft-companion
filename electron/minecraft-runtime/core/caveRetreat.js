@@ -41,7 +41,9 @@ function skyOpen(bot, feet, { allowLeafCanopy = false } = {}) {
   // enter horizontally or briefly lag a dig.
   if (!open(head)) return false;
   const fullSky = head.skyLight === 15;
-  if (!fullSky && !(allowLeafCanopy && Number.isInteger(head.skyLight) && head.skyLight > 0 && head.skyLight < 15)) return false;
+  // Live section-light data can report zero beneath a real canopy. In this
+  // opt-in mode the loaded column and actual dry leaves provide the proof.
+  if (!fullSky && !(allowLeafCanopy && Number.isInteger(head.skyLight) && head.skyLight >= 0 && head.skyLight < 15)) return false;
   let foundLeaves = false;
   const top = (bot.game?.minY ?? -64) + (bot.game?.height ?? 384);
   for (let y = feet.y + 2; y < top; y += 1) {

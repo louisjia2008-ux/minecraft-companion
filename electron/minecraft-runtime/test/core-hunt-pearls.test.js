@@ -125,7 +125,7 @@ test('a visible Enderman below dry leaves can be stared at without opening that 
   const records = [];
   const bot = { ...terrain, entity: { position }, entities: { 7: man },
     blockAt(p) {
-      if (p.equals(target.offset(0, 1, 0))) return { ...AIR, skyLight: 10 };
+      if (p.equals(target.offset(0, 1, 0))) return { ...AIR, skyLight: 0 };
       if (p.equals(target.offset(0, 3, 0))) return { ...STONE, name: 'oak_leaves' };
       return terrain.blockAt(p);
     },
@@ -144,7 +144,7 @@ test('dim sky alone, a roof over leaves and wet foliage do not qualify an Enderm
   for (const [canopy, higher] of [[AIR, AIR], [leaves, STONE],
     [{ ...leaves, getProperties: () => ({ waterlogged: true }) }, AIR], [leaves, null]]) {
     const bot = { ...terrain, blockAt(p) {
-      if (p.y === 65) return { ...AIR, skyLight: 10 };
+      if (p.y === 65) return { ...AIR, skyLight: 0 };
       if (p.y === 67) return canopy;
       if (p.y === 68) return higher;
       return terrain.blockAt(p);
