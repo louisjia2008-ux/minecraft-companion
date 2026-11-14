@@ -161,6 +161,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
         if (route.scouting) {
           const from = new Vec3(node.x, node.y, node.z);
           if (Math.abs(p.x - node.x) + Math.abs(p.z - node.z) !== 1) return false;
+          if (route.escapeCells && !route.escapeCells.get(posKey(from))?.equals(p)) return false;
           // Check the swept edge at the lower foot height too, before either
           // a hop or a drop changes the actual player's vertical position.
           const edge = from.plus(p).scale(.5);
@@ -233,7 +234,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       { arrived, timeoutMs: 6500, retryNoProgress: false });
     const landed = (result.ok || result.reason === 'not_arrived')
       && await waitUntil(arrived, { timeoutMs: 450, signal: ctx.signal });
-    ctx.record(label, { from, to, arrived: landed, ring: SCOUT_RINGS[scout.ring], reason: result.reason });
+    ctx.record(label, { from, to, arrived: landed, ...(scout && { ring: SCOUT_RINGS[scout.ring] }), reason: result.reason });
     return landed;
   }
 
@@ -298,10 +299,40 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     return scoutDelay();
   }
 
-  async function withdrawFromMelee(ctx, from, route) {
-    // Only use a previously reached landing while a threat is nearby.
-    const to = scout.trail.findLast((p) => p.distanceTo(from) >= 2);
+  function savedStartEscape(from, hostiles) {
+    const towardsHome = (a, b) => distance(a) - distance(b);
+    const clearance = (p) => Math.min(...hostiles.map((h) => p.offset(.5, 0, .5).distanceTo(h.position)));
+    const queue = [{ at: from, previous: null, steps: 0 }];
+    const seen = new Set([posKey(from)]);
+    for (let i = 0; i < queue.length && i < 140; i++) {
+      const node = queue[i];
+      if (node.steps && clearance(node.at) > 17) {
+        const cells = new Map();
+        for (let n = node; n.previous; n = n.previous) cells.set(posKey(n.previous.at), n.at);
+        return { to: node.at, cells };
+      }
+      if (node.steps >= 7) continue;
+      const next = [];
+      for (const [x, z] of CARDINAL) for (const y of [0, -1, 1]) {
+        const p = node.at.offset(x, y, z);
+        const key = posKey(p);
+        if (seen.has(key) || !exposed(p)) continue;
+        const edge = node.at.plus(p).scale(.5).offset(.5, 0, .5);
+        edge.y = Math.min(node.at.y, p.y);
+        if (!bodyClear(edge) || !awayFromThreats(hostiles, node.at.offset(.5, 0, .5), p.offset(.5, 0, .5))) continue;
+        seen.add(key);
+        next.push(p);
+      }
+      next.sort(towardsHome);
+      for (const at of next) queue.push({ at, previous: node, steps: node.steps + 1 });
+    }
+    return null;
+  }
+
+  async function withdrawFromMelee(ctx, from, route, escape) {
+    const to = escape?.to || scout?.trail.findLast((p) => p.distanceTo(from) >= 2);
     if (!to || from.distanceTo(to) > SCOUT_STEPS + 2) return wait(ctx, 'expedition_food_unsafe');
+    if (escape) route.escapeCells = escape.cells;
     const centre = to.offset(.5, 0, .5);
     let snapshot = null, sampledAt = 0;
     const observe = (refresh = false) => {
@@ -311,6 +342,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       }
       return snapshot;
     };
+    const mayMove = (state) => canWithdraw(state) && (!escape || state.isDay === true);
     route.withdraw = () => retreatThreats(observe());
     const began = bot.entity.position.clone();
     if (!awayFromThreats(route.withdraw(), began, centre)) return wait(ctx, 'expedition_food_unsafe');
@@ -320,13 +352,14 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const monitor = setInterval(() => {
       const live = observe(true);
       const at = bot.entity.position;
-      if (live.inWater || bot.entity.isInLava || !bodyClear(at) || !canWithdraw(live)
+      if (live.inWater || bot.entity.isInLava || !bodyClear(at) || !mayMove(live)
         || !awayFromThreats(retreatThreats(live), previous, at)) abort.abort('expedition_food_unsafe');
       previous = at.clone();
     }, 100);
     try {
-      if (await scoutWalk({ ...ctx, signal }, to, 'expedition_food_scout_withdraw', () => canWithdraw(observe(true)))) {
-        scout.trail.length = scout.trail.indexOf(to);
+      const label = escape ? 'expedition_food_return_withdraw' : 'expedition_food_scout_withdraw';
+      if (await scoutWalk({ ...ctx, signal }, to, label, () => mayMove(observe(true)))) {
+        if (scout) scout.trail.length = scout.trail.indexOf(to);
       } else {
         return wait(ctx, 'expedition_food_unsafe');
       }
@@ -429,8 +462,10 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const feet = here.floored();
     if (dimension(bot) !== 'overworld') return { ok: false, reason: 'expedition_food_wrong_dimension' };
     const hostile = threatsNear(state);
+    const fromOutside = !scout && state.isDay === true && distance(feet) > HOME_RADIUS && distance(feet) <= SCOUT_RINGS.at(-1)
+      && scoutFit(state) && Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'));
     if (state.health <= 6 || bot.entity.isInLava
-      || hostile && (!scout || !onDryGround() || !exposed(feet) || !canWithdraw(state))) return wait(ctx, 'expedition_food_unsafe');
+      || hostile && ((!scout && !fromOutside) || !onDryGround() || !exposed(feet) || !canWithdraw(state))) return wait(ctx, 'expedition_food_unsafe');
     if (state.inWater || bot.entity.isInWater) {
       return scout || distance(feet) <= SCOUT_RINGS.at(-1) ? scoutAshore(ctx, here) : wait(ctx, 'expedition_food_unsafe');
     }
@@ -455,9 +490,13 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     returning ||= scout ? hostile || homeTask || !scoutFit(state) || !scoutTimeLeft(state) : distance(feet) > HOME_RADIUS;
     const huntEdge = scout ? SCOUT_RINGS[scout.ring] : HOME_RADIUS;
     const edge = Math.max(huntEdge, returning ? distance(feet) + 4 : 0);
-    const route = { pickup: null, scouting: Boolean(scout) };
+    const route = { pickup: null, scouting: Boolean(scout || hostile) };
     return dryWalk(async () => {
-      if (hostile) return withdrawFromMelee(ctx, feet, route);
+      if (hostile) {
+        const escape = fromOutside && savedStartEscape(feet, retreatThreats(state));
+        if (!scout && !escape) return wait(ctx, 'expedition_food_unsafe');
+        return withdrawFromMelee(ctx, feet, route, escape);
+      }
       if (homeTask || returning) {
         const inside = Math.abs(here.x - centre.x - .5) < 2.6 && Math.abs(here.z - centre.z - .5) < 2.6
           && Math.abs(here.y - centre.y) < .8;

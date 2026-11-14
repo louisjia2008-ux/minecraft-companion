@@ -1056,6 +1056,59 @@ test('expedition scout can withdraw from a distant spider while close, ranged an
   assert.equal(movements.getNeighbors, native);
 });
 
+test('an armed expedition stock restart can leave a calm spider by one bounded dry route', async () => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const start = new Vec3(62.5, 64, 2.5);
+  const spider = { id: 1, name: 'spider', position: new Vec3(73, 64, 2.5) };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const neighbors = (p) => [p.offset(1, 0, 0), p.offset(-1, 0, 0), p.offset(0, 0, 1)];
+  const movements = { getNeighbors: neighbors, allowSprinting: true };
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
+    registry: { entitiesByName: { spider: { metadataKeys: ['mob_flags'] } } },
+    entities: { 1: { name: 'spider', metadata: [0] } },
+    entity: { position: start, onGround: true },
+    blockAt: (p) => p.y === 63 ? grass : air,
+    pathfinder: { movements },
+  });
+  const visits = [];
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: home, actions: {
+    underground: () => false,
+    async goTo(_bot, _ctx, destination) {
+      visits.push(destination.constructor.name);
+      if (destination.constructor.name === 'GoalBlock') {
+        assert.equal(movements.allowSprinting, false);
+        const initial = start.floored();
+        assert.deepEqual(movements.getNeighbors(initial), [initial.offset(-1, 0, 0)]);
+        assert.equal(destination.x, 55);
+        assert.equal(destination.z, 2);
+      }
+      bot.entity.position = new Vec3(destination.x + .5, destination.y ?? 64, destination.z + .5);
+      return { ok: true };
+    },
+  } });
+  const inventory = { cooked_chicken: 3, iron_sword: 1 };
+  const events = [];
+  let isDay = true;
+  const ctx = { perceive() {
+    const distance = bot.entity.position.distanceTo(spider.position);
+    return { inventory, health: 20, food: 18, isDay, hostiles: distance <= 16 ? [{ ...spider, distance }] : [] };
+  }, record: (type, data) => events.push({ type, ...data }) };
+  isDay = false;
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  isDay = true;
+  bot.entities[1].metadata = [];
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  bot.entities[1].metadata = [0];
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(bot.entity.position.distanceTo(spider.position) > 17);
+  assert.deepEqual(events.map(({ type, arrived }) => ({ type, arrived })), [{ type: 'expedition_food_return_withdraw', arrived: true }]);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(visits, ['GoalBlock', 'GoalNearXZ']);
+  assert.equal(movements.getNeighbors, neighbors);
+  assert.equal(movements.allowSprinting, true);
+});
+
 test('healthy home recovery waits for its growing food reserve instead of exploring and harvests when ripe', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const crop = new Vec3(-10, 64, 3);
