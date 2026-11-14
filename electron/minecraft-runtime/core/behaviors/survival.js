@@ -384,7 +384,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const dryOverworldCritical = (state) => dimensionOf(bot) === 'overworld' && !state.inWater
     && !bot.entity?.isInLava && state.health <= t.escapeHealth;
   const criticalHomeResupply = (state) => dryOverworldCritical(state) && resupplying();
+  const unarmedNearHome = (state) => {
+    if (dimensionOf(bot) !== 'overworld' || !resupplying() || armed(state)) return false;
+    const centre = home();
+    return centre && Math.abs(state.position.y - centre.y) <= 8
+      && Math.hypot(state.position.x - centre.x, state.position.z - centre.z) <= 8;
+  };
   const defendInPlace = (state, threat) => criticalHomeResupply(state)
+    || unarmedNearHome(state)
     || threat.name === 'witch' && resupplying() && dimensionOf(bot) === 'overworld' && !armed(state);
   const canStrikeFromHere = (h) => {
     const entity = bot.entities?.[h.id];

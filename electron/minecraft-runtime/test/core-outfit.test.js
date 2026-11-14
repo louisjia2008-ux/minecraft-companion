@@ -154,6 +154,63 @@ test('home recovery takes a bounded dry ascent after a failed open-sky ravine re
   assert.equal(goal.ownsRouteRecovery(), false);
 });
 
+test('home recovery walks beneath intact foundations before digging outside the house', async () => {
+  const house = createStarterHouse({ x: 30, y: 72, z: -34 });
+  const door = house.furniture.door.position;
+  const start = new Vec3(33, 68, -32);
+  const approach = [[33, 69, -33], [33, 68, -34], [32, 68, -34], [32, 69, -35]].map((p) => new Vec3(...p));
+  const air = { name: 'air', boundingBox: 'empty', shapes: [], skyLight: 15 };
+  const dirt = { name: 'dirt', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]], diggable: true };
+  const cleared = new Set();
+  const initial = new Set([start, ...approach].flatMap((p) => [p.toString(), p.offset(0, 1, 0).toString()]));
+  for (const p of [start, approach[1], approach[2]]) initial.add(p.offset(0, 2, 0).toString());
+  const bot = Object.assign(fakeBot(), {
+    health: 20, food: 20, time: { timeOfDay: 5000 }, game: { dimension: 'overworld', minY: 60, height: 24 },
+    entity: { position: start.offset(.5, 0, .5), onGround: true }, entities: {}, canDigBlock: () => true,
+    blockAt(p) {
+      if (p.x === door.x && p.z === door.z && [door.y, door.y + 1].includes(p.y)) return {
+        name: 'birch_door', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper', open: false, facing: 'south', hinge: 'left' }),
+      };
+      return p.y >= 72 || initial.has(p.toString()) || cleared.has(p.toString()) ? air : { ...dirt, position: p };
+    },
+    companionProtectBlock: (block) => block.position?.z >= house.anchor.z
+      && block.position.x >= house.anchor.x && block.position.x < house.anchor.x + 7,
+  });
+  const movements = { getNeighbors(at) {
+    return [-1, 0, 1].flatMap(dy => [[0, -1], [-1, 0], [1, 0], [0, 1]].map(([dx, dz]) => at.offset(dx, dy, dz)));
+  } };
+  bot.pathfinder = { movements };
+  const moves = [];
+  const ctx = { perceive: () => perceive(bot), record: () => {} };
+  const goal = createOutfitGoal({ bot, items: [{ key: 'stone_sword', count: 1 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: {
+      goNear: async () => assert.fail('ordinary approach attempted from below the house'),
+      goTo: async (_bot, _ctx, { x, y, z }) => {
+        const from = bot.entity.position.floored();
+        const next = new Vec3(x, y, z);
+        assert.deepEqual(movements.getNeighbors(from), [next]);
+        moves.push(next);
+        bot.entity.position = next.offset(.5, 0, .5);
+        return { ok: true };
+      },
+      digBlock: async (_bot, _ctx, block) => {
+        assert.equal(moves.length, approach.length);
+        assert.ok(block.position.z < house.anchor.z);
+        assert.equal(bot.companionProtectBlock(block), false);
+        cleared.add(block.position.toString());
+        return { ok: true };
+      },
+    },
+  });
+  for (let i = 0; i < approach.length; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(moves, approach);
+  assert.equal(cleared.size, 0);
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(cleared.size, 1);
+});
+
 test('home recovery repairs the missing inner doorstep support from the intact outer doorstep', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const { x, y, z } = house.furniture.door.position;

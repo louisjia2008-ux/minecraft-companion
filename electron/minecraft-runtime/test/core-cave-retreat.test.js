@@ -318,7 +318,7 @@ test('a visible archer beyond ordinary flee range triggers a safe escape from gr
   assert.equal(guarded.want({ ...state, position: bot.entity.position, hostiles: [skeleton] }), 0);
 });
 
-test('critical home resupply defends within native strike reach without approaching or collecting drops', async () => {
+test('critical or unarmed nearby home resupply strikes only within native reach', async () => {
   const { bot } = fixture();
   bot.world = { raycast: () => null };
   const zombie = { id: 3, name: 'zombie', position: new Vec3(5.5, 0, .5), width: .6, height: 1.95, isValid: true };
@@ -334,7 +334,7 @@ test('critical home resupply defends within native strike reach without approach
     async collectDrops() { calls.push('drops'); },
   };
   let resupplying = true;
-  const defend = createSurvivalBehaviors({ bot, actions, resupplying: () => resupplying })
+  const defend = createSurvivalBehaviors({ bot, actions, resupplying: () => resupplying, home: () => new Vec3(0, 0, 0) })
     .find((behavior) => behavior.name === 'defend');
   const ctx = { perceive: () => state, record() {} };
   assert.equal(defend.want(state), 0);
@@ -347,6 +347,12 @@ test('critical home resupply defends within native strike reach without approach
   assert.deepEqual(calls, [[zombie.id, { pursue: false }]]);
   zombie.position.x = 5.5;
   state.hostiles[0].distance = 5;
+  state.health = 20;
+  state.food = 20;
+  assert.equal(defend.want(state), 0, 'healthy but unarmed home rearm stays on its verified footing');
+  state.inventory.stone_sword = 1;
+  assert.equal(defend.want(state), 1);
+  delete state.inventory.stone_sword;
   resupplying = false;
   assert.equal(defend.want(state), 1);
   await defend.run(ctx);

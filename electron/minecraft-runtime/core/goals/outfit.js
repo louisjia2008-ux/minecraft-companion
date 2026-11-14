@@ -26,7 +26,7 @@ const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { upgrades } = require('../armor');
 const { entityDimensions } = require('../entityGeometry');
 const { isHostile, perceive } = require('../perception');
-const { advanceCaveRetreat, farmlandFooting, skyOpen, standable } = require('../caveRetreat');
+const { advanceCaveRetreat, farmlandFooting, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { createResupplyIrrigation } = require('./resupplyFarm');
 
 // Tools and weapons stay in the bag as they are made: stored, the bot spent
@@ -48,6 +48,7 @@ const HOME_DETOUR_RADIUS = 28;
 const HOME_DETOUR_STEPS = 80;
 const RAVINE_HOME_RADIUS = 22;
 const RAVINE_HOME_STEPS = 32;
+const UNDER_HOME_EXIT_STEPS = 8;
 const DOOR_FLOOR_FILL = /^(cobblestone|cobbled_deepslate|dirt)$/;
 const APPROACH_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const APPROACH_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
@@ -549,8 +550,10 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       || p.z < home.anchor.z || p.z >= home.anchor.z + 7) && !farmPlots.some((plot) => p.x === plot.x && p.z === plot.z);
     const safeAscentStart = (current) => home.anchor && shelter && typeof actions.digBlock === 'function'
       && typeof actions.goTo === 'function' && current.health > 6 && bot.entity.onGround && !current.inWater
-      && safety.homeDistance(current.position) <= RAVINE_HOME_RADIUS && outsideHouse(current.position.floored())
+      && safety.homeDistance(current.position) <= RAVINE_HOME_RADIUS
       && standable(read, current.position.floored());
+    const underFoundation = (p) => !outsideHouse(p) && p.y <= home.anchor.y - 3
+      && !farmPlots.some((plot) => p.x === plot.x && p.z === plot.z);
     if (ravine && (atResupplyHome(state, home) || safety.homeDistance(state.position) > RAVINE_HOME_RADIUS
       || state.position.y >= ascentFloor && skyOpen(bot, state.position.floored()))) ravine = null;
     if (!(ravine?.steps > 0) && state.position.y < home.centre.y - 8 && defaultActions.underground(bot)) {
@@ -634,8 +637,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const holdShelter = waitForDay || waitForFood || waitForHealing || (critical || localReserve) && routeInterrupted;
     const guardedArrival = !returned && !inside && !needsProtection && !unarmed && nearShelter(state.position)
       && shelter.doorOpen() !== null;
+    const underHome = !inside && !missingDoor && home.anchor && underFoundation(currentCell);
     const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover || guardedArrival
-      || detourRemaining > 0 || ravine?.steps > 0 || repairFloor || crossingRepairedFloor;
+      || detourRemaining > 0 || ravine?.steps > 0 || underHome || repairFloor || crossingRepairedFloor;
     ownsShelterRoute = (missingDoor && nearShelter(state.position) || detourRemaining > 0) && (!inside || holdShelter);
     if (shelter && holdShelter) bot.companionResupplySheltered = shelterWitness;
     else clearShelter();
@@ -935,6 +939,43 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       scoped.record('resupply_home_step', { from: feet, to: first, ...(farmlandStart ? { partialFloor: 'farmland' } : {}) });
       return { ok: true };
     };
+    const startRavine = (from) => {
+      ravine = { high: from.y, steps: RAVINE_HOME_STEPS, visited: new Set() };
+      ctx.record('resupply_ravine_ascent', { from, floor: ascentFloor });
+    };
+    // A shallow cave can run beneath an intact house. Reach an outside
+    // column on existing footing before allowing the normal guarded ascent.
+    if (underHome && safeAscentStart(state)) {
+      ownsShelterRoute = true;
+      const blocked = (reason) => ({ ok: true, waited: true, reason });
+      const outside = (p) => outsideHouse(p) && p.y >= home.anchor.y - 3;
+      const safe = (to, from) => !unsafeToDig(from, to, activeThreats())
+        && (outside(to.floored()) || underFoundation(to.floored()));
+      const path = shelterApproach(read, shelter, currentCell, outside, safe, failedApproaches,
+        null, true, UNDER_HOME_EXIT_STEPS);
+      if (!path) {
+        await sleep(500, ctx.signal);
+        return blocked('resupply_under_home_no_dry_exit');
+      }
+      const { first, safeLeg, dry } = path;
+      preparingStep = first.offset(.5, 0, .5);
+      const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(first) && dry(first);
+      const result = await guarded('under_home', async (scoped) => {
+        if (!safeLeg(currentCell, first, bot.entity.position)) return blocked('resupply_under_home_step_changed');
+        const moved = await walkDry(bot, scoped, actions, new goals.GoalBlock(first.x, first.y, first.z), {
+          adjacent: first, avoid: (p) => !p.equals(first) || !safeLeg(currentCell, first, bot.entity.position),
+          arrived,
+        });
+        const landed = (moved.ok || moved.reason === 'not_arrived')
+          && await waitUntil(arrived, { timeoutMs: 500, signal: scoped.signal });
+        if (!landed) return blocked(moved.reason || 'resupply_under_home_not_arrived');
+        scoped.record('resupply_under_home_step', { from: currentCell, to: first });
+        if (outside(first)) startRavine(first);
+        return { ok: true };
+      }, true);
+      if (!arrived()) failedApproaches.add(`${posKey(currentCell)}>${posKey(first)}`, result.reason);
+      return result;
+    }
     return onSurfacePath(bot, home, async () => {
       if (ravine?.steps > 0) {
         const from = state.position.floored();
@@ -975,10 +1016,10 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
             const result = await guarded(foodTarget?.kind === 'bread' ? 'return_for_bread' : 'return_home', action, true, cardinal);
             if (!ravine && (result.reason === 'NoPath' || result.reason === 'resupply_no_dry_home_route')) {
               const current = ctx.perceive();
-              if (current.position.y >= home.centre.y - 4 || !safeAscentStart(current)) return result;
+              if (current.position.y >= home.centre.y - 4 || !safeAscentStart(current)
+                || !outsideHouse(current.position.floored())) return result;
               const from = current.position.floored();
-              ravine = { high: from.y, steps: RAVINE_HOME_STEPS, visited: new Set() };
-              ctx.record('resupply_ravine_ascent', { from, floor: ascentFloor });
+              startRavine(from);
               return { ok: true };
             }
             return result;
