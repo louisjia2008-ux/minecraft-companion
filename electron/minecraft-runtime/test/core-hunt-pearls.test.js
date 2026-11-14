@@ -300,6 +300,36 @@ test('scouting takes the connected dry bend when a straight lookout would end in
   assert.deepEqual(steps, [new Vec3(5, 64, 5), shore.at(-1)]);
 });
 
+test('scouting avoids leaf floors and can leave one via a directly reachable grass bank', async () => {
+  const start = new Vec3(0, 64, 0);
+  const treetop = new Vec3(1, 64, 0);
+  const grass = new Vec3(0, 64, -1);
+  const movements = { getNeighbors: (p) => p.x === 0 ? [treetop, grass] : [start] };
+  const bot = { ...terrain, entity: { position: start, onGround: true }, pathfinder: { movements },
+    blockAt(p) {
+      if (p.equals(treetop.offset(0, -1, 0))) return { ...STONE, name: 'oak_leaves' };
+      return terrain.blockAt(p);
+    } };
+  let target;
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, goal) => {
+    target = new Vec3(goal.x, goal.y, goal.z);
+    const current = bot.entity.position;
+    assert.ok(movements.getNeighbors(current).some((p) => p.equals(target)));
+    assert.ok(movements.getNeighbors(current).every((p) => !p.equals(treetop)));
+    bot.entity.position = target;
+    return { ok: true };
+  } } });
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record: (type) => records.push(type),
+    perceive: () => nightState(bot.entity.position) };
+  await goal.run(ctx);
+  assert.ok(target.equals(grass));
+  bot.entity.position = treetop;
+  await goal.run(ctx);
+  assert.ok(target.equals(start));
+  assert.equal(records.at(-1), 'pearl_scout_ground_bank');
+});
+
 test('a hunter starting inside the known house walks out through an observed door', async () => {
   const player = new Vec3(0, 64, 0);
   const position = new Vec3(0, 64, -2);

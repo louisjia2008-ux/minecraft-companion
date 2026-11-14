@@ -59,6 +59,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   const endermen = () => Object.values(bot.entities || {}).filter((e) => e?.name === 'enderman' && e.position);
   const read = (p) => bot.blockAt(p, false);
   const outdoors = (p) => standable(read, p) && skyOpen(bot, p);
+  const leafFloor = (p) => read(p.offset(0, -1, 0))?.name.endsWith('_leaves');
+  const scoutGround = (p) => outdoors(p) && !leafFloor(p);
   const targetOutdoors = (p) => standable(read, p) && skyOpen(bot, p, { allowLeafCanopy: true });
   const restingAtHome = (p, centre) => centre && p.distanceTo(centre) <= 6;
   const readyToHunt = (state) => state.health >= ENGAGE_HEALTH && state.food >= ENGAGE_FOOD
@@ -74,7 +76,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   };
 
   function fightFooting(feet) {
-    const firm = (p) => standable(read, p) && !read(p.offset(0, -1, 0))?.name.endsWith('_leaves');
+    const firm = (p) => standable(read, p) && !leafFloor(p);
     if (!firm(feet)) return false;
     // An Enderman can teleport around the hunter, so leave room to absorb
     // knockback in any direction with a drop of at most one block.
@@ -171,11 +173,16 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     } finally { restore(); }
   }
 
-  function scoutTarget(from, accept, focus) {
+  function dryScoutMovements() {
     const movements = bot.pathfinder?.movements;
     if (typeof movements?.getNeighbors !== 'function') return null;
-    const dry = Object.assign(Object.create(movements), { canDig: false, allowParkour: false,
+    return Object.assign(Object.create(movements), { canDig: false, allowParkour: false,
       allow1by1towers: false, scafoldingBlocks: [], maxDropDown: 2, infiniteLiquidDropdownDistance: false });
+  }
+
+  function scoutTarget(from, accept, focus) {
+    const dry = dryScoutMovements();
+    if (!dry) return null;
     const visited = memory.scoutPositions;
     const visitedAt = new Map(visited.map((p, i) => [pointKey(p), i]));
     const aim = focus?.position;
@@ -217,6 +224,23 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     const from = bot.entity.position.floored();
     const house = home();
     if (state.inWater || bot.entity.onGround === false) return wait(ctx, 'pearl_wait_for_dry_ground');
+    if (leafFloor(from) && outdoors(from)) {
+      // An already stranded hunter can step onto an immediately adjacent dry
+      // bank, but ordinary scouting must never climb back onto the canopy.
+      const adjacent = dryScoutMovements()?.getNeighbors(Object.assign(from.clone(), { remainingBlocks: 0 })) || [];
+      const step = adjacent.find((p) => flatDistance(from, p) === 1 && Math.abs(p.y - from.y) <= 1
+        && !p.parkour && !p.toBreak?.length && !p.toPlace?.length && scoutGround(p));
+      const bank = step && new Vec3(step.x, step.y, step.z);
+      if (!bank) return wait(ctx, 'pearl_wait_for_ground_bank');
+      const arrived = (p) => bot.entity.onGround && p.floored().equals(bank) && scoutGround(bank);
+      const moved = await walkDry(bot, ctx, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
+        { adjacent: bank, timeoutMs: 2000, arrived });
+      if (moved.ok && arrived(bot.entity.position)) {
+        ctx.record('pearl_scout_ground_bank', { from, to: bank });
+        return { ok: true, waited: true };
+      }
+      return wait(ctx, moved.reason || 'pearl_ground_bank_not_arrived');
+    }
     if (!outdoors(from)) {
       // On a natural lip the grounded collision box can overlap the support
       // while the centre has crossed into the next, lower column.
@@ -225,9 +249,9 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
         const bodyRadius = (bot.entity.width || 0.6) / 2;
         const support = Object.values(DOOR_DIRECTIONS).map(([x, z]) => from.offset(x, 0, z)).find((p) =>
           here.x + bodyRadius > p.x && here.x - bodyRadius < p.x + 1
-          && here.z + bodyRadius > p.z && here.z - bodyRadius < p.z + 1 && outdoors(p));
+          && here.z + bodyRadius > p.z && here.z - bodyRadius < p.z + 1 && scoutGround(p));
         if (support) {
-          const arrived = (at) => bot.entity.onGround && at.floored().equals(support) && outdoors(support);
+          const arrived = (at) => bot.entity.onGround && at.floored().equals(support) && scoutGround(support);
           const result = await walkDry(bot, ctx, actions, new goals.GoalBlock(support.x, support.y, support.z),
             { adjacent: support, timeoutMs: 2000, arrived });
           if (result.ok && arrived(bot.entity.position)) {
@@ -249,7 +273,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     const accept = (p) => {
       if (flatDistance(p, centre) > SCOUT_RADIUS || flatDistance(p, from) > SCOUT_LEG + 3) return false;
       const key = pointKey(p);
-      if (!surface.has(key)) surface.set(key, outdoors(p));
+      if (!surface.has(key)) surface.set(key, scoutGround(p));
       return surface.get(key);
     };
     let target = scoutTarget(from, accept, focus);
