@@ -1201,8 +1201,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           // sideways to open air. Rising alone pinned the head under the lip
           // until the bot drowned, a third of a block from open water.
           const air = airColumn();
-          if (air && (air.x !== Math.floor(bot.entity.position.x) || air.z !== Math.floor(bot.entity.position.z))) {
-            await bot.lookAt(new Vec3(air.x + 0.5, bot.entity.position.y + 1.6, air.z + 0.5), true);
+          const position = bot.entity.position;
+          if (air && Math.hypot(air.x + .5 - position.x, air.z + .5 - position.z) > .2) {
+            await bot.lookAt(new Vec3(air.x + .5, position.y + (bot.entity.eyeHeight ?? 1.62), air.z + .5), true);
             bot.setControlState('forward', true);
           } else {
             bot.setControlState('forward', false);
@@ -1221,11 +1222,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           }
           await sleep(100, ctx.signal);
         }
+        if (await actions.swimToNearbyBank?.(bot, ctx)) return { ok: true, ashore: true };
       } finally {
         bot.setControlState('jump', false);
         bot.setControlState('forward', false);
       }
-      return { ok: bot.oxygenLevel >= t.oxygen, reason: 'still_underwater' };
+      return bot.oxygenLevel >= t.oxygen ? { ok: true } : { ok: false, reason: 'still_underwater' };
     },
   };
 

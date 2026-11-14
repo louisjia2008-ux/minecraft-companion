@@ -12,6 +12,7 @@ const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { ownedItems } = require('./perception');
 const { dropReturnPosition } = require('./pathReturn');
 const { meleeGeometry, meleeSight, MeleeFollowGoal, entitySizeEvidence } = require('./entityGeometry');
+const { standable } = require('./caveRetreat');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -745,8 +746,82 @@ async function unstick(bot, ctx) {
 
 /** Digs the block over the bot's head and those beside its head. True if any went. */
 const SEA = new Set(['water', 'kelp', 'kelp_plant', 'seagrass', 'tall_seagrass', 'bubble_column']);
+const OPEN_AIR = /^(air|cave_air|void_air)$/;
+
+// After surfacing for air, stay in control until a nearby observed bank is
+// reached. Returning immediately can let the body sink between breath cycles.
+async function swimToNearbyBank(bot, ctx) {
+  const read = (p) => bot.blockAt(p, false);
+  const clear = (p) => OPEN_AIR.test(read(p)?.name);
+  const surface = (p) => {
+    const below = read(p.offset(0, -1, 0));
+    return below?.name === 'water' && Number(below.getProperties?.()?.level) === 0
+      && clear(p) && clear(p.offset(0, 1, 0));
+  };
+  const dry = (p) => standable(read, p) && !read(p.offset(0, -1, 0)).name.endsWith('_leaves')
+    && clear(p.offset(0, 2, 0));
+  const feet = bot.entity.position.floored();
+  const from = [feet, feet.offset(0, 1, 0), feet.offset(0, 2, 0)].find(surface);
+  const nearSurface = () => {
+    const position = bot.entity.position;
+    return position.y >= from.y - 1.5 && clear(position.offset(0, bot.entity.eyeHeight ?? 1.62, 0).floored());
+  };
+  if (!from || !nearSurface()) return false;
+  let route;
+  for (const [dx, dz] of SIDES) {
+    const water = [from];
+    for (let distance = 1; distance <= 6 && distance < (route?.water.length ?? Infinity); distance += 1) {
+      const p = from.offset(dx * distance, 0, dz * distance);
+      const bank = [p, p.offset(0, 1, 0)].find(dry);
+      if (bank) { route = { water, bank }; break; }
+      if (!surface(p)) break;
+      water.push(p);
+    }
+  }
+  if (!route) return false;
+  const { bank, water } = route;
+  const nextToBank = water.at(-1);
+  const target = nextToBank.offset(.5, 0, .5);
+  const forward = bank.minus(nextToBank);
+  const nearLane = (p) => Math.abs(forward.x ? p.z - target.z : p.x - target.x) <= .22;
+  const laneOpen = (position) => {
+    const p = position.floored();
+    const radius = (bot.entity.width || .6) / 2;
+    const skirt = forward.x
+      ? [Math.floor(position.z - radius), Math.floor(position.z + radius)].map((z) => new Vec3(p.x, from.y, z))
+      : [Math.floor(position.x - radius), Math.floor(position.x + radius)].map((x) => new Vec3(x, from.y, p.z));
+    return skirt.every(surface);
+  };
+  const valid = () => dry(bank) && water.every(surface) && !bot.entity.isInLava && nearSurface() && laneOpen(bot.entity.position);
+  if (!valid()) return false;
+  ctx.record?.('breathe_bank_route', { from, bank, distance: water.length });
+  try {
+    for (let tick = 0; tick < 100 && valid(); tick += 1) {
+      const position = bot.entity.position;
+      const cell = position.floored();
+      if (!water.some((p) => p.x === cell.x && p.z === cell.z)) return false;
+      const centered = Math.hypot(position.x - target.x, position.z - target.z) <= .35;
+      const aligned = centered && nearLane(position);
+      if (aligned && bank.y <= cell.y + 1) {
+        const landed = await swimAshore(bot, ctx, { maxTicks: 50, bank, acceptBank: dry, surfaceY: from.y });
+        ctx.record?.('breathe_bank_result', { bank, landed });
+        return landed;
+      }
+      if (!aligned) await bot.lookAt(new Vec3(target.x, position.y + (bot.entity.eyeHeight ?? 1.62), target.z), true);
+      ctx.signal?.throwIfAborted();
+      if (!valid()) return false;
+      bot.setControlState('forward', !aligned);
+      bot.setControlState('jump', true);
+      await sleep(50, ctx.signal);
+    }
+  } finally {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+  }
+  return false;
+}
 /** Out on open water, swims along the surface to the nearest land within sight. True once ashore. */
-async function swimAshore(bot, ctx, { maxTicks = 1200, bank, acceptBank } = {}) {
+async function swimAshore(bot, ctx, { maxTicks = 1200, bank, acceptBank, surfaceY } = {}) {
   const feet = bot.entity.position.floored();
   const wet = (p) => SEA.has(bot.blockAt(p)?.name);
   if (!wet(feet) && !wet(feet.offset(0, -1, 0))) return false;
@@ -770,7 +845,9 @@ async function swimAshore(bot, ctx, { maxTicks = 1200, bank, acceptBank } = {}) 
         const close = Math.hypot(p.x - centre.x, p.z - centre.z) < .18;
         if (!close) await bot.lookAt(new Vec3(centre.x, p.y + (bot.entity.eyeHeight ?? 1.62), centre.z), true);
         bot.setControlState('forward', !close);
-        bot.setControlState('jump', bot.entity.isInWater === true);
+        // At the surface Mineflayer briefly alternates the water flag during
+        // each bounce. Continue jumping while crossing onto dry bank support.
+        bot.setControlState('jump', bot.entity.isInWater === true || (surfaceY !== undefined && p.y >= surfaceY - 1));
         await sleep(50, ctx.signal);
       }
       return landed();
@@ -1115,6 +1192,6 @@ async function surface(bot, ctx) {
 
 module.exports = {
   drainPocket,
-  recentre, surface, underground, unstick, nudge, breakLattice, openHeadroom, openNearDoor, swimAshore, stepOutOfPool, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  recentre, surface, underground, unstick, nudge, breakLattice, openHeadroom, openNearDoor, swimAshore, swimToNearbyBank, stepOutOfPool, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };

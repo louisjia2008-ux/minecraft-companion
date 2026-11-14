@@ -6,6 +6,7 @@ const { createSurvivalBehaviors } = require('../core/behaviors/survival');
 const { perceive } = require('../core/perception');
 const { createBrain } = require('../core/brain');
 const { sleep } = require('../core/confirm');
+const { swimToNearbyBank } = require('../core/actions');
 const { EventEmitter } = require('node:events');
 const minecraftData = require('minecraft-data');
 
@@ -311,6 +312,49 @@ test('breathing with no air column drains first, then gives a slow lid dig its m
   s.bot.entity.isInWater = true;
   assert.equal((await s.behavior('breathe').run({ signal: new AbortController().signal })).ok, true);
   assert.deepEqual(calls, ['drain', 21500]);
+});
+
+test('regaining air in an open pool keeps the body until it reaches a checked bank', async () => {
+  const start = new Vec3(94.5, 59, 128.5);
+  const bank = new Vec3(94, 63, 124);
+  const records = [];
+  const s = setup({ actions: { swimToNearbyBank } });
+  Object.assign(s.bot.entity, { position: start.clone(), isInWater: true, onGround: false });
+  let toward;
+  Object.assign(s.bot, {
+    oxygenLevel: 4,
+    blockAt(p) {
+      if (p.x === 94 && p.z >= 125 && p.y <= 62) {
+        return { name: 'water', boundingBox: 'empty', shapes: [], getProperties: () => ({ level: 0 }) };
+      }
+      if (p.y <= 62 || (p.x !== 94 && p.y <= 66)) return { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+      return { name: 'air', boundingBox: 'empty', shapes: [] };
+    },
+    lookAt: async (p) => { toward = p; },
+    setControlState(key, value) {
+      if (!value) return;
+      if (key === 'jump' && s.bot.entity.position.y < 62) {
+        s.bot.entity.position.y = 62;
+        s.bot.entity.isInWater = false;
+        s.bot.oxygenLevel = 6;
+      }
+      if (key !== 'forward') return;
+      s.bot.entity.position.z = toward.z;
+      if (Math.floor(toward.z) === bank.z) {
+        s.bot.entity.position.y = bank.y;
+        s.bot.entity.isInWater = false;
+        s.bot.entity.onGround = true;
+      }
+    },
+  });
+  const result = await s.behavior('breathe').run({ signal: new AbortController().signal,
+    record: (type, data) => records.push({ type, ...data }) });
+  assert.deepEqual(result, { ok: true, ashore: true });
+  assert.deepEqual(records, [
+    { type: 'breathe_bank_route', from: new Vec3(94, 63, 128), bank, distance: 4 },
+    { type: 'breathe_bank_result', bank, landed: true },
+  ]);
+  assert.deepEqual(s.bot.entity.position.floored(), bank);
 });
 
 test('a goal that brings its own food (the farm) keeps provisioning out of its way', () => {
