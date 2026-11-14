@@ -125,7 +125,7 @@ const STEPS = [
     const previous = state?.goals?.pearls?.memory?.scoutCoverage || {};
     const mostSampled = directions.reduce((best, d) => (previous[d] || 0) > (previous[best] || 0) ? d : best, 'north');
     const opposite = directions[(directions.indexOf(mostSampled) + 2) % directions.length];
-    const wide = pearlWantsWide(bot, state) && bot.health >= 18 && bot.food >= 16 && fullArmorWorn(bot)
+    const wide = pearlWantsWide(state) && bot.health >= 18 && bot.food >= 16 && fullArmorWorn(bot)
       && expeditionFoodCount(bot, perceive(bot).inventory) >= 3;
     const scoutSector = (wide ? ['south', 'east', 'west', 'north'] : [opposite, ...directions.filter((d) => d !== opposite)])
       .sort((a, b) => (coverage[a] || 0) - (coverage[b] || 0))[0];
@@ -224,9 +224,8 @@ function pearlScoutCoverage(state) {
   return coverage;
 }
 
-function pearlWantsWide(bot, state) {
-  return new Set(state?.pearlDryNights || []).size >= 3
-    && have(bot, 'ender_pearl') + have(bot, 'ender_eye') === 0;
+function pearlWantsWide(state) {
+  return new Set(state?.pearlDryNights || []).size >= 3;
 }
 
 function observePearlNight(bot, state) {
@@ -256,7 +255,7 @@ async function provisionPearlScouts(context) {
   const position = bot.entity?.position;
   if (!Number.isSafeInteger(day) || !Number.isFinite(time) || time >= 10000
     || state.pearlFoodRestockDay === day || active || !home || !position || position.distanceTo(home) > 16
-    || !pearlWantsWide(bot, state) || !fullArmorWorn(bot)
+    || !pearlWantsWide(state) || !fullArmorWorn(bot)
     || expeditionFoodCount(bot, state.lastPerceive.inventory) >= 3) return false;
   const farmPlots = farmPlotPositions(state);
   if (!farmPlots.length) return false;

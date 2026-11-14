@@ -73,7 +73,8 @@ test('pearl scouting widens only with three distinct dry nights and a carried fo
   context.bot.inventory.slots[45] = { name: 'shield', count: 1 };
   context.bot.food = 19;
   let carried = 3;
-  context.bot.inventory.items = () => [{ name: 'iron_sword', count: 1 }, { name: 'bread', count: carried }];
+  const pearls = { name: 'ender_pearl', count: 0 };
+  context.bot.inventory.items = () => [{ name: 'iron_sword', count: 1 }, { name: 'bread', count: carried }, pearls];
   state.pearlDryNights = [40, 40, 41];
   assert.equal(hunt.args(context).scoutRadius, undefined);
   state.pearlDryNights.push(42);
@@ -82,6 +83,9 @@ test('pearl scouting widens only with three distinct dry nights and a carried fo
   carried = 3;
   assert.equal(hunt.args(context).scoutRadius, 80);
   assert.equal(hunt.args(context).scoutSector, 'south');
+  pearls.count = 1;
+  assert.equal(hunt.done(context), false);
+  assert.equal(hunt.args(context).scoutRadius, 80);
 });
 
 test('a living Nether food return refills the carried reserve and resumes the same rod goal', async () => {
