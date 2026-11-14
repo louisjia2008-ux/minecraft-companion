@@ -1278,13 +1278,6 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await sleep(1000, ctx.signal);
       return { ok: true, waited: true };
     }
-    // Run out of blocks, a fall into the lava sea has no way out and the walk
-    // home has nothing to bridge with (a run with every rod, skull and trade
-    // in hand spent its last hour 135 blocks from the portal): keep some.
-    if (nether.scaffoldCount(bot) < SCAFFOLD_LOW && Date.now() - (memory.restockedAt || 0) > 60000) {
-      memory.restockedAt = Date.now();
-      await stockScaffolding(ctx, 16);
-    }
     if (allDone(state)) return headHome(ctx);
     // Save enough food to heal on the return trail. Commit to returning
     // before a meal moving health above the hunt threshold restarts combat.
@@ -1297,6 +1290,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
         ctx.record('retreat', { health: Math.round(state.health), food: state.food, carriedFood, reason: 'food_reserve' });
       }
       return headHome(ctx);
+    }
+    // On the way out, leave the spawner before spending time at a mine.
+    // Expeditions still need a scaffold reserve for travel elsewhere.
+    if (nether.scaffoldCount(bot) < SCAFFOLD_LOW && Date.now() - (memory.restockedAt || 0) > 60000) {
+      memory.restockedAt = Date.now();
+      await stockScaffolding(ctx, 16);
     }
     const lost = lostKit(state);
     if (lost) return fail(lost);
