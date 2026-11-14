@@ -206,7 +206,7 @@ test('a loaded occluded Enderman guides the hunter to a dry visible stance befor
   assert.ok(records.some((e) => e.type === 'enderman_stare_result' && e.came));
 });
 
-test('dim sky alone, a roof over leaves and wet foliage do not qualify an Enderman', () => {
+test('canopy sky proof requires dry leaves below a loaded, unobstructed column', () => {
   const feet = new Vec3(0, 64, 0);
   const leaves = { ...STONE, name: 'oak_leaves' };
   for (const [canopy, higher] of [[AIR, AIR], [leaves, STONE],
@@ -219,6 +219,29 @@ test('dim sky alone, a roof over leaves and wet foliage do not qualify an Enderm
     } };
     assert.equal(skyOpen(bot, feet, { allowLeafCanopy: true }), false);
   }
+});
+
+test('a low light bare column admits an Enderman only with loaded, dry body clearance', async () => {
+  const position = new Vec3(0, 64, 0);
+  const open = { id: 1, name: 'enderman', position: new Vec3(4, 64, 0) };
+  const roofed = { id: 2, name: 'enderman', position: new Vec3(5, 64, 0) };
+  const clipped = { id: 3, name: 'enderman', position: new Vec3(-4, 64, 0) };
+  const unloaded = { id: 4, name: 'enderman', position: new Vec3(-5, 64, 0) };
+  const candidates = [open, roofed, clipped, unloaded];
+  const bot = { ...terrain, entity: { position }, entities: Object.fromEntries(candidates.map((e) => [e.id, e])),
+    blockAt(p) {
+      if (candidates.some((e) => e.position.offset(0, 1, 0).equals(p))) return { ...AIR, skyLight: 7 };
+      if (p.equals(roofed.position.offset(0, 3, 0))) return STONE;
+      if (p.equals(clipped.position.offset(0, 2, 0))) return { ...STONE, name: 'oak_leaves' };
+      if (p.equals(unloaded.position.offset(0, 3, 0))) return null;
+      return terrain.blockAt(p);
+    } };
+  const goal = createHuntPearlsGoal({ bot, skills: { huntOne: async (_bot, _ctx, { accept }) => {
+    assert.deepEqual(candidates.filter(accept), [open]);
+    return { ok: true, melee: true };
+  } } });
+  const result = await goal.run({ signal: new AbortController().signal, record() {}, perceive: () => nightState(position) });
+  assert.deepEqual(result, { ok: true, melee: true });
 });
 
 test('an injured or unarmed hunter does not aggro a visible Enderman', async () => {
@@ -526,6 +549,34 @@ test('dawn keeps an outlying hunter on the dry route back inside the known home 
   assert.equal(goal.isDone(ctx.perceive()), false, 'the dawn return continues toward the house');
   assert.deepEqual(records, [{ type: 'pearl_scout_tether_return', from: start, to: entry, centre: home }]);
   assert.equal(movements.getNeighbors, native);
+});
+
+test('an edge cell that triggers tether recovery is excluded from the next scout leg', async () => {
+  const home = new Vec3(-102, 64, -179);
+  const outside = new Vec3(-59, 65, -158);
+  const entry = new Vec3(-60, 65, -159);
+  const lookout = new Vec3(-61, 65, -159);
+  const cells = [outside, entry, lookout];
+  const center = (p) => p.offset(.5, 0, .5);
+  const movements = { getNeighbors: (p) => cells.filter((next) => p.distanceTo(next) > 0 && p.distanceTo(next) <= Math.SQRT2) };
+  const bot = { ...terrain, entity: { position: center(outside), onGround: true }, companionHomeAt: () => home,
+    pathfinder: { movements }, blockAt: (p) => p.y < 65 ? STONE : AIR };
+  const records = [];
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, target) => {
+    const next = cells.find((p) => target.isEnd(p));
+    bot.entity.position = center(next);
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => nightState(bot.entity.position) };
+  assert.equal(pearlTetherRecoveryNeeded(home, outside), false);
+  assert.equal(pearlTetherRecoveryNeeded(home, center(outside)), true);
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(records.map(({ type, target, to }) => [type, target || to]), [
+    ['pearl_scout_tether_return', entry], ['pearl_surface_scout', lookout],
+  ]);
+  assert.deepEqual(bot.entity.position, center(lookout));
 });
 
 test('an outlying hunter launched at dawn stops attempting recovery after two guarded route failures', async () => {

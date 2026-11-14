@@ -51,11 +51,19 @@ const NEAR_SCOUT_REPEAT_MS = 70000;
 const NEAR_SCOUT_BUDGET_MS = 35000;
 const NEAR_SCOUT_WATCH_MS = 6000;
 const DOOR_DIRECTIONS = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
+const SCOUT_AIR = /^(air|cave_air|void_air)$/;
 
 const MOBS = ['enderman'];
 const isPearl = (n) => n === 'ender_pearl';
 const pointKey = (p) => `${p.x},${p.y},${p.z}`;
 const flatDistance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+
+function insideScoutTether(cell, centre, limit) {
+  // The pathfinder can stop anywhere inside the cell, so check its farthest corner.
+  const dx = Math.max(Math.abs(cell.x - centre.x), Math.abs(cell.x + 1 - centre.x));
+  const dz = Math.max(Math.abs(cell.z - centre.z), Math.abs(cell.z + 1 - centre.z));
+  return Math.hypot(dx, dz) <= limit;
+}
 
 function scoutSectorOf(position, centre) {
   const dx = position.x - centre.x, dz = position.z - centre.z;
@@ -79,8 +87,7 @@ function pearlTetherRecoveryNeeded(house, position, limit = SCOUT_RADIUS) {
 function openScoutColumn(bot, feet) {
   const top = (bot.game?.minY ?? -64) + (bot.game?.height ?? 384);
   for (let y = feet.y + 1; y < top; y += 1) {
-    const name = bot.blockAt(feet.offset(0, y - feet.y, 0), false)?.name;
-    if (name !== 'air' && name !== 'cave_air' && name !== 'void_air') return false;
+    if (!SCOUT_AIR.test(bot.blockAt(feet.offset(0, y - feet.y, 0), false)?.name)) return false;
   }
   return true;
 }
@@ -95,7 +102,7 @@ function pearlWaterBank(bot, house, limit = SCOUT_RADIUS) {
   if (!house || entity?.isInWater !== true || entity.isInLava || !entity.position?.floored) return null;
   const feet = entity.position.floored();
   const head = bot.blockAt(feet.offset(0, 1, 0), false);
-  if (!head || !/^(air|cave_air|void_air)$/.test(head.name)) return null;
+  if (!SCOUT_AIR.test(head?.name)) return null;
   return Object.values(DOOR_DIRECTIONS).map(([x, z]) => feet.offset(x, 1, z))
     .find((p) => flatDistance(p, house) <= limit && scoutGround(bot, p)) || null;
 }
@@ -149,7 +156,10 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
   const clearColumn = (feet) => openScoutColumn(bot, feet);
   const leafFloor = (p) => read(p.offset(0, -1, 0))?.name.endsWith('_leaves');
   const scoutGroundAt = (p) => scoutGround(bot, p);
-  const targetOutdoors = (p) => standable(read, p) && skyOpen(bot, p, { allowLeafCanopy: true });
+  // An Enderman needs three clear blocks. A fully loaded air column also
+  // proves exposure when the server's reported sky light is below 15.
+  const targetOutdoors = (p) => standable(read, p) && SCOUT_AIR.test(read(p.offset(0, 2, 0))?.name)
+    && (clearColumn(p) || dryLeafCanopy(bot, p));
   const restingAtHome = (p, centre) => centre && p.distanceTo(centre) <= HOME_RETURN_NEAR;
   const readyForWideScout = (state) => state.health >= 18 && state.food >= 16
     && expeditionFoodCount(bot, state.inventory) >= 3;
@@ -299,10 +309,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
         seen.add(key);
         const p = new Vec3(move.x, move.y, move.z);
         if (!scoutGroundAt(p)) continue;
-        // The pathfinder can stop anywhere inside the block. Rejoin with
-        // both the physical body centre and the floor cell inside the tether.
-        if (d <= operatingRadius() && [p.offset(1, 0, 0), p.offset(0, 0, 1), p.offset(1, 0, 1)]
-          .every((corner) => flatDistance(corner, centre) <= operatingRadius())) return p;
+        if (insideScoutTether(p, centre, operatingRadius())) return p;
         nodes.push({ point: p, steps: steps + 1 });
         if (d < nearest) { better = p; nearest = d; }
       }
@@ -347,7 +354,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
     if (!dry || typeof bot.pathfinder.getPathFromTo !== 'function') return [];
     const safe = new Map();
     const accepted = (p) => {
-      if (flatDistance(p, centre) > radius) return false;
+      if (!insideScoutTether(p, centre, radius)) return false;
       const key = pointKey(p);
       if (!safe.has(key)) safe.set(key, scoutGroundAt(p));
       return safe.get(key);
@@ -514,7 +521,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
       for (const move of safeScoutMoves(dry, node.point)) {
         if (nodes.length >= SECTOR_SEARCH_NODES) break;
         const key = pointKey(move);
-        if (seen.has(key) || flatDistance(move, centre) > SCOUT_RADIUS) continue;
+        if (seen.has(key) || !insideScoutTether(move, centre, SCOUT_RADIUS)) continue;
         seen.add(key);
         const p = new Vec3(move.x, move.y, move.z);
         if (scoutGroundAt(p)) nodes.push({ point: p, steps: node.steps + 1, previous: node });
@@ -665,7 +672,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
     }
     const surface = new Map();
     const accept = (p) => {
-      if (flatDistance(p, centre) > operatingRadius() || flatDistance(p, from) > SCOUT_LEG + 3) return false;
+      if (!insideScoutTether(p, centre, operatingRadius()) || flatDistance(p, from) > SCOUT_LEG + 3) return false;
       const key = pointKey(p);
       if (!surface.has(key)) surface.set(key, scoutGroundAt(p));
       return surface.get(key);
