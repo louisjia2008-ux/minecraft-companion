@@ -579,6 +579,40 @@ test('an edge cell that triggers tether recovery is excluded from the next scout
   assert.deepEqual(bot.entity.position, center(lookout));
 });
 
+test('a hunter resumed on grounded sand can recover onto the grass inside the tether after dawn', async () => {
+  const home = new Vec3(-102, 64, -179);
+  const player = new Vec3(-58.7, 65, -158.35925622748834);
+  const start = player.floored();
+  const bank = start.offset(-1, 0, 0);
+  const outside = start.offset(0, 0, 1);
+  let roof = STONE;
+  const native = (p) => p.equals(start) ? [outside, bank] : [];
+  const movements = { getNeighbors: native, canDig: true };
+  const bot = { ...terrain, entity: { position: player, onGround: true }, companionHomeAt: () => home,
+    pathfinder: { movements }, blockAt(p) {
+      if (p.equals(start.offset(0, -1, 0))) return { ...STONE, name: 'sand' };
+      if (p.equals(start.offset(0, 3, 0))) return roof;
+      return p.y < 65 ? STONE : AIR;
+    } };
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, target, options) => {
+    assert.equal(target.isEnd(bank), true);
+    assert.deepEqual(movements.getNeighbors(start), [bank]);
+    assert.equal(movements.canDig, false);
+    bot.entity.position = bank.offset(.5, 0, .5);
+    assert.equal(options.arrived(bot.entity.position), true);
+    return { ok: true };
+  } } });
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: true }) };
+  assert.equal(pearlHomeReturnNeeded(home, player, bot), false);
+  roof = AIR;
+  assert.equal(pearlHomeReturnNeeded(home, player, bot), true);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(records, [{ type: 'pearl_scout_ground_bank', from: start, to: bank }]);
+  assert.equal(movements.getNeighbors, native);
+});
+
 test('an outlying hunter launched at dawn stops attempting recovery after two guarded route failures', async () => {
   const home = new Vec3(0, 64, 0);
   const start = home.offset(0, 0, -56);
