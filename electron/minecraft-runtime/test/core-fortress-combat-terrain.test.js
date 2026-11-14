@@ -199,3 +199,40 @@ test('withdrawal aborts immediately if the chosen dry support turns unsafe', asy
   assert.deepEqual(result, { ok: false, reason: 'fortress_combat_unsafe_footing' });
   assert.equal(bot.pathfinder.goal, null);
 });
+
+test('a body hanging over its centre cell sneaks back onto the exact lip that supports it', async () => {
+  const { bot, set } = world();
+  bot.entity.position = point(-290.5038792238422, 75, -203.8059908336649);
+  const lip = point(-291, 75, -205);
+  const center = lip.offset(.5, 0, .5);
+  set(lip.x, lip.y - 1, lip.z, rock);
+  bot.lookAt = async (at) => assert.ok(at.equals(center.offset(0, 1.6, 0)));
+  bot.pathfinder.goto = () => assert.fail('an unsupported centre may not issue a native path');
+  const control = bot.setControlState;
+  let walked = false;
+  bot.setControlState = (name, value) => {
+    control(name, value);
+    if (name !== 'forward' || !value) return;
+    assert.equal(bot.controlState.sneak, true);
+    bot.entity.position = center.clone();
+    walked = true;
+    bot.emit('physicsTick');
+  };
+  const records = [];
+  const result = await withFortressCombatTerrain(bot, { record: (...args) => records.push(args) },
+    () => assert.fail('combat waits until after retracting to the lip'));
+  assert.deepEqual(result, { ok: true, repositioned: true });
+  assert.ok(walked);
+  assert.equal(records[0][1].mode, 'supported_lip');
+  assert.equal(records[0][1].support, 'nether_bricks');
+  assert.equal(bot.companionSneaking, undefined);
+});
+
+test('lip recovery never walks inward when the body has no horizontal overlap', async () => {
+  const { bot, set } = world();
+  bot.entity.position = point(-290.5038792238422, 75, -203.69);
+  set(-291, 74, -205, rock);
+  bot.lookAt = () => assert.fail('no overlap means no verified grounding');
+  const result = await withFortressCombatTerrain(bot, {}, () => assert.fail('unsupported body must wait'));
+  assert.deepEqual(result, { ok: false, reason: 'fortress_combat_unsafe_footing' });
+});

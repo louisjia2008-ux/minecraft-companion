@@ -542,39 +542,62 @@ async function leaveCombatFooting(bot, ctx, origin, from) {
   const read = (p) => bot.blockAt(p);
   if (!combatOpen(read(from)) || !combatOpen(read(from.offset(0, 1, 0)))) return false;
   const support = read(from.offset(0, -1, 0));
-  if (!combatFooting(bot, from) && support?.name !== 'magma_block') return false;
   const centre = (p) => p.offset(.5, 0, .5);
   const touches = (cell) => Math.abs(cell.x + .5 - origin.x) < .8 - 1e-6
     && Math.abs(cell.z + .5 - origin.z) < .8 - 1e-6;
   const leaving = (cell) => touches(cell);
+  const sides = SCOUT_SIDES.map(([x, z]) => from.offset(x, 0, z));
+  // The body's centre can hang past a step while its collision box still
+  // stands on the bordering tile. Its actual supporting face tells us which
+  // way to sneak, without treating the column under the centre as navigable.
+  const lip = combatOpen(support) && sides.find((cell) => combatFooting(bot, cell) && touches(cell)
+    && read(cell.offset(0, -1, 0)).shapes.some(([x, y, z, right, top, back]) =>
+      !x && !y && !z && right === 1 && back === 1 && Math.abs(cell.y - 1 + top - origin.y) < .02));
+  if (!combatFooting(bot, from) && support?.name !== 'magma_block' && !lip) return false;
   const safeEdge = (to) => combatFooting(bot, to)
     && (from.equals(to) || lookoutMoveSafe(bot, from, to, read));
   const clearLane = (at, to) => combatBodyLane(bot, at, from.y, centre(to).x - at.x, centre(to).z - at.z, leaving);
-  const retry = combatFooting(bot, from) ? [from] : SCOUT_SIDES.flatMap(([x, z]) =>
-    [from.offset(x, 0, z), from.offset(x, 1, z)]);
+  const retry = lip ? [lip] : combatFooting(bot, from) ? [from] : sides.flatMap((p) => [p, p.offset(0, 1, 0)]);
   const to = retry.filter((p) => safeEdge(p) && clearLane(origin, p))
     .sort((a, b) => lavaRisk(bot, a) - lavaRisk(bot, b))[0];
   if (!to) return false;
   const target = centre(to);
+  const toward = target.minus(origin);
   const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(to)
+    && (!lip || bot.entity.position.distanceTo(target) < .19)
     && combatFooting(bot, to) && combatBodyLane(bot, bot.entity.position, to.y, 0, 0);
   const controller = new AbortController();
   const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
   const check = () => {
     const at = bot.entity.position;
+    const backFromLip = lip && (!bot.entity.onGround || at.minus(origin).dot(toward) < -.02);
     if (!inNether(bot) || bot.entity.isInLava || bot.entity.isInWater || !safeEdge(to)
       || at.y < from.y - .05 || at.y > Math.max(from.y, to.y) + 1.3
-      || Math.abs(at.x - origin.x) + Math.abs(at.z - origin.z) > 1.65 || !clearLane(at, to)) {
+      || Math.abs(at.x - origin.x) + Math.abs(at.z - origin.z) > 1.65 || backFromLip || !clearLane(at, to)) {
       controller.abort('fortress_combat_exit_changed');
       actions.haltBody(bot);
     }
   };
   const movements = bot.pathfinder.movements;
   const native = movements.getNeighbors;
+  const oldSneak = bot.companionSneaking;
   bot.on?.('physicsTick', check);
   bot.on?.('forcedMove', check);
   try {
-    if (from.equals(to)) await actions.recentre(bot, { ...ctx, signal });
+    if (lip) {
+      actions.haltBody(bot);
+      bot.companionSneaking = true;
+      bot.setControlState('sneak', true);
+      for (let i = 0; i < 30 && !arrived(); i += 1) {
+        if (signal.aborted) throw abortError(signal);
+        await bot.lookAt(target.offset(0, 1.6, 0), true);
+        check();
+        if (signal.aborted) throw abortError(signal);
+        bot.setControlState('forward', true);
+        await sleep(50, signal);
+      }
+      bot.setControlState('forward', false);
+    } else if (from.equals(to)) await actions.recentre(bot, { ...ctx, signal });
     else {
       movements.getNeighbors = function (node, ...args) {
         return from.equals(node) ? native.call(this, node, ...args)
@@ -588,7 +611,10 @@ async function leaveCombatFooting(bot, ctx, origin, from) {
       }
     }
     if (!await waitUntil(arrived, { timeoutMs: 550, signal })) return false;
-    ctx.record?.('fortress_combat_reposition', { from: origin, to: target, support: support?.name });
+    ctx.record?.('fortress_combat_reposition', {
+      from: origin, to: target, support: (lip ? read(lip.offset(0, -1, 0)) : support)?.name,
+      mode: lip ? 'supported_lip' : from.equals(to) ? 'recentre' : 'leave_hazard',
+    });
     return true;
   } catch (error) {
     if (ctx.signal?.aborted || !controller.signal.aborted || !isAbort(error)) throw error;
@@ -597,6 +623,8 @@ async function leaveCombatFooting(bot, ctx, origin, from) {
     bot.removeListener?.('physicsTick', check);
     bot.removeListener?.('forcedMove', check);
     movements.getNeighbors = native;
+    if (oldSneak === undefined) delete bot.companionSneaking;
+    else bot.companionSneaking = oldSneak;
     actions.haltBody(bot);
   }
 }
