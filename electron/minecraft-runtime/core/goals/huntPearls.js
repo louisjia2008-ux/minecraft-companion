@@ -143,11 +143,12 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   const restingAtHome = (p, centre) => centre && p.distanceTo(centre) <= HOME_RETURN_NEAR;
   const readyToHunt = (state) => state.health >= ENGAGE_HEALTH && state.food >= ENGAGE_FOOD
     && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe'));
-  const visible = (entity, from = bot.entity.position) => {
+  const sight = (entity, from = bot.entity.position) => {
     const eye = from.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
     const point = entity.position.offset(0, ENDERMAN_EYES, 0);
-    return meleeSight(bot, { eye, point, distance: eye.distanceTo(point) }) === 'clear';
+    return meleeSight(bot, { eye, point, distance: eye.distanceTo(point) });
   };
+  const visible = (entity, from) => sight(entity, from) === 'clear';
   const wait = async (ctx, reason) => {
     await sleep(750, ctx.signal);
     return { ok: true, waited: true, reason };
@@ -515,7 +516,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     return null;
   }
 
-  async function scout(ctx, state, focus) {
+  async function scout(ctx, state, focus, occluded = false) {
     const from = bot.entity.position.floored();
     const house = home();
     if (state.inWater || bot.entity.onGround === false) return wait(ctx, 'pearl_wait_for_dry_ground');
@@ -577,7 +578,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     if (!target) target = sectorHop || scoutTarget(from, accept);
     if (!target) return wait(ctx, 'pearl_scout_no_dry_route');
     const goal = new goals.GoalBlock(target.x, target.y, target.z);
-    ctx.record('pearl_surface_scout', { from, target, centre, towardEnderman: Boolean(focus), ...(sectorHop ? { scoutSector } : {}) });
+    ctx.record('pearl_surface_scout', { from, target, centre, towardEnderman: Boolean(focus),
+      ...(focus && occluded ? { occludedEnderman: focus.id } : {}), ...(sectorHop ? { scoutSector } : {}) });
     surface.clear();
     const result = await walkDry(bot, ctx, actions, goal, { timeoutMs: 5000, avoid: (p) => !accept(p) });
     const at = bot.entity.position.floored();
@@ -689,8 +691,10 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       // One in sight but far: stare at its head and let it come. Chased,
       // it teleported off: fourteen nights of chasing brought one pearl.
       // Angry, it comes to the bot, where defend fights it and keeps the pearl.
-      const targets = endermen().filter((e) => e.position.distanceTo(state.position) <= Math.min(radius, STARE_FAR)
-        && visible(e) && targetOutdoors(e.position.floored()));
+      const potential = endermen().filter((e) => e.isValid !== false && e.health !== 0
+        && e.position.distanceTo(state.position) <= Math.min(radius, STARE_FAR) && targetOutdoors(e.position.floored()))
+        .map((entity) => ({ entity, sight: sight(entity) }));
+      const targets = potential.filter((candidate) => candidate.sight === 'clear').map(({ entity }) => entity);
       const camp = !state.inWater && bot.entity.onGround !== false && fightFooting(bot.entity.position.floored());
       const stared = camp ? await stare(ctx, targets) : null;
       if (stared) {
@@ -705,15 +709,18 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
         const restore = applyWalkOnlyMovements(bot);
         try {
           const hunted = await skills.huntOne(bot, ctx, { mobs: MOBS, dropMatch: isPearl, blacklist,
-            radius: Math.min(radius, STARE_NEAR), accept: (e) => close.includes(e) });
+            radius: Math.min(radius, STARE_NEAR), accept: (e) => close.includes(e) && visible(e) });
           if (hunted.ok) { memory.hunted += 1; return hunted; }
           if (hunted.reason !== 'no_mob_in_range') return hunted;
         } finally { restore(); }
       }
-      const focus = targets.filter((e) => !angry(e) && !blacklist.has(`mob:${e.id}`) && !blacklist.has(`approach:${e.id}`)
-        && flatDistance(e.position, memory.centre || state.position) <= SCOUT_RADIUS)
-        .sort((a, b) => a.position.distanceTo(state.position) - b.position.distanceTo(state.position))[0];
-      return scout(ctx, state, focus);
+      const centre = memory.centre || home() || state.position;
+      const focus = potential.filter(({ entity: e, sight: view }) => view !== 'unknown' && !angry(e)
+        && !blacklist.has(`mob:${e.id}`) && !blacklist.has(`approach:${e.id}`)
+        && flatDistance(e.position, centre) <= SCOUT_RADIUS)
+        .sort((a, b) => Number(b.sight === 'clear') - Number(a.sight === 'clear')
+          || a.entity.position.distanceTo(state.position) - b.entity.position.distanceTo(state.position))[0];
+      return scout(ctx, state, focus?.entity, focus?.sight === 'blocked');
     },
   };
 }

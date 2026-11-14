@@ -166,6 +166,46 @@ test('a visible Enderman below dry leaves can be stared at without opening that 
   assert.ok(records.some((r) => r.type === 'enderman_stare_result' && r.came));
 });
 
+test('a loaded occluded Enderman guides the hunter to a dry visible stance before any stare', async () => {
+  const position = new Vec3(0, 64, 0);
+  const viewpoint = new Vec3(0, 64, -2);
+  const flooded = new Vec3(0, 64, 2);
+  const man = { id: 62, name: 'enderman', position: new Vec3(10, 64, 0) };
+  const dry = [position, new Vec3(0, 64, -1), viewpoint];
+  const movements = { getNeighbors: (p) => dry.filter((q) => p.distanceTo(q) === 1)
+    .concat(p.equals(position) ? [flooded.offset(0, 0, -1)] : p.equals(flooded.offset(0, 0, -1)) ? [flooded] : []) };
+  const records = [];
+  let stares = 0;
+  const bot = { ...terrain, entity: { position: position.offset(.5, 0, .5), onGround: true },
+    entities: { 62: man }, companionHomeAt: () => position, pathfinder: { movements },
+    blockAt(p) {
+      if (p.floored().equals(flooded.offset(0, -1, 0))) return { ...AIR, name: 'seagrass' };
+      return terrain.blockAt(p);
+    },
+    world: { raycast: (eye) => eye.z <= -1 ? null : STONE },
+    lookAt: async () => {
+      stares += 1;
+      assert.deepEqual(bot.entity.position.floored(), viewpoint);
+      man.position = new Vec3(4, 64, -2);
+    } };
+  const actions = { haltBody() {}, goTo: async (_bot, _ctx, target) => {
+    assert.equal(stares, 0);
+    assert.ok(target.isEnd(viewpoint));
+    assert.ok(!movements.getNeighbors(flooded.offset(0, 0, -1)).some((p) => p.equals(flooded)));
+    bot.entity.position = viewpoint.offset(.5, 0, .5);
+    return { ok: true };
+  } };
+  const goal = createHuntPearlsGoal({ bot, actions });
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => nightState(bot.entity.position) };
+  await goal.run(ctx);
+  assert.equal(stares, 0);
+  assert.equal(records[0].occludedEnderman, man.id);
+  await goal.run(ctx);
+  assert.equal(stares, 1);
+  assert.ok(records.some((e) => e.type === 'enderman_stare_result' && e.came));
+});
+
 test('dim sky alone, a roof over leaves and wet foliage do not qualify an Enderman', () => {
   const feet = new Vec3(0, 64, 0);
   const leaves = { ...STONE, name: 'oak_leaves' };
