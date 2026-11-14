@@ -6,6 +6,7 @@ const { createGatherMaterialsGoal } = require('../core/goals/gatherMaterials');
 const { perceive } = require('../core/perception');
 const { createStarterHouse } = require('../core/blueprints/starterHouse');
 const { sleep } = require('../core/confirm');
+const { takeItems } = require('../core/skills');
 const { Vec3 } = require('vec3');
 
 function fakeBot(items = []) {
@@ -146,6 +147,114 @@ test('a full-health unarmed respawn seals home and reads supplies before gatheri
   await goal.run(ctx);
   assert.deepEqual(events, ['close', 'chest', 'open', 'gather']);
   assert.equal(perceive(bot).sheltered, false);
+  await goal.dispose();
+});
+
+test('an unarmed respawn reads a reachable chest from a screened part of a damaged house', async (t) => {
+  const house = createStarterHouse({ x: 5, y: 64, z: -13 });
+  const door = house.furniture.door.position;
+  const chest = house.furniture.chest.position;
+  const origin = new Vec3(9.5, 64, -11.5);
+  const westGap = new Vec3(5, 64, -9);
+  const shell = new Set([...house.blocks.map(({ position }) => position), ...house.foundation]
+    .map(({ x, y, z }) => new Vec3(x, y, z).toString()));
+  for (const p of [westGap, westGap.offset(0, 1, 0)]) shell.delete(p.toString());
+  const cases = [
+    { name: 'rock screens the underground skeleton', mob: 'skeleton', at: new Vec3(7.3, 55, -2.58), open: true },
+    { name: 'an exposed skeleton has sight through the opening', mob: 'skeleton', at: new Vec3(4.5, 64, -7.8), open: false },
+    { name: 'a close creeper still blocks the action', mob: 'creeper', at: new Vec3(9.5, 64, -14.5), open: false },
+  ];
+  for (const sample of cases) await t.test(sample.name, async () => {
+    const underRock = sample.at.y < 64;
+    const bot = Object.assign(fakeBot(), { health: 20, food: 20, game: { dimension: 'overworld' },
+      entity: { position: origin.clone(), onGround: true }, time: { timeOfDay: 16000 },
+      entities: { 4: { id: 4, name: sample.mob, position: sample.at } }, canSeeBlock: () => true });
+    bot.blockAt = (p) => {
+      if (p.x === door.x && p.z === door.z && (p.y === door.y || p.y === door.y + 1)) {
+        return { name: 'birch_door', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
+          open: false, facing: 'north', hinge: 'left' }) };
+      }
+      if (p.x === chest.x && p.y === chest.y && p.z === chest.z) return { name: 'chest' };
+      const solid = shell.has(p.toString()) || underRock && p.y === 62;
+      return { name: solid ? 'cobblestone' : 'air', boundingBox: solid ? 'block' : 'empty',
+        shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+    };
+    let opened = 0;
+    bot.openContainer = async () => { opened += 1; return { containerItems: () => [], close() {} }; };
+    const goal = createOutfitGoal({ bot, recoverAtHome: true, items: [{ key: 'stone_sword', count: 1 }],
+      home: { chest, centre: house.interiorCenter, anchor: house.anchor, door }, skills: { takeItems } });
+    const events = [];
+    await goal.run({ perceive: () => perceive(bot), record: (type, detail) => events.push([type, detail]) });
+    assert.equal(opened, Number(sample.open));
+    assert.equal(events.find(([type]) => type === 'resupply_chest_read')[1].reason,
+      sample.open ? 'chest_empty' : 'unsafe_resupply_food_route');
+    assert.ok(bot.entity.position.equals(origin));
+    assert.equal(perceive(bot).sheltered, false, 'a successful interaction does not seal a breached house');
+    await goal.dispose();
+  });
+});
+
+test('daylight rearm can cross the north door above a screened archer under live checks', async () => {
+  const house = createStarterHouse({ x: 5, y: 64, z: -13 });
+  const { door, chest } = house.furniture;
+  const doorway = new Vec3(8, 64, -13);
+  const threshold = doorway.offset(0, 0, 1);
+  const outside = doorway.offset(0, 0, -1);
+  const hole = new Vec3(5, 64, -9);
+  const shell = new Set([...house.blocks.map(({ position }) => position), ...house.foundation]
+    .map(({ x, y, z }) => new Vec3(x, y, z).toString()));
+  for (const p of [hole, hole.offset(0, 1, 0)]) shell.delete(p.toString());
+  const skeleton = { id: 7, name: 'skeleton', position: new Vec3(7.3, 55, -2.58), width: .6, height: 1.99 };
+  const neighbors = (p) => [p.offset(0, 0, -1), p.offset(1, 0, 0), p.offset(-1, 0, 0)];
+  const movements = { getNeighbors: neighbors };
+  let open = false;
+  const bot = Object.assign(fakeBot(), { health: 20, food: 20, game: { dimension: 'overworld' },
+    entity: { position: new Vec3(9.5, 64, -11.5), onGround: true }, time: { timeOfDay: 5000 },
+    entities: { 7: skeleton }, pathfinder: { movements } });
+  bot.blockAt = (p) => {
+    if (p.x === doorway.x && p.z === doorway.z && (p.y === doorway.y || p.y === doorway.y + 1)) {
+      return { name: 'birch_door', getProperties: () => ({ half: p.y === doorway.y ? 'lower' : 'upper',
+        open, facing: 'north', hinge: 'left' }) };
+    }
+    const solid = shell.has(p.toString()) || p.y === 62 || p.equals(outside.offset(0, -1, 0));
+    return { name: solid ? 'cobblestone' : 'air', boundingBox: solid ? 'block' : 'empty',
+      shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.activateBlock = async () => { open = !open; };
+  const operations = [];
+  let replaced = false;
+  const goal = createOutfitGoal({ bot, recoverAtHome: true, items: [{ key: 'stone_sword', count: 1 }],
+    home: { chest: chest.position, centre: house.interiorCenter, anchor: house.anchor, door: door.position },
+    skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }) },
+    createGather: () => ({ isDone: () => false, progress: () => 0,
+      async run(ctx) {
+        operations.push('gather');
+        if (replaced) {
+          skeleton.position = new Vec3(8.5, 64, -17.5);
+          await sleep(400, ctx.signal);
+          assert.fail('a newly exposed shooter must interrupt the rearm');
+        }
+        const permitted = (from, to) => movements.getNeighbors(from).some((cell) => cell.equals(to));
+        assert.equal(permitted(hole, hole.offset(-1, 0, 0)), false);
+        assert.equal(permitted(threshold, doorway), true);
+        assert.equal(permitted(doorway, outside), true);
+        bot.entity.position = doorway.offset(.5, 0, .5);
+        await sleep(120, ctx.signal);
+        bot.entity.position = outside.offset(.5, 0, .5);
+        await sleep(120, ctx.signal);
+        return { ok: true };
+      } }),
+  });
+  const ctx = { perceive: () => perceive(bot), record() {} };
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.equal(open, true);
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(bot.entity.position.equals(outside.offset(.5, 0, .5)));
+  replaced = true;
+  assert.equal((await goal.run(ctx)).reason, 'unsafe_resupply_food_route');
+  assert.deepEqual(operations, ['gather', 'gather']);
+  assert.equal(movements.getNeighbors, neighbors);
   await goal.dispose();
 });
 

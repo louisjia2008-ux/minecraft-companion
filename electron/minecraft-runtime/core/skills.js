@@ -725,11 +725,16 @@ async function storeItems(bot, ctx, { position, items }) {
 }
 
 /** Takes matching items from a chest; ok once the inventory holds more of them. */
-async function takeItems(bot, ctx, { position, itemMatch, count: limit = Infinity }) {
-  const moved = await goToBlock(bot, ctx, position);
-  if (!moved.ok) return moved;
+async function takeItems(bot, ctx, { position, itemMatch, count: limit = Infinity, stationary = false }) {
+  if (stationary) {
+    if (!bot.entity.onGround || !actions.withinReach(bot, v(position))) return fail('station_out_of_reach');
+  } else {
+    const moved = await goToBlock(bot, ctx, position);
+    if (!moved.ok) return moved;
+  }
   const block = bot.blockAt(v(position));
   if (block?.name !== 'chest') return fail('chest_missing');
+  if (stationary && bot.canSeeBlock?.(block) !== true) return fail('station_obstructed');
   const count = () => ownedItems(bot).filter((i) => itemMatch(i.name)).reduce((sum, i) => sum + i.count, 0);
   const before = count();
   let chest;

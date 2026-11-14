@@ -490,6 +490,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   let routeDestination = null;
   let ownsShelterRoute = false;
   let ownsReserveRoute = false;
+  let daylightExit = null;
   let homeCut = null;
   const failedApproaches = createBlacklist({ ttlMs: 12000 });
   const nearShelter = (position) => Boolean(shelter && position && typeof actions.goTo === 'function'
@@ -500,6 +501,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     returned = false; checkedChest = false; lastFoodWait = null; routeInterrupted = false; routeDestination = null;
     ownsShelterRoute = false;
     ownsReserveRoute = false;
+    daylightExit = null;
     homeCut = null;
     failedApproaches.clear();
     clearShelter();
@@ -533,8 +535,35 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const inside = atResupplyHome(state, home, { verticalSlack: (critical || missingDoor) && shelter ? 0 : 1 });
     const doorstep = shelter?.position.offset(.5, 0, -.5);
     const nearbyHostiles = needsProtection || unarmed ? safety.threats(state, true) : [];
-    const exposedUnarmed = unarmed && nearbyHostiles.some((hostile) => RANGED_HOSTILES.has(hostile.name)
+    const ranged = nearbyHostiles.filter((hostile) => RANGED_HOSTILES.has(hostile.name)
       && hostile.position.distanceTo(state.position) <= RANGED_RANGE);
+    const screenedBelow = (hostile, position) => {
+      const dimensions = entityDimensions(bot.entities?.[hostile.id] || hostile, bot.registry);
+      return dimensions && hostile.position.y + dimensions.height <= Math.min(home.anchor.y, position.y) - 1
+        && blocksThreat(bot, hostile, position);
+    };
+    const threshold = shelter?.position;
+    const insideDoor = threshold?.offset(0, 0, 1);
+    const exitFloor = (p) => standable((cell) => cell.equals(threshold) || cell.equals(threshold.offset(0, 1, 0))
+      ? AIR : isPortal(read(cell)) ? null : read(cell), p);
+    const exitCells = threshold && [insideDoor, threshold, doorstep.floored()];
+    const exitIntact = () => shelter.doorOpen() !== null && read(threshold)?.getProperties()?.facing === 'north'
+      && exitCells.every(exitFloor) && [threshold, insideDoor].every((p) => fullBlock(read(p.offset(0, 2, 0))));
+    const exitPoints = exitCells?.map((p) => p.offset(.5, 0, .5));
+    const exitSafe = (hostiles, accept) => hostiles.every((hostile) => exitPoints.every((p) =>
+      hostile.position.distanceTo(p) > safety.threatRange(hostile) || accept(hostile, p)));
+    if (!checkedChest || needsProtection || !unarmed || state.isDay !== true || !shelter
+      || !exitIntact() || !ranged.length) daylightExit = null;
+    else if (!daylightExit && inside && bot.entity.onGround && shelter.doorOpen() === false
+      && shelter.refuge({ position: state.position, hostiles: nearbyHostiles })
+      && ranged.every((hostile) => [state.position, ...exitPoints].every((p) => screenedBelow(hostile, p)))
+      && exitSafe(nearbyHostiles, (hostile) => ranged.includes(hostile))) {
+      daylightExit = new Set(ranged.map((hostile) => hostile.id));
+    }
+    const daylightScreen = (hostile, at) => daylightExit?.has(hostile.id) && RANGED_HOSTILES.has(hostile.name)
+      && screenedBelow(hostile, at);
+    const exposedUnarmed = unarmed && ranged.some((hostile) => !daylightScreen(hostile, state.position));
+    const leavingUnderCover = Boolean(daylightExit && !exposedUnarmed);
     const unarmedShelter = Boolean(shelter && unarmed && (state.isDay === false || exposedUnarmed));
     const threatened = needsProtection && (doorstep && safety.exposed(doorstep, nearbyHostiles, critical)
       || critical && !inside && safety.exposed(state.position, nearbyHostiles, true));
@@ -550,7 +579,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const waitForFood = foodTarget?.kind === 'wait';
     const waitForHealing = critical && state.food >= REGEN_FOOD;
     const holdShelter = waitForDay || waitForFood || waitForHealing || (critical || localReserve) && routeInterrupted;
-    const guardRoute = critical || unarmedShelter || localReserve;
+    const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover;
     ownsShelterRoute = missingDoor && nearShelter(state.position) && (!inside || holdShelter);
     if (shelter && holdShelter) bot.companionResupplySheltered = shelterWitness;
     else clearShelter();
@@ -576,6 +605,11 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     };
     const refuge = (position, hostiles) => missingDoor && shelter.refuge({ position, hostiles });
     const cover = (position, hostiles) => shelter?.covered({ position, hostiles }) === true || refuge(position, hostiles);
+    // Reading a reachable chest can stay in a screened part of a damaged house.
+    // This exception belongs to the stationary interaction, never an approach.
+    const chestRefuge = (position, hostiles) => bot.entity.onGround && shelter?.doorOpen() === false
+      && !hostiles.some((hostile) => hostile.name === 'creeper' && position.distanceTo(hostile.position) <= MELEE_RANGE)
+      && shelter.refuge({ position, hostiles });
     const screenedByRoof = (hostile, from, to, livePosition) => shelterRoute
       && shelter?.overheadPhantom(hostile, from, to, livePosition) === true;
     const unsafeToDig = (at, step, hostiles) => hostiles.some((hostile) => {
@@ -583,23 +617,32 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return Math.min(at.distanceTo(hostile.position), step.distanceTo(hostile.position)) <= range;
     });
     const screenedByWall = (hostile, position) => missingDoor && blocksThreat(bot, hostile, position);
+    const houseBody = (p) => p.x >= home.anchor.x && p.x < home.anchor.x + 7
+      && p.z >= home.anchor.z && p.z < home.anchor.z + 7;
+    const approvedDoorEdge = (at, from) => {
+      const a = at.floored(), b = from.floored();
+      return houseBody(a) === houseBody(b) || shelter.doorOpen() === true
+        && (a.equals(threshold) && b.equals(exitCells[2]) || b.equals(threshold) && a.equals(exitCells[2]));
+    };
     const safeStep = (position, from) => {
       if (!guardRoute && !shelterRoute) return true;
       if (routeDestination && !position.floored().equals(routeDestination)) return false;
       if (safety.homeDistance(position) > radius) return false;
       const hostiles = activeThreats();
-      if (atResupplyHome({ position }, home) && cover(position, hostiles)) return true;
+      if (leavingUnderCover && !approvedDoorEdge(position, from)) return false;
+      if (!leavingUnderCover && atResupplyHome({ position }, home) && cover(position, hostiles)) return true;
       const accepted = hostiles.every((hostile) => {
         const distance = position.distanceTo(hostile.position);
         const range = safety.threatRange(hostile, shelterRoute);
         return distance > range || screenedByRoof(hostile, from, position) || screenedByWall(hostile, position)
+          || leavingUnderCover && daylightScreen(hostile, position) && daylightScreen(hostile, from.scaled(.5).plus(position.scaled(.5)))
           || routeHome && from && from.distanceTo(hostile.position) <= range
           && distance > from.distanceTo(hostile.position) + .05;
       });
       deniedStep ||= !accepted;
       return accepted;
     };
-    const guarded = async (label, run, homebound = false, cardinalApproach = false) => {
+    const guarded = async (label, run, homebound = false, cardinalApproach = false, stationary = false) => {
       if (!guardRoute && !(missingDoor && cardinalApproach)) return run(ctx);
       routeHome = homebound;
       shelterRoute = cardinalApproach;
@@ -619,7 +662,16 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           return;
         }
         if (preparingStep && unsafeToDig(here, preparingStep, hostiles)) { route.abort(UNSAFE_ROUTE); return; }
-        if (cover(here, hostiles)) { last = here.clone(); return; }
+        if (stationary) {
+          if (here.distanceTo(origin) > .15 || !chestRefuge(here, hostiles)) route.abort(UNSAFE_ROUTE);
+          return;
+        }
+        if (leavingUnderCover && (ctx.perceive().isDay !== true || !exitIntact() || !approvedDoorEdge(here, last)
+          || label === 'daylight_exit_door' && !exitSafe(hostiles, daylightScreen))) {
+          route.abort(UNSAFE_ROUTE);
+          return;
+        }
+        if (!leavingUnderCover && cover(here, hostiles)) { last = here.clone(); return; }
         const moving = here.distanceTo(last) > .15;
         for (const threat of hostiles) {
           const distance = here.distanceTo(threat.position);
@@ -627,7 +679,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           if (distance > range) continue;
           const doorPhantom = inwardDoorStep && threat.name === 'phantom';
           if (doorPhantom && screenedByRoof(threat, inwardDoorStep.from, inwardDoorStep.to, here)
-            || screenedByWall(threat, here)) continue;
+            || screenedByWall(threat, here) || leavingUnderCover && daylightScreen(threat, here)) continue;
           if (doorPhantom || !homebound || !previous.has(threat.id) || previous.get(threat.id) > range
             || moving && distance < last.distanceTo(threat.position) - .1) {
             route.abort(UNSAFE_ROUTE);
@@ -795,11 +847,16 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       if (!checkedChest) {
         const wanted = items.filter(({ key, count }) => countKey(key, state.inventory, kb) < count);
         if (wanted.length) {
+          const chest = new Vec3(home.chest.x, home.chest.y, home.chest.z);
+          const hostiles = guardRoute && inside ? activeThreats() : [];
+          const stationary = guardRoute && inside && !cover(state.position, hostiles)
+            && defaultActions.withinReach(bot, chest) && chestRefuge(state.position, hostiles);
           const result = await guarded('read_home_chest', (scoped) => skills.takeItems(bot, scoped, { position: home.chest,
+            ...(stationary && { stationary: true }),
             itemMatch: (name) => wanted.some(({ key }) => kb[key].match(name))
               || (name === 'water_bucket' && critical && !state.inventory.water_bucket)
               || /^(stick|wheat|cobblestone|cobbled_deepslate|coal|charcoal)$/.test(name)
-              || kb.log.match(name) || kb.planks.match(name) }));
+              || kb.log.match(name) || kb.planks.match(name) }), false, false, stationary);
           ctx.record('resupply_chest_read', { ok: result.ok, reason: result.reason, taken: result.taken });
           if (result.waited) return result;
           if (!result.ok && result.reason !== 'chest_empty' && result.reason !== 'chest_missing') return result;
@@ -839,9 +896,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         return guarded(kind, (scoped) => resupplyFood.run(scoped, foodTarget));
       }
       if (shelter?.doorOpen() === false && inside) {
-        return shelter.setDoor(ctx, true);
+        return leavingUnderCover ? guarded('daylight_exit_door', (scoped) => shelter.setDoor(scoped, true)) : shelter.setDoor(ctx, true);
       }
-      return runOutfit(ctx);
+      return leavingUnderCover ? guarded('daylight_exit_rearm', runOutfit) : runOutfit(ctx);
     }, safeStep);
   };
   return goal;
