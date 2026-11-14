@@ -109,6 +109,7 @@ function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blue
     shortfall: {},
     mine: null,
     mineRestart: null,
+    existingMineExit: false,
     cast: null,
     trip: null,
     steps: 0,
@@ -131,7 +132,7 @@ function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blue
   let bowRouteOwnsRecovery = false;
   let lavaRouteOwnsRecovery = false;
   const ownsRouteRecovery = () => stoneRouteOwnsRecovery || bowRouteOwnsRecovery || lavaRouteOwnsRecovery
-    || Boolean(memory.mineRestart) || memory.mine?.changingLevel === true || quarry?.inside() === true;
+    || Boolean(memory.mineRestart) || memory.existingMineExit || memory.mine?.changingLevel === true || quarry?.inside() === true;
   let nightHunt = null;
   let nextBowFoodCheck = 0;
   let bowSearchSince = 0;
@@ -637,6 +638,14 @@ function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blue
   async function climbOut(ctx) {
     const leg = await mining.leaveMine(bot, ctx, memory, actions);
     if (leg) return leg;
+    if (!memory.mine && (memory.existingMineExit || bot.entity.position.y < chest.y - HOME_BELOW)) {
+      const exit = await mining.walkExistingMineExit(bot, ctx, actions, chest.y - HOME_BELOW);
+      if (exit) {
+        memory.existingMineExit = true;
+        return exit;
+      }
+      memory.existingMineExit = false;
+    }
     return surfaceFirst(ctx);
   }
 
@@ -919,7 +928,7 @@ function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blue
     // Out of picks deep in a mine, a walk home dug by hand through deepslate
     // timed out every 20 seconds for two hours: out of the mine first.
     const homeward = nameAt(chest) === null || memory.chest === null;
-    if (homeward && bot.entity.position.y < chest.y - HOME_BELOW) {
+    if (memory.existingMineExit || (homeward && bot.entity.position.y < chest.y - HOME_BELOW)) {
       const up = await climbOut(ctx);
       if (up) return up;
     }

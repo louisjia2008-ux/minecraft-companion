@@ -19,6 +19,7 @@ const defaultSkills = require('./skills');
 const { posKey } = require('./blacklist');
 const { abortError, waitUntil } = require('./confirm');
 const { applyWalkOnlyMovements } = require('./nether');
+const { skyOpen, walkDry } = require('./caveRetreat');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -44,6 +45,8 @@ const TORCH_EVERY = 8;
 const MAX_RETURN_LEGS = 80; // y=-53 and a long main tunnel: some 40 legs from the surface
 const MAX_TURNS = 4;
 const LEVEL_ROUTE_FAILURES = 3;
+const LEVEL_EXIT_RETRY_MS = 5000;
+const DRY_EXIT_LEGS = 24;
 // Directions (relative to the staircase) a boxed-in main tunnel restarts in from its foot.
 const RESTART_SIDES = [1, 3];
 
@@ -177,11 +180,13 @@ async function tossRubble(bot, ctx) {
 async function mineStep(bot, ctx, memory, { blocks, dropMatch, y, blacklist, start = null, actions = defaultActions, skills = defaultSkills }) {
   const feet = bot.entity.position.floored();
   if (memory.mine?.floorRepair) return repairFloor(bot, ctx, memory.mine, skills);
+  if (memory.mine?.changingLevel && memory.mine.levelRouteFailures >= LEVEL_ROUTE_FAILURES) {
+    return leaveBlockedLevel(bot, ctx, memory, actions);
+  }
   const previousLevel = memory.mine?.y;
   const switched = memory.mine && selectMineLevel(bot, memory.mine, y);
   if (switched) ctx.record('mine_level_changed', { from: previousLevel, y, front: posKey(memory.mine.front) });
   const changingLevel = memory.mine?.changingLevel === true;
-  if (changingLevel && memory.mine.levelRouteFailures >= LEVEL_ROUTE_FAILURES) return fail('mine_level_route_blocked');
   // Ore already open to the tunnel first: the ore asked for, and any other
   // ore worth taking that the carried pickaxes can harvest.
   if (memory.mine && !changingLevel) {
@@ -397,7 +402,7 @@ const unkey = (k) => { const [x, y, z] = k.split(',').map(Number); return { x, y
 
 function rejoinGeometry(bot) {
   const read = p => bot.blockAt(new Vec3(p.x, p.y, p.z));
-  const safe = b => b && !LIQUID.test(b.name) && !REJOIN_HAZARDS.has(b.name);
+  const safe = b => b && !LIQUID.test(b.name) && !REJOIN_HAZARDS.has(b.name) && b.getProperties?.()?.waterlogged !== true;
   const falling = b => GRAVITY.has(b.name) || b.name.endsWith('_concrete_powder');
   const clear = p => {
     const b = read(p);
@@ -644,6 +649,85 @@ async function walkLevelChange(bot, ctx, mine, actions) {
   }
 }
 
+/** A blocked level rejoin can retire only after the bot walks its known exit. */
+async function leaveBlockedLevel(bot, ctx, memory, actions) {
+  const { mine } = memory;
+  if (Date.now() < (mine.levelExitRetryAt || 0)) return fail('mine_level_route_blocked');
+  const geometry = rejoinGeometry(bot);
+  const dryAt = (p) => bot.entity.onGround && !bot.entity.isInWater && !bot.entity.isInLava
+    && same(bot.entity.position.floored(), p) && Math.abs(bot.entity.position.y - p.y) < .03 && geometry.standing(p);
+  const blocked = (why) => {
+    mine.levelExitRetryAt = Date.now() + LEVEL_EXIT_RETRY_MS;
+    ctx.record('mine_level_exit_wait', { at: posKey(bot.entity.position.floored()), reason: why });
+    return fail('mine_level_route_blocked');
+  };
+  const from = bot.entity.position.floored();
+  if (!dryAt(from)) return blocked('unsafe_footing');
+  if (same(from, mine.entrance)) {
+    const surface = (p) => skyOpen(bot, new Vec3(p.x, p.y, p.z), { allowLeafCanopy: true });
+    let at = from;
+    if (!surface(from)) {
+      const next = DIRS.flatMap(([dx, dz]) => [0, 1].map(dy => add(from, dx, dy, dz)))
+        .find((p) => geometry.step(from, p) && surface(p));
+      if (!next) return blocked('entrance_has_no_verified_surface');
+      const moved = await walkMineExitStep(bot, ctx, actions, geometry, from, next);
+      if (!moved.ok || !surface(next)) return blocked(moved.reason || 'entrance_surface_changed');
+      at = next;
+    }
+    ctx.record('mine_abandoned', { reason: 'level_route_blocked', at: posKey(at) });
+    memory.mineDir = (mine.dir + 1) % 4;
+    memory.mine = null;
+    return fail('mine_level_route_exited');
+  }
+  const previous = mine.cells[posKey(from)];
+  const to = previous && unkey(previous);
+  if (!to || !geometry.step(from, to)) return blocked('no_verified_entrance_step');
+  const moved = await walkMineExitStep(bot, ctx, actions, geometry, from, to);
+  if (!moved.ok) return blocked(moved.reason);
+  ctx.record('mine_level_exit', { from: posKey(from), to: previous });
+  return { ok: true, progress: false };
+}
+
+async function walkMineExitStep(bot, ctx, actions, geometry, from, to) {
+  const destination = new Vec3(to.x, to.y, to.z);
+  const moved = await walkDry(bot, ctx, actions, new goals.GoalBlock(to.x, to.y, to.z), {
+    adjacent: destination, maxDrop: 0, avoid: (p) => !geometry.step(from, p),
+  });
+  const reached = () => bot.entity.onGround && !bot.entity.isInWater && !bot.entity.isInLava
+    && same(bot.entity.position.floored(), to) && Math.abs(bot.entity.position.y - to.y) < .03 && geometry.standing(to);
+  if ((moved.ok || moved.reason === 'not_arrived')
+    && await waitUntil(reached, { timeoutMs: 500, signal: ctx.signal })) return { ok: true, progress: false };
+  return fail(moved.reason || 'entrance_step_unconfirmed');
+}
+
+// A resumed world has no original tunnel memory. Prefer an already connected
+// staircase to the surface when the entire short exit is actually loaded.
+async function walkExistingMineExit(bot, ctx, actions, minimumY) {
+  const from = bot.entity.position.floored();
+  const geometry = rejoinGeometry(bot);
+  if (!bot.entity.onGround || bot.entity.isInWater || bot.entity.isInLava || !geometry.standing(from)
+    || (from.y >= minimumY && skyOpen(bot, from, { allowLeafCanopy: true }))) return null;
+  const cells = [{ at: from, first: null, distance: 0 }];
+  const seen = new Set([posKey(from)]);
+  for (let i = 0; i < cells.length && i < 600; i += 1) {
+    const { at, first, distance } = cells[i];
+    if (first && at.y >= minimumY && skyOpen(bot, new Vec3(at.x, at.y, at.z), { allowLeafCanopy: true })) {
+      const moved = await walkMineExitStep(bot, ctx, actions, geometry, from, first);
+      if (moved.ok) ctx.record('mine_existing_exit', { from: posKey(from), to: posKey(first), exit: posKey(at) });
+      return moved;
+    }
+    if (distance >= DRY_EXIT_LEGS) continue;
+    for (const [dx, dz] of DIRS) for (const dy of [1, 0]) {
+      const next = add(at, dx, dy, dz);
+      const key = posKey(next);
+      if (seen.has(key) || !geometry.step(at, next)) continue;
+      seen.add(key);
+      cells.push({ at: next, first: first || next, distance: distance + 1 });
+    }
+  }
+  return null;
+}
+
 /**
  * Ore deeper than the mine (redstone after iron): the staircase carries on
  * down from the front, so the way out stays one tunnel. selectMineLevel
@@ -720,5 +804,5 @@ async function maybeTorch(bot, ctx, mine, cell) {
   } catch { /* a torch is a nicety, not progress */ }
 }
 
-module.exports = { installCheapDigging, inspectStep, turn, knownOpen, mineStep, leaveMine, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
+module.exports = { installCheapDigging, inspectStep, turn, knownOpen, mineStep, leaveMine, walkExistingMineExit, walkTunnel, walkToCell, LIQUID, visibleOre, exposed, advance, retarget, pickFor, isLoot,
   LOOT_ORES, DIRS, BRANCH_EVERY, BRANCH_LENGTH, cardinalRejoin };
