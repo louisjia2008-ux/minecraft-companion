@@ -392,6 +392,68 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return bot.entity.onGround && !bot.entity.isInLava && start.distanceTo(target) - here.distanceTo(target) >= 3;
   }
 
+  async function planStructureDetour(ctx, kind, target, range) {
+    const pathfinder = bot.pathfinder;
+    if (!bot.entity.onGround || !pathfinder?.getPathFromTo || typeof pathfinder.movements?.getNeighbors !== 'function') return null;
+    const start = bot.entity.position.clone();
+    if (start.distanceTo(target) <= range + 1) return null;
+    const arrival = new goals.GoalNear(target.x, target.y, target.z, range + 1);
+    return structureWalk(async () => {
+      // Prefer the complete, if longer, path over the closest cell A* reached
+      // before the direct walk timed out. Execute it as short native legs.
+      const profile = Object.create(pathfinder.movements);
+      const observed = new Map();
+      const read = (p) => {
+        const key = posKey(p);
+        if (!observed.has(key)) observed.set(key, bot.blockAt(p));
+        return observed.get(key);
+      };
+      profile.getNeighbors = (node) => nether.lookoutCardinalMoves(bot, node, read).filter((move) => move.distanceTo(start) <= 104);
+      const nearDeck = (node) => kind === 'fortress' && target.distanceTo(node) <= 8
+        && [node, ...HORIZONTAL.map((face) => node.plus(face))].some((p) => [-2, -1, 0]
+          .some((dy) => read(p.offset(0, dy, 0))?.name === 'nether_bricks'));
+      // Prefer the height of the deck when routing toward a first sighting,
+      // which is often the masonry behind or below the actual floor.
+      const height = kind === 'fortress' ? Math.max(target.y, start.y + 8) : target.y;
+      const aim = new Vec3(target.x, height, target.z);
+      const goal = { isEnd: (node) => arrival.isEnd(node) || nearDeck(node), heuristic: (node) => 3 * aim.distanceTo(node) };
+      let closest = null;
+      for (const { result } of pathfinder.getPathFromTo(profile, start, goal, { timeout: 12000, tickTimeout: 18, optimizePath: false })) {
+        if (result.status === 'success') { closest = result.path; break; }
+        if (result.path.length >= 16 && start.distanceTo(aim) - result.path.at(-1).distanceTo(aim) >= 12) closest = result.path;
+        if (result.status !== 'partial') break;
+        await sleep(0, ctx.signal);
+      }
+      if (!closest || closest.length < 3) return null;
+      return closest.filter((_p, i, route) => i % 8 === 7 || i === route.length - 1);
+    });
+  }
+
+  async function followStructureDetour(ctx, kind, target, range) {
+    let detour = memory.structureDetour;
+    if (detour?.kind !== kind || !detour.target.equals(target)) {
+      const route = await planStructureDetour(ctx, kind, target, range);
+      if (!route) return null;
+      detour = { kind, target, range, route };
+      memory.structureDetour = detour;
+    }
+    const next = detour.route[0];
+    const inCell = () => next.equals(bot.entity.position.floored());
+    const arrived = () => bot.entity.onGround && !bot.entity.isInLava && inCell();
+    const hop = new goals.GoalBlock(next.x, next.y, next.z);
+    ctx.record('structure_detour', { kind, target: posKey(target), via: posKey(next), left: detour.route.length });
+    const moved = await structureWalk(() => actions.goTo(bot, ctx, hop, { timeoutMs: 18000, arrived, retryNoProgress: false }));
+    // The native goal can resolve in the destination while a jump is landing.
+    const landed = arrived() || (inCell() && await waitUntil(arrived, { timeoutMs: 650, signal: ctx.signal }));
+    if (!landed) {
+      memory.structureDetour = null;
+      return moved.ok ? fail('structure_detour_not_arrived') : moved;
+    }
+    detour.route.shift();
+    if (!detour.route.length) memory.structureDetour = null;
+    return { ok: true, moved: true };
+  }
+
   // A short, level gap directly in front of a seen deck has a known landing.
   async function crossDeckGap(ctx, stand) {
     const feet = bot.entity.position.floored();
@@ -434,6 +496,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (result.ok || approached(here, stand)) return result.ok ? result : { ok: true, moved: true };
     const crossed = await crossDeckGap(ctx, stand);
     if (crossed?.ok) return crossed;
+    const detour = await followStructureDetour(ctx, kind, stand, 2);
+    if (detour?.ok) return detour;
     blacklist.add(`${kind}:${posKey(target)}`, result.reason);
     return result;
   }
@@ -666,6 +730,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return result;
     }
     if (!inFortress()) {
+      const detour = memory.structureDetour;
+      if (detour?.kind === 'fortress') return followStructureDetour(ctx, detour.kind, detour.target, detour.range);
       if (marooned()) {
         const crossed = await causeway(ctx);
         if (crossed.ok) return crossed;
@@ -683,6 +749,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       if (here.distanceTo(memory.fortress) <= 8) return explore(ctx, memory.fortress);
       return approachStructure(ctx, 'fortress');
     }
+    if (memory.structureDetour?.kind === 'fortress') memory.structureDetour = null;
     if (!memory.visited.fortress) {
       memory.visited.fortress = true;
       ctx.record('structure_entered', { kind: 'fortress', position: posKey(here.floored()) });
@@ -753,8 +820,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   async function approachStructure(ctx, kind, p = memory[kind]) {
     const here = bot.entity.position.clone();
     ctx.record('approach', { kind, target: posKey(p), distance: Math.round(p.distanceTo(here)) });
+    const active = memory.structureDetour;
+    if (active?.kind === kind) return followStructureDetour(ctx, kind, active.target, active.range);
     const result = await walkTowardStructure(ctx, p, 4);
     if (result.ok || approached(here, p)) return result.ok ? result : { ok: true, moved: true };
+    const detour = await followStructureDetour(ctx, kind, p, 4);
+    if (detour?.ok) return detour;
     return explore(ctx, p);
   }
 

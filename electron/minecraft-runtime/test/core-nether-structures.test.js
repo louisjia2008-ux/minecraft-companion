@@ -1008,3 +1008,52 @@ for (const deckKnown of [false, true]) test(`a remote fortress approach and its 
     assert.equal(movements.getNeighbors, nativeNeighbors);
   } finally { goal.dispose(); }
 });
+
+test('a blocked approach keeps its guarded detour across a leg away from the fortress', async () => {
+  const start = new Vec3(0, 65, 0);
+  const nativeNeighbors = () => [];
+  const movements = { getNeighbors: nativeNeighbors, allowParkour: false, allow1by1towers: false,
+    scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() };
+  const calls = [];
+  const path = [new Vec3(-1, 65, 0), new Vec3(-2, 65, 0), new Vec3(-3, 65, 0),
+    new Vec3(-4, 66, 0), new Vec3(-4, 67, 1), new Vec3(-4, 67, 2),
+    new Vec3(-4, 67, 3), new Vec3(-4, 67, 4), new Vec3(-3, 67, 4), new Vec3(-2, 67, 4)];
+  const bot = { ...world(row('nether_bricks', 30, 5)), game: { dimension: 'the_nether' },
+    entity: { position: start, onGround: true },
+    pathfinder: { movements, *getPathFromTo(_profile, position, goal, options) {
+      calls.push('plan');
+      assert.equal(movements.getNeighbors === nativeNeighbors, false);
+      assert.equal(options.optimizePath, false);
+      assert.ok(goal.heuristic(position) > 0);
+      yield { result: { status: 'success', path } };
+    } },
+    inventory: { slots: [], items: () => [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }] },
+    registry: { ...registry, itemsByName: { netherrack: { id: 2 } } } };
+  const actions = {
+    goNear: async () => { calls.push('direct'); return { ok: false, reason: 'NoPath' }; },
+    goTo: async (_bot, _ctx, destination, options) => {
+      calls.push([destination.x, destination.y, destination.z]);
+      assert.equal(movements.getNeighbors === nativeNeighbors, false);
+      bot.entity.position = new Vec3(destination.x + .5, destination.y + .25, destination.z + .5);
+      bot.entity.onGround = false;
+      assert.equal(options.arrived(), false);
+      setTimeout(() => {
+        bot.entity.position.y = destination.y;
+        bot.entity.onGround = true;
+      }, 20);
+      return { ok: false, reason: 'not_arrived' };
+    },
+  };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 6, witherSkulls: 0, trades: 0, actions });
+  goal.memory.fortress = new Vec3(30, 64, 0);
+  goal.memory.netherPortal = new Vec3(-14, 65, 0);
+  const ctx = { record() {}, perceive: () => ({ inventory: { iron_sword: 1 }, health: 20, food: 20 }) };
+  try {
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.ok(bot.entity.onGround);
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.ok(bot.entity.onGround);
+    assert.deepEqual(calls, ['direct', 'plan', [-4, 67, 4], [-2, 67, 4]]);
+    assert.equal(movements.getNeighbors, nativeNeighbors);
+  } finally { goal.dispose(); }
+});

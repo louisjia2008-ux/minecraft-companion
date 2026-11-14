@@ -437,13 +437,12 @@ const lookoutOpen = (b) => lookoutDry(b) && b.boundingBox === 'empty';
 const lookoutSupport = (b) => lookoutDry(b) && b.boundingBox === 'block' && !LOOKOUT_LOOSE.test(b.name)
   && b.shapes?.some(([x, y, z, right, top, back]) => x === 0 && y === 0 && z === 0 && right === 1 && top >= .75 && back === 1);
 
-function lookoutMoveSafe(bot, node, move) {
+function lookoutMoveSafe(bot, node, move, read = (p) => bot.blockAt(p)) {
   const from = new Vec3(node.x, node.y, node.z);
   const to = new Vec3(move.x, move.y, move.z);
   const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
   if (![dx, dy, dz].every(Number.isInteger) || Math.abs(dx) > 1 || Math.abs(dz) > 1 || Math.abs(dy) > 1
     || (!dx && !dz) || move.parkour || move.toPlace?.length) return false;
-  const read = (p) => bot.blockAt(p);
   if (!lookoutSupport(read(to.offset(0, -1, 0)))) return false;
   const cuts = move.toBreak || [];
   const breakable = (p) => {
@@ -468,6 +467,20 @@ function lookoutMoveSafe(bot, node, move) {
     }
   }
   return true;
+}
+
+// A search hint for the native pathfinder. The actual movement still replans
+// each short leg with its native neighbors and the same terrain guard.
+function lookoutCardinalMoves(bot, from, read) {
+  const moves = [];
+  for (const [dx, dz] of SCOUT_SIDES) for (const dy of [0, 1, -1]) {
+    const to = new Vec3(from.x + dx, from.y + dy, from.z + dz);
+    if (!lookoutSupport(read(to.offset(0, -1, 0)))) continue;
+    const cuts = dy ? [] : [to, to.offset(0, 1, 0)].filter((p) => !lookoutOpen(read(p)));
+    const move = Object.assign(to, { hash: posKey(to), cost: 1 + 1.25 * cuts.length, toBreak: cuts, toPlace: [] });
+    if (lookoutMoveSafe(bot, from, move, read)) moves.push(move);
+  }
+  return moves;
 }
 
 /** Limits a plain Nether lookout leg to loaded ground or a checked horizontal cut. */
@@ -543,5 +556,5 @@ module.exports = {
   netherScaffolding, scaffoldCount, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, scoutPortalSite, portalScoutStep,
   buildPortalStep, ignite, travel, leavePortal,
-  applyNetherMovements, applyWalkOnlyMovements, withLookoutTerrain, lavaRisk, lavaNear, NEVER_BREAK,
+  applyNetherMovements, applyWalkOnlyMovements, withLookoutTerrain, lookoutCardinalMoves, lavaRisk, lavaNear, NEVER_BREAK,
 };
