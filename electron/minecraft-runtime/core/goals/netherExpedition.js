@@ -33,6 +33,8 @@ const SCAN_EVERY_MS = 10000;
 const HUNT_HEALTH = 15;
 // How far above or below the bot a wither skeleton is still hunted.
 const HUNT_DY_WITHER = 12;
+const BLAZE_SPAWN_RANGE = 15;
+const SPAWNER_LEG_RANGE = 12;
 
 function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trades = 10, roam = 400, skullTries = 0,
   skills = defaultSkills, actions = defaultActions } = {}) {
@@ -383,6 +385,27 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   }
 
   const structureWalk = (run) => nether.withLookoutTerrain(bot, run);
+  const safeSpawnerMove = (move, read) => !move.toBreak?.length && !move.toPlace?.length
+    && nether.lavaRisk({ blockAt: read }, new Vec3(move.x, move.y, move.z)) === 0;
+
+  function walkSpawnerLeg(ctx, goal, arrived) {
+    return structureWalk(async () => {
+      const movement = bot.pathfinder.movements;
+      const previous = movement.getNeighbors;
+      const start = bot.entity.position.clone();
+      const read = (p) => bot.blockAt(p);
+      function boundedNeighbors(node) {
+        return previous.call(this, node).filter((move) => start.distanceTo(move) <= SPAWNER_LEG_RANGE && safeSpawnerMove(move, read));
+      }
+      movement.getNeighbors = boundedNeighbors;
+      try {
+        return await actions.goTo(bot, ctx, goal, { timeoutMs: 18000, arrived, retryNoProgress: false });
+      } finally {
+        if (movement.getNeighbors === boundedNeighbors) movement.getNeighbors = previous;
+      }
+    });
+  }
+
   function walkTowardStructure(ctx, target, range) {
     return structureWalk(() => actions.goNear(bot, ctx, target, range, { timeoutMs: 25000, retryNoProgress: false }));
   }
@@ -396,7 +419,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const pathfinder = bot.pathfinder;
     if (!bot.entity.onGround || !pathfinder?.getPathFromTo || typeof pathfinder.movements?.getNeighbors !== 'function') return null;
     const start = bot.entity.position.clone();
-    if (start.distanceTo(target) <= range + 1) return null;
+    if (start.distanceTo(target) <= range + (kind === 'spawner' ? 0 : 1)) return null;
     const arrival = new goals.GoalNear(target.x, target.y, target.z, range + 1);
     return structureWalk(async () => {
       // Prefer the complete, if longer, path over the closest cell A* reached
@@ -408,7 +431,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
         if (!observed.has(key)) observed.set(key, bot.blockAt(p));
         return observed.get(key);
       };
-      profile.getNeighbors = (node) => nether.lookoutCardinalMoves(bot, node, read).filter((move) => move.distanceTo(start) <= 104);
+      profile.getNeighbors = (node) => nether.lookoutCardinalMoves(bot, node, read).filter((move) => move.distanceTo(start) <= 104
+        && (kind !== 'spawner' || safeSpawnerMove(move, read)));
       const nearDeck = (node) => kind === 'fortress' && target.distanceTo(node) <= 8
         && [node, ...HORIZONTAL.map((face) => node.plus(face))].some((p) => [-2, -1, 0]
           .some((dy) => read(p.offset(0, dy, 0))?.name === 'nether_bricks'));
@@ -416,7 +440,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       // which is often the masonry behind or below the actual floor.
       const height = kind === 'fortress' ? Math.max(target.y, start.y + 8) : target.y;
       const aim = new Vec3(target.x, height, target.z);
-      const goal = { isEnd: (node) => arrival.isEnd(node) || nearDeck(node), heuristic: (node) => 3 * aim.distanceTo(node) };
+      const goal = { isEnd: (node) => kind === 'spawner' ? target.distanceTo(node.offset(.5, 0, .5)) <= range - 1
+        : arrival.isEnd(node) || nearDeck(node), heuristic: (node) => 3 * aim.distanceTo(node) };
       let closest = null;
       for (const { result } of pathfinder.getPathFromTo(profile, start, goal, { timeout: 12000, tickTimeout: 18, optimizePath: false })) {
         if (result.status === 'success') { closest = result.path; break; }
@@ -424,14 +449,16 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
         if (result.status !== 'partial') break;
         await sleep(0, ctx.signal);
       }
-      if (!closest || closest.length < 3) return null;
+      if (!closest || closest.length < (kind === 'spawner' ? 1 : 3)) return null;
       return closest.filter((_p, i, route) => i % 8 === 7 || i === route.length - 1);
     });
   }
 
   async function followStructureDetour(ctx, kind, target, range) {
     let detour = memory.structureDetour;
-    if (detour?.kind !== kind || !detour.target.equals(target)) {
+    const displaced = kind === 'spawner' && detour?.kind === kind
+      && bot.entity.position.distanceTo(detour.route[0]) > SPAWNER_LEG_RANGE;
+    if (detour?.kind !== kind || !detour.target.equals(target) || displaced) {
       const route = await planStructureDetour(ctx, kind, target, range);
       if (!route) return null;
       detour = { kind, target, range, route };
@@ -442,7 +469,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const arrived = () => bot.entity.onGround && !bot.entity.isInLava && inCell();
     const hop = new goals.GoalBlock(next.x, next.y, next.z);
     ctx.record('structure_detour', { kind, target: posKey(target), via: posKey(next), left: detour.route.length });
-    const moved = await structureWalk(() => actions.goTo(bot, ctx, hop, { timeoutMs: 18000, arrived, retryNoProgress: false }));
+    const moved = kind === 'spawner' ? await walkSpawnerLeg(ctx, hop, arrived)
+      : await structureWalk(() => actions.goTo(bot, ctx, hop, { timeoutMs: 18000, arrived, retryNoProgress: false }));
     // The native goal can resolve in the destination while a jump is landing.
     const landed = arrived() || (inCell() && await waitUntil(arrived, { timeoutMs: 650, signal: ctx.signal }));
     if (!landed) {
@@ -672,6 +700,22 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return wanted;
   }
 
+  async function pursueSpawner(ctx, here) {
+    const spawner = memory.spawner;
+    if (!spawner) return null;
+    if (here.distanceTo(spawner) <= BLAZE_SPAWN_RANGE) {
+      if (memory.structureDetour?.kind === 'spawner') memory.structureDetour = null;
+      return null;
+    }
+    const result = await followStructureDetour(ctx, 'spawner', spawner, BLAZE_SPAWN_RANGE);
+    if (result?.ok) return result;
+    blacklist.add(`spawner:${posKey(spawner)}`, result?.reason || 'spawner_route_unavailable', 60000);
+    memory.spawner = null;
+    memory.waitSince = 0;
+    memory.spawnerWaiting = false;
+    return null;
+  }
+
   async function fortressStep(ctx, state) {
     const mobs = fortressTarget(state);
     const here = bot.entity.position;
@@ -729,7 +773,38 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       }
       return result;
     }
-    if (!inFortress()) {
+    const onDeck = inFortress();
+    if (onDeck) {
+      if (memory.structureDetour?.kind === 'fortress') memory.structureDetour = null;
+      if (!memory.visited.fortress) {
+        memory.visited.fortress = true;
+        ctx.record('structure_entered', { kind: 'fortress', position: posKey(here.floored()) });
+      }
+    }
+    if (mobs.includes('blaze')) {
+      // The first recorded bricks can be at the end of a different wing.
+      // Search the loaded fortress from the current deck, and keep the
+      // observed spawner only while its block remains loaded and intact.
+      if (memory.spawner && bot.blockAt(memory.spawner)?.name !== 'spawner') {
+        memory.spawner = null;
+        memory.waitSince = 0;
+        memory.spawnerWaiting = false;
+        if (memory.structureDetour?.kind === 'spawner') memory.structureDetour = null;
+      }
+      if (onDeck && !memory.spawner && Date.now() >= (memory.nextSpawnerScan || 0)) {
+        memory.nextSpawnerScan = Date.now() + 5000;
+        memory.spawner = structures.findSpawners(bot, here, 128)
+          .find((p) => !blacklist.has(`spawner:${posKey(p)}`) && bot.blockAt(p)?.name === 'spawner'
+            && deckFloor(p, 8, 1).length) || null;
+        if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner), from: posKey(here.floored()) });
+      }
+      if (memory.spawner && (onDeck || memory.structureDetour?.kind === 'spawner')) {
+        const leg = await pursueSpawner(ctx, here);
+        if (leg) return leg;
+      }
+    }
+    const byspawner = memory.spawner && rods(state) < blazeRods && here.distanceTo(memory.spawner) <= BLAZE_SPAWN_RANGE;
+    if (!onDeck && !byspawner) {
       const detour = memory.structureDetour;
       if (detour?.kind === 'fortress') return followStructureDetour(ctx, detour.kind, detour.target, detour.range);
       if (marooned()) {
@@ -749,32 +824,22 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       if (here.distanceTo(memory.fortress) <= 8) return explore(ctx, memory.fortress);
       return approachStructure(ctx, 'fortress');
     }
-    if (memory.structureDetour?.kind === 'fortress') memory.structureDetour = null;
-    if (!memory.visited.fortress) {
-      memory.visited.fortress = true;
-      ctx.record('structure_entered', { kind: 'fortress', position: posKey(here.floored()) });
-    }
-    if (!memory.spawner) {
-      memory.spawner = structures.findSpawners(bot, memory.fortress, 96)[0] || null;
-      if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner) });
-    }
     // Blazes come from the spawner; wither skeletons spawn anywhere in the fortress.
     // Wait by the spawner a while, then walk the corridors for a bit.
     const now = Date.now();
     if (!memory.waitSince) memory.waitSince = now;
-    const byspawner = memory.spawner && rods(state) < blazeRods;
     if (byspawner && now - memory.waitSince < 45000) {
-      if (here.distanceTo(memory.spawner) > 7) {
-        const floor = deckFloor(memory.spawner, 8, 32)
-          .filter((p) => p.distanceTo(memory.spawner) >= 3)
-          .sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
-        if (floor.length) return approach(ctx, 'spawner', floor);
+      if (!memory.spawnerWaiting) {
+        ctx.record('spawner_in_range', { position: posKey(memory.spawner), from: posKey(here.floored()),
+          distance: here.distanceTo(memory.spawner) });
+        memory.spawnerWaiting = true;
       }
       actions.haltBody(bot);
       await sleep(2000, ctx.signal);
       return { ok: true, waited: true };
     }
     memory.waitSince = 0;
+    memory.spawnerWaiting = false;
     return patrol(ctx, memory.fortress, 'fortress', state);
   }
 
