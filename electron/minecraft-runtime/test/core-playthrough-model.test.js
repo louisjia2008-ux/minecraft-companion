@@ -255,6 +255,25 @@ test('an angry Enderman must finish the fight before a hungry pearl hunter retur
   assert.equal(state.snack, true);
 });
 
+test('a pearl hunt that cannot fight at thirteen food asks for guarded home supplies at night', async () => {
+  const { context, asked, state } = modelContext({ step: 'pearls', goal: { name: 'hunt_pearls', generation: 1 },
+    armour: ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots'], pick: true });
+  const house = createStarterHouse({ x: -105, y: 64, z: -182 });
+  context.companion.director = { memory: { homestead: { memory: { house } } } };
+  context.bot.inventory.slots[45] = { name: 'shield', count: 1 };
+  context.bot.food = 13;
+  context.bot.time.day = 5;
+  const plot = new Vec3(-113, 62, -180);
+  state.goals.farm = { memory: { plots: [plot] } };
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked, [{ task: 'outfit', args: { items: [{ key: 'food', count: 3 }],
+    recoverAtHome: true, farmPlots: [{ x: -113, y: 62, z: -180 }] } }]);
+  assert.equal(state.pearlFoodRestock.urgent, true);
+  await playthroughNatural.onTick(context);
+  assert.equal(asked.length, 1);
+  assert.equal(state.pearlFoodRestock.urgent, true);
+});
+
 test('a lost bow after eyes preparation restocks the End weapons without recrafting spent eyes', async () => {
   const { context, asked, state } = modelContext({ step: 'end', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
   state.rearm = true;

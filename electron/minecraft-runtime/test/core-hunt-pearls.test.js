@@ -316,6 +316,31 @@ test('after an angry Enderman approaches, the hunter lets it close instead of sc
   assert.equal((await goal.run(ctx)).reason, 'pearl_scout_no_dry_route');
 });
 
+test('an angry Enderman that stays eight blocks away does not monopolize repeated stares', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+  const position = new Vec3(0, 64, 0);
+  const man = { id: 9, name: 'enderman', position: new Vec3(8, 64, 0), metadata: [true] };
+  const bot = { ...terrain, entity: { position, onGround: true }, entities: { 9: man },
+    registry: { entitiesByName: { enderman: { metadataKeys: ['creepy'] } } }, look: async () => {} };
+  const goal = createHuntPearlsGoal({ bot });
+  const events = [];
+  const ctx = { signal: new AbortController().signal, record: (type, data) => events.push({ type, ...data }),
+    perceive: () => nightState(position) };
+  const original = goal.run(ctx);
+  for (let i = 0; i < 120; i += 1) {
+    await Promise.resolve();
+    t.mock.timers.tick(100);
+    await Promise.resolve();
+  }
+  await original;
+  const next = goal.run(ctx);
+  await Promise.resolve();
+  t.mock.timers.tick(750);
+  await next;
+  assert.equal(events.filter(({ type }) => type === 'enderman_stare').length, 1);
+  assert.equal(goal.memory.lured, null);
+});
+
 test('scouting owns short dry surface legs and skips underground targets', async () => {
   const player = new Vec3(0, 64, 0);
   const safe = new Vec3(8, 64, 0);

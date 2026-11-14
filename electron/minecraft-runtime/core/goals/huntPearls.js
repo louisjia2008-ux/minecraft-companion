@@ -214,8 +214,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
     if (endermen().some((e) => angry(e) && e.position.distanceTo(here) <= STARE_NEAR)) return null;
     const near = targets.map((e) => ({ e, d: e.position.distanceTo(here) }))
       .filter(({ d }) => d > STARE_NEAR && d <= STARE_FAR);
-    const turned = near.filter(({ e }) => angry(e)).sort((a, b) => a.d - b.d)[0];
-    const target = turned || near.filter(({ e }) => !blacklist.has(`stare:${e.id}`)).sort((a, b) => a.d - b.d)[0];
+    const target = near.filter(({ e }) => !blacklist.has(`stare:${e.id}`))
+      .sort((a, b) => Number(angry(b.e)) - Number(angry(a.e)) || a.d - b.d)[0];
     if (!target) return null;
     const { e } = target;
     blacklist.add(`stare:${e.id}`, 'stared', STARE_AGAIN_MS);
@@ -233,7 +233,9 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
       await sleep(100, ctx.signal);
     }
     const came = Boolean(bot.entities?.[e.id]) && e.position.distanceTo(bot.entity.position) <= STARE_NEAR;
-    if (turnedAt) memory.lured = { id: e.id, until: Date.now() + LURE_HOLD_MS };
+    const approached = turnedAt && e.position.distanceTo(here) < target.d - 1;
+    if (turnedAt && (came || approached)) memory.lured = { id: e.id, until: Date.now() + LURE_HOLD_MS };
+    if (turnedAt && !came && !approached) blacklist.add(`stare:${e.id}`, 'enderman_did_not_approach');
     ctx.record('enderman_stare_result', { id: e.id, came, angry: angry(e), turnedMs: turnedAt ? turnedAt - started : null,
       gone: !bot.entities?.[e.id], distance: Math.round(e.position.distanceTo(bot.entity.position)) });
     return { ok: true, progress: came, waited: !came };

@@ -243,7 +243,8 @@ async function provisionPearlScouts(context) {
   const time = bot.time?.timeOfDay;
   const active = companion.status().goal;
   if (state.pearlFoodRestock && state.pearlFoodRestock.generation === active?.generation) {
-    if (time >= 12500 || expeditionFoodCount(bot, state.lastPerceive.inventory) >= 3) {
+    if ((!state.pearlFoodRestock.urgent && time >= 12500)
+      || expeditionFoodCount(bot, state.lastPerceive.inventory) >= 3) {
       state.pearlFoodRestock = null;
       state.replace = Boolean(active);
       return false;
@@ -253,9 +254,11 @@ async function provisionPearlScouts(context) {
   state.pearlFoodRestock = null;
   const home = companion.director && houseOf(companion)?.interiorCenter;
   const position = bot.entity?.position;
-  if (!Number.isSafeInteger(day) || !Number.isFinite(time) || time >= 10000
-    || state.pearlFoodRestockDay === day || active || !home || !position || position.distanceTo(home) > 16
-    || !pearlWantsWide(state) || !fullArmorWorn(bot)
+  const cannotFightHungry = bot.food < 15 && !safeFood(bot);
+  if (!Number.isSafeInteger(day) || !Number.isFinite(time) || !home || !position || !fullArmorWorn(bot)
+    || state.pearlFoodRestockDay === day
+    || (cannotFightHungry ? fightingEnderman(bot, active) || Boolean(active && active.name !== 'hunt_pearls')
+      : time >= 10000 || active || position.distanceTo(home) > 16 || !pearlWantsWide(state))
     || expeditionFoodCount(bot, state.lastPerceive.inventory) >= 3) return false;
   const farmPlots = farmPlotPositions(state);
   if (!farmPlots.length) return false;
@@ -264,7 +267,7 @@ async function provisionPearlScouts(context) {
   write('model_ask', { step: 'pearl_food_restock', task: 'outfit', args, day });
   await companion.submitTask('outfit', args);
   const goal = companion.status().goal;
-  if (goal) state.pearlFoodRestock = { generation: goal.generation };
+  if (goal) state.pearlFoodRestock = { generation: goal.generation, urgent: cannotFightHungry };
   return true;
 }
 
