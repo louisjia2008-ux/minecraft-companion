@@ -26,6 +26,7 @@ const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { upgrades } = require('../armor');
 const { entityDimensions } = require('../entityGeometry');
 const { isHostile, perceive } = require('../perception');
+const { isThreateningMobEntity } = require('../../vendor/server/minecraft/entitySemantics');
 const { advanceCaveRetreat, caveFootingBank, farmlandFooting, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { createResupplyIrrigation } = require('./resupplyFarm');
 
@@ -380,7 +381,8 @@ function localFoodSafety(bot, home) {
       // A skeleton at the farm can be in range of the next step while still
       // outside the ordinary perception radius from the house.
       observed = Object.values(bot.entities || {}).filter((entity) => entity.position && entity.isValid !== false
-        && isHostile(entity) && !bot.companionSpare?.(entity));
+        && isHostile(entity) && (entity.name !== 'enderman' || isThreateningMobEntity(entity, bot.registry))
+        && !bot.companionSpare?.(entity));
     }
     return [...observed, ...(state.hostiles || []).filter((hostile) => hostile.selfAggressor)];
   };
