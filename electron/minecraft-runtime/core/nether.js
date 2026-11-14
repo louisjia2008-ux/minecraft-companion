@@ -9,7 +9,7 @@
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const actions = require('./actions');
-const { waitUntil, runCancellable, sleep } = require('./confirm');
+const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { posKey } = require('./blacklist');
 const { skyOpen, standable } = require('./caveRetreat');
 
@@ -484,14 +484,14 @@ function lookoutCardinalMoves(bot, from, read) {
 }
 
 /** Limits a plain Nether lookout leg to loaded ground or a checked horizontal cut. */
-async function withLookoutTerrain(bot, run) {
+async function withLookoutTerrain(bot, run, accept = () => true) {
   const movements = bot.pathfinder?.movements;
   const neighbors = movements?.getNeighbors;
   if (typeof neighbors !== 'function') return run();
   const keys = ['getNeighbors', 'allowParkour', 'allow1by1towers', 'infiniteLiquidDropdownDistance'];
   const saved = keys.map((key) => [key, Object.hasOwn(movements, key), movements[key]]);
   const guarded = function (node, ...args) {
-    return neighbors.call(this, node, ...args).filter((move) => lookoutMoveSafe(bot, node, move));
+    return neighbors.call(this, node, ...args).filter((move) => accept(move) && lookoutMoveSafe(bot, node, move));
   };
   Object.assign(movements, { getNeighbors: guarded, allowParkour: false, allow1by1towers: false, infiniteLiquidDropdownDistance: false });
   try {
@@ -502,6 +502,113 @@ async function withLookoutTerrain(bot, run) {
       else delete movements[key];
     }
   }
+}
+
+const FORTRESS_COMBAT_RADIUS = 12;
+const COMBAT_PORTAL = /^(nether_portal|end_portal|end_gateway)$/;
+const combatOpen = (block) => lookoutOpen(block) && !COMBAT_PORTAL.test(block.name);
+
+function combatFooting(bot, p) {
+  return lookoutSupport(bot.blockAt(p.offset(0, -1, 0)))
+    && combatOpen(bot.blockAt(p)) && combatOpen(bot.blockAt(p.offset(0, 1, 0))) && lavaRisk(bot, p) === 0;
+}
+
+function combatBodyLane(bot, position, floorY, dx, dz) {
+  // Native path nodes are centred, but following an entity can cut a corner
+  // before that centre. Check the real 0.6-wide body and its braking distance.
+  for (const fraction of [0, 0.5, 1]) {
+    const x = position.x + dx * fraction;
+    const z = position.z + dz * fraction;
+    for (let i = Math.floor(x - .3 + 1e-6); i <= Math.floor(x + .3 - 1e-6); i += 1) {
+      for (let j = Math.floor(z - .3 + 1e-6); j <= Math.floor(z + .3 - 1e-6); j += 1) {
+        const cell = new Vec3(i, floorY, j);
+        if (combatFooting(bot, cell)) continue;
+        if (combatOpen(bot.blockAt(cell)) && combatFooting(bot, cell.offset(0, -1, 0))) continue;
+        // A full step up or a wall physically stops the horizontal body. It
+        // still needs a verified dry supporting face, rather than a fluid.
+        if (lookoutSupport(bot.blockAt(cell))) continue;
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Keep combat, pursuit and drop recovery on nearby, loaded Nether footing. */
+async function withFortressCombatTerrain(bot, ctx, run) {
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const pathfinder = bot.pathfinder;
+  const movements = pathfinder?.movements;
+  if (!movements && typeof bot.blockAt !== 'function') return run(ctx);
+  const position = bot.entity?.position;
+  if (!position || typeof movements?.getNeighbors !== 'function' || typeof bot.blockAt !== 'function') {
+    return fail('fortress_combat_unsafe_footing');
+  }
+  const origin = position.clone();
+  const floorAt = (p) => Math.ceil(p.y - .001);
+  let floorY = floorAt(origin);
+  const controller = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
+  const atFoot = (p) => new Vec3(Math.floor(p.x), floorAt(p), Math.floor(p.z));
+  const stop = (reason) => {
+    controller.abort(reason);
+    actions.haltBody(bot);
+    ctx.record?.('fortress_combat_terrain_blocked', { reason, origin, position: bot.entity?.position, floorY });
+  };
+  if (!inNether(bot) || !bot.entity.onGround || !combatFooting(bot, atFoot(origin)) || !combatBodyLane(bot, origin, floorY, 0, 0)) {
+    stop('fortress_combat_unsafe_footing');
+    return fail(controller.signal.reason);
+  }
+  const check = () => {
+    if (signal.aborted) return;
+    const entity = bot.entity;
+    const p = entity.position;
+    if (!inNether(bot) || entity.isInLava || entity.isInWater || p.y < floorY - 1.05) {
+      stop('fortress_combat_unsafe_footing');
+      return;
+    }
+    if (p.distanceTo(origin) > FORTRESS_COMBAT_RADIUS) {
+      stop('fortress_combat_move_limit');
+      return;
+    }
+    if (entity.onGround && combatFooting(bot, atFoot(p))) floorY = floorAt(p);
+    const controls = bot.controlState || {};
+    const yaw = entity.yaw || 0;
+    const along = Number(Boolean(controls.forward)) - Number(Boolean(controls.back));
+    const across = Number(Boolean(controls.right)) - Number(Boolean(controls.left));
+    const dx = (entity.velocity?.x || 0) * 1.8 - .24 * (along * Math.sin(yaw) + across * Math.cos(yaw));
+    const dz = (entity.velocity?.z || 0) * 1.8 + .24 * (along * Math.cos(yaw) - across * Math.sin(yaw));
+    if (!combatBodyLane(bot, p, floorY, dx, dz)) stop('fortress_combat_unsafe_footing');
+  };
+  const restoreWalk = applyWalkOnlyMovements(bot);
+  const saved = [[movements, 'allowSprinting', movements.sprintSetting ?? movements.allowSprinting],
+    [movements, 'allowFreeMotion', movements.allowFreeMotion], [pathfinder, 'enablePathShortcut', pathfinder.enablePathShortcut]]
+    .map(([owner, key, value]) => [owner, key, Object.hasOwn(owner, key), value]);
+  for (const [owner, key] of saved) owner[key] = false;
+  bot.setControlState?.('sprint', false);
+  bot.on?.('physicsTick', check);
+  bot.on?.('forcedMove', check);
+  try {
+    check();
+    if (!controller.signal.aborted) {
+      const accept = (move) => !move.toBreak?.length && combatFooting(bot, new Vec3(move.x, move.y, move.z))
+        && new Vec3(move.x + .5, move.y, move.z + .5).distanceTo(origin) <= FORTRESS_COMBAT_RADIUS;
+      const result = await withLookoutTerrain(bot, () => run({ ...ctx, signal }), accept);
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      if (!controller.signal.aborted) return result;
+    }
+  } catch (error) {
+    if (!controller.signal.aborted || ctx.signal?.aborted || !isAbort(error)) throw error;
+  } finally {
+    bot.removeListener?.('physicsTick', check);
+    bot.removeListener?.('forcedMove', check);
+    for (const [owner, key, owned, value] of saved) {
+      if (owned) owner[key] = value;
+      else delete owner[key];
+    }
+    restoreWalk();
+  }
+  return fail(controller.signal.reason);
 }
 
 /**
@@ -556,5 +663,5 @@ module.exports = {
   netherScaffolding, scaffoldCount, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, scoutPortalSite, portalScoutStep,
   buildPortalStep, ignite, travel, leavePortal,
-  applyNetherMovements, applyWalkOnlyMovements, withLookoutTerrain, lookoutCardinalMoves, lavaRisk, lavaNear, NEVER_BREAK,
+  applyNetherMovements, applyWalkOnlyMovements, withLookoutTerrain, withFortressCombatTerrain, lookoutCardinalMoves, lavaRisk, lavaNear, NEVER_BREAK,
 };
