@@ -44,6 +44,8 @@ const RANGED_RANGE = 16;
 const MELEE_RANGE = 8;
 const SHELTER_MELEE_RANGE = 5;
 const UNSAFE_ROUTE = 'unsafe_resupply_food_route';
+const HOME_DETOUR_RADIUS = 28;
+const HOME_DETOUR_STEPS = 80;
 const APPROACH_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const APPROACH_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
 const isPortal = (block) => block?.name === 'nether_portal' || block?.name === 'end_portal';
@@ -274,7 +276,7 @@ async function onSurfacePath(bot, home, run, accept = () => true) {
 
 // Find the next physical foothold, then let the native follower execute only
 // that leg. An adjacent door can be crossed only after both halves are open.
-function shelterApproach(read, shelter, from, target, accept, failed = noFailedSteps, farmlandStart = null, knownDoor = false) {
+function shelterApproach(read, shelter, from, target, accept, failed = noFailedSteps, farmlandStart = null, knownDoor = false, detourSteps = 0) {
   const door = shelter.position;
   const isDoor = (p) => p.equals(door);
   const dryRead = (p) => {
@@ -302,17 +304,18 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
   };
   // A higher first leg may still need to descend to the verified doorstep.
   // Keep the same physical one-block limit on each individual leg.
-  const floor = Math.max(door.y - 5, knownDoor ? Math.min(door.y, from.y - 1) : from.y - 1);
+  const floor = detourSteps ? door.y - 5 : Math.max(door.y - 5, knownDoor ? Math.min(door.y, from.y - 1) : from.y - 1);
   const queue = [{ at: from, first: null, steps: 0 }];
   const seen = new Set([posKey(from)]);
-  for (let i = 0; i < queue.length && i < 1200; i += 1) {
+  for (let i = 0; i < queue.length && i < (detourSteps ? 3600 : 1200); i += 1) {
     const { at, first, steps } = queue[i];
     if (first && dry(at) && (typeof target === 'function' ? target(at) : at.equals(target))) return { first, safeLeg, dry, farm, steps };
-    if (steps >= 28) continue;
+    if (steps >= (detourSteps || 28)) continue;
     for (const [x, z] of APPROACH_SIDES) for (const y of [0, 1, -1]) {
       const next = at.offset(x, y, z);
       const id = posKey(next);
-      if (seen.has(id) || next.y < floor || next.y > door.y + 2 || Math.hypot(next.x - door.x, next.z - door.z) > 20
+      if (seen.has(id) || next.y < floor || next.y > door.y + 2
+        || Math.hypot(next.x - door.x, next.z - door.z) > (detourSteps ? HOME_DETOUR_RADIUS : 20)
         || (!first && failed.has(`${posKey(at)}>${id}`)) || !safeLeg(at, next)) continue;
       seen.add(id);
       queue.push({ at: next, first: first || next, steps: steps + 1 });
@@ -497,6 +500,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   let ownsShelterRoute = false;
   let ownsReserveRoute = false;
   let daylightExit = null;
+  let detourRemaining = null;
   let homeCut = null;
   const failedApproaches = createBlacklist({ ttlMs: 12000 });
   const nearShelter = (position) => Boolean(shelter && position && typeof actions.goTo === 'function'
@@ -508,6 +512,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     ownsShelterRoute = false;
     ownsReserveRoute = false;
     daylightExit = null;
+    detourRemaining = null;
     homeCut = null;
     failedApproaches.clear();
     clearShelter();
@@ -595,8 +600,10 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const waitForFood = foodTarget?.kind === 'wait';
     const waitForHealing = critical && state.food >= REGEN_FOOD;
     const holdShelter = waitForDay || waitForFood || waitForHealing || (critical || localReserve) && routeInterrupted;
-    const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover;
-    ownsShelterRoute = missingDoor && nearShelter(state.position) && (!inside || holdShelter);
+    const guardedArrival = !returned && !inside && !needsProtection && !unarmed && nearShelter(state.position)
+      && shelter.doorOpen() !== null;
+    const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover || guardedArrival || detourRemaining > 0;
+    ownsShelterRoute = (missingDoor && nearShelter(state.position) || detourRemaining > 0) && (!inside || holdShelter);
     if (shelter && holdShelter) bot.companionResupplySheltered = shelterWitness;
     else clearShelter();
     // All low-health local travel uses the same live checks. A return may
@@ -608,6 +615,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     let inwardDoorStep = null;
     let destinationStillSafe = null;
     let relaxedReturn = null;
+    let detouring = false;
+    let detourStep = null;
     let deniedStep = false;
     const radius = returned ? Math.max(LOCAL_FOOD_RADIUS, safety.homeDistance(state.position) + 1) : Infinity;
     let scannedAt = 0;
@@ -641,11 +650,15 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return houseBody(a) === houseBody(b) || shelter.doorOpen() === true
         && (a.equals(threshold) && b.equals(exitCells[2]) || b.equals(threshold) && a.equals(exitCells[2]));
     };
+    const safeDetour = (at, from, hostiles) => Math.hypot(at.x - threshold.x - .5, at.z - threshold.z - .5) <= HOME_DETOUR_RADIUS + .1
+      && approvedDoorEdge(at, from) && hostiles.every((hostile) =>
+        Math.min(at.distanceTo(hostile.position), from.distanceTo(hostile.position)) > safety.threatRange(hostile));
     const safeStep = (position, from) => {
       if (!guardRoute && !shelterRoute) return true;
       if (routeDestination && !position.floored().equals(routeDestination)) return false;
-      if (safety.homeDistance(position) > radius) return false;
       const hostiles = activeThreats();
+      if (detouring) return safeDetour(position, from, hostiles);
+      if (safety.homeDistance(position) > radius) return false;
       if (screenedDoorTravel() && !approvedDoorEdge(position, from)) return false;
       if (!screenedDoorTravel() && atResupplyHome({ position }, home) && cover(position, hostiles)) return true;
       const accepted = hostiles.every((hostile) => {
@@ -681,6 +694,15 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         if (preparingStep && unsafeToDig(here, preparingStep, hostiles)) { route.abort(UNSAFE_ROUTE); return; }
         if (stationary) {
           if (here.distanceTo(origin) > .15 || !chestRefuge(here, hostiles)) route.abort(UNSAFE_ROUTE);
+          return;
+        }
+        if (detouring) {
+          const cell = here.floored();
+          if (ctx.perceive().isDay !== true || bot.health < HOME_HEALTH || bot.food < HOME_FOOD || !detourStep?.valid()
+            || ![detourStep.from, detourStep.to].some((p) => p.x === cell.x && p.z === cell.z)
+            || here.y < Math.min(detourStep.from.y, detourStep.to.y) - .05
+            || !safeDetour(here, last, hostiles)) route.abort(UNSAFE_ROUTE);
+          last = here.clone();
           return;
         }
         if (screenedDoorTravel() && (ctx.perceive().isDay !== true || !exitIntact() || !approvedDoorEdge(here, last)
@@ -775,11 +797,28 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       if (open === false && from.equals(entrance) && bot.entity.onGround) return shelter.setDoor(scoped, true);
       const target = open ? shelter.position.offset(0, 0, 1) : entrance;
       const knownDoor = standable(read, entrance);
-      const path = shelterApproach(read, shelter, from, target, safeStep, failedApproaches, farmlandStart, knownDoor);
+      const path = detourRemaining === null
+        && shelterApproach(read, shelter, from, target, safeStep, failedApproaches, farmlandStart, knownDoor);
       if (!path) {
-        if (shelterApproach(read, shelter, from, target, () => true, noFailedSteps, farmlandStart, knownDoor)) {
+        if (detourRemaining === null && shelterApproach(read, shelter, from, target, () => true, noFailedSteps, farmlandStart, knownDoor)) {
           return wait('resupply_home_route_unsafe');
         }
+        if (knownDoor && !missingDoor && !farmlandStart && !needsProtection && !unarmed && state.isDay === true
+          && Math.hypot(from.x - entrance.x, from.z - entrance.z) <= HOME_DETOUR_RADIUS
+          && bot.entity.onGround && (detourRemaining ?? HOME_DETOUR_STEPS) > 0) {
+          detouring = true;
+          const walk = shelterApproach(read, shelter, from, target, safeStep, failedApproaches, null, true,
+            detourRemaining ?? HOME_DETOUR_STEPS);
+          if (walk) {
+            if (detourRemaining === null) scoped.record('resupply_home_detour', { from, steps: walk.steps });
+            detourRemaining ??= HOME_DETOUR_STEPS;
+            const result = await followStep(scoped, walk, from, feet, null, open, target, wait);
+            if (result.ok && !result.waited) detourRemaining -= 1;
+            return result;
+          }
+          detouring = false;
+        }
+        if (detourRemaining !== null) return wait('resupply_home_detour_wait');
         const cut = !farmlandStart && !returned && bot.entity.onGround && actions.digBlock
           && shelterStepRepair(bot, read, home, shelter, from, target, homeCut);
         if (!cut) return wait('resupply_no_dry_home_route');
@@ -811,7 +850,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       }
       routeDestination = first;
       destinationStillSafe = () => ontoFarm ? Boolean(farm(first)) : dry(first);
-      const movement = ontoFarm && bot.pathfinder?.movements;
+      if (detouring) detourStep = { from, to: first, valid: () => shelter.doorOpen() === open
+        && standable(read, doorstep.floored()) && dry(from) && dry(first) };
+      const movement = (ontoFarm || detouring) && bot.pathfinder?.movements;
       const sprint = movement && (movement.sprintSetting ?? movement.allowSprinting);
       if (movement && sprint !== undefined) movement.allowSprinting = false;
       let moved;
@@ -823,6 +864,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         if (movement && sprint !== undefined) movement.allowSprinting = sprint;
         routeDestination = null;
         destinationStillSafe = null;
+        detourStep = null;
+        detouring = false;
       }
       if (!arrived()) {
         failedApproaches.add(`${posKey(from)}>${posKey(first)}`, moved.reason || 'resupply_home_step_unconfirmed');
@@ -840,13 +883,16 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         if (!inside) {
           const goHome = (action, cardinal = false) => guarded(
             foodTarget?.kind === 'bread' ? 'return_for_bread' : 'return_home', action, true, cardinal);
-          if ((guardRoute || missingDoor) && nearShelter(state.position)) return goHome(approachShelter, true);
+          if ((guardRoute || missingDoor) && (nearShelter(state.position) || detourRemaining > 0)) {
+            return goHome(approachShelter, true);
+          }
           if (shelter?.doorOpen() === false) {
             if (actions.withinReach(bot, shelter.position)) return goHome((scoped) => shelter.setDoor(scoped, true));
             return goHome((scoped) => actions.goNear(bot, scoped, doorstep, 1, { timeoutMs: 30000 }));
           }
           return goHome((scoped) => actions.goNear(bot, scoped, safety.centre, 1, { timeoutMs: 90000 }));
         }
+        detourRemaining = null;
         if (!returned) {
           returned = true;
           ctx.record('resupply_home_arrived', { position: state.position.floored() });

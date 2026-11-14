@@ -296,6 +296,53 @@ test('a grounded unarmed return can descend a screened two-level ridge to the or
   await goal.dispose();
 });
 
+test('an armed daylight home return takes a longer dry route when the short search cannot reach the door', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const { door, chest } = house.furniture;
+  const shell = new Set([...house.blocks.map(({ position }) => position), ...house.foundation]
+    .map(({ x, y, z }) => new Vec3(x, y, z).toString()));
+  const route = [new Vec3(16, 64, 3)];
+  for (let z = 2; z >= -14; z -= 1) route.push(new Vec3(16, 64, z));
+  for (let x = 15; x >= 3; x -= 1) route.push(new Vec3(x, 64, -14));
+  for (let z = -13; z <= -1; z += 1) route.push(new Vec3(3, 64, z));
+  for (const p of route) shell.add(p.offset(0, -1, 0).toString());
+  const bot = Object.assign(fakeBot([{ name: 'stone_sword', count: 1 }]), { health: 20, food: 19,
+    game: { dimension: 'overworld' }, time: { timeOfDay: 18000 }, entities: {},
+    entity: { position: route[0].offset(.5, 0, .5), onGround: true } });
+  bot.blockAt = (p) => {
+    if (p.x === door.position.x && p.z === door.position.z && [64, 65].includes(p.y)) {
+      return { name: 'oak_door', getProperties: () => ({ half: p.y === 64 ? 'lower' : 'upper',
+        open: true, facing: 'south', hinge: 'left' }) };
+    }
+    if (p.equals(new Vec3(15, 64, 3))) return { name: 'nether_portal', boundingBox: 'empty', shapes: [] };
+    const solid = shell.has(p.toString());
+    return { name: solid ? 'cobblestone' : 'air', boundingBox: solid ? 'block' : 'empty',
+      shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const visits = [], detours = [];
+  const goal = createOutfitGoal({ bot, recoverAtHome: true, items: [{ key: 'food', count: 3 }],
+    home: { chest: chest.position, centre: house.interiorCenter, anchor: house.anchor, door: door.position },
+    actions: { async goTo(_bot, _ctx, target) {
+      const next = new Vec3(target.x, target.y, target.z);
+      visits.push(next);
+      bot.entity.position = next.offset(.5, 0, .5);
+      return { ok: true };
+    } } });
+  const ctx = { perceive: () => perceive(bot), record(type, data) {
+    if (type === 'resupply_home_detour') detours.push(data);
+  } };
+  assert.equal((await goal.run(ctx)).reason, 'resupply_no_dry_home_route');
+  bot.time.timeOfDay = 5000;
+  bot.entities[2] = { id: 2, name: 'pillager', position: new Vec3(16.5, 64, -21.5) };
+  assert.equal((await goal.run(ctx)).reason, 'resupply_no_dry_home_route');
+  delete bot.entities[2];
+  for (const _step of route.slice(1)) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(visits, route.slice(1));
+  assert.equal(detours.length, 1);
+  assert.equal(detours[0].steps, route.length + 1);
+  await goal.dispose();
+});
+
 test('home resupply can see a known ripe plot beyond the native section scan', async () => {
   const { OctahedronIterator } = require('prismarine-world').iterators;
   const house = createStarterHouse({ x: -69, y: 65, z: -104 });
