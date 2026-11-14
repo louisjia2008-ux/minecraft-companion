@@ -159,7 +159,8 @@ function lavaBank() {
     activateItem: () => { bag.splice(0, 1, { name: 'lava_bucket', count: 1 }); } };
   const records = [];
   const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }) };
-  const fill = () => skillsModule.fillBucket(bot, ctx, { liquid: 'lava', blacklist: createBlacklist(), guardLava: true });
+  const blacklist = createBlacklist();
+  const fill = () => skillsModule.fillBucket(bot, ctx, { liquid: 'lava', blacklist, guardLava: true });
   return { at, bank, accessible, blocked, bot, fill, movements, neighbors, record, records };
 }
 
@@ -192,6 +193,51 @@ test('casting lava never uses the bucket if the bank becomes wet or its ray chan
     assert.equal((await f.fill()).reason, 'lava_bank_changed');
     assert.equal(f.bot.inventory.items()[0].name, 'bucket');
   }
+});
+
+test('casting lava keeps approaching a dry bank after a timeout that moved closer', async (t) => {
+  const f = lavaBank();
+  f.record(new Vec3(-73, 43, -100), 'cave_air');
+  f.record(new Vec3(-73, 44, -100), 'cave_air');
+  f.record(new Vec3(-73, 43, -104), 'cave_air');
+  f.record(new Vec3(-73, 44, -104), 'cave_air');
+  f.bot.entity.position = new Vec3(-72.5, 43, -99.5);
+  let calls = 0;
+  t.mock.method(actionsModule, 'goTo', async (_bot, _ctx, goal, options) => {
+    assert.ok(goal.isEnd(f.bank));
+    if (++calls === 1) {
+      f.bot.entity.position = new Vec3(-72.5, 43, -103.5);
+      return { ok: false, reason: 'path_timeout' };
+    }
+    f.bot.entity.position = f.bank.offset(.5, 0, .5);
+    assert.ok(options.arrived());
+    return { ok: true };
+  });
+  const leg = await f.fill();
+  assert.equal(leg.ok, true);
+  assert.equal(leg.progress, false);
+  assert.equal(f.bot.inventory.items()[0].name, 'bucket');
+  assert.deepEqual(await f.fill(), { ok: true, filled: 'lava_bucket' });
+  assert.equal(calls, 2);
+});
+
+test('casting lava can use the guarded approach to a bank close by but five blocks higher', async (t) => {
+  const f = lavaBank();
+  f.bot.entity.position = f.bank.offset(0.5, -5, 0.5);
+  let calls = 0;
+  t.mock.method(actionsModule, 'goTo', async (_bot, _ctx, goal) => {
+    calls += 1;
+    if (calls === 1) {
+      assert.ok(goal.isEnd(f.bank));
+      return { ok: false, reason: 'not_arrived' };
+    }
+    assert.deepEqual([goal.x, goal.y, goal.z], [f.bank.x, f.bank.y, f.bank.z]);
+    assert.equal(goal.isEnd(f.bot.entity.position.floored()), false);
+    f.bot.entity.position = f.bank.offset(0.5, 0, 0.5);
+    return { ok: false, reason: 'path_timeout' };
+  });
+  assert.deepEqual(await f.fill(), { ok: true, filled: 'lava_bucket' });
+  assert.equal(calls, 2);
 });
 
 test('a distant lava bank can use a guarded dry approach without breaking its liquid containment', async (t) => {

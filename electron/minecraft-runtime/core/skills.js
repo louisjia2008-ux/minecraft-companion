@@ -836,6 +836,8 @@ const BUCKET_REACH = 4.5;
 const LAVA_APPROACH_MS = 20000;
 const LAVA_ROUTE_RETRY_MS = 30000;
 const LAVA_STANCES_PER_ROUTE = 40;
+const LAVA_BANK_MIN_ADVANCE = 2;
+const LAVA_BANK_MIN_VERTICAL_GAP = 2;
 const LAVA_HAZARD = /^(lava|water|bubble_column|fire|soul_fire|magma_block|campfire|soul_campfire)$/;
 const LAVA_ROUTE_FACES = [new Vec3(0, 0, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
   new Vec3(0, 0, 1), new Vec3(0, 0, -1), new Vec3(0, -1, 0), new Vec3(0, 1, 0)];
@@ -929,25 +931,42 @@ async function fillCastingLava(bot, ctx, sources, blacklist) {
     const nearby = stances.slice(0, LAVA_STANCES_PER_ROUTE);
     const exact = new goals.GoalCompositeAny(nearby.map(({ feet }) => new goals.GoalBlock(feet.x, feet.y, feet.z)));
     const arrived = () => Boolean(current());
+    const distanceToBank = (at) => Math.min(...nearby.map(({ feet }) => at.distanceTo(feet.offset(.5, 0, .5))));
+    const continued = (from) => {
+      const body = bot.entity;
+      const at = body.position;
+      if (!body.onGround || body.isInWater || body.isInLava || !standable(read, at.floored())
+        || distanceToBank(from) - distanceToBank(at) < LAVA_BANK_MIN_ADVANCE) return null;
+      ctx.record('lava_bank_approach', { from, to: at.clone(), remaining: Math.round(distanceToBank(at)) });
+      return { ok: true, progress: false };
+    };
     const blocked = () => {
       for (const { feet } of nearby) blacklist.add(`lava_stance:${posKey(feet)}`, 'lava_bank_unreachable', LAVA_ROUTE_RETRY_MS);
       return fail('lava_bank_unreachable');
     };
+    const start = bot.entity.position.clone();
     const moved = await walkDry(bot, ctx, actions, exact, { timeoutMs: 8000, arrived });
     if (!moved.ok && !current()) {
+      const advanced = continued(start);
+      if (advanced) return advanced;
       // Reach a distant bank via ordinary terrain routing, while keeping the
       // final lava-edge walk on verified dry ground. Never use the bucket on
       // a loose GoalNear arrival.
       const { feet, source } = stances[0];
-      if (bot.entity.position.distanceTo(feet) <= 10) return blocked();
-      const coarse = new goals.GoalNear(feet.x, feet.y, feet.z, 5);
+      const close = bot.entity.position.distanceTo(feet) <= 10;
+      if (close && Math.abs(bot.entity.position.y - feet.y) < LAVA_BANK_MIN_VERTICAL_GAP) return blocked();
+      const coarse = new goals.GoalNear(feet.x, feet.y, feet.z, close ? 3 : 5);
       const accept = coarse.isEnd.bind(coarse);
       coarse.isEnd = (p) => accept(p) && p.distanceTo(source) >= 4
         && standable(read, new Vec3(p.x, p.y, p.z));
+      const beforeCoarse = bot.entity.position.clone();
       const near = await walkTowardLavaBank(bot, ctx, coarse, Math.max(1, deadline - Date.now()));
-      if (!near.ok || Date.now() >= deadline) return blocked();
-      const bank = await walkDry(bot, ctx, actions, exact, { timeoutMs: Math.max(1, deadline - Date.now()), arrived });
-      if (!bank.ok && !current()) return blocked();
+      if (!current()) {
+        if (!near.ok || Date.now() >= deadline) return continued(beforeCoarse) || blocked();
+        const beforeBank = bot.entity.position.clone();
+        const bank = await walkDry(bot, ctx, actions, exact, { timeoutMs: Math.max(1, deadline - Date.now()), arrived });
+        if (!bank.ok && !current()) return continued(beforeBank) || blocked();
+      }
     }
   }
   const selected = current();
