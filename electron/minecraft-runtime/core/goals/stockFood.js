@@ -133,9 +133,24 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     return dry(block) && !PORTAL.test(block.name);
   };
   const fieldClear = (p) => [-1, 0, 1].every((dy) => farmDry(p.offset(0, dy, 0)));
+  const fullCube = (block) => block?.boundingBox === 'block' && block.shapes?.length === 1
+    && block.shapes[0].every((value, i) => value === (i < 3 ? 0 : 1));
+  const backedSand = (p) => {
+    const soil = read(p.offset(0, -1, 0));
+    const backing = read(p.offset(0, -2, 0));
+    // Only the local farm route may use a full sand block resting directly
+    // on full non-falling dry terrain.
+    return /^(red_)?sand$/.test(soil?.name || '') && fullCube(soil)
+      && fullCube(backing) && !/(sand|gravel|concrete_powder|leaves|magma_block)$/.test(backing.name)
+      && farmDry(p.offset(0, -2, 0)) && fieldClear(p) && [0, 1, 2].every((dy) => {
+        const b = read(p.offset(0, dy, 0));
+        return b?.boundingBox === 'empty' && !b.shapes?.length;
+      }) && skyClear(p);
+  };
+  const fieldBank = (p) => exposed(p) && fieldClear(p) || backedSand(p);
   const farmStance = (p) => fieldClear(p) && skyClear(p)
     && farmlandFooting(read, { onGround: true, position: p.offset(.5, -1 / 16, .5) });
-  const fieldStance = (p) => Boolean(farmStance(p) || exposed(p) && fieldClear(p));
+  const fieldStance = (p) => Boolean(farmStance(p) || fieldBank(p));
   const adjacent = (p) => CARDINAL.map(([dx, dz]) => p.offset(dx, 0, dz));
 
   // Walk backwards from the crop to the closest verified full bank. Each
@@ -147,7 +162,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const seen = new Set([posKey(target)]);
     const pending = [[target]];
     for (const [head, ...trail] of pending) {
-      const bank = harvestBanks(head.offset(0, -1, 0)).find(fieldStance);
+      const bank = adjacent(head).find(fieldBank);
       if (bank) return [bank, head, ...trail];
       if (trail.length + 1 >= MAX_FIELD_WALK) continue;
       for (const next of adjacent(head)) {
@@ -206,6 +221,11 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
             && accept(p) && fieldStance(from) && fieldStance(p);
         }
         if (route.fieldApproach && !fieldClear(p)) return false;
+        if (route.fieldApproach && p.distanceTo(route.fieldApproach) <= 1 && backedSand(p)) {
+          const from = new Vec3(node.x, node.y, node.z);
+          return accept(p) && (exposed(from) || from.distanceTo(route.fieldApproach) <= 1 && backedSand(from))
+            && Math.abs(from.x - p.x) + Math.abs(from.z - p.z) === 1;
+        }
         if (route.scouting) {
           const from = new Vec3(node.x, node.y, node.z);
           if (Math.abs(p.x - node.x) + Math.abs(p.z - node.z) !== 1) return false;
@@ -257,7 +277,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   async function walkField(ctx, route, from, to) {
     const arrived = () => bot.entity.onGround && !bot.entity.isInWater && !bot.entity.isInLava
       && (farmStance(to) ? bot.entity.position.floored().equals(to.offset(0, -1, 0)) && farmlandFooting(read, bot.entity)
-        : bot.entity.position.floored().equals(to) && exposed(to));
+        : bot.entity.position.floored().equals(to) && fieldBank(to));
     if (!fieldStance(from) || !fieldStance(to)) return false;
     const movement = bot.pathfinder.movements;
     const sprint = movement.sprintSetting ?? movement.allowSprinting;
@@ -290,7 +310,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const at = farmlandFooting(read, bot.entity) ? feet.offset(0, 1, 0) : feet;
     const index = fieldExit?.findIndex((p) => p.equals(at));
     if (index >= 0 && bot.entity.onGround) fieldExit.length = index + 1;
-    else if (onDryGround() && exposed(at)) fieldExit = null;
+    else if (onDryGround() && fieldBank(at)) fieldExit = null;
     else return fieldFailure();
     while (fieldExit?.length > 1) {
       const last = fieldExit.at(-1);
@@ -304,9 +324,9 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
 
   async function harvestField(ctx, plot, path, route) {
     const [bank, ...steps] = path;
-    const atBank = () => onDryGround() && bot.entity.position.floored().equals(bank) && exposed(bank);
+    const atBank = () => onDryGround() && bot.entity.position.floored().equals(bank) && fieldBank(bank);
     if (!atBank()) {
-      route.fieldApproach = true;
+      route.fieldApproach = bank;
       try {
         const approach = await actions.goTo(bot, ctx, new goals.GoalBlock(bank.x, bank.y, bank.z),
           { arrived: atBank, timeoutMs: 8000, retryNoProgress: false });

@@ -1296,3 +1296,71 @@ test('healthy home recovery waits for its growing food reserve instead of explor
   await assert.rejects(goal.run(ctx), { code: 'aborted' });
   assert.equal(records.find(({ type }) => type === 'resupply_food_target')?.kind, 'wheat');
 });
+
+test('expedition harvest crosses a same-level sand bank only over dry full backing', async (t) => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const farm = require('../core/farming');
+  const bank = new Vec3(10, 64, 2);
+  const target = bank.offset(1, 0, 0);
+  const plot = target.offset(0, -1, 0);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const support = { name: 'clay', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const water = { ...air, name: 'water' };
+  const sand = { ...support, name: 'sand' };
+  const soil = { ...support, name: 'farmland', shapes: [[0, 0, 0, 1, 15 / 16, 1]] };
+  const from = bank.offset(0, 0, 1);
+  const start = new Vec3(2.5, 64, 2.5);
+  const state = { inventory: { wheat_seeds: 1 }, health: 20, food: 20, isDay: true, hostiles: [] };
+  let backing = water;
+  let ripe = true;
+  let crops = 0, replanted = 0;
+  const traveled = [];
+  const movement = { getNeighbors: () => [bank, target], allowSprinting: true };
+  const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' }, pathfinder: { movements: movement },
+    entity: { position: start, onGround: true }, blockAt(p) {
+      if (p.equals(plot)) return soil;
+      if (p.equals(target) && ripe) return { ...air, name: 'wheat' };
+      if (p.equals(bank.offset(0, -1, 0))) return sand;
+      if (p.equals(bank.offset(0, -2, 0))) return backing;
+      if (p.equals(from.offset(0, -1, 0))) return support;
+      if (p.y === 63) return water;
+      return air;
+    } });
+  t.mock.method(farm, 'plotState', () => ripe ? 'ripe' : 'empty');
+  t.mock.method(farm, 'harvest', async () => {
+    assert.ok(bot.entity.position.floored().equals(plot));
+    ripe = false;
+    crops += 1;
+    return { ok: true, gained: 1 };
+  });
+  t.mock.method(farm, 'plant', async () => { replanted += 1; return { ok: true }; });
+  const ctx = { perceive: () => state, record() {} };
+  const createGoal = () => createStockFoodGoal({ bot, target: 12,
+    expeditionHome: { ...home, stations: { crafting_table: home.centre } }, farmPlots: [plot], actions: {
+      goTo: async (_bot, _ctx, goal, { arrived }) => {
+        const to = new Vec3(goal.x, goal.y, goal.z);
+        const at = bot.entity.position.floored();
+        const nativeFrom = at.equals(start.floored()) ? from : at.equals(plot) ? target : at;
+        assert.ok(movement.getNeighbors(nativeFrom).some((p) => p.equals(to)));
+        bot.entity.position = to.offset(.5, to.equals(target) ? -1 / 16 : 0, .5);
+        assert.ok(arrived());
+        traveled.push(to);
+        return { ok: true };
+      },
+    }, skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+      huntOne: async () => ({ ok: false, reason: 'no_mob_in_range' }) } });
+
+  const refused = createGoal();
+  await refused.run(ctx);
+  await refused.run(ctx);
+  assert.equal(crops, 0);
+  assert.deepEqual(traveled, []);
+
+  backing = support;
+  const reachable = createGoal();
+  await reachable.run(ctx);
+  assert.equal((await reachable.run(ctx)).gained, 1);
+  assert.equal(crops, 1);
+  assert.equal(replanted, 1);
+  assert.deepEqual(traveled, [bank, target, bank]);
+});
