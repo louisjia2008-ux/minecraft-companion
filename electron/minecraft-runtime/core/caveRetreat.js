@@ -6,7 +6,7 @@ const { abortError, waitUntil } = require('./confirm');
 
 const SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const FACES = [...SIDES.map(([x, z]) => [x, 0, z]), [0, 1, 0], [0, -1, 0]];
-const FLUID_OR_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
+const FLUID_OR_HAZARD = /^(water|seagrass|tall_seagrass|kelp|kelp_plant|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
 const GRAVITY = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|.*_concrete_powder)$/;
 const NATURAL = /^(stone|deepslate|tuff|calcite|granite|diorite|andesite|dripstone_block|dirt|grass_block|coarse_dirt|rooted_dirt|podzol|clay|moss_block|snow_block|[a-z_]+_ore)$/;
 const CLEARED = Object.freeze({ name: 'air', boundingBox: 'empty', shapes: [] });

@@ -35,6 +35,34 @@ test('set during the day far from home, the hunt waits for dusk at home', async 
   assert.deepEqual([s.walks[0].x, s.walks[0].z], [0, 0]);
 });
 
+test('a surfaced hunter launched in daylight swims only to the adjacent dry bank before releasing', async () => {
+  const start = new Vec3(-87, 62, -188);
+  const bank = new Vec3(-87, 63, -187);
+  const home = new Vec3(-102, 64, -179);
+  const bot = { ...terrain, entity: { position: start.offset(.5, 0, .5), onGround: true, isInWater: true },
+    companionHomeAt: () => home, blockAt(p) {
+      if (p.equals(start)) return { ...AIR, name: 'seagrass' };
+      if (p.equals(bank.offset(0, -1, 0))) return STONE;
+      return AIR;
+    } };
+  const calls = [];
+  const goal = createHuntPearlsGoal({ bot, actions: { swimAshore: async (_b, _c, options) => {
+    assert.deepEqual(options.bank, bank);
+    assert.equal(options.acceptBank(bank), true);
+    assert.equal(options.acceptBank(bank.offset(48, 0, 0)), false);
+    assert.equal(options.maxTicks, 45);
+    bot.entity.position = bank.offset(.5, 0, .5);
+    bot.entity.isInWater = false;
+    return true;
+  } } });
+  const ctx = { signal: new AbortController().signal, record: (type) => calls.push(type),
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: true, inWater: bot.entity.isInWater }) };
+  assert.equal(goal.isDone(ctx.perceive()), false);
+  await goal.run(ctx);
+  assert.equal(goal.isDone(ctx.perceive()), true);
+  assert.deepEqual(calls, ['pearl_swim_dry_bank']);
+});
+
 test('already at home, it simply waits', async () => {
   const s = setup({ position: new Vec3(3, 64, 2) });
   const goal = s.goal;

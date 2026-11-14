@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { Vec3 } = require('vec3');
-const { advanceCaveRetreat, evadeInCave, planRetreat, returnFromCave } = require('../core/caveRetreat');
+const { advanceCaveRetreat, evadeInCave, planRetreat, returnFromCave, standable } = require('../core/caveRetreat');
 const { createSurvivalBehaviors } = require('../core/behaviors/survival');
 
 const key = (p) => `${p.x},${p.y},${p.z}`;
@@ -33,6 +33,20 @@ test('a liquid touching a proposed cut rules out that heading', () => {
   const plan = planRetreat(bot, origin, home);
   assert.ok(plan);
   assert.notEqual(plan.target.x, 1);
+});
+
+test('water plants without a waterlogged property cannot look like dry feet or headroom', () => {
+  const { bot, cells, origin } = fixture();
+  assert.equal(standable(bot.blockAt, origin), true);
+  for (const name of ['seagrass', 'tall_seagrass', 'kelp', 'kelp_plant']) {
+    const plant = { ...air, name, getProperties: () => ({}) };
+    cells.set('0,0,0', plant);
+    assert.equal(standable(bot.blockAt, origin), false);
+    cells.set('0,0,0', air);
+    cells.set('0,1,0', plant);
+    assert.equal(standable(bot.blockAt, origin), false);
+    cells.set('0,1,0', air);
+  }
 });
 
 test('provisioning may cross a short dry gap onto a supported bank with an uphill route', async (t) => {

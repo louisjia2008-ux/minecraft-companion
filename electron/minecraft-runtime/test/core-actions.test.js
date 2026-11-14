@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { eat, goToDig } = require('../core/actions');
+const { eat, goToDig, swimAshore } = require('../core/actions');
 const { waitUntil, runCancellable } = require('../core/confirm');
 
 // Fake bot whose server effects arrive as separate, delayed packets.
@@ -150,4 +150,29 @@ test('native bed confirmation preserves a rapid sleep/wake and daytime spawn', a
   assert.deepEqual(await useBed(bot, ctx(), { position }), { ok: true, spawnSet: true, messages: ['block.minecraft.bed.no_sleep'] });
   assert.equal(bot.listenerCount('sleep'), 0);
   assert.equal(bot.listenerCount('message'), 0);
+});
+
+test('explicit shoreline control aims across one wet edge, stops on confirmed dry feet and clears movement', async () => {
+  const feet = new Vec3(0, 62, 0), bank = new Vec3(0, 63, 1);
+  const controls = {};
+  let looks = 0;
+  const bot = { entity: { position: feet.offset(.5, 0, .5), onGround: true, isInWater: true },
+    blockAt: (p) => ({ name: p.equals(feet) ? 'seagrass' : 'air' }),
+    setControlState(name, value) {
+      controls[name] = value;
+      if (name === 'jump' && value) {
+        bot.entity.position = bank.offset(.5, 0, .5);
+        bot.entity.isInWater = false;
+      }
+    },
+    async lookAt(target) {
+      looks += 1;
+      assert.equal(target.x, bank.x + .5);
+      assert.equal(target.z, bank.z + .5);
+      assert.ok(target.y > feet.y);
+    } };
+  assert.equal(await swimAshore(bot, ctx(), { bank: bank.offset(0, 0, 1), acceptBank: () => true, maxTicks: 3 }), false);
+  assert.equal(await swimAshore(bot, ctx(), { bank, acceptBank: (p) => p.equals(bank), maxTicks: 3 }), true);
+  assert.equal(looks, 1);
+  assert.deepEqual(controls, { sprint: false, forward: false, jump: false });
 });

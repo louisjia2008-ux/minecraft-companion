@@ -746,10 +746,39 @@ async function unstick(bot, ctx) {
 /** Digs the block over the bot's head and those beside its head. True if any went. */
 const SEA = new Set(['water', 'kelp', 'kelp_plant', 'seagrass', 'tall_seagrass', 'bubble_column']);
 /** Out on open water, swims along the surface to the nearest land within sight. True once ashore. */
-async function swimAshore(bot, ctx, { maxTicks = 1200 } = {}) {
+async function swimAshore(bot, ctx, { maxTicks = 1200, bank, acceptBank } = {}) {
   const feet = bot.entity.position.floored();
   const wet = (p) => SEA.has(bot.blockAt(p)?.name);
   if (!wet(feet) && !wet(feet.offset(0, -1, 0))) return false;
+  if (bank) {
+    // A caller can supply a verified adjacent landing without asking the
+    // general open-water search to choose a distant shore.
+    const canLand = () => acceptBank?.(bank) && !wet(bank) && !wet(bank.offset(0, 1, 0));
+    if (!canLand() || Math.abs(feet.x - bank.x) + Math.abs(feet.z - bank.z) !== 1
+      || bank.y < feet.y || bank.y > feet.y + 1) return false;
+    const landed = () => bot.entity.onGround === true && !bot.entity.isInWater
+      && bot.entity.position.floored().equals(bank) && canLand();
+    const centre = bank.offset(.5, 0, .5);
+    try {
+      bot.pathfinder?.setGoal(null);
+      bot.setControlState('sprint', false);
+      for (let i = 0; i < maxTicks && !landed(); i += 1) {
+        const p = bot.entity.position;
+        const column = p.floored();
+        if (!canLand() || bot.entity.isInLava || (column.x !== feet.x || column.z !== feet.z)
+          && (column.x !== bank.x || column.z !== bank.z)) break;
+        const close = Math.hypot(p.x - centre.x, p.z - centre.z) < .18;
+        if (!close) await bot.lookAt(new Vec3(centre.x, p.y + (bot.entity.eyeHeight ?? 1.62), centre.z), true);
+        bot.setControlState('forward', !close);
+        bot.setControlState('jump', bot.entity.isInWater === true);
+        await sleep(50, ctx.signal);
+      }
+      return landed();
+    } finally {
+      bot.setControlState('forward', false);
+      bot.setControlState('jump', false);
+    }
+  }
   // Not a puddle: open water all round.
   if (![[2, 0], [-2, 0], [0, 2], [0, -2]].every(([dx, dz]) => wet(feet.offset(dx, -1, dz)))) return false;
   // Solid ground about the water's level with open air over it.

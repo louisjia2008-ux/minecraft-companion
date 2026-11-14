@@ -86,6 +86,16 @@ function scoutGround(bot, p) {
   return standable(read, p) && !read(p.offset(0, -1, 0))?.name.endsWith('_leaves') && openScoutColumn(bot, p);
 }
 
+function pearlWaterBank(bot, house) {
+  const entity = bot?.entity;
+  if (!house || entity?.isInWater !== true || entity.isInLava || !entity.position?.floored) return null;
+  const feet = entity.position.floored();
+  const head = bot.blockAt(feet.offset(0, 1, 0), false);
+  if (!head || !/^(air|cave_air|void_air)$/.test(head.name)) return null;
+  return Object.values(DOOR_DIRECTIONS).map(([x, z]) => feet.offset(x, 1, z))
+    .find((p) => flatDistance(p, house) <= SCOUT_RADIUS && scoutGround(bot, p)) || null;
+}
+
 const dryLeafCanopy = (bot, feet) => skyOpen(bot, feet, { allowLeafCanopy: true });
 
 function pearlHomeReturnNeeded(house, position, bot) {
@@ -113,6 +123,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   let homeward = false;
   let homeRoute = [];
   let homeFailures = 0;
+  let waterFailures = 0;
+  let recoveringWater = false;
   const nearCamps = [];
   let nextNearScout = 0;
   let nearScout;
@@ -569,7 +581,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     surface.clear();
     const result = await walkDry(bot, ctx, actions, goal, { timeoutMs: 5000, avoid: (p) => !accept(p) });
     const at = bot.entity.position.floored();
-    const landed = () => bot.entity.onGround === true && bot.entity.position.floored().equals(target) && scoutGroundAt(target);
+    const landed = () => bot.entity.onGround === true && !bot.entity.isInWater
+      && bot.entity.position.floored().equals(target) && scoutGroundAt(target);
     if (at.equals(target) && (landed() || await waitUntil(landed, { timeoutMs: 500, signal: ctx.signal }))) {
       const key = pointKey(target);
       if (!landedScoutCells.has(key)) {
@@ -587,6 +600,22 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     return wait(ctx, result.reason || 'pearl_scout_no_progress');
   }
 
+  const pendingWaterBank = (house) => waterFailures < 2 && typeof actions.swimAshore === 'function' && pearlWaterBank(bot, house);
+
+  async function regainDryBank(ctx, house, bank, from) {
+    recoveringWater = true;
+    const acceptBank = (p) => flatDistance(p, house) <= SCOUT_RADIUS && scoutGroundAt(p);
+    if (await actions.swimAshore(bot, ctx, { bank, acceptBank, maxTicks: 45 })
+      && !bot.entity.isInWater && bot.entity.onGround === true && bot.entity.position.floored().equals(bank)) {
+      waterFailures = 0;
+      ctx.record('pearl_swim_dry_bank', { from, to: bank });
+      return { ok: true, waited: true };
+    }
+    waterFailures += 1;
+    if (waterFailures >= 2) memory.waterReturnBlocked = pointKey(from);
+    return wait(ctx, 'pearl_swim_dry_bank_blocked');
+  }
+
   function startNight() {
     if (memory.sawNight) return;
     memory.sawNight = true;
@@ -597,17 +626,22 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   return {
     name: 'hunt_pearls',
     memory,
-    ownsRouteRecovery: () => memory.sawNight || memory.ascending || recoveringTether || homeward,
+    ownsRouteRecovery: () => memory.sawNight || memory.ascending || recoveringTether || homeward
+      || recoveringWater || Boolean(pendingWaterBank(home())),
     // Endermen appear and vanish: a quiet stretch is normal, not a stall.
     noProgressLimit: 40,
     isDone: (state) => !memory.ascending && !pearlCaveRecoveryNeeded(bot, home(), state.position)
-      && (pearls(state) >= count || ((memory.sawNight || recoveringTether || homeward) && state.isDay !== false
-        && !tetheredOutside(home(), bot.entity.position.floored()) && !wantsHome(state, home()))),
+      && (pearls(state) >= count || ((memory.sawNight || recoveringTether || homeward || recoveringWater) && state.isDay !== false
+        && !tetheredOutside(home(), bot.entity.position.floored()) && !wantsHome(state, home())
+        && !pendingWaterBank(home()))),
     progress: (state) => pearls(state) * 10 + memory.hunted,
     async run(ctx) {
       const state = ctx.perceive();
       const house = home();
       const feet = bot.entity.position.floored();
+      const bank = pendingWaterBank(house);
+      if (bank) return regainDryBank(ctx, house, bank, feet);
+      if (!bot.entity.isInWater) waterFailures = 0;
       if (memory.ascending && (!house || flatDistance(feet, house) > SCOUT_RADIUS
         || (feet.y >= house.y - 2 && bot.entity.onGround && outdoors(feet) && !state.inWater && !bot.entity.isInLava))) {
         memory.ascending = false;
@@ -684,4 +718,4 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   };
 }
 
-module.exports = { createHuntPearlsGoal, pearlCaveRecoveryNeeded, pearlTetherRecoveryNeeded, pearlHomeReturnNeeded, scoutSectorOf };
+module.exports = { createHuntPearlsGoal, pearlCaveRecoveryNeeded, pearlTetherRecoveryNeeded, pearlHomeReturnNeeded, pearlWaterBank, scoutSectorOf };

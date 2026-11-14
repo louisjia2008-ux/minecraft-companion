@@ -35,7 +35,7 @@ const { countKey } = require('../core/knowledge');
 const { RISKY_FOODS } = require('../core/actions');
 const { homeOf } = require('../core/goals/registry');
 const { homeResupplyReady } = require('../core/goals/outfit');
-const { pearlCaveRecoveryNeeded, pearlHomeReturnNeeded } = require('../core/goals/huntPearls');
+const { pearlCaveRecoveryNeeded, pearlHomeReturnNeeded, pearlWaterBank } = require('../core/goals/huntPearls');
 const { expeditionFoodCount } = require('../core/goals/stockFood');
 const { isThreateningMobEntity } = require('../vendor/server/minecraft/entitySemantics');
 
@@ -133,7 +133,10 @@ const STEPS = [
       const { timeOfDay, day } = bot.time || {};
       if (timeOfDay >= 12500 && timeOfDay < 23000) return true;
       const home = companion?.director && houseOf(companion)?.interiorCenter;
+      const feet = bot.entity?.position?.floored?.();
+      const waterCell = feet && `${feet.x},${feet.y},${feet.z}`;
       return pearlCaveRecoveryNeeded(bot, home, bot.entity?.position)
+        || (waterCell && state?.goals?.pearls?.memory?.waterReturnBlocked !== waterCell && Boolean(pearlWaterBank(bot, home)))
         || (Number.isFinite(timeOfDay) && timeOfDay < 12500 && (!Number.isFinite(day) || state?.goals?.pearls?.memory?.homeReturnBlockedDay !== day)
           && pearlHomeReturnNeeded(home, bot.entity?.position, bot));
     },
