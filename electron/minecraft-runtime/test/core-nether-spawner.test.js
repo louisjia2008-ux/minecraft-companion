@@ -56,8 +56,7 @@ function fixture({ reported = true, guardedRoute = true } = {}) {
       return { ok: true };
     },
     async goNear() {
-      walks.push({ move: 'patrol' });
-      return { ok: true };
+      assert.fail('a spawner fallback must use the guarded patrol route');
     },
   };
   const goal = createNetherExpeditionGoal({ bot, blazeRods: 7, witherSkulls: 0, trades: 0, actions });
@@ -85,14 +84,15 @@ test('on a fortress deck the spawner search uses live position and follows rever
   } finally { goal.dispose(); }
 });
 
-test('a missing or disconnected spawner falls back to ordinary patrol', async () => {
+test('a missing or disconnected spawner falls back to guarded patrol', async () => {
   for (const input of [{ reported: false }, { guardedRoute: false }]) {
     const { goal, records, walks, ctx } = fixture(input);
     try {
       await goal.run(ctx);
       assert.ok(records.some((e) => e.type === 'patrol'));
       assert.ok(!records.some((e) => e.type === 'structure_detour'));
-      assert.deepEqual(walks, [{ move: 'patrol' }]);
+      assert.deepEqual(walks, Array.from({ length: 7 }, (_, i) =>
+        ({ move: 'goTo', target: 11 + i, guarded: true, towers: false })));
       assert.equal(goal.memory.spawner, null);
     } finally { goal.dispose(); }
   }
