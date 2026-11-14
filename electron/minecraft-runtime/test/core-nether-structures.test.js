@@ -305,7 +305,7 @@ test('a blaze volley is taken on a raised shield', async () => {
   assert.equal(block.want({}), 0, 'fire resistance takes the fireball');
 });
 
-test('an injured Nether explorer eats under verified cover before chasing blazes again', async () => {
+test('an injured Nether player eats under verified cover before a task is assigned', async () => {
   const terrain = row('nether_bricks', -2, 10, 63);
   terrain['2,64,0'] = terrain['2,65,0'] = 'nether_bricks';
   const bot = { ...world(terrain), game: { dimension: 'the_nether' } };
@@ -321,7 +321,7 @@ test('an injured Nether explorer eats under verified cover before chasing blazes
     position: bot.entity.position, hostiles: [{ ...bot.entities[1], distance: 4 }] };
   bot.registry = { ...bot.registry, foodsByName: { cooked_porkchop: {} } };
   let ate = 0;
-  const behaviors = createSurvivalBehaviors({ bot, activeGoal: () => 'nether_expedition',
+  const behaviors = createSurvivalBehaviors({ bot,
     actions: { eat: async () => { ate += 1; state.food = 20; return { ok: true }; } } });
   const recovery = behaviors.find((behavior) => behavior.name === 'nether_combat_recovery');
   assert.equal(behaviors.find((behavior) => behavior.name === 'defend').want(state), 0);
