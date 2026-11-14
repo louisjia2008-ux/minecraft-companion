@@ -161,6 +161,22 @@ test('night rest a few blocks from the bed uses it straight away instead of walk
   assert.deepEqual(calls, ['sleep']);
 });
 
+test('night rest uses a bed under the home roof and yields while a failed sleep backs off', async () => {
+  const position = new Vec3(3.5, 64, 3.5);
+  const bot = { entity: { position }, game: { dimension: 'overworld' } };
+  const home = () => ({ bed: { x: 5, y: 64, z: 3 }, centre: { x: 3, y: 64, z: 3 } });
+  const state = { isDay: false, sheltered: false };
+  const rest = createNightRest({ bot, home, actions: { underground: () => true },
+    skills: { useBed: async () => ({ ok: false, reason: 'bed_near_hostiles' }) } });
+  bot.entity.position = position.offset(0, -2, 0);
+  assert.equal(rest.want(state), 0);
+  bot.entity.position = position;
+  assert.ok(rest.want(state) > 0);
+  const run = AbortSignal.timeout(25);
+  await assert.rejects(rest.run({ signal: run, record() {}, perceive: () => state }), { code: 'aborted' });
+  assert.equal(rest.want(state), 0);
+});
+
 test('the night shelter remains owned across task restart and a failed dawn exit', async () => {
   const bot = { entity: { position: new Vec3(108.5, 70, 0.5), onGround: true }, game: { dimension: 'overworld' }, on() {}, removeListener() {} };
   const home = () => ({ centre: { x: 3, y: 64, z: 3 } });

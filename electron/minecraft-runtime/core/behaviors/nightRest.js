@@ -27,6 +27,8 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
   const where = () => {
     try { return home(); } catch { return null; }
   };
+  const insideHome = ({ centre }, p) => Math.abs(p.x - centre.x - .5) < 2.6
+    && Math.abs(p.z - centre.z - .5) < 2.6 && Math.abs(p.y - centre.y) < .8;
 
   const behavior = {
     name: 'night_rest',
@@ -35,8 +37,12 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
       if (dimensionOf(bot) !== 'overworld') return 0;
       if (bot.companionNightBunker) return 0.8;
       if (state.isDay !== false || state.sheltered) return 0;
-      if (!where()) return 0;
-      if (typeof actions.underground === 'function' && actions.underground(bot)) return 0;
+      const spot = where();
+      if (!spot) return 0;
+      // The finished house's roof can read as underground. Work in a real
+      // cave should keep running, but a player already indoors can use bed.
+      if (actions.underground?.(bot) && !(spot.bed && insideHome(spot, bot.entity.position))) return 0;
+      if (spot.bed && now() < bedRefusedUntil && insideHome(spot, bot.entity.position)) return 0;
       return 0.8;
     },
     async run(ctx) {
