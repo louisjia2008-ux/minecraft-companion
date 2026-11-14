@@ -42,6 +42,10 @@ test('a pearl hunt already below the home can recover on the daylight tick', () 
   context.bot.entity.position.y = 57;
   context.bot.blockAt = () => ({ name: 'air', boundingBox: 'empty', skyLight: 0 });
   assert.equal(hunt.when(context), true);
+  context.bot.entity.position.y = 61;
+  context.bot.blockAt = (p) => p.y === 60 ? { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] }
+    : { name: 'air', boundingBox: 'empty', skyLight: 7, shapes: [] };
+  assert.equal(hunt.when(context), false);
   context.bot.entity.position.y = 64;
   assert.equal(hunt.when(context), false);
 });

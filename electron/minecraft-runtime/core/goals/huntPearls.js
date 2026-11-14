@@ -75,7 +75,7 @@ function scoutSectorOf(position, centre) {
 function pearlCaveRecoveryNeeded(bot, house, position, limit = SCOUT_RADIUS) {
   if (!house || !position || position.y >= house.y - 2 || flatDistance(position, house) > limit) return false;
   const feet = new Vec3(position.x, position.y, position.z).floored();
-  return position.y < house.y - 7 || !skyOpen(bot, feet);
+  return position.y < house.y - 7 || (!scoutGround(bot, feet) && !skyOpen(bot, feet));
 }
 
 function pearlTetherRecoveryNeeded(house, position, limit = SCOUT_RADIUS) {
@@ -457,7 +457,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
     const route = await planDryRoute(ctx, centre, site, scoutRadius);
     const camp = route.at(-1);
     if (!camp) return null;
-    const homeBank = new goals.GoalNear(from.x, from.y, from.z, 1);
+    const homeBank = new goals.GoalBlock(from.x, from.y, from.z);
     const returnRoute = await planDryRoute(ctx, centre, homeBank, scoutRadius, camp.offset(.5, 0, .5));
     if (!returnRoute.length) return null;
     ctx.record('pearl_wide_scout_plan', { from, camp, sector, steps: route.length, returnSteps: returnRoute.length });
@@ -472,7 +472,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
 
   async function runWideScout(ctx, state, house, from, focus) {
     if (scoutRadius === SCOUT_RADIUS || !house || bot.entity.onGround !== true || state.inWater || !scoutGroundAt(from)) return null;
-    if (!widePlan && !focus && !wideTried && flatDistance(from, house) <= HOME_RANGE && readyForWideScout(state)) {
+    if (!widePlan && !focus && !wideTried && from.y >= house.y - 2
+      && flatDistance(from, house) <= HOME_RANGE && readyForWideScout(state)) {
       wideTried = true;
       widePlan = await planWideScout(ctx, house, from);
     }
@@ -483,14 +484,14 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
         plan.returning = true;
         plan.route = from.equals(plan.camp) ? plan.returnRoute : [];
       }
-      if (from.distanceTo(plan.from) <= 2) {
+      if (from.equals(plan.from)) {
         ctx.record('pearl_wide_scout_home', { at: from, home: house });
         widePlan = null;
         return { ok: true, waited: true };
       }
       if (wideFailures >= WIDE_SCOUT_RETRY_LIMIT && Date.now() < plan.retryAt) return wait(ctx, 'pearl_wide_scout_return_blocked');
       if (!plan.route.length) {
-        const homeBank = new goals.GoalNear(plan.from.x, plan.from.y, plan.from.z, 2);
+        const homeBank = new goals.GoalBlock(plan.from.x, plan.from.y, plan.from.z);
         plan.route = await planDryRoute(ctx, house, homeBank, scoutRadius + 1);
       }
       const next = await walkRouteLeg(ctx, from, plan.route);

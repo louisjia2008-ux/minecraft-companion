@@ -691,6 +691,7 @@ test('the wider dusk scout proves a dry return before leaving and uses it at daw
         const start = position.floored();
         const target = start.equals(camp) ? home : camp;
         assert.ok(end.isEnd(target));
+        if (start.equals(camp)) assert.equal(end.isEnd(home.offset(0, -1, 0)), false);
         yield { result: { status: 'success', path: simplePath(start, target) } };
       } } };
   const goal = createHuntPearlsGoal({ bot, scoutRadius: 80, scoutSector: 'south', actions: {
@@ -714,13 +715,13 @@ test('the wider dusk scout proves a dry return before leaving and uses it at daw
     type: 'pearl_wide_scout_plan', from: home, camp, sector: 'south', steps: 64, returnSteps: 64 });
   assert.deepEqual(bot.entity.position.floored(), camp);
   day = true;
-  for (let i = 0; i < 10; i += 1) {
+  for (let i = 0; i < 11; i += 1) {
     assert.equal(goal.isDone(ctx.perceive()), false);
     await goal.run(ctx);
   }
   assert.equal(goal.isDone(ctx.perceive()), true);
   assert.ok(records.some(({ type }) => type === 'pearl_wide_scout_home'));
-  assert.equal(ledges.length, 20);
+  assert.deepEqual(ledges.at(-1), home);
 });
 
 test('dawn returns to the house in short confirmed dry legs and can begin with a detour', async () => {
