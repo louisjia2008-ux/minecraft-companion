@@ -38,8 +38,9 @@ const { homeResupplyReady } = require('../core/goals/outfit');
 const { expeditionFoodCount } = require('../core/goals/stockFood');
 
 const MINUTE = 60 * 1000;
-const EYES = 12;
-const BLAZE_RODS = Math.ceil(EYES / 2) + 1;
+// Twelve portal frames plus two eyes lost during the seed 2 stronghold scouting run.
+const EYES = 14;
+const BLAZE_RODS = 7;
 // Asked again this many times before the run counts the bot as stuck.
 const RETRIES = 8;
 // Bread a trip to the farm brings back; asked for again whenever the bot goes hungry with nothing in the bag.
@@ -80,7 +81,8 @@ const PORTAL_GEAR = [
   { key: 'obsidian', count: 10 }, { key: 'cobblestone', count: 64 },
 ];
 const TRIP = [...PORTAL_GEAR, TRIP_FOOD];
-const END_WEAPONS = [{ key: 'bow', count: 1 }, { key: 'arrow', count: 48 }];
+// The native seed 2 dragon test consumed 55 arrows. Carry a full stack.
+const END_WEAPONS = [{ key: 'bow', count: 1 }, { key: 'arrow', count: 64 }];
 const END_FOOD = { key: 'food', count: 24 };
 const GEAR = [...IRON_ARMOR, PORTAL_GEAR[0], ...END_WEAPONS, ...PORTAL_GEAR.slice(1), END_FOOD];
 const EYE_KIT = [{ key: 'ender_eye', count: EYES }, ...END_WEAPONS, END_FOOD,
@@ -113,7 +115,7 @@ const STEPS = [
   { id: 'gear', task: 'outfit', args: ({ state } = {}) => expeditionKitArgs(TRIP, state),
     done: ({ bot, state }) => state.gearDone || expeditionKitDone(bot, TRIP) },
   { id: 'nether', task: 'netherExpedition', args: () => ({ blazeRods: BLAZE_RODS, witherSkulls: 0, trades: 0 }), patient: true,
-    done: ({ bot }) => have(bot, 'blaze_rod') + have(bot, 'ender_eye') / 2 >= BLAZE_RODS && bot.game?.dimension?.endsWith('overworld') },
+    done: ({ bot }) => have(bot, 'blaze_rod') >= BLAZE_RODS && dimensionOf(bot) === 'overworld' },
   { id: 'pearls', task: 'huntPearls', args: ({ bot }) => ({ count: Math.max(1, EYES - have(bot, 'ender_eye')) }),
     when: ({ bot }) => bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000,
     done: ({ bot }) => have(bot, 'ender_pearl') + have(bot, 'ender_eye') >= EYES, nightly: true },

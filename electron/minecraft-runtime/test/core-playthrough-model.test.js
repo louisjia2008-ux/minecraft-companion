@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
 const { playthroughNatural, STEPS, REARM, RECOVERY_BASE_KIT } = require('../scenarios/playthrough.cjs');
 const { createStarterHouse } = require('../core/blueprints/starterHouse');
+const { planNext } = require('../core/planner');
 
 test('a nether trip short of obsidian for its portal sends the model back for the gear', () => {
   const state = { gearDone: true, steps: STEPS.map((s) => ({ id: s.id, asks: 1, doneAt: s.id === 'nether' ? null : 1 })) };
@@ -74,7 +75,44 @@ test('every pickaxe worn out: the new set comes with one', async () => {
   assert.ok(asked[0].args.items.some((r) => r.key === 'iron_pickaxe'));
 });
 
-test('the Nether trip requires portal supplies; the eyes stage also waits for a bow and 48 arrows', async () => {
+test('first Nether return requires seven actual rods and fourteen pearls supply the full eye reserve', () => {
+  const { context } = modelContext();
+  const [nether, pearls, eyes] = ['nether', 'pearls', 'eyes'].map((id) => STEPS.find((step) => step.id === id));
+  const bag = { blaze_rod: 6, ender_pearl: 12, blaze_powder: 2, ender_eye: 2 };
+  context.bot.inventory.items = () => Object.entries(bag).filter(([, count]) => count > 0).map(([name, count]) => ({ name, count }));
+  assert.equal(nether.args().blazeRods, 7);
+  assert.equal(nether.done(context), false);
+  bag.blaze_rod = 7;
+  context.bot.game.dimension = 'minecraft:the_nether';
+  assert.equal(nether.done(context), false);
+  context.bot.game.dimension = 'minecraft:overworld';
+  assert.equal(nether.done(context), true);
+
+  assert.equal(pearls.args(context).count, 12, 'physically crafted eyes already contain a pearl');
+  assert.equal(pearls.done(context), true);
+  delete bag.ender_eye;
+  delete bag.blaze_powder;
+  assert.equal(pearls.args(context).count, 14);
+  assert.equal(pearls.done(context), false);
+
+  const requirements = [eyes.args().items.find(({ key }) => key === 'ender_eye')];
+  assert.deepEqual(requirements, [{ key: 'ender_eye', count: 14 }]);
+  assert.deepEqual(planNext({ requirements, inventory: bag }), {
+    kind: 'hunt', key: 'ender_pearl', mobs: ['enderman'], count: 2, for: 'ender_eye',
+  });
+  bag.ender_pearl = 14;
+  assert.equal(pearls.done(context), true);
+  assert.deepEqual(planNext({ requirements, inventory: bag }), {
+    kind: 'craft', key: 'blaze_powder', item: 'blaze_powder', times: 7, table: false, for: 'ender_eye',
+  });
+  delete bag.blaze_rod;
+  bag.blaze_powder = 14;
+  assert.deepEqual(planNext({ requirements, inventory: bag }), {
+    kind: 'craft', key: 'ender_eye', item: 'ender_eye', times: 14, table: false, for: 'ender_eye',
+  });
+});
+
+test('the Nether trip requires portal supplies; the eyes stage waits for fourteen eyes, a bow and a stack of arrows', async () => {
   const gear = STEPS.find((step) => step.id === 'gear').args().items;
   assert.ok(gear.some(({ key }) => key === 'obsidian'));
   assert.ok(gear.some(({ key }) => key === 'flint_and_steel'));
@@ -83,17 +121,20 @@ test('the Nether trip requires portal supplies; the eyes stage also waits for a 
   const { context, asked, state } = modelContext({ step: 'eyes', armour: ['iron_helmet', 'iron_chestplate'], pick: true });
   const eyes = STEPS.find((step) => step.id === 'eyes');
   const inventory = eyes.args().items.filter(({ key }) => key !== 'bow').map(({ key, count }) => ({
-    name: key === 'food' ? 'bread' : key, count: key === 'arrow' ? 47 : count,
+    name: key === 'food' ? 'bread' : key, count: ['arrow', 'ender_eye'].includes(key) ? count - 1 : count,
   }));
   context.bot.inventory.items = () => [...inventory, { name: 'iron_pickaxe', count: 1 }];
   await playthroughNatural.onTick(context);
   assert.equal(asked[0]?.task, 'outfit', 'eyes alone do not finish the kit');
   assert.deepEqual(asked[0].args.items.filter(({ key }) => key === 'bow' || key === 'arrow'),
-    [{ key: 'bow', count: 1 }, { key: 'arrow', count: 48 }]);
+    [{ key: 'bow', count: 1 }, { key: 'arrow', count: 64 }]);
   inventory.push({ name: 'bow', count: 1 });
   await playthroughNatural.onTick(context);
   assert.equal(state.steps.find((step) => step.id === 'eyes').doneAt, null);
-  inventory.find(({ name }) => name === 'arrow').count = 48;
+  inventory.find(({ name }) => name === 'arrow').count = 64;
+  await playthroughNatural.onTick(context);
+  assert.equal(state.steps.find((step) => step.id === 'eyes').doneAt, null);
+  inventory.find(({ name }) => name === 'ender_eye').count = 14;
   await playthroughNatural.onTick(context);
   assert.ok(state.steps.find((step) => step.id === 'eyes').doneAt);
 });
@@ -140,14 +181,14 @@ test('a lost bow after eyes preparation restocks the End weapons without recraft
     asked.push({ task, args });
     goal = { name: task };
   };
-  const inventory = [{ name: 'iron_pickaxe', count: 1 }, { name: 'arrow', count: 47 }];
+  const inventory = [{ name: 'iron_pickaxe', count: 1 }, { name: 'arrow', count: 63 }];
   context.bot.inventory.items = () => inventory;
   await playthroughNatural.onTick(context);
   assert.equal(state.rearm, false);
   assert.equal(state.steps.find((step) => step.id === 'eyes').doneAt, null);
   assert.deepEqual(asked, []);
   await playthroughNatural.onTick(context);
-  assert.deepEqual(asked[0], { task: 'outfit', args: { items: [{ key: 'bow', count: 1 }, { key: 'arrow', count: 48 }] } });
+  assert.deepEqual(asked[0], { task: 'outfit', args: { items: [{ key: 'bow', count: 1 }, { key: 'arrow', count: 64 }] } });
   inventory.push({ name: 'bow', count: 1 }, { name: 'arrow', count: 1 });
   await playthroughNatural.onTick(context);
   await playthroughNatural.onTick(context);
