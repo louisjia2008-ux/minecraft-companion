@@ -161,6 +161,42 @@ test('night rest a few blocks from the bed uses it straight away instead of walk
   assert.deepEqual(calls, ['sleep']);
 });
 
+test('the night shelter remains owned across task restart and a failed dawn exit', async () => {
+  const bot = { entity: { position: new Vec3(108.5, 70, 0.5), onGround: true }, game: { dimension: 'overworld' }, on() {}, removeListener() {} };
+  const home = () => ({ centre: { x: 3, y: 64, z: 3 } });
+  const bunker = { top: { x: 108, y: 70, z: 0 }, seal: 'cobblestone' };
+  const calls = [], events = [];
+  const skills = {
+    async digIn() { calls.push('seal'); return { ok: true, bunker }; },
+    async digOut(_bot, _ctx, descriptor) {
+      assert.equal(descriptor, bunker);
+      calls.push('exit');
+      return calls.length === 2 ? { ok: false, opened: true, reason: 'bunker_exit_unconfirmed' } : { ok: true };
+    },
+  };
+  const actions = { underground: () => false };
+  const night = { isDay: false }, day = { isDay: true };
+  const ctx = (state) => ({ perceive: () => state, record: (_type, event) => events.push(event) });
+  const rest = createNightRest({ bot, home, actions, skills });
+  await rest.run(ctx(night));
+  rest.dispose();
+  assert.equal(bot.companionNightBunker, bunker);
+  assert.equal(bot.companionSheltered, true);
+  assert.deepEqual(events[1], { action: 'bunker_sealed', top: bunker.top, seal: bunker.seal });
+
+  const resumed = createNightRest({ bot, home, actions, skills });
+  assert.ok(resumed.want(day) > 0);
+  assert.equal((await resumed.run(ctx(day))).reason, 'bunker_exit_unconfirmed');
+  assert.equal(bot.companionNightBunker, bunker);
+  assert.equal(bot.companionSheltered, false);
+  assert.ok(resumed.want(day) > 0);
+  assert.equal((await resumed.run(ctx(day))).ok, true);
+  assert.equal(bot.companionNightBunker, undefined);
+  assert.equal(resumed.want(day), 0);
+  assert.deepEqual(calls, ['seal', 'exit', 'exit']);
+  resumed.dispose();
+});
+
 test('night rest shelters in the house when the bed is gone', async () => {
   const bot = { entity: { position: new Vec3(40, 64, 0) }, game: { dimension: 'overworld' }, on() {}, removeListener() {} };
   const went = [];

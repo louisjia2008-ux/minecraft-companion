@@ -22,7 +22,6 @@ const NEAR_BED = 16;
 function createNightRest({ bot, home, actions = defaultActions, skills = defaultSkills, now = Date.now,
   farDistance = 64, retryBedMs = 20000 } = {}) {
   if (!bot || typeof home !== 'function') throw new TypeError('bot and home are required');
-  let bunker = null;
   let bedRefusedUntil = 0;
 
   const where = () => {
@@ -33,23 +32,31 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
     name: 'night_rest',
     band: BAND.MAINTENANCE,
     want(state) {
-      if (bunker) return 0.8;
-      if (state.isDay !== false || state.sheltered || dimensionOf(bot) !== 'overworld') return 0;
+      if (dimensionOf(bot) !== 'overworld') return 0;
+      if (bot.companionNightBunker) return 0.8;
+      if (state.isDay !== false || state.sheltered) return 0;
       if (!where()) return 0;
       if (typeof actions.underground === 'function' && actions.underground(bot)) return 0;
       return 0.8;
     },
     async run(ctx) {
       const state = ctx.perceive();
+      const bunker = bot.companionNightBunker;
       if (bunker) {
-        if (state.isDay === false) {
+        if (state.isDay !== true) {
           await sleep(3000, ctx.signal);
           return { ok: true, waited: true };
         }
-        ctx.record('night_rest', { action: 'dig_out' });
-        const out = await skills.digOut(bot, ctx, bunker);
-        bunker = null;
-        bot.companionSheltered = false;
+        ctx.record('night_rest', { action: 'dig_out', top: bunker.top, seal: bunker.seal });
+        const out = await skills.digOut(bot, ctx, bunker, { confirmExit: true });
+        if (bot.companionNightBunker === bunker) {
+          if (out.ok || out.reason === 'bunker_seal_changed') {
+            delete bot.companionNightBunker;
+            bot.companionSheltered = false;
+          } else if (out.opened) {
+            bot.companionSheltered = false;
+          }
+        }
         return out;
       }
       const spot = where();
@@ -62,8 +69,9 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
         ctx.record('night_rest', { action: 'dig_in', distance: Math.round(distance) });
         const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => SEALS.has(n) });
         if (!dug.ok) return dug;
-        bunker = dug.bunker;
+        bot.companionNightBunker = dug.bunker;
         bot.companionSheltered = true;
+        ctx.record('night_rest', { action: 'bunker_sealed', top: dug.bunker.top, seal: dug.bunker.seal });
         return { ok: true };
       }
       if (spot.bed && now() >= bedRefusedUntil) {
@@ -89,7 +97,11 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
       return { ok: true, waited: true };
     },
   };
-  const onDeath = () => { bunker = null; };
+  const onDeath = () => {
+    if (!bot.companionNightBunker) return;
+    delete bot.companionNightBunker;
+    bot.companionSheltered = false;
+  };
   bot.on?.('death', onDeath);
   behavior.dispose = () => bot.removeListener?.('death', onDeath);
   return behavior;

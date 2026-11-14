@@ -1116,7 +1116,7 @@ async function digIn(bot, ctx, { sealMatch, avoid = () => false }) {
   const sealed = await placeAt(bot, ctx, seal, sealMatch,
     { faces: [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)] });
   if (!sealed.ok) return sealed;
-  return { ok: true, bunker: { top: { x: top.x, y: top.y, z: top.z } } };
+  return { ok: true, bunker: { top: { x: top.x, y: top.y, z: top.z }, seal: bot.blockAt(seal)?.name } };
 }
 
 /**
@@ -1141,18 +1141,28 @@ async function tossStacks(bot, ctx, items) {
 }
 
 /** Opens the seal and climbs back up, filling the shaft behind the bot. */
-async function digOut(bot, ctx, bunker) {
+async function digOut(bot, ctx, bunker, { confirmExit = false } = {}) {
   const top = new Vec3(bunker.top.x, bunker.top.y, bunker.top.z);
-  const seal = bot.blockAt(top.offset(0, -1, 0));
-  if (seal && seal.boundingBox === 'block' && bot.entity.position.y < top.y - 1) {
+  const atSeal = top.offset(0, -1, 0);
+  const outside = () => bot.entity.onGround && bot.entity.position.y >= top.y - .1;
+  if (confirmExit && outside()) return { ok: true };
+  const seal = bot.blockAt(atSeal);
+  if (confirmExit && !seal) return fail('bunker_seal_unloaded');
+  if (seal.boundingBox === 'block' && bot.entity.position.y < top.y - 1) {
+    const feet = bot.entity.position.floored();
+    if (confirmExit && (seal.name !== bunker.seal || feet.x !== top.x || feet.z !== top.z
+      || bot.companionProtectBlock?.(seal))) return fail('bunker_seal_changed');
     const dug = await actions.digBlock(bot, ctx, seal);
     if (!dug.ok) return dug;
+    if (confirmExit && bot.blockAt(atSeal)?.boundingBox !== 'empty') return fail('bunker_open_unconfirmed');
   }
   const saved = bot.companionSurfaceY;
   bot.companionSurfaceY = top.y;
   try {
     const up = await actions.surface(bot, ctx);
-    return up || { ok: true };
+    if (!confirmExit) return up || { ok: true };
+    if (outside() || await waitUntil(outside, { timeoutMs: 650, signal: ctx.signal })) return { ok: true };
+    return { ...fail(up?.reason || 'bunker_exit_unconfirmed'), opened: bot.blockAt(atSeal)?.boundingBox === 'empty' };
   } finally {
     bot.companionSurfaceY = saved;
   }
