@@ -35,6 +35,7 @@ const { countKey } = require('../core/knowledge');
 const { RISKY_FOODS } = require('../core/actions');
 const { homeOf } = require('../core/goals/registry');
 const { homeResupplyReady } = require('../core/goals/outfit');
+const { pearlCaveRecoveryNeeded } = require('../core/goals/huntPearls');
 const { expeditionFoodCount } = require('../core/goals/stockFood');
 
 const MINUTE = 60 * 1000;
@@ -120,8 +121,7 @@ const STEPS = [
     when: ({ bot, companion }) => {
       if (bot.time?.timeOfDay >= 12500 && bot.time?.timeOfDay < 23000) return true;
       const home = companion?.director && houseOf(companion)?.interiorCenter;
-      const p = bot.entity?.position;
-      return Boolean(home && p && p.y < home.y - 7 && Math.hypot(p.x - home.x, p.z - home.z) <= 48);
+      return pearlCaveRecoveryNeeded(bot, home, bot.entity?.position);
     },
     done: ({ bot }) => have(bot, 'ender_pearl') + have(bot, 'ender_eye') >= EYES, nightly: true },
   { id: 'eyes', task: 'outfit', args: ({ state } = {}) => state?.endWeaponsRestock

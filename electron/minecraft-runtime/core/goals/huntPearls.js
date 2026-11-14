@@ -37,11 +37,18 @@ const DOOR_DIRECTIONS = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1
 const MOBS = ['enderman'];
 const isPearl = (n) => n === 'ender_pearl';
 const pointKey = (p) => `${p.x},${p.y},${p.z}`;
+const flatDistance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+
+function pearlCaveRecoveryNeeded(bot, house, position) {
+  if (!house || !position || position.y >= house.y - 2 || flatDistance(position, house) > SCOUT_RADIUS) return false;
+  const feet = new Vec3(position.x, position.y, position.z).floored();
+  return position.y < house.y - 7 || !skyOpen(bot, feet);
+}
 
 function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
   const blacklist = createBlacklist({ ttlMs: 60000 });
-  const memory = { centre: null, scoutPositions: [], nights: 0, hunted: 0, sawNight: false };
+  const memory = { centre: null, scoutPositions: [], nights: 0, hunted: 0, sawNight: false, ascending: false };
   const caveVisited = new Set();
   const pearls = (state) => state.inventory.ender_pearl || 0;
 
@@ -51,7 +58,6 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   const read = (p) => bot.blockAt(p, false);
   const outdoors = (p) => standable(read, p) && skyOpen(bot, p);
   const restingAtHome = (p, centre) => centre && p.distanceTo(centre) <= 6;
-  const flatDistance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
   const readyToHunt = (state) => state.health >= ENGAGE_HEALTH && state.food >= ENGAGE_FOOD
     && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe'));
   const visible = (entity) => {
@@ -101,10 +107,6 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   function home() {
     const at = bot.companionHomeAt?.();
     return at ? new Vec3(at.x, at.y, at.z) : null;
-  }
-
-  function belowHome(house, p) {
-    return house && p && p.y < house.y - 7 && flatDistance(p, house) <= SCOUT_RADIUS;
   }
 
   async function regainSurface(ctx, state, house) {
@@ -253,15 +255,25 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   return {
     name: 'hunt_pearls',
     memory,
-    ownsRouteRecovery: () => memory.sawNight,
+    ownsRouteRecovery: () => memory.sawNight || memory.ascending,
     // Endermen appear and vanish: a quiet stretch is normal, not a stall.
     noProgressLimit: 40,
-    isDone: (state) => pearls(state) >= count || (memory.sawNight && state.isDay !== false && !belowHome(home(), state.position)),
+    isDone: (state) => !memory.ascending && !pearlCaveRecoveryNeeded(bot, home(), state.position)
+      && (pearls(state) >= count || (memory.sawNight && state.isDay !== false)),
     progress: (state) => pearls(state) * 10 + memory.hunted,
     async run(ctx) {
       const state = ctx.perceive();
       const house = home();
-      if (belowHome(house, bot.entity.position)) return regainSurface(ctx, state, house);
+      const feet = bot.entity.position.floored();
+      if (memory.ascending && (!house || flatDistance(feet, house) > SCOUT_RADIUS
+        || (feet.y >= house.y - 2 && bot.entity.onGround && outdoors(feet) && !state.inWater && !bot.entity.isInLava))) {
+        memory.ascending = false;
+        caveVisited.clear();
+      }
+      if (house && (memory.ascending || pearlCaveRecoveryNeeded(bot, house, state.position))) {
+        memory.ascending = true;
+        return regainSurface(ctx, state, house);
+      }
       if (state.isDay !== false) {
         // Set during the day: wait for dusk at home. Where the night's hunt
         // ended was once a flooded cave thirty blocks down, and the bot
@@ -304,4 +316,4 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
   };
 }
 
-module.exports = { createHuntPearlsGoal };
+module.exports = { createHuntPearlsGoal, pearlCaveRecoveryNeeded };

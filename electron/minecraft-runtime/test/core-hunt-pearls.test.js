@@ -43,6 +43,36 @@ test('already at home, it simply waits', async () => {
   assert.equal(s.walks.length, 0);
 });
 
+test('a pearl hunter resumed under a low roof keeps climbing past cave detection height', async () => {
+  const stairs = [new Vec3(0, 57, 0), new Vec3(1, 58, 0), new Vec3(2, 59, 0),
+    new Vec3(3, 60, 0), new Vec3(4, 61, 0), new Vec3(5, 62, 0), new Vec3(6, 63, 0)];
+  const bot = { ...terrain, entity: { position: stairs[0], onGround: true },
+    companionHomeAt: () => new Vec3(0, 64, 0),
+    pathfinder: { movements: { getNeighbors: () => [] } },
+    blockAt(p) {
+      const step = stairs.find((at) => at.x === p.x && at.z === p.z);
+      if (!step || p.y < step.y || (step.x < 6 && p.y >= step.y + 3)) return STONE;
+      return step.x === 6 ? AIR : { ...AIR, skyLight: 0 };
+    } };
+  const actions = { goTo: async (_bot, _ctx, goal) => {
+    const next = stairs[stairs.indexOf(bot.entity.position) + 1];
+    assert.ok(goal.isEnd(next));
+    bot.entity.position = next;
+    return { ok: true };
+  } };
+  const records = [];
+  const goal = createHuntPearlsGoal({ bot, actions });
+  const ctx = { signal: new AbortController().signal, record: (type) => records.push(type),
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: true }) };
+  goal.memory.sawNight = true;
+  for (let i = 1; i < stairs.length; i += 1) {
+    assert.equal(goal.isDone(ctx.perceive()), false);
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.equal(bot.entity.position, stairs[i]);
+  }
+  assert.equal(records.filter((type) => type === 'pearl_cave_ascent').length, stairs.length - 1);
+});
+
 test('at night an enderman far off is stared at until it comes, not chased', async () => {
   const position = new Vec3(0, 64, 0);
   const man = { id: 7, name: 'enderman', position: new Vec3(30, 64, 0) };
