@@ -265,7 +265,8 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
     const dy = b.y - a.y;
     const farmOrigin = farmlandStart && a.equals(from);
     if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(dy) > 1 || (!farmOrigin && !dry(a)) || !dry(b)) return false;
-    if (farmOrigin && dy !== 0) return false;
+    // A full bank one level up is 17/16 blocks above this observed farm surface.
+    if (farmOrigin && dy < 0) return false;
     if ((isDoor(a) || isDoor(b)) && (a.x !== b.x || dy !== 0)) return false;
     return (dy === 0 || clearBlock(read((dy > 0 ? a : b).offset(0, 2, 0))))
       && accept(b.offset(.5, 0, .5), actualOrigin || (farmOrigin ? farmlandStart : a.offset(.5, 0, .5)));
