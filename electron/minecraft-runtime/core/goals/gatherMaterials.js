@@ -26,9 +26,9 @@ const { planNext } = require('../planner');
 const { KNOWLEDGE, countKey, familyOf } = require('../knowledge');
 const { materialsFor } = require('../materials');
 const { createBlacklist, posKey } = require('../blacklist');
-const { sleep } = require('../confirm');
+const { sleep, waitUntil } = require('../confirm');
 const mining = require('../mining');
-const { skyOpen, standable } = require('../caveRetreat');
+const { skyOpen, standable, walkDry } = require('../caveRetreat');
 const { createStoneQuarry } = require('./stoneQuarry');
 const obsidian = require('../obsidian');
 const nether = require('../nether');
@@ -45,6 +45,10 @@ const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
 const MINE_FROM_HOME = 8;
 const MINE_RESTART_RINGS = [18, 26, 34, 42];
+const MINE_SITE_LIMIT = 14;
+const MINE_SCOUT_LEG = 12;
+const MINE_SCOUT_LEGS = 2;
+const MINE_PORTAL = /^(nether_portal|end_portal|end_gateway)$/;
 // Further below the chest than this, home is reached by going up first.
 const HOME_BELOW = 8;
 const SUPPLY_STONE_RADIUS = 24;
@@ -78,6 +82,11 @@ const MOLD_FROM_HOME = 5;
 // A portal frame: ten obsidian, the four corners anything solid.
 const FRAME_OBSIDIAN = 10;
 const FRAME_CORNERS = 4;
+
+const MINE_SITE_COLUMNS = Array.from({ length: 33 }, (_, x) => x - 16)
+  .flatMap((x) => Array.from({ length: 33 }, (_, z) => [x, z - 16, Math.hypot(x, z - 16)]))
+  .filter(([, , distance]) => distance <= 16).sort((a, b) => a[2] - b[2]);
+const MINE_SITE_HEIGHTS = [0, ...Array.from({ length: 24 }, (_, i) => [i + 1, -i - 1]).flat()];
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
   skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20, carry = () => false, reserved = {},
@@ -117,6 +126,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   let stoneRouteOwnsRecovery = false;
   let bowRouteOwnsRecovery = false;
   let lavaRouteOwnsRecovery = false;
+  const ownsRouteRecovery = () => stoneRouteOwnsRecovery || bowRouteOwnsRecovery || lavaRouteOwnsRecovery
+    || Boolean(memory.mineRestart) || memory.mine?.changingLevel === true || quarry?.inside() === true;
   let nightHunt = null;
   let nextBowFoodCheck = 0;
   let bowSearchSince = 0;
@@ -298,6 +309,56 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   const horizontalDistance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
+  const restartFooting = (p) => standable(blockAt, p) && !SUPPLY_CANOPY.test(nameAt(p.offset(0, -1, 0)))
+    && ![p, p.offset(0, 1, 0)].some((cell) => MINE_PORTAL.test(nameAt(cell)));
+  const mineSurface = (p) => !bot.companionHomeSite?.(p) && restartFooting(p) && skyOpen(bot, p);
+  const groundedAt = (at) => bot.entity.onGround && !bot.entity.isInWater && !bot.entity.isInLava
+    && bot.entity.position.floored().equals(at) && Math.abs(bot.entity.position.y - at.y) < .03;
+
+  function mineRestartSites(centre, radius, eligible) {
+    const sites = [];
+    let unloaded = false;
+    for (const [dx, dz, distance] of MINE_SITE_COLUMNS) {
+      if (distance > radius || sites.length >= MINE_SITE_LIMIT) break;
+      const column = centre.offset(dx, 0, dz);
+      if (!blockAt(column)) { unloaded ||= distance <= 8; continue; }
+      if (!eligible(column)) continue;
+      // Keep each search budget spread over distinct parts of the sector.
+      if (sites.some((p) => horizontalDistance(p, column) < 3)) continue;
+      for (const dy of MINE_SITE_HEIGHTS) {
+        const at = column.offset(0, dy, 0);
+        if (!mineSurface(at)) continue;
+        sites.push(at);
+        break;
+      }
+    }
+    return { sites, unloaded };
+  }
+
+  async function walkToRestartSite(ctx, sites, { avoid, timeoutMs, arrived }) {
+    const pathfinder = bot.pathfinder;
+    const movements = pathfinder?.movements;
+    if (!movements?.getNeighbors) return { ok: false, reason: 'mine_restart_no_pathfinder' };
+    const { getNeighbors } = movements;
+    const sprint = movements.sprintSetting ?? movements.allowSprinting;
+    const owned = Object.hasOwn(movements, 'getNeighbors');
+    const shortcut = pathfinder.enablePathShortcut;
+    movements.getNeighbors = function (node) {
+      return getNeighbors.call(this, node).filter((move) => Math.abs(move.x - node.x) + Math.abs(move.z - node.z) === 1);
+    };
+    movements.allowSprinting = false;
+    pathfinder.enablePathShortcut = false;
+    try {
+      const goal = new goals.GoalCompositeAny(sites.map((p) => new goals.GoalBlock(p.x, p.y, p.z)));
+      return await walkDry(bot, ctx, actions, goal, { avoid, timeoutMs, arrived });
+    } finally {
+      if (owned) movements.getNeighbors = getNeighbors;
+      else delete movements.getNeighbors;
+      movements.allowSprinting = sprint;
+      pathfinder.enablePathShortcut = shortcut;
+    }
+  }
+
   async function relocateMine(ctx) {
     const restart = memory.mineRestart;
     const state = ctx.perceive();
@@ -310,41 +371,61 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       // The height-based surface helper can stop below an overhang. A
       // connected walk to a verified open site can still get out from here.
     }
-    const awayFromOld = (p) => restart.avoid.every((old) => horizontalDistance(p, old) >= MINE_FROM_HOME);
-    const safe = (p) => horizontalDistance(p, chest) >= MINE_FROM_HOME && awayFromOld(p)
-      && standable((at) => bot.blockAt(at), p) && skyOpen(bot, p);
-    const site = () => {
-      // Rotate sides as well as widening the search. The furthest candidate
-      // stays inside a bounded ring around the established home.
-      const direction = ((memory.mineDir ?? 0) + restart.attempt) % SIDES.length;
-      const reach = MINE_RESTART_RINGS[Math.min(MINE_RESTART_RINGS.length - 1,
-        restart.barren - 1 + Math.floor(restart.attempt / SIDES.length))];
-      const [dx, dz] = SIDES[direction];
-      return new Vec3(chest.x + dx * reach, chest.y, chest.z + dz * reach);
-    };
-    let base = site();
-    for (let n = 0; n < SIDES.length && !awayFromOld(base); n += 1) {
-      restart.attempt += 1;
-      base = site();
+    if (!bot.entity.onGround || bot.entity.isInWater || bot.entity.isInLava) {
+      return { ok: false, reason: 'mine_restart_waiting_for_footing' };
     }
-    if (!awayFromOld(base)) return { ok: false, reason: 'mine_restart_no_fresh_sector' };
-    let target = base;
-    for (const dy of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5]) {
-      const candidate = base.offset(0, dy, 0);
-      if (safe(candidate)) { target = candidate; break; }
+    const from = bot.entity.position.floored();
+    const [dx, dz] = SIDES[((memory.mineDir ?? 0) + restart.attempt) % SIDES.length];
+    const ring = Math.min(MINE_RESTART_RINGS.length - 1, restart.barren - 1 + Math.floor(restart.attempt / SIDES.length));
+    const reach = MINE_RESTART_RINGS[ring];
+    const base = new Vec3(chest.x + dx * reach, chest.y, chest.z + dz * reach);
+    const fresh = (p) => horizontalDistance(p, chest) >= MINE_FROM_HOME
+      && restart.avoid.every((old) => horizontalDistance(p, old) >= MINE_FROM_HOME);
+    let { sites, unloaded } = mineRestartSites(base, 16, fresh);
+    let scouting = false;
+    const distance = horizontalDistance(from, base);
+    if (!sites.length && unloaded && distance > MINE_SCOUT_LEG && (restart.scoutLegs || 0) < MINE_SCOUT_LEGS) {
+      const toward = from.offset(Math.round((base.x - from.x) * 8 / distance), 0,
+        Math.round((base.z - from.z) * 8 / distance));
+      sites = mineRestartSites(toward, 4, (p) => horizontalDistance(p, from) <= MINE_SCOUT_LEG
+        && horizontalDistance(p, base) <= distance - 3).sites;
+      scouting = sites.length > 0;
     }
-    ctx.record('mine_relocate', { from: posKey(bot.entity.position.floored()), target: posKey(target), attempt: restart.attempt + 1 });
-    const restore = nether.applyWalkOnlyMovements(bot);
-    let moved;
-    try { moved = await actions.goNear(bot, ctx, target, 1, { timeoutMs: 30000 }); }
-    finally { restore(); }
-    const landed = bot.entity.position.floored();
-    if (moved.ok && bot.entity.onGround && horizontalDistance(landed, target) <= 2.5 && safe(landed)) {
-      restart.arrived = landed;
-      return { ok: true, progress: false };
+    let reason = 'mine_restart_no_dry_site';
+    if (sites.length) {
+      const matches = new Set(sites.map(posKey));
+      const arrived = (p) => matches.has(posKey(p)) && groundedAt(p.floored()) && mineSurface(p.floored());
+      const maxDistance = scouting ? MINE_SCOUT_LEG
+        : Math.max(...sites.map((p) => horizontalDistance(from, p))) + MINE_SCOUT_LEG;
+      const floor = Math.min(from.y, chest.y) - HOME_BELOW;
+      const avoid = (p) => p.y < floor || horizontalDistance(from, p) > maxDistance || !restartFooting(p);
+      ctx.record('mine_relocate', { from: posKey(from), target: posKey(sites[0]), sector: posKey(base),
+        candidates: sites.length, scouting, attempt: restart.attempt + 1 });
+      const moved = await walkToRestartSite(ctx, sites, { avoid, timeoutMs: scouting ? 5000 : 10000, arrived });
+      const confirmed = (moved.ok || moved.reason === 'not_arrived') && await waitUntil(() => arrived(bot.entity.position),
+        { timeoutMs: 450, signal: ctx.signal });
+      if (confirmed) {
+        const landed = bot.entity.position.floored();
+        if (scouting) restart.scoutLegs = (restart.scoutLegs || 0) + 1;
+        else restart.arrived = landed;
+        ctx.record('mine_relocate_landed', { at: posKey(landed), sector: posKey(base), scouting });
+        return { ok: true, progress: false };
+      }
+      reason = moved.ok || moved.reason === 'not_arrived' ? 'mine_restart_site_unconfirmed' : moved.reason;
+      const landed = bot.entity.position.floored();
+      const distanceToSite = (p) => Math.min(...sites.map((site) => site.distanceTo(p)));
+      if (!scouting && (restart.approachLegs || 0) < 2 && groundedAt(landed) && restartFooting(landed)
+        && distanceToSite(landed) <= distanceToSite(from) - 4) {
+        restart.approachLegs = (restart.approachLegs || 0) + 1;
+        ctx.record('mine_relocate_approach', { from: posKey(from), at: posKey(landed), sector: posKey(base), reason });
+        return { ok: true, progress: false };
+      }
     }
+    ctx.record('mine_relocate_blocked', { sector: posKey(base), candidates: sites.length, unloaded, reason });
     restart.attempt += 1;
-    return { ok: false, reason: moved.ok ? 'mine_restart_site_unconfirmed' : moved.reason };
+    restart.scoutLegs = 0;
+    restart.approachLegs = 0;
+    return { ok: false, reason };
   }
 
   // A staircase starts at least this far from the chest, so home is never undermined.
@@ -353,9 +434,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     if (!memory.mine) {
       const at = bot.entity.position.floored();
       if (memory.mineRestart) {
-        if (!memory.mineRestart.arrived?.equals(at) || !bot.entity.onGround
-          || !standable((p) => bot.blockAt(p), at) || !skyOpen(bot, at)) return relocateMine(ctx);
-        memory.mineRestart = null;
+        if (!memory.mineRestart.arrived?.equals(at) || !groundedAt(at) || !mineSurface(at)) return relocateMine(ctx);
       } else if (horizontalDistance(at, chest) < MINE_FROM_HOME) {
         const [sx, sz] = SIDES[(memory.mineDir ?? 0) % 4];
         const reach = MINE_FROM_HOME + 2;
@@ -371,13 +450,18 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       const made = await skills.craft(bot, ctx, { item: 'torch', times: Math.min(2, have('coal'), have('stick')) });
       if (!made.ok) blacklist.add('torch', made.reason, 60000);
     }
+    if (memory.mineRestart) {
+      if (!groundedAt(start) || !mineSurface(start)) return { ok: false, reason: 'mine_restart_site_unconfirmed' };
+      memory.mineRestart = null;
+    }
     const m = memory.mine;
     if (m?.junction && !m.depot && m.y === step.mineY && step.mineY <= DEPOT_BELOW) return buildDepot(ctx);
     const result = await mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions, skills });
     if (!memory.mine && (m || result.reason === 'mine_exhausted')) {
       const old = m || { entrance: start, front: bot.entity.position.floored() };
       memory.barrenMines = (memory.barrenMines || 0) + 1;
-      memory.mineRestart = { barren: memory.barrenMines, attempt: 0, avoid: [old.entrance, old.front].filter(Boolean) };
+      memory.barrenMineSites = [...(memory.barrenMineSites || []), old.entrance, old.front].filter(Boolean).slice(-8);
+      memory.mineRestart = { barren: memory.barrenMines, attempt: 0, avoid: memory.barrenMineSites };
     }
     return result;
   }
@@ -627,7 +711,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         if (surfaceStone) return gatherSurfaceStone(ctx, step, dropMatch);
         const deep = Number.isFinite(step.mineY);
         // Ore that needs a mine is mined from the tunnel once there is one.
-        if (deep && memory.mine) return mine(ctx, step, dropMatch);
+        if (deep && (memory.mine || memory.mineRestart)) return mine(ctx, step, dropMatch);
         // Elsewhere only ore in the open (surface, cave mouths): never a
         // pathfinder tunnel straight down to buried ore.
         const route = surfaceOnly ? surfaceSupplyRoute(step.key).gather
@@ -870,12 +954,11 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     recover() {
       blacklist.clear();
       memory.pathFailures = 0;
-      memory.recovery = !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery && !lavaRouteOwnsRecovery && !memory.mine?.changingLevel;
+      memory.recovery = !ownsRouteRecovery();
     },
     memory,
     owed,
-    ownsRouteRecovery: () => stoneRouteOwnsRecovery || bowRouteOwnsRecovery || lavaRouteOwnsRecovery
-      || memory.mine?.changingLevel === true || quarry?.inside() === true,
+    ownsRouteRecovery,
     leaveSurfaceQuarry,
     isDone: (state) => memory.chest !== null && !quarry?.inside() && owed(state?.inventory).length === 0,
     progress: () => memory.steps,
@@ -890,7 +973,7 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         ctx.record('recovery', { at: bot.entity.position.floored(), dimension: 'the_nether', delegate: 'nether_trip' });
         return runOnce(ctx);
       }
-      if (memory.pathFailures >= 2 && !stoneRouteOwnsRecovery && !bowRouteOwnsRecovery && !lavaRouteOwnsRecovery && !memory.mine?.changingLevel) {
+      if (memory.pathFailures >= 2 && !ownsRouteRecovery()) {
         memory.pathFailures = 0;
         ctx.record('unstick', { at: bot.entity.position.floored() });
         return actions.unstick(bot, ctx);

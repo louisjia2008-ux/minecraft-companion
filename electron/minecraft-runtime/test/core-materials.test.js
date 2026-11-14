@@ -10,6 +10,7 @@ const { materialsFor } = require('../core/materials');
 const { createBrain } = require('../core/brain');
 const { createGatherMaterialsGoal } = require('../core/goals/gatherMaterials');
 const { gatherOne } = require('../core/skills');
+const { posKey } = require('../core/blacklist');
 
 test('a water bucket needs a bucket, which needs three iron at the table', () => {
   const water = [{ key: 'water_bucket', count: 1 }];
@@ -713,6 +714,19 @@ test('a carried requirement stays in the bag and counts there, never stored', as
   assert.ok(sim.chest.cobblestone >= 3);
 });
 
+function modelMineRelocation(sim, move) {
+  const movements = { getNeighbors: () => [], allowSprinting: true };
+  sim.bot.pathfinder = { movements, enablePathShortcut: true };
+  sim.actions.goTo = async (_bot, _ctx, goal, options) => {
+    assert.equal(movements.canDig, false);
+    assert.deepEqual(movements.scafoldingBlocks, []);
+    assert.equal(movements.allowSprinting, false);
+    assert.equal(sim.bot.pathfinder.enablePathShortcut, false);
+    assert.equal(options.retryNoProgress, false);
+    return move(goal.goals.map(({ x, y, z }) => new Vec3(x, y, z)), options);
+  };
+}
+
 test('a mine that comes to nothing is started again on another side of the house, farther out', async () => {
   const mining = require('../core/mining');
   const sim = simulate({ seed: 2, failRate: 0 });
@@ -731,6 +745,7 @@ test('a mine that comes to nothing is started again on another side of the house
     sim.bot.entity.position = p.offset(.5, 0, .5);
     return { ok: true };
   };
+  modelMineRelocation(sim, ([p]) => sim.actions.goNear(null, null, p));
   // No ore in the open: it has to be mined.
   sim.skills.gatherOne = async () => ({ ok: false, reason: 'no_target_in_range' });
   const mineStep = mining.mineStep;
@@ -772,14 +787,14 @@ test('an exhausted mine beyond the home boundary surfaces and confirms a differe
     sim.bot.entity.position = old.offset(0, 10, 0);
     return { ok: true };
   };
-  sim.actions.goNear = async (_bot, _ctx, target) => {
+  modelMineRelocation(sim, ([target]) => {
     events.push(target);
     walks += 1;
     // The first simulated navigation reports success but the body stayed at
     // the shaft; do not create a new mine at that position.
     if (walks > 1) sim.bot.entity.position = target.offset(.5, 0, .5);
     return { ok: true };
-  };
+  });
   const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'raw_iron', count: 2 }],
     skills: sim.skills, actions: sim.actions });
   goal.memory.chest = {};
@@ -829,11 +844,11 @@ test('a mine restart can walk out from an overhang where height-based surfacing 
   sim.actions.underground = () => true;
   sim.actions.surface = async () => null;
   let walks = 0;
-  sim.actions.goNear = async (_bot, _ctx, target) => {
+  modelMineRelocation(sim, ([target]) => {
     walks += 1;
     sim.bot.entity.position = target.offset(.5, 0, .5);
     return { ok: true };
-  };
+  });
   const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'raw_iron', count: 2 }],
     skills: sim.skills, actions: sim.actions });
   goal.memory.chest = {};
@@ -843,6 +858,83 @@ test('a mine restart can walk out from an overhang where height-based surfacing 
   assert.equal(walks, 1);
   assert.equal(goal.memory.mineRestart.arrived.y, 72);
   assert.equal(goal.memory.mine, null);
+});
+
+test('mine relocation finds a dry elevated bank off a blocked sector and confirms the exact stance', async (t) => {
+  const mining = require('../core/mining');
+  const sim = simulate({ failRate: 0 });
+  sim.inventory.stone_pickaxe = 5;
+  const chest = new Vec3(0, 64, 0);
+  const from = new Vec3(5, 64, 0);
+  const old = new Vec3(18, 64, -8);
+  const highBank = new Vec3(18, 79, 7);
+  const positions = new Map([[posKey(chest), 'chest'], [posKey(from.offset(0, -1, 0)), 'grass_block'],
+    [posKey(highBank.offset(0, -1, 0)), 'grass_block'], ['18,64,0', 'stone'], ['18,65,0', 'water'], ['18,64,1', 'water'],
+    ['18,64,-1', 'nether_portal'], ['18,63,-1', 'grass_block'], ['19,63,0', 'oak_leaves']]);
+  sim.bot.entity.position = from;
+  sim.bot.entity.onGround = true;
+  sim.bot.blockAt = (p) => {
+    const name = positions.get(posKey(p)) || 'air';
+    const empty = ['air', 'water', 'nether_portal'].includes(name);
+    return { name, skyLight: 15, boundingBox: empty ? 'empty' : 'block',
+      shapes: empty ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  modelMineRelocation(sim, (candidates, { arrived }) => {
+    assert.deepEqual(candidates, [highBank]);
+    sim.bot.entity.position = highBank.offset(.5, 0, .5);
+    assert.equal(arrived(from), false);
+    assert.equal(arrived(sim.bot.entity.position), true);
+    return { ok: true };
+  });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'raw_iron', count: 1 }],
+    skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  goal.memory.mineRestart = { barren: 1, attempt: 0, avoid: [old] };
+  const starts = [];
+  t.mock.method(mining, 'mineStep', async (_bot, _ctx, _memory, { start }) => { starts.push(start); return { ok: true }; });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.deepEqual(goal.memory.mineRestart.arrived, highBank);
+  assert.deepEqual(starts, []);
+  await goal.run(ctx);
+  assert.deepEqual(starts, [highBank]);
+});
+
+test('an unloaded mine sector gets two verified dry scout legs then rotates without a blind destination', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.inventory.stone_pickaxe = 6;
+  const chest = new Vec3(0, 64, 0);
+  sim.bot.entity.position = new Vec3(.5, 64, .5);
+  sim.bot.entity.onGround = true;
+  const seen = new Set(['0,64,0']);
+  sim.bot.blockAt = (p) => {
+    if (p.x < 0 || p.x > 29 || p.z < -2 || p.z > 2) return null;
+    const name = p.equals(chest) ? 'chest' : p.y < 64 ? 'stone' : 'air';
+    return { name, skyLight: 15, boundingBox: name === 'air' ? 'empty' : 'block',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  modelMineRelocation(sim, ([target], { arrived }) => {
+    assert.ok(target.distanceTo(sim.bot.entity.position.floored()) <= 12);
+    sim.bot.entity.position = target.offset(.5, 0, .5);
+    assert.equal(arrived(sim.bot.entity.position), true);
+    seen.add(posKey(target));
+    return { ok: true };
+  });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'raw_iron', count: 1 }],
+    skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  goal.memory.mineRestart = { barren: 4, attempt: 0, avoid: [new Vec3(29, 64, 0)] };
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  for (let n = 0; n < 2; n += 1) {
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.equal(goal.memory.mineRestart.arrived, undefined);
+  }
+  assert.equal((await goal.run(ctx)).reason, 'mine_restart_no_dry_site');
+  assert.deepEqual([...seen], ['0,64,0', '8,64,0', '16,64,0']);
+  assert.equal(goal.memory.mineRestart.attempt, 1);
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal(sim.bot.pathfinder.enablePathShortcut, true);
+  assert.equal(sim.bot.pathfinder.movements.allowSprinting, true);
 });
 
 test('far below the chest, the walk home starts by going up', async () => {
