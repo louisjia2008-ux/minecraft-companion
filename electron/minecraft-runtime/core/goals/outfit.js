@@ -610,7 +610,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const exitFloor = (p) => standable((cell) => cell.equals(threshold) || cell.equals(threshold.offset(0, 1, 0))
       ? AIR : isPortal(read(cell)) ? null : read(cell), p);
     const exitCells = threshold && [insideDoor, threshold, doorstep.floored()];
-    const exitIntact = () => shelter.doorOpen() !== null && read(threshold)?.getProperties()?.facing === 'north'
+    // Builders may place either hinge orientation on the north wall. Both
+    // north- and south-facing door panels open to the same north/south axis.
+    const exitIntact = () => shelter.doorOpen() !== null && ['north', 'south'].includes(read(threshold)?.getProperties()?.facing)
       && exitCells.every(exitFloor) && [threshold, insideDoor].every((p) => fullBlock(read(p.offset(0, 2, 0))));
     const thresholdGap = () => shelter?.doorOpen() === true && exitFloor(threshold) && exitFloor(exitCells[2])
       && /^(air|cave_air)$/.test(read(insideDoor.offset(0, -1, 0))?.name || '')

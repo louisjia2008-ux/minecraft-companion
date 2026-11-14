@@ -486,7 +486,7 @@ test('an unarmed respawn reads a reachable chest from a screened part of a damag
   });
 });
 
-test('daylight rearm can cross the north door above a screened archer under live checks', async () => {
+test('daylight rearm can cross a south-facing door on the north wall above a screened archer', async () => {
   const house = createStarterHouse({ x: 5, y: 64, z: -13 });
   const { door, chest } = house.furniture;
   const doorway = new Vec3(8, 64, -13);
@@ -506,7 +506,7 @@ test('daylight rearm can cross the north door above a screened archer under live
   bot.blockAt = (p) => {
     if (p.x === doorway.x && p.z === doorway.z && (p.y === doorway.y || p.y === doorway.y + 1)) {
       return { name: 'birch_door', getProperties: () => ({ half: p.y === doorway.y ? 'lower' : 'upper',
-        open, facing: 'north', hinge: 'left' }) };
+        open, facing: 'south', hinge: 'left' }) };
     }
     const solid = shell.has(p.toString()) || p.y === 62 || p.equals(outside.offset(0, -1, 0));
     return { name: solid ? 'cobblestone' : 'air', boundingBox: solid ? 'block' : 'empty',
