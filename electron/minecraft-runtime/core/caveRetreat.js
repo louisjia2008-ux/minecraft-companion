@@ -262,6 +262,7 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { all
   const queue = [{ p: from, first: null, edges: 0 }];
   const seen = new Set([key(from)]);
   let best = null;
+  let coveredAscent = null;
   for (let i = 0; i < queue.length && i < 180; i += 1) {
     const { p, first, edges } = queue[i];
     if (first) {
@@ -277,20 +278,34 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { all
     if (edges >= 6) continue;
     for (const next of drySteps(read, p, allowDescend ? from.y - 1 : p.y)) {
       const id = key(next);
-      if (farm && !first && next.y !== from.y) continue;
-      if (seen.has(id) || distance(next) < Math.min(2.5, startDistance)
-        || (!first && distance(next) < startDistance - (ranged ? .05 : .35))) continue;
+      const range = distance(next);
+      if (seen.has(id) || range < Math.min(2.5, startDistance) || (farm && !first && next.y !== from.y)) continue;
+      // The distance gain of the open stair down is temporary if the same
+      // pursuer can follow. Advance into an immediately covered uphill cell
+      // outside striking range, even when the straight-line gap shrinks.
+      if (allowDescend && !ranged && !first && next.y > from.y && range >= 2.5 && !visible(threat, point(next))) {
+        if (!coveredAscent || range > coveredAscent.range) coveredAscent = { first: next, range };
+      }
+      if (!first && range < startDistance - (ranged ? .05 : .35)) continue;
       seen.add(id);
       queue.push({ p: next, first: first || next, edges: edges + 1 });
     }
   }
-  if (!best) return fail('cave_evasion_no_safe_step');
-  const result = await stepDry(bot, ctx, actions, best.first, (p) => {
+  if (!best && !coveredAscent) return fail('cave_evasion_no_safe_step');
+  const take = (target, coverRequired) => stepDry(bot, ctx, actions, target, (p) => {
     const live = liveThreat(threat.id);
     if (!live) return false;
+    if (coverRequired) return point(p).distanceTo(live.position) < 2.5 || visible(live, point(p));
     const margin = ranged ? start.distanceTo(live.position) - .05 : Math.min(2.5, start.distanceTo(live.position));
     return point(p).distanceTo(live.position) < margin;
   }, allowDescend ? 1 : 0);
+  let result = coveredAscent ? await take(coveredAscent.first, true) : null;
+  // If the pocket stopped being safe before movement, keep the existing
+  // dry escape choice. A partially executed step belongs to the next tick.
+  if (best && (!result || !result.ok && bot.entity.onGround && bot.entity.position.floored().equals(feet))) {
+    result = await take(best.first, false);
+  }
+  if (!result) return fail('cave_evasion_no_safe_step');
   const current = liveThreat(threat.id);
   if (result.ok) ctx.record('cave_evasion_step', { from: feet, to: result.to, threat: threat.name, id: threat.id,
     mobAt: current?.position ?? null, distance: current ? point(result.to).distanceTo(current.position) : null });

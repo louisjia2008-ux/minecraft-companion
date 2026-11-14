@@ -106,6 +106,45 @@ test('emergency evasion takes one supported step toward cover and ignores a deep
   assert.deepEqual(receipts.map(([type]) => type), ['cave_evasion_threat', 'cave_evasion_step']);
 });
 
+test('the logged cave lip uses its covered uphill pocket while it is out of zombie reach', async (t) => {
+  async function run({ threatEnd, covered = true, changes = false } = {}) {
+    const { bot, cells, origin } = fixture();
+    const uphill = new Vec3(0, 1, -1);
+    const downhill = new Vec3(-1, -1, 0);
+    for (const key of ['0,2,0', '0,1,-1', '0,2,-1', '-1,-1,0', '-1,0,0', '-1,1,0']) cells.set(key, air);
+    const threat = { id: 3498, name: 'zombie', position: new Vec3(1.990234, 4, -.086194) };
+    const visible = (mob, p) => p.z > 0 || !covered || changes && mob !== threat;
+    const live = { ...threat, position: threatEnd || threat.position };
+    const attempts = [];
+    bot.pathfinder.movements.getNeighbors = () => [uphill, downhill];
+    const result = await evadeInCave(bot, { record() {} }, { async goTo(_bot, _ctx, goal) {
+      const target = new Vec3(goal.x, goal.y, goal.z);
+      attempts.push(target);
+      if (!bot.pathfinder.movements.getNeighbors(origin).some((p) => p.equals(target))) return { ok: false, reason: 'NoPath' };
+      bot.entity.position = target.offset(.5, 0, .5);
+      return { ok: true };
+    } }, threat, visible, () => live);
+    return { result, attempts, uphill, downhill };
+  }
+  await t.test('native-log distances favor cover despite the smaller straight-line gap', async () => {
+    const { result, attempts, uphill } = await run();
+    assert.deepEqual(result.to, uphill);
+    assert.deepEqual(attempts, [uphill]);
+  });
+  await t.test('missing or lost cover retains the existing legal downhill escape', async () => {
+    const noCover = await run({ covered: false });
+    assert.deepEqual(noCover.attempts, [noCover.downhill]);
+    const lost = await run({ changes: true });
+    assert.deepEqual(lost.attempts, [lost.uphill, lost.downhill]);
+    assert.deepEqual(lost.result.to, lost.downhill);
+  });
+  await t.test('a pursuer moving within strike distance vetoes the covered uphill edge', async () => {
+    const { result, attempts, uphill, downhill } = await run({ threatEnd: new Vec3(.5, 2, -.5) });
+    assert.deepEqual(attempts, [uphill, downhill]);
+    assert.deepEqual(result.to, downhill);
+  });
+});
+
 test('critical surface resupply evasion holds the ledge, with ordinary flee unchanged', async (t) => {
   const check = async ({ resupplying = true, flat = false, onGround = true, mob = 'zombie', expected }) => {
     const { bot, cells } = fixture();
