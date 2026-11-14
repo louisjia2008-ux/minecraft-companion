@@ -80,6 +80,7 @@ const DEPOT_STICKS = 24;
 const KEEP_PICKS = 3;
 const DEPOT_CRAFT = 6;
 const SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+const SIDE_SUPPORT = SIDES.map(([x, z]) => new Vec3(x, 0, z));
 const SPARE_PICKAXES = 3;
 // Casting obsidian floods the ground around the pit for a moment: not by the chest.
 const MOLD_FROM_HOME = 5;
@@ -117,6 +118,14 @@ function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blue
   const blacklist = createBlacklist({ ttlMs: 120000 });
   const blockAt = (p) => bot.blockAt(new Vec3(p.x, p.y, p.z));
   const nameAt = (p) => blockAt(p)?.name || null;
+  const placeHomeStation = (ctx, spot, item) => {
+    const target = new Vec3(spot.x, spot.y, spot.z);
+    // An explosion can remove the floor below the station's reserved cell.
+    // The chest and furnace can also be placed against an existing side face.
+    const floor = nameAt(target.plus(DOWN[0]));
+    const faces = floor === 'air' || floor === 'cave_air' ? SIDE_SUPPORT : DOWN;
+    return skills.placeAt(bot, ctx, spot, (name) => name === item, { faces });
+  };
   const homeStations = [chest, ...Object.values(stations)].filter(Boolean);
   const withinStoneRange = (p) => Math.hypot(p.x - chest.x, p.z - chest.z) <= SUPPLY_STONE_RADIUS;
   // Outfit opts into worn items; standalone material orders and machines keep
@@ -770,7 +779,7 @@ function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blue
       case 'place_station': {
         const spot = stations[step.station];
         if (!spot) return { ok: false, reason: `no_spot:${step.station}` };
-        return skills.placeAt(bot, ctx, spot, (n) => n === step.station, { faces: DOWN });
+        return placeHomeStation(ctx, spot, step.station);
       }
       case 'craft': {
         const craft = (times) => skills.craft(bot, ctx, { item: step.item, times,
@@ -945,7 +954,7 @@ function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blue
         return step ? runStep(ctx, step) : { ok: false, reason: 'chest_missing' };
       }
       ctx.record('chest_replaced', { position: posKey(chest) });
-      const placed = await skills.placeAt(bot, ctx, chest, (n) => n === 'chest', { faces: DOWN });
+      const placed = await placeHomeStation(ctx, chest, 'chest');
       if (placed.ok) memory.chest = null;
       return placed;
     }
