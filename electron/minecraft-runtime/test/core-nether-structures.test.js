@@ -305,6 +305,43 @@ test('a blaze volley is taken on a raised shield', async () => {
   assert.equal(block.want({}), 0, 'fire resistance takes the fireball');
 });
 
+test('fortress patrol stays on nearby verified brick footing without building across a drop', async () => {
+  const bot = { ...world({ ...row('nether_bricks', 0, 12, 73), ...row('nether_bricks', -20, 17, 73),
+    '0,73,6': 'spawner', '0,45,1': 'netherrack' }), game: { dimension: 'the_nether' } };
+  const read = bot.blockAt;
+  bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.entity = { position: new Vec3(.5, 74, .5), onGround: true };
+  bot.inventory = { slots: [], items: () => [] };
+  bot.pathfinder = { movements: { companionNether: true, getNeighbors: () => [] } };
+  const walked = [];
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 7, witherSkulls: 0, trades: 0,
+    actions: {
+      goNear: () => assert.fail('patrol must not use an unrestricted long goal'),
+      goTo: async (_bot, _ctx, next) => {
+        const p = new Vec3(next.x, next.y, next.z);
+        assert.equal(p.y, 74);
+        assert.equal(p.z, 0);
+        assert.equal(p.x, walked.length + 1);
+        assert.equal(bot.pathfinder.movements.canDig, false);
+        assert.equal(bot.pathfinder.movements.allowParkour, false);
+        assert.deepEqual(bot.pathfinder.movements.scafoldingBlocks, []);
+        bot.entity.position = p.offset(.5, 0, .5);
+        walked.push(p);
+        return { ok: true };
+      },
+    } });
+  goal.memory.fortress = new Vec3(0, 73, 0);
+  goal.memory.spawner = new Vec3(0, 73, 6);
+  goal.memory.waitSince = Date.now() - 46000;
+  const result = await goal.run({ perceive: () => ({ health: 20, inventory: { blaze_rod: 4, iron_sword: 1 }, hostiles: [] }),
+    record() {}, signal: new AbortController().signal });
+  assert.deepEqual(result, { ok: true, moved: true });
+  assert.ok(walked.length >= 3 && walked.length <= 8);
+});
+
 test('an injured Nether player eats under verified cover before a task is assigned', async () => {
   const terrain = row('nether_bricks', -2, 10, 63);
   terrain['2,64,0'] = terrain['2,65,0'] = 'nether_bricks';

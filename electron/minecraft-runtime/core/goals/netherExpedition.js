@@ -876,45 +876,77 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     }
     memory.waitSince = 0;
     memory.spawnerWaiting = false;
-    return patrol(ctx, memory.fortress, 'fortress', state);
+    return patrol(ctx, state);
   }
 
   // With the rods in, the spawner's blazes only fill the mob cap: wither
   // skeletons are found in the corridors away from it (3 of 58 kills by it).
   const SPAWNER_CLEAR = 24;
 
-  /** A walk to a random floor cell 12-40 blocks away inside the structure. */
-  async function patrol(ctx, centre, kind, state) {
-    const here = bot.entity.position;
-    const band = (lo, hi) => (p) => { const d = p.distanceTo(here); return d >= lo && d <= hi; };
-    const avoid = kind === 'fortress' && memory.spawner && state && rods(state) >= blazeRods
-      ? (p) => p.distanceTo(memory.spawner) >= SPAWNER_CLEAR : () => true;
-    // A pillar foot by the lava sea counts as fortress floor too: from there
-    // the decks are far overhead and walks to them fail one after another.
-    // After two such misses, tower up to a deck instead.
-    if (kind === 'fortress' && (memory.highMisses || 0) >= 2) {
-      memory.highMisses = 0;
-      const climbed = await climbTo(ctx, { minClimb: CLIMB });
-      if (climbed.ok) return climbed;
+  /** Sample nearby positions on an observed, supported fortress route. */
+  async function patrol(ctx, state) {
+    const here = bot.entity.position.floored();
+    const spawner = memory.spawner;
+    const huntingBlaze = spawner && rods(state) < blazeRods;
+    const observed = new Map();
+    const read = (p) => {
+      const key = posKey(p);
+      if (!observed.has(key)) observed.set(key, bot.blockAt(p));
+      return observed.get(key);
+    };
+    const nodes = [{ point: here, previous: null, depth: 0 }];
+    const seen = new Set([posKey(here)]);
+    let pick = null;
+    let best = Infinity;
+    for (let i = 0; bot.entity.onGround && i < nodes.length; i += 1) {
+      const node = nodes[i];
+      const { point, depth } = node;
+      if (depth >= 3 && read(point.offset(0, -1, 0))?.name === 'nether_bricks') {
+        const spawnerDistance = spawner?.distanceTo(point.offset(.5, 0, .5)) ?? 0;
+        const score = Math.abs(depth - 7) + 2 * Math.abs(point.y - here.y)
+          + (huntingBlaze ? Math.abs(spawnerDistance - 8) : spawner ? Math.max(0, SPAWNER_CLEAR - spawnerDistance) : 0)
+          + (blacklist.has(`patrol:${posKey(point)}`) ? 20 : 0);
+        if (score < best) { pick = node; best = score; }
+      }
+      if (depth >= 8) continue;
+      for (const move of nether.lookoutCardinalMoves(bot, point, read)) {
+        const next = new Vec3(move.x, move.y, move.z);
+        const key = posKey(next);
+        if (seen.has(key) || !safeSpawnerMove(move, read)
+          || blacklist.has(`patrol_edge:${posKey(point)}>${key}`)
+          || huntingBlaze && next.offset(.5, 0, .5).distanceTo(spawner) > BLAZE_SPAWN_RANGE) continue;
+        seen.add(key);
+        nodes.push({ point: next, previous: node, depth: depth + 1 });
+      }
     }
-    // On the level it walks now first: a walk down to a lower ledge is a
-    // walk along the drop, and the falls from it ended in the lava sea.
-    const level = (p) => Math.abs(p.y + 1 - here.y) <= 6;
-    let floor = deckFloor(here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p) && level(p));
-    if (!floor.length) floor = deckFloor(here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
-    if (!floor.length) floor = deckFloor(centre, 96, 512).filter((p) => band(12, 96)(p) && avoid(p));
-    if (!floor.length) floor = deckFloor(here, 48, 512).filter(band(12, 40));
-    if (!floor.length) floor = deckFloor(centre, 96, 512).filter(band(12, 96));
-    // Nothing else to walk to here: go and stand by the spawner (or the first brick
-    // seen); already there, look around from a lookout instead.
-    const fallback = kind === 'fortress' && memory.spawner ? memory.spawner : centre;
-    if (!floor.length) return here.distanceTo(fallback) <= 8 ? explore(ctx, fallback) : approachStructure(ctx, kind, fallback);
-    const pick = floor[Math.floor(Math.random() * floor.length)];
-    ctx.record('patrol', { kind, target: posKey(pick) });
-    const result = await actions.goNear(bot, ctx, pick.offset(0, 1, 0), 2, { timeoutMs: 45000 });
-    const high = pick.y + 1 - here.y > CLIMB;
-    memory.highMisses = !result.ok && high ? (memory.highMisses || 0) + 1 : 0;
-    return result.ok ? { ok: true, waited: true } : result;
+    if (!pick) {
+      actions.haltBody(bot);
+      await sleep(1200, ctx.signal);
+      return { ok: true, waited: true };
+    }
+    const route = [];
+    for (let node = pick; node.previous; node = node.previous) route.unshift(node.point);
+    ctx.record('patrol', { kind: 'fortress', target: posKey(pick.point), from: here, legs: route.length });
+    for (const next of route) {
+      const from = bot.entity.position.floored();
+      const live = (p) => bot.blockAt(p);
+      const checked = nether.lookoutCardinalMoves(bot, from, live).some((move) => move.equals(next) && safeSpawnerMove(move, live));
+      const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(next);
+      let result = fail('fortress_patrol_step_changed');
+      if (checked && next.y < from.y) {
+        if (await nether.descendCombatStep(bot, ctx, from, next, actions)) result = { ok: true };
+      } else if (checked) {
+        result = await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
+          actions.goTo(bot, combat, new goals.GoalBlock(next.x, next.y, next.z), { arrived, timeoutMs: 2500, retryNoProgress: false }));
+      }
+      if (result.repositioned) return result;
+      if (!(result.ok || result.reason === 'not_arrived') || !await waitUntil(arrived, { timeoutMs: 600, signal: ctx.signal })) {
+        blacklist.add(`patrol_edge:${posKey(from)}>${posKey(next)}`, result.reason, 9000);
+        return result.ok ? fail('fortress_patrol_step_unconfirmed') : result;
+      }
+    }
+    blacklist.add(`patrol:${posKey(pick.point)}`, 'visited', 60000);
+    return { ok: true, moved: true };
   }
 
   /** No floor known yet (seen from afar): walk towards the first block seen. */
