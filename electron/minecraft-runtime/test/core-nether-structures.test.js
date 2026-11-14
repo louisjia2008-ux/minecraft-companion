@@ -342,6 +342,44 @@ test('fortress patrol stays on nearby verified brick footing without building ac
   assert.ok(walked.length >= 3 && walked.length <= 8);
 });
 
+test('an expedition leaving its spawner takes the connected trail away before heading toward its portal', async () => {
+  const bot = { ...world({ ...row('nether_bricks', 0, 4, 73),
+    ...Object.fromEntries(Array.from({ length: 35 }, (_, i) => [`0,73,${-i}`, 'nether_bricks'])),
+    '0,74,3': 'spawner' }), game: { dimension: 'the_nether' } };
+  const read = bot.blockAt;
+  bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.entity = { position: new Vec3(.5, 74, .5), onGround: true };
+  bot.inventory = { slots: [], items: () => [{ name: 'netherrack', count: 256 }] };
+  bot.pathfinder = { movements: { companionNether: true, getNeighbors: () => [] } };
+  const events = [];
+  const walked = [];
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 7, witherSkulls: 0, trades: 0, actions: {
+    goNear: () => assert.fail('the spawner must be left by guarded one-block steps'),
+    goTo: async (_bot, _ctx, next) => {
+      assert.equal(next.x, 0);
+      assert.equal(next.y, 74);
+      assert.equal(next.z, -walked.length - 1);
+      walked.push(next.z);
+      bot.entity.position = new Vec3(.5, 74, next.z + .5);
+      return { ok: true };
+    },
+  } });
+  goal.memory.netherPortal = new Vec3(80, 72, 8);
+  goal.memory.spawner = new Vec3(0, 74, 3);
+  goal.memory.crumbs = [new Vec3(0, 74, -31), new Vec3(0, 74, 0)];
+  goal.memory.returnForFood = true;
+  const ctx = { record: (type, details) => events.push({ type, ...details }), signal: new AbortController().signal,
+    perceive: () => ({ health: 15, food: 17, inventory: { blaze_rod: 4, iron_sword: 1, bread: 2 }, hostiles: [] }) };
+  for (let i = 0; i < 4; i += 1) assert.equal((await goal.run(ctx)).moved, true);
+  assert.equal(goal.memory.leftSpawner, true);
+  assert.equal(goal.memory.crumbAt, 0);
+  assert.equal(events.filter(({ type }) => type === 'fortress_exit_route').length, 4);
+  assert.equal(walked.at(-1), -29);
+});
+
 test('an injured Nether player eats under verified cover before a task is assigned', async () => {
   const terrain = row('nether_bricks', -2, 10, 63);
   terrain['2,64,0'] = terrain['2,65,0'] = 'nether_bricks';

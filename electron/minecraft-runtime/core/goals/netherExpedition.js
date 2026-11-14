@@ -396,6 +396,51 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return result;
   }
 
+  async function leaveFortressByTrail(ctx, spawner) {
+    const start = bot.entity.position.floored();
+    if (!bot.entity.onGround || !memory.netherPortal || memory.leftSpawner) return null;
+    const cache = new Map();
+    const read = (p) => {
+      const key = posKey(p);
+      if (!cache.has(key)) cache.set(key, bot.blockAt(p));
+      return cache.get(key);
+    };
+    const end = memory.crumbs.findIndex((p) => p.distanceTo(spawner) < BLAZE_SPAWN_RANGE);
+    if (end <= 0) return null;
+    const targets = memory.crumbs.slice(0, end).filter((p) => p.distanceTo(spawner) >= SPAWNER_CLEAR && p.distanceTo(start) <= 50);
+    if (!targets.length) return null;
+    const nodes = [{ point: start, previous: null, depth: 0 }];
+    const seen = new Set([posKey(start)]);
+    let best = null;
+    for (let i = 0; i < nodes.length && i < 2200; i += 1) {
+      const node = nodes[i];
+      const { point, depth } = node;
+      if (point.distanceTo(spawner) >= SPAWNER_CLEAR && targets.some((p) => p.distanceTo(point) <= 2)) {
+        best = node;
+        break;
+      }
+      if (depth >= 58) continue;
+      for (const move of nether.lookoutCardinalMoves(bot, point, read)) {
+        const next = new Vec3(move.x, move.y, move.z);
+        const key = posKey(next);
+        if (seen.has(key) || !safeSpawnerMove(move, read) || blacklist.has(`fortress_exit:${posKey(point)}>${key}`)) continue;
+        seen.add(key);
+        nodes.push({ point: next, previous: node, depth: depth + 1 });
+      }
+    }
+    if (!best?.previous) return null;
+    const route = [];
+    for (let node = best; node.previous; node = node.previous) route.unshift(node.point);
+    ctx.record('fortress_exit_route', { from: start, to: best.point, legs: route.length });
+    const result = await walkFortressRoute(ctx, route.slice(0, 8), 'fortress_exit');
+    if (result.moved && route.length <= 8) {
+      const joined = targets.find((p) => p.distanceTo(best.point) <= 2);
+      memory.crumbAt = memory.crumbs.indexOf(joined);
+      memory.leftSpawner = true;
+    }
+    return result;
+  }
+
   async function stockForTravel(ctx) {
     if (nether.scaffoldCount(bot) >= 64 || Date.now() - (memory.travelStockedAt || 0) < 60000) return;
     memory.travelStockedAt = Date.now();
@@ -939,6 +984,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const route = [];
     for (let node = pick; node.previous; node = node.previous) route.unshift(node.point);
     ctx.record('patrol', { kind: 'fortress', target: posKey(pick.point), from: here, legs: route.length });
+    const result = await walkFortressRoute(ctx, route, 'patrol_edge');
+    if (result.moved) blacklist.add(`patrol:${posKey(pick.point)}`, 'visited', 60000);
+    return result;
+  }
+
+  async function walkFortressRoute(ctx, route, failedEdge) {
     for (const next of route) {
       const from = bot.entity.position.floored();
       const live = (p) => bot.blockAt(p);
@@ -955,11 +1006,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       actions.haltBody?.(bot);
       const settled = () => arrived() && Math.hypot(bot.entity.velocity?.x || 0, bot.entity.velocity?.z || 0) <= .025;
       if (!(result.ok || result.reason === 'not_arrived') || !await waitUntil(settled, { timeoutMs: 650, signal: ctx.signal })) {
-        blacklist.add(`patrol_edge:${posKey(from)}>${posKey(next)}`, result.reason, 9000);
-        return result.ok ? fail('fortress_patrol_step_unconfirmed') : result;
+        blacklist.add(`${failedEdge}:${posKey(from)}>${posKey(next)}`, result.reason, 9000);
+        return result.ok ? fail('fortress_step_unconfirmed') : result;
       }
     }
-    blacklist.add(`patrol:${posKey(pick.point)}`, 'visited', 60000);
     return { ok: true, moved: true };
   }
 
@@ -1198,6 +1248,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // the lava sea 40 blocks under the portal with nothing to climb with.
     const portal = memory.netherPortal;
     const here = bot.entity.position;
+    if (memory.spawner) {
+      const exit = await leaveFortressByTrail(ctx, memory.spawner);
+      if (exit) return exit;
+    }
     const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
     if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
       && Date.now() - (memory.homeStockedAt || 0) > 60000) {
@@ -1296,6 +1350,7 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       blacklist.clear?.();
       memory.explore = { index: memory.explore.index, leftBastion: memory.explore.leftBastion };
       memory.waitSince = 0;
+      memory.leftSpawner = false;
     },
     async run(ctx) {
       keepSearch();
