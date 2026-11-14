@@ -296,6 +296,42 @@ test('a grounded unarmed return can descend a screened two-level ridge to the or
   await goal.dispose();
 });
 
+test('home resupply can see a known ripe plot beyond the native section scan', async () => {
+  const { OctahedronIterator } = require('prismarine-world').iterators;
+  const house = createStarterHouse({ x: -69, y: 65, z: -104 });
+  const plot = new Vec3(-81, 62, -94);
+  const ripe = plot.offset(0, 1, 0);
+  const farther = new Vec3(-90, 62, -94);
+  const sectionOf = (p) => new Vec3(Math.floor(p.x / 16), Math.floor(p.y / 16), Math.floor(p.z / 16));
+  const bot = Object.assign(fakeBot([{ name: 'stone_sword', count: 1 }]), { health: 7.3, food: 7,
+    entity: { position: new Vec3(-64.5, 65, -102.5), onGround: true }, game: { dimension: 'overworld' },
+    registry: { blocksByName: { wheat: { id: 1 } } }, time: { timeOfDay: 6149 }, entities: {} });
+  const targets = [];
+  bot.findBlocks = ({ point, maxDistance }) => {
+    const start = sectionOf(point);
+    const iter = new OctahedronIterator(start, Math.ceil((maxDistance + 8) / 16));
+    for (let cell = start; cell; cell = iter.next()) if (cell.equals(sectionOf(ripe))) return [ripe];
+    return [];
+  };
+  bot.blockAt = (position) => {
+    if (position.equals(ripe) || position.equals(farther.offset(0, 1, 0))) return { name: 'wheat', getProperties: () => ({ age: 7 }) };
+    if (position.equals(plot) || position.equals(farther)) return { name: 'farmland' };
+    return { name: 'air', boundingBox: 'empty', shapes: [] };
+  };
+  const { chest } = house.furniture;
+  const goal = createOutfitGoal({ bot, recoverAtHome: true, items: [{ key: 'food', count: 3 }],
+    farmPlots: [farther, plot], home: { chest: chest.position, centre: house.interiorCenter, anchor: house.anchor },
+    skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }) } });
+  const controller = new AbortController();
+  const ctx = { signal: controller.signal, perceive: () => perceive(bot), record(type, fields) {
+    if (type === 'resupply_food_target') { targets.push(fields.position); controller.abort('test_proved_target'); }
+  } };
+  await goal.run(ctx);
+  await assert.rejects(goal.run(ctx), { code: 'aborted' });
+  assert.deepEqual(targets, [ripe]);
+  await goal.dispose();
+});
+
 test('a destroyed doorstep uses supported covered interior and refuses missing floor or visible shooter', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const door = new Vec3(3, 64, 0);

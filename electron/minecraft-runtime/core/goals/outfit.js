@@ -378,7 +378,7 @@ function localFoodSafety(bot, home) {
   return { local, exposed, safe, threats, threatRange, homeDistance, centre };
 }
 
-function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) {
+function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmPlots }) {
   const blacklist = createBlacklist({ ttlMs: 60000 });
   const farm = new Vec3(home.centre.x - 15, home.centre.y, home.centre.z);
   const explore = { around: { x: home.centre.x, z: home.centre.z, radius: 48 } };
@@ -402,7 +402,11 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) {
       if (inventory.wheat_seeds > 0 && stage === 'empty' && !blacklist.has(`plant:${key}`)
         && permitted(plot.offset(.5, 1, .5))) return { kind: 'plant', plot };
     }
-    const crops = find('wheat', local ? safety.centre : farm, 24, 64)
+    // The native scan visits chunk sections in Manhattan order. A nearby plot
+    // across both horizontal borders and one section down can be missed.
+    const discovered = find('wheat', local ? safety.centre : farm, 24, 64);
+    const known = farmPlots.map(({ x, y, z }) => new Vec3(x, y + 1, z));
+    const crops = [...new Map([...discovered, ...known].map((p) => [posKey(p), p])).values()]
       .filter((p) => local ? safety.local(p, LOCAL_FOOD_RADIUS - 2) : permitted(p))
       .map((p) => ({ position: p, plot: p.offset(0, -1, 0), state: farming.plotState(bot, p.offset(0, -1, 0)) }));
     const crop = crops.find(({ position, state }) => state === 'ripe'
@@ -462,7 +466,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     !p || ![p.x, p.y, p.z].every(Number.isInteger))) throw new TypeError('invalid expedition food options');
   const expedition = expeditionFood && !recoverAtHome ? { home, plots: farmPlots } : null;
   const safety = recoverAtHome ? localFoodSafety(bot, home) : null;
-  const resupplyFood = recoverAtHome ? resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety }) : undefined;
+  const resupplyFood = recoverAtHome ? resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmPlots }) : undefined;
   const device = createKit({ bot, items, kb, expedition, actions, skills, resupplyFood: resupplyFood?.run });
   const goal = createDeviceProjectGoal({ bot, name: 'outfit', device, home, kb, actions, skills, carry: (key) => CARRY.test(key),
     createGather: recoverAtHome ? (options) => createGather({ ...options, surfaceOnly: true }) : createGather,

@@ -93,9 +93,10 @@ const expeditionKitDone = (bot, kit) => {
   const inventory = perceive(bot).inventory;
   return kit.every(({ key, count }) => (key === 'food' ? expeditionFoodCount(bot, inventory) : countKey(key, inventory)) >= count);
 };
+const farmPlotPositions = (state) => (state?.goals?.farm?.memory?.plots || []).map(({ x, y, z }) => ({ x, y, z }));
 const expeditionKitArgs = (items, state) => ({
   items, expeditionFood: true,
-  farmPlots: (state?.goals?.farm?.memory?.plots || []).map(({ x, y, z }) => ({ x, y, z })),
+  farmPlots: farmPlotPositions(state),
 });
 
 // What the model asks for, in order. `done` reads the world as the model
@@ -355,7 +356,9 @@ async function runDeathRecovery(context, index, entry) {
     }
     return true;
   }
-  const args = recovery.phase === 'base' ? { items: recoveryItems, recoverAtHome: true } : expeditionKitArgs(recoveryItems, state);
+  const args = recovery.phase === 'base'
+    ? { items: recoveryItems, recoverAtHome: true, farmPlots: farmPlotPositions(state) }
+    : expeditionKitArgs(recoveryItems, state);
   recovery.attempts += 1;
   state.activeStage = 'rearm';
   write('model_ask', { step: 'rearm', phase: recovery.phase, death: death.id, task: 'outfit', args, ask: recovery.attempts });

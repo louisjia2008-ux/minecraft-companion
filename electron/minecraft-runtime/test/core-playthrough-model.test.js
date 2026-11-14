@@ -155,6 +155,8 @@ test('death during active expedition prep holds gear until home supplies and wor
   bot.inventory.items = () => items;
   bot.entity.position = new Vec3(3.5, 64, 3.5);
   state.audit = { deaths: [{ id: 1, at: 1 }], taskEvents: [] };
+  const plots = [{ x: -11, y: 62, z: -7 }];
+  state.goals.farm = { memory: { plots } };
   context.server.query = async (command, pattern) => (command.endsWith(' Health') ? 'data: 0' : 'Test failed').match(pattern);
   // Until the real respawn is known, even the still active old request is not continued.
   bot.health = 0;
@@ -166,7 +168,7 @@ test('death during active expedition prep holds gear until home supplies and wor
   bot.health = 20;
   await playthroughNatural.onTick(context);
   await playthroughNatural.onTick(context);
-  assert.deepEqual(requests, [{ task: 'outfit', args: { items: RECOVERY_BASE_KIT, recoverAtHome: true } }]);
+  assert.deepEqual(requests, [{ task: 'outfit', args: { items: RECOVERY_BASE_KIT, recoverAtHome: true, farmPlots: plots } }]);
   items.push({ name: 'stone_pickaxe', count: 1 }, { name: 'stone_sword', count: 1 }, { name: 'bread', count: 12 });
   bot.entity.position = new Vec3(4, 10, 4);
   await playthroughNatural.onTick(context);
@@ -174,7 +176,7 @@ test('death during active expedition prep holds gear until home supplies and wor
   bot.entity.position = new Vec3(3.5, 64, 3.5);
   await playthroughNatural.onTick(context);
   await playthroughNatural.onTick(context);
-  assert.deepEqual(requests[1], { task: 'outfit', args: { items: REARM, expeditionFood: true, farmPlots: [] } });
+  assert.deepEqual(requests[1], { task: 'outfit', args: { items: REARM, expeditionFood: true, farmPlots: plots } });
   items.push(...REARM.filter(({ key }) => key !== 'food').map(({ key }) => ({ name: key, count: 1 })));
   await playthroughNatural.onTick(context);
   assert.equal(requests.length, 2, 'carrying the armour without wearing it cannot release the gear gate');
@@ -232,5 +234,5 @@ test('unexpected Nether entry during rearm returns through the portal before tak
   assert.deepEqual(asked, [{ task: 'netherExpedition', args: { blazeRods: 0, witherSkulls: 0, trades: 0 } }]);
   bot.game.dimension = 'minecraft:overworld';
   await playthroughNatural.onTick(context);
-  assert.deepEqual(asked[1], { task: 'outfit', args: { items: RECOVERY_BASE_KIT, recoverAtHome: true } });
+  assert.deepEqual(asked[1], { task: 'outfit', args: { items: RECOVERY_BASE_KIT, recoverAtHome: true, farmPlots: [] } });
 });
