@@ -19,6 +19,7 @@ const defaultActions = require('../actions');
 const nether = require('../nether');
 const end = require('../end');
 const structures = require('../netherStructures');
+const { createNetherSpawnerStaging } = require('../netherSpawnerStaging');
 const { createPortalTrip } = require('../netherTrip');
 const { createBlacklist, posKey } = require('../blacklist');
 const { waitUntil, runCancellable, sleep } = require('../confirm');
@@ -85,8 +86,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   };
   bot.on?.('death', markDeadly);
   const trip = createPortalTrip({ bot, memory, actions });
+  const spawnerStaging = createNetherSpawnerStaging({ bot, actions });
 
   const rods = (state) => state.inventory.blaze_rod || 0;
+  let spawnerHuntStalls = 0;
+  let stagingRetryAt = 0;
+  let stagingSpawner = null;
   const skulls = (state) => state.inventory.wither_skeleton_skull || 0;
   const gold = (state) => state.inventory.gold_ingot || 0;
   const skullsWanted = (state) => skulls(state) < witherSkulls && !(skullTries > 0 && memory.witherKills >= skullTries);
@@ -744,6 +749,46 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await sleep(2000, ctx.signal);
       return { ok: true, waited: true };
     }
+    const onDeck = inFortress();
+    if (onDeck) {
+      if (memory.structureDetour?.kind === 'fortress') memory.structureDetour = null;
+      if (!memory.visited.fortress) {
+        memory.visited.fortress = true;
+        ctx.record('structure_entered', { kind: 'fortress', position: posKey(here.floored()) });
+      }
+    }
+    if (mobs.includes('blaze')) {
+      // The first recorded bricks can be at the end of a different wing.
+      // Search the loaded fortress from the current deck, and keep the
+      // observed spawner only while its block remains loaded and intact.
+      if (memory.spawner && bot.blockAt(memory.spawner)?.name !== 'spawner') {
+        memory.spawner = null;
+        memory.waitSince = 0;
+        memory.spawnerWaiting = false;
+        if (memory.structureDetour?.kind === 'spawner') memory.structureDetour = null;
+      }
+      if (onDeck && !memory.spawner && Date.now() >= (memory.nextSpawnerScan || 0)) {
+        memory.nextSpawnerScan = Date.now() + 5000;
+        memory.spawner = structures.findSpawners(bot, here, 128)
+          .find((p) => !blacklist.has(`spawner:${posKey(p)}`) && bot.blockAt(p)?.name === 'spawner'
+            && deckFloor(p, 8, 1).length) || null;
+        if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner), from: posKey(here.floored()) });
+      }
+    }
+    const mayStage = mobs.includes('blaze') && memory.spawner && bot.blockAt(memory.spawner)?.name === 'spawner'
+      && (spawnerStaging.pending() || here.distanceTo(memory.spawner) <= BLAZE_SPAWN_RANGE);
+    if (!mayStage || stagingSpawner && !memory.spawner.equals(stagingSpawner)) {
+      spawnerStaging.clear();
+      spawnerHuntStalls = 0;
+    }
+    stagingSpawner = mayStage ? memory.spawner : null;
+    if (mayStage && (spawnerStaging.pending() || spawnerHuntStalls >= 3 && Date.now() >= stagingRetryAt)) {
+      const result = await spawnerStaging.run(ctx, { spawner: stagingSpawner });
+      if (result?.staging || result?.repositioned) return result;
+      spawnerHuntStalls = 0;
+      stagingRetryAt = Date.now() + (result?.staged ? 120000 : 25000);
+      if (result?.ok) return result;
+    }
     // Wither skeletons spawn anywhere in the fortress's bounds, on the
     // netherrack under and beside the decks too: one is worth a short climb
     // or drop. A fortress gave 25 kills in 85 minutes while patrols walked
@@ -777,35 +822,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       if (result.ok) {
         memory.kills[name] = (memory.kills[name] || 0) + 1;
         ctx.record('kill', { mob: name, kills: memory.kills[name], gained: result.gained });
+        spawnerHuntStalls = 0;
+      } else if (mayStage && name === 'blaze' && /^(chase_stuck|line_of_sight_blocked|fortress_combat_unsafe_footing|NoPath)$/.test(result.reason || '')) {
+        spawnerHuntStalls += 1;
       }
       if (/^fortress_combat_/.test(result.reason || '')) blacklist.add(`mob:${target.id}`, result.reason, 3500);
       return result;
     }
-    const onDeck = inFortress();
-    if (onDeck) {
-      if (memory.structureDetour?.kind === 'fortress') memory.structureDetour = null;
-      if (!memory.visited.fortress) {
-        memory.visited.fortress = true;
-        ctx.record('structure_entered', { kind: 'fortress', position: posKey(here.floored()) });
-      }
-    }
     if (mobs.includes('blaze')) {
-      // The first recorded bricks can be at the end of a different wing.
-      // Search the loaded fortress from the current deck, and keep the
-      // observed spawner only while its block remains loaded and intact.
-      if (memory.spawner && bot.blockAt(memory.spawner)?.name !== 'spawner') {
-        memory.spawner = null;
-        memory.waitSince = 0;
-        memory.spawnerWaiting = false;
-        if (memory.structureDetour?.kind === 'spawner') memory.structureDetour = null;
-      }
-      if (onDeck && !memory.spawner && Date.now() >= (memory.nextSpawnerScan || 0)) {
-        memory.nextSpawnerScan = Date.now() + 5000;
-        memory.spawner = structures.findSpawners(bot, here, 128)
-          .find((p) => !blacklist.has(`spawner:${posKey(p)}`) && bot.blockAt(p)?.name === 'spawner'
-            && deckFloor(p, 8, 1).length) || null;
-        if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner), from: posKey(here.floored()) });
-      }
       if (memory.spawner && (onDeck || memory.structureDetour?.kind === 'spawner')) {
         const leg = await pursueSpawner(ctx, here);
         if (leg) return leg;
