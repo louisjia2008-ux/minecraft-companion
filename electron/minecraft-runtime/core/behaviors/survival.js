@@ -14,7 +14,7 @@ const { findNetherCombatCover, hasNetherCombatCover } = require('../netherCombat
 const { createBlacklist, posKey } = require('../blacklist');
 const { ownedItems } = require('../perception');
 const { meleeGeometry, meleeSight } = require('../entityGeometry');
-const { advanceCaveRetreat, cavePoolBank, evadeInCave, returnFromCave, skyOpen, standable } = require('../caveRetreat');
+const { advanceCaveRetreat, cavePoolBank, evadeInCave, returnFromCave, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { goals } = require('mineflayer-pathfinder');
 const { recordObservedSelfAggressor } = require('../../vendor/server/minecraft/entitySemantics');
 
@@ -1323,7 +1323,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
 
   // Items dropped on death stay for five minutes: go back for them once it is safe.
-  let lastDeath = null;
+  // The native checkpoint harness may provide a verified still-present
+  // surface rod stack. Its remaining time comes from the saved item age.
+  const savedDrops = bot.companionSavedSurfaceDrops;
+  const savedAt = savedDrops?.position;
+  let lastDeath = savedDrops?.dimension === 'overworld' && ['x', 'y', 'z'].every((axis) => Number.isFinite(savedAt?.[axis]))
+    && Number.isFinite(savedDrops.timeLeftMs) && savedDrops.timeLeftMs > 0 && savedDrops.timeLeftMs <= t.dropsTtlMs
+    ? { position: new Vec3(savedAt.x, savedAt.y, savedAt.z), dimension: 'overworld', respawned: true,
+      at: Date.now() - (t.dropsTtlMs - savedDrops.timeLeftMs), tries: 0, checkpoint: true } : null;
   let emptyDeathSnapshot = null;
   const PLAYER_INVENTORY_SLOTS = 46; // InventoryMenu, including off-hand.
   const observeCombatDeath = bot.version === '1.21.8' && typeof bot._client?.on === 'function';
@@ -1381,6 +1388,8 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     const left = t.dropsTtlMs - (Date.now() - target.at);
     if (left <= 0 || state.health < 10 || threats(state).some((h) => h.distance <= 8)) return false;
     if (target.dimension !== dimensionOf(bot)) return false;
+    if (target.checkpoint && (state.isDay !== true || state.health < 16 || state.food < 16 || !armed(state)
+      || !state.onGround || state.inWater || bot.entity.isInLava)) return false;
     if (target.cave) {
       // A fresh respawn has full health, but chasing a cave drop unarmed
       // exposes the new life to the same threat that killed the equipped one.
@@ -1410,12 +1419,21 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       target.tries += 1;
       ctx.record('recover_drops', { position: target.position.floored(), try: target.tries });
       const left = t.dropsTtlMs - (Date.now() - target.at);
-      const moved = await actions.goNear(bot, ctx, target.position, 2, { timeoutMs: Math.max(60000, Math.min(240000, left)) });
+      const moved = target.checkpoint
+        ? await walkDry(bot, ctx, actions, new goals.GoalNear(target.position.x, target.position.y, target.position.z, 1),
+          { timeoutMs: Math.min(45000, left), avoid: (p) => /_leaves$/.test(bot.blockAt(p.offset(0, -1, 0))?.name || '')
+            || p.y < (home()?.y ?? target.position.y) - 4 })
+        : await actions.goNear(bot, ctx, target.position, 2, { timeoutMs: Math.max(60000, Math.min(240000, left)) });
       if (!moved.ok) return moved;
       if (target !== lastDeath || ctx.signal?.aborted || !ctx.perceive().alive) {
         return { ok: false, reason: 'drop_recovery_interrupted' };
       }
-      const result = await actions.collectDrops(bot, ctx, target.position, () => true, { radius: 8, timeoutMs: 15000 });
+      // Living checkpoint recovery is only seeded for a confirmed, still
+      // present drop and ends after that pickup. Ordinary deaths keep their
+      // original collection and cave policies.
+      const result = await actions.collectDrops(bot, ctx, target.position, target.checkpoint
+        ? (name) => name === 'blaze_rod' : () => true, { radius: target.checkpoint ? 2 : 8, timeoutMs: 15000 });
+      if (target.checkpoint && result.ok) ctx.record('recover_checkpoint_rods', { gained: result.gained, position: target.position });
       if (result.ok || target.tries >= 3) lastDeath = null;
       return result;
     },

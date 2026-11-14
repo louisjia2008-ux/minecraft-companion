@@ -373,6 +373,23 @@ test('right after a kill with more animals close by, provision hunts a few more 
   assert.equal(s.behavior('provision').want(fed()), 0, 'the bag is stocked');
 });
 
+test('a verified surface rod checkpoint only restores pickup while armed and fit by daylight', () => {
+  const bot = new EventEmitter();
+  bot.game = { dimension: 'overworld' };
+  bot.entity = { position: new Vec3(1, 64, 0), onGround: true };
+  bot.registry = { foodsByName: {} };
+  bot.companionSavedSurfaceDrops = { dimension: 'overworld', position: { x: 30, y: 64, z: 0 }, timeLeftMs: 150000 };
+  const recover = createSurvivalBehaviors({ bot }).find((behavior) => behavior.name === 'recover_drops');
+  const state = { alive: true, health: 20, food: 20, inventory: { stone_sword: 1 }, hostiles: [],
+    isDay: true, sheltered: false, onGround: true, inWater: false, position: bot.entity.position };
+  assert.ok(recover.want(state) > 0);
+  assert.equal(recover.want({ ...state, isDay: false }), 0);
+  assert.equal(recover.want({ ...state, inventory: {} }), 0);
+  assert.equal(recover.want({ ...state, onGround: false }), 0);
+  assert.equal(recover.want({ ...state, health: 12 }), 0);
+  recover.dispose();
+});
+
 test('drops are gone back for only when something dropped, and never into the lava that killed', () => {
   const bot = Object.assign(new EventEmitter(), { entity: { position: new Vec3(0, 64, 0) }, game: { dimension: 'overworld' },
     registry: { foodsByName: {} }, inventory: { slots: [], items: () => items }, blockAt: () => ({ name: feet }) });
