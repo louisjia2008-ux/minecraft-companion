@@ -385,8 +385,10 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
 
   let retreat = null;
   const retreatCanMove = (state) => !state.inWater && !bot.entity?.isInLava && !state.sheltered;
-  const caveSituation = (state) => dryOverworldCritical(state) && !state.sheltered && typeof bot.blockAt === 'function'
+  const beginRetreat = () => { retreat ||= { visited: new Set(), surfaced: false, nextMealAt: 0 }; };
+  const canPlanRetreat = () => typeof bot.blockAt === 'function'
     && typeof bot.pathfinder?.movements?.getNeighbors === 'function';
+  const caveSituation = (state) => dryOverworldCritical(state) && !state.sheltered && canPlanRetreat();
   const caveNeedsExit = (state) => {
     if (!caveSituation(state)) return false;
     const centre = home();
@@ -417,7 +419,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       if (!retreat && !caveNeedsExit(ctx.perceive())) return { ok: false, reason: 'cave_retreat_not_needed' };
-      retreat ||= { visited: new Set(), surfaced: false, nextMealAt: 0 };
+      beginRetreat();
       const current = retreat;
       const here = bot.entity.position.floored();
       const centre = home();
@@ -1095,9 +1097,17 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       return 0.5;
     },
     async run(ctx) {
+      const state = ctx.perceive();
+      if (dimensionOf(bot) === 'overworld' && retreatCanMove(state) && canPlanRetreat() && actions.underground?.(bot)) {
+        // Animal distance alone does not establish a route to the surface.
+        // Leaving first keeps one guarded route across food/combat preemptions.
+        beginRetreat();
+        ctx.record('provision_cave_ascent', { at: state.position.floored(), health: state.health, food: state.food });
+        return { ok: true };
+      }
       // Animals are visible out to about 100 blocks; go for the nearest one seen.
       const near = feeding();
-      const stocking = stockingUp(ctx.perceive());
+      const stocking = stockingUp(state);
       const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck,
         radius: stocking ? t.stockRange : near ? FEEDING_RANGE : 96, blacklist: huntBlacklist, accept: (e) => !spare(e) });
       if (result.ok) lastHuntAt = Date.now();

@@ -110,6 +110,27 @@ test('an active cave retreat cooldown allows eating but does not start a new foo
   } finally { await brain.dispose(); }
 });
 
+test('provisioning below ground hands the body to a guarded ascent before looking for food', async () => {
+  let hunted = 0;
+  const s = setup({ actions: { underground: () => true }, skills: {
+    async huntOne() { hunted += 1; return { ok: true }; },
+  } });
+  s.bot.blockAt = () => null;
+  s.bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  const hungry = { ...s.state, health: 20, food: 12 };
+  const provision = s.behavior('provision');
+  const retreat = s.behavior('cave_retreat');
+  const events = [];
+  assert.ok(provision.want(hungry) > 0);
+  assert.equal(retreat.want(hungry), 0);
+  await provision.run({ perceive: () => hungry, record: (event) => events.push(event) });
+  assert.equal(hunted, 0);
+  assert.deepEqual(events, ['provision_cave_ascent']);
+  assert.ok(retreat.want(hungry) > 0);
+  assert.equal(provision.want(hungry), 0);
+  assert.ok(s.behavior('eat').want({ ...hungry, inventory: { beef: 1 } }) > 0);
+});
+
 test('a running device yields to injured provisioning and eating, preserving its goal', async () => {
   let state;
   let hunts = 0;
