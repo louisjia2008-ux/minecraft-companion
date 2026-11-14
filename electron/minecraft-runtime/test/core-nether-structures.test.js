@@ -979,3 +979,32 @@ for (const { ends, targets } of [
     assert.ok(calls.every(({ guarded, towers, retry }) => guarded && !towers && !retry));
   } finally { goal.dispose(); }
 });
+
+for (const deckKnown of [false, true]) test(`a remote fortress approach and its alternate stay guarded (deck visible: ${deckKnown})`, async () => {
+  const start = new Vec3(0, 65, 0);
+  const nativeNeighbors = () => [];
+  const movements = { getNeighbors: nativeNeighbors, allowParkour: true, allow1by1towers: false,
+    scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() };
+  const bot = { ...world(deckKnown ? row('nether_bricks', 70, 5) : {}), game: { dimension: 'the_nether' },
+    entity: { position: start, onGround: true }, pathfinder: { movements },
+    inventory: { slots: [], items: () => [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }] },
+    registry: { ...registry, itemsByName: { netherrack: { id: 2 } } } };
+  const calls = [];
+  const walk = (target, options) => {
+    calls.push({ target, guarded: movements.getNeighbors !== nativeNeighbors,
+      towers: movements.allow1by1towers, retry: options.retryNoProgress, timeoutMs: options.timeoutMs });
+    return { ok: false, reason: 'NoPath' };
+  };
+  const actions = { goTo: async (_bot, _ctx, target, options) => walk(target, options),
+    goNear: async (_bot, _ctx, target, _range, options) => walk(target, options) };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 6, witherSkulls: 0, trades: 0, actions });
+  goal.memory.fortress = new Vec3(70, 64, 0);
+  goal.memory.netherPortal = new Vec3(-14, 65, 0);
+  const ctx = { record() {}, perceive: () => ({ inventory: { iron_sword: 1 }, health: 20, food: 20 }) };
+  try {
+    await goal.run(ctx);
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every(({ guarded, towers, retry, timeoutMs }) => guarded && !towers && retry === false && timeoutMs <= 60000), JSON.stringify(calls));
+    assert.equal(movements.getNeighbors, nativeNeighbors);
+  } finally { goal.dispose(); }
+});

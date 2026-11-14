@@ -209,8 +209,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     ctx.record('explore', { lookout: m.index, x: target.x, z: target.z, ...(centre ? { around: posKey(centre) } : {}),
       want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
     // A blocked lookout on ordinary terrain should try a different direction.
-    // Use scaffolding for a known structure or after repeated failures in place.
-    const bridge = Boolean(centre || boxedIn());
+    // Circling a known structure is still an approach on existing terrain.
+    const bridge = !centre && boxedIn();
     const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8),
       { timeoutMs: 60000, arrived: () => true, retryNoProgress: bridge });
     if (bridge) await stockScaffolding(ctx, 16);
@@ -382,15 +382,59 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     await stockScaffolding(ctx, 56);
   }
 
-  async function approach(ctx, kind, cells) {
+  const structureWalk = (run) => nether.withLookoutTerrain(bot, run);
+  function walkTowardStructure(ctx, target, range) {
+    return structureWalk(() => actions.goNear(bot, ctx, target, range, { timeoutMs: 25000, retryNoProgress: false }));
+  }
+
+  function approached(start, target) {
     const here = bot.entity.position;
+    return bot.entity.onGround && !bot.entity.isInLava && start.distanceTo(target) - here.distanceTo(target) >= 3;
+  }
+
+  // A short, level gap directly in front of a seen deck has a known landing.
+  async function crossDeckGap(ctx, stand) {
+    const feet = bot.entity.position.floored();
+    if (!bot.entity.onGround || feet.y !== stand.y) return null;
+    const dx = stand.x - feet.x, dz = stand.z - feet.z;
+    const length = Math.abs(dx) + Math.abs(dz);
+    if ((dx === 0) === (dz === 0) || length < 2 || length > 8 || towerBlocks() < length + 3) return null;
+    const direction = new Vec3(Math.sign(dx), 0, Math.sign(dz));
+    const at = (n) => feet.plus(direction.scaled(n));
+    const full = (p) => bot.blockAt(p.offset(0, -1, 0))?.shapes
+      ?.some(([x, y, z, x2, y2, z2]) => x === 0 && y === 0 && z === 0 && x2 === 1 && y2 === 1 && z2 === 1);
+    const clear = (p) => [p, p.offset(0, 1, 0)].every((cell) => /^((cave|void)_)?air$/.test(bot.blockAt(cell)?.name || ''));
+    if (!full(feet) || !full(stand) || !clear(stand)) return null;
+    for (let n = 1; n < length; n += 1) {
+      const cell = at(n);
+      if (!clear(cell) || (!full(cell) && bot.blockAt(cell.offset(0, -1, 0))?.boundingBox !== 'empty')) return null;
+    }
+    if (full(at(1))) return null;
+    for (let n = 1; n <= length; n += 1) {
+      const previous = at(n - 1), next = at(n);
+      const validateNext = () => {
+        const at = bot.entity.position.floored();
+        return bot.entity.onGround && !bot.entity.isInLava && (at.equals(previous) || at.equals(next))
+          && full(at) && clear(next) && (n < length || full(next)) ? { ok: true } : fail('structure_bridge_changed');
+      };
+      const step = await end.bridgeStep(bot, ctx, stand.offset(0.5, 0, 0.5),
+        { blocks: TOWER, keepWalls: true, validateNext });
+      if (!step.ok || !bot.entity.onGround || !next.equals(bot.entity.position.floored())) return fail('structure_bridge_blocked');
+    }
+    return { ok: true, moved: length };
+  }
+
+  async function approach(ctx, kind, cells) {
+    const here = bot.entity.position.clone();
     const target = cells.find((p) => !blacklist.has(`${kind}:${posKey(p)}`));
-    if (!target) return fail(`${kind}_unreachable`);
+    if (!target) return kind === 'fortress' ? explore(ctx, memory.fortress) : fail(`${kind}_unreachable`);
     ctx.record('approach', { kind, target: posKey(target), distance: Math.round(target.distanceTo(here)) });
     const stand = target.offset(0, 1, 0);
-    if (stand.y - here.y > 3) await stockScaffolding(ctx, stand.y - here.y);
-    const result = await withScaffolding(() => actions.goNear(bot, ctx, stand, 2, { timeoutMs: 120000 }));
-    if (!result.ok && bot.entity.position.distanceTo(here) < 6) blacklist.add(`${kind}:${posKey(target)}`, result.reason);
+    const result = await walkTowardStructure(ctx, stand, 2);
+    if (result.ok || approached(here, stand)) return result.ok ? result : { ok: true, moved: true };
+    const crossed = await crossDeckGap(ctx, stand);
+    if (crossed?.ok) return crossed;
+    blacklist.add(`${kind}:${posKey(target)}`, result.reason);
     return result;
   }
 
@@ -446,10 +490,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await stockScaffolding(ctx, climb);
       // A few left over at the top: what it steps out of lava with.
       if (towerBlocks() < climb + 4) return giveUp('few_blocks', fail('tower_blocks'));
-      const walk = await withScaffolding(() => actions.goTo(bot, ctx, new goals.GoalBlock(spot.stand.x, spot.stand.y, spot.stand.z),
-        { timeoutMs: 60000 }));
+      const walk = await structureWalk(() => actions.goTo(bot, ctx, new goals.GoalBlock(spot.stand.x, spot.stand.y, spot.stand.z),
+        { timeoutMs: 25000, retryNoProgress: false }));
       const at = bot.entity.position.floored();
-      if (at.x !== spot.stand.x || at.z !== spot.stand.z || Math.abs(at.y - spot.stand.y) > 1) {
+      if (!bot.entity.onGround || !at.equals(spot.stand) || !open(spot.stand) || !solid(spot.stand.offset(0, -1, 0))) {
         return giveUp(walk.reason || 'not_arrived', walk.ok ? fail('tower_not_reached') : walk);
       }
     }
@@ -457,7 +501,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     await end.pillarUp(bot, ctx, spot.top, { maxSteps: climb + 6, blocks: towerBlocks(RUBBLE) >= climb ? RUBBLE : TOWER,
       stop: () => Boolean(bot.entity?.isInLava) || bot.health < 8 });
     if (bot.entity.position.y < spot.top - 0.5) return giveUp('pillar_short', fail('tower_short'));
-    const step = await actions.goTo(bot, ctx, new goals.GoalBlock(spot.deck.x, spot.deck.y + 1, spot.deck.z), { timeoutMs: 10000 });
+    const step = await structureWalk(() => actions.goTo(bot, ctx, new goals.GoalBlock(spot.deck.x, spot.deck.y + 1, spot.deck.z),
+      { timeoutMs: 10000, retryNoProgress: false }));
     const onDeck = inFortress();
     ctx.record('towered', { onDeck, y: Math.round(bot.entity.position.y) });
     if (onDeck) return { ok: true };
@@ -706,12 +751,11 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
 
   /** No floor known yet (seen from afar): walk towards the first block seen. */
   async function approachStructure(ctx, kind, p = memory[kind]) {
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     ctx.record('approach', { kind, target: posKey(p), distance: Math.round(p.distanceTo(here)) });
-    await stockScaffolding(ctx, p.y - here.y);
-    const result = await withScaffolding(() => actions.goNear(bot, ctx, p, 4, { timeoutMs: 120000 }));
-    if (!result.ok && bot.entity.position.distanceTo(here) < 6) return explore(ctx, p);
-    return result;
+    const result = await walkTowardStructure(ctx, p, 4);
+    if (result.ok || approached(here, p)) return result.ok ? result : { ok: true, moved: true };
+    return explore(ctx, p);
   }
 
   // ---- bartering ------------------------------------------------------------
