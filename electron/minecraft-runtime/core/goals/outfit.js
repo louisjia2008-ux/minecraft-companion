@@ -46,6 +46,7 @@ const SHELTER_MELEE_RANGE = 5;
 const UNSAFE_ROUTE = 'unsafe_resupply_food_route';
 const APPROACH_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const APPROACH_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
+const isPortal = (block) => block?.name === 'nether_portal' || block?.name === 'end_portal';
 const AIR = Object.freeze({ name: 'air', boundingBox: 'empty', shapes: [] });
 const noFailedSteps = new Set();
 const dryBlock = (block) => block && !APPROACH_HAZARD.test(block.name) && block.getProperties?.()?.waterlogged !== true;
@@ -224,6 +225,21 @@ function resupplyShelter(bot, home, actions, skills) {
   return { position, doorOpen, covered, sealed, missingDoor, refuge, overheadPhantom, waitInside, setDoor };
 }
 
+// A portal has no collision but can activate while a player's body crosses
+// its cell. A diagonal could touch one without ever using it as a waypoint.
+function portalFree(read, from, to) {
+  const padding = .3;
+  const top = Math.max(from.y, to.y) + (to.y - from.y > .2 ? 2.1 : 1.8);
+  for (let x = Math.floor(Math.min(from.x, to.x) - padding); x <= Math.floor(Math.max(from.x, to.x) + padding); x += 1) {
+    for (let z = Math.floor(Math.min(from.z, to.z) - padding); z <= Math.floor(Math.max(from.z, to.z) + padding); z += 1) {
+      for (let y = Math.floor(Math.min(from.y, to.y)); y < top; y += 1) {
+        if (isPortal(read(new Vec3(x, y, z)))) return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Base supplies use existing dry paths. Explicit harvesting still goes
 // through the normal gather and dig checks, with branch mining disabled.
 async function onSurfacePath(bot, home, run, accept = () => true) {
@@ -239,7 +255,9 @@ async function onSurfacePath(bot, home, run, accept = () => true) {
     return neighbors.call(this, node, ...args).filter((move) => {
       if (move.y < floor) return false;
       const p = new Vec3(move.x, move.y, move.z);
-      return accept(p.offset(.5, 0, .5), new Vec3(node.x + .5, node.y, node.z + .5)) && [-1, 0, 1].every((dy) => {
+      const from = new Vec3(node.x + .5, node.y, node.z + .5);
+      const to = p.offset(.5, 0, .5);
+      return portalFree((cell) => bot.blockAt(cell), from, to) && accept(to, from) && [-1, 0, 1].every((dy) => {
         const block = bot.blockAt(p.offset(0, dy, 0));
         return block && !/lava|water|fire|magma|campfire|cactus|powder_snow|bubble_column/.test(block.name);
       });
@@ -259,9 +277,13 @@ async function onSurfacePath(bot, home, run, accept = () => true) {
 function shelterApproach(read, shelter, from, target, accept, failed = noFailedSteps, farmlandStart = null) {
   const door = shelter.position;
   const isDoor = (p) => p.equals(door);
-  const dry = (p) => standable(read, p) || isDoor(p) && shelter.doorOpen() === true
-    && standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? AIR : read(cell), p);
-  const farm = (p) => farmlandStart && farmlandFooting(read, { onGround: true, position: p.offset(.5, -1 / 16, .5) });
+  const dryRead = (p) => {
+    const block = read(p);
+    return isPortal(block) ? null : block;
+  };
+  const dry = (p) => standable(dryRead, p) || isDoor(p) && shelter.doorOpen() === true
+    && standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? AIR : dryRead(cell), p);
+  const farm = (p) => farmlandStart && farmlandFooting(dryRead, { onGround: true, position: p.offset(.5, -1 / 16, .5) });
   const safeLeg = (a, b, actualOrigin) => {
     const dy = b.y - a.y;
     const farmOrigin = farm(a);
@@ -273,8 +295,10 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
     // A full bank one level up is 17/16 blocks above this observed farm surface.
     if (farmOrigin && dy < 0) return false;
     if ((isDoor(a) || isDoor(b)) && (a.x !== b.x || dy !== 0)) return false;
-    return (dy === 0 || clearBlock(read((dy > 0 ? a : b).offset(0, 2, 0))))
-      && accept(farmDestination || b.offset(.5, 0, .5), actualOrigin || farmOrigin || a.offset(.5, 0, .5));
+    const origin = actualOrigin || farmOrigin || a.offset(.5, 0, .5);
+    const destination = farmDestination || b.offset(.5, 0, .5);
+    return (dy === 0 || clearBlock(dryRead((dy > 0 ? a : b).offset(0, 2, 0))))
+      && portalFree(read, origin, destination) && accept(destination, origin);
   };
   const floor = Math.max(door.y - 5, from.y - 1);
   const queue = [{ at: from, first: null, steps: 0 }];
@@ -589,7 +613,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       const check = () => {
         const here = bot.entity.position;
         const hostiles = activeThreats();
-        if (shelterRoute && routeDestination && !destinationStillSafe?.() || relaxedReturn && !relaxedReturn()) {
+        if (!portalFree(read, here, here)
+          || shelterRoute && routeDestination && !destinationStillSafe?.() || relaxedReturn && !relaxedReturn()) {
           route.abort(UNSAFE_ROUTE);
           return;
         }

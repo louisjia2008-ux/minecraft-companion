@@ -422,9 +422,11 @@ test('critical home arrival walks the saved ledge and crosses the door from the 
   let obstruction = null;
   let flood = false;
   let protect = false;
+  let portal = null;
   bot.canDigBlock = (block) => block.diggable;
   bot.companionProtectBlock = (block) => protect && block.position.equals(route[1]);
   bot.blockAt = (p) => {
+    if (portal && p.equals(portal)) return { name: 'nether_portal', boundingBox: 'empty', shapes: [] };
     if (p.equals(door) || p.equals(door.offset(0, 1, 0))) {
       return { name: 'oak_door', boundingBox: 'block', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper',
         open, facing: 'south', hinge: 'left' }) };
@@ -479,6 +481,11 @@ test('critical home arrival walks the saved ledge and crosses the door from the 
   await expectBlocked('resupply_home_route_unsafe', 'zombie', new Vec3(-68.5, 71, -34.5));
   await expectBlocked('resupply_home_route_unsafe', 'creeper', new Vec3(-61.2256, 67, -37.502));
   await expectBlocked('resupply_home_route_unsafe', 'skeleton', new Vec3(-57.5, 72, -36.5));
+  for (const dy of [0, 1, 2]) {
+    portal = route[1].offset(0, dy, 0);
+    await expectBlocked('resupply_no_dry_home_route');
+  }
+  portal = null;
   // Both unmodified R7/R8 worlds had grass on the first foothold. Its
   // removal alone must restore the complete physical route to the door.
   obstruction = route[1];
