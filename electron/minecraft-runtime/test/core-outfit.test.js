@@ -211,6 +211,37 @@ test('home recovery walks beneath intact foundations before digging outside the 
   assert.equal(cleared.size, 1);
 });
 
+test('unarmed home rearm climbs a shallow roofed rim outside the house before walking home', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const start = new Vec3(3, 60, 8);
+  const door = house.furniture.door.position;
+  const air = { name: 'air', boundingBox: 'empty', shapes: [], skyLight: 15 };
+  const stone = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]], diggable: true };
+  const bot = Object.assign(fakeBot(), {
+    health: 20, food: 20, time: { timeOfDay: 3000 }, game: { dimension: 'overworld', minY: 54, height: 28 },
+    entity: { position: start.offset(.5, 0, .5), onGround: true }, entities: {}, canDigBlock: () => true,
+    blockAt(p) {
+      if (p.x === door.x && p.z === door.z && [door.y, door.y + 1].includes(p.y)) return {
+        name: 'birch_door', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper', open: false, facing: 'south', hinge: 'left' }),
+      };
+      return p.y >= 64 || p.equals(start) || p.equals(start.offset(0, 1, 0)) ? air : { ...stone, position: p };
+    },
+  });
+  const events = [];
+  const goal = createOutfitGoal({ bot, items: [{ key: 'stone_sword', count: 1 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: {
+      goNear: async () => assert.fail('ordinary approach attempted through the roofed rim'),
+      goTo: async () => assert.fail('retreat should clear its next foothold first'),
+      digBlock: async () => ({ ok: false, reason: 'observed_cut' }),
+    },
+  });
+  const result = await goal.run({ perceive: () => perceive(bot), record: (type) => events.push(type) });
+  assert.equal(result.reason, 'observed_cut');
+  assert.deepEqual(events, ['resupply_ravine_ascent', 'resupply_ravine_step']);
+  assert.equal(goal.ownsRouteRecovery(), true);
+});
+
 test('home recovery repairs the missing inner doorstep support from the intact outer doorstep', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const { x, y, z } = house.furniture.door.position;

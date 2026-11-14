@@ -638,8 +638,11 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const guardedArrival = !returned && !inside && !needsProtection && !unarmed && nearShelter(state.position)
       && shelter.doorOpen() !== null;
     const underHome = !inside && !missingDoor && home.anchor && underFoundation(currentCell);
+    const roofedRim = !inside && !missingDoor && unarmed && home.anchor && outsideHouse(currentCell)
+      && currentCell.y <= home.anchor.y - 4 && safety.homeDistance(state.position) <= 8
+      && defaultActions.underground(bot);
     const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover || guardedArrival
-      || detourRemaining > 0 || ravine?.steps > 0 || underHome || repairFloor || crossingRepairedFloor;
+      || detourRemaining > 0 || ravine?.steps > 0 || underHome || roofedRim || repairFloor || crossingRepairedFloor;
     ownsShelterRoute = (missingDoor && nearShelter(state.position) || detourRemaining > 0) && (!inside || holdShelter);
     if (shelter && holdShelter) bot.companionResupplySheltered = shelterWitness;
     else clearShelter();
@@ -943,6 +946,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       ravine = { high: from.y, steps: RAVINE_HOME_STEPS, visited: new Set() };
       ctx.record('resupply_ravine_ascent', { from, floor: ascentFloor });
     };
+    if (!ravine && roofedRim && safeAscentStart(state)) startRavine(currentCell);
     // A shallow cave can run beneath an intact house. Reach an outside
     // column on existing footing before allowing the normal guarded ascent.
     if (underHome && safeAscentStart(state)) {
