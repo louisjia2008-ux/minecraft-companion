@@ -733,9 +733,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const apples = bot.inventory.items().filter((i) => /golden_apple$/.test(i.name)).reduce((n, i) => n + i.count, 0);
       if (near && !(apples >= 2 && inFortress())) {
         ctx.record('fall_back', { health: Math.round(state.health), from: near.name });
+        const start = here.clone();
+        const clearance = Math.min(15, Math.max(8, near.distance + 4));
         const moved = await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
-          actions.fleeFrom(bot, combat, near.position, { distance: 9, timeoutMs: 10000 }));
-        return moved.ok || bot.entity.position.distanceTo(here) >= 4 ? { ok: true, waited: true } : moved;
+          actions.fleeFrom(bot, combat, near.position, { distance: clearance, timeoutMs: 10000 }));
+        if (moved.repositioned || bot.entity.position.distanceTo(start) >= 2) return { ok: true, waited: true };
+        if (!moved.ok) return moved;
       }
       actions.haltBody(bot);
       await sleep(2000, ctx.signal);

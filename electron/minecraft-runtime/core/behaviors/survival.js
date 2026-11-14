@@ -181,9 +181,9 @@ function exposedTo(bot, range) {
 }
 
 /** A nearby standable cell with a roof that the ghast cannot see into. */
-function coverSpot(bot, ghast) {
+function coverSpot(bot, shooter) {
   const feet = bot.entity.position.floored();
-  const eye = ghast.position.offset(0, 2, 0);
+  const eye = shooter.position.offset(0, 2, 0);
   let best = null;
   for (let dx = -6; dx <= 6; dx += 1) {
     for (let dz = -6; dz <= 6; dz += 1) {
@@ -375,6 +375,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     && dimensionOf(bot) === 'overworld' && !state.inWater && armed(state) && canStrikeFromHere(h);
   const netherExpedition = () => activeGoal() === 'nether_expedition' && dimensionOf(bot) === 'the_nether';
   const unsafePursuits = createBlacklist({ ttlMs: 3500 });
+  let netherEscapeRetryAt = 0;
   const escapeThreat = (state) => threats(state).find((h) => !huntEndermanInReach(state, h)) || null;
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
@@ -525,6 +526,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // In the End an enderman teleports after anything that runs, and the
       // run ends in the void: fight it out there instead.
       if (threat.name === 'enderman' && dimensionOf(bot) === 'the_end') return 0;
+      if (netherExpedition() && Date.now() < netherEscapeRetryAt) return 0;
       // An exposed mob within striking range still wins immediately. From
       // cover, continue the persistent ascent rather than orbiting its old
       // position and handing the body back to deeper work.
@@ -562,6 +564,16 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         return actions.fleeFrom(bot, ctx, current.position);
       }
       if (threat?.selfAggressor && !armed(state)) ctx.record('escape_self_aggressor', { mob: threat.name, id: threat.id });
+      if (netherExpedition() && threat) {
+        const start = bot.entity.position.clone();
+        const cover = threat.name === 'blaze' && coverSpot(bot, threat);
+        const moved = await withFortressCombatTerrain(bot, ctx, (combat) => cover
+          ? actions.goTo(bot, combat, new goals.GoalBlock(cover.x, cover.y, cover.z),
+            { timeoutMs: 4500, retryNoProgress: false })
+          : actions.fleeFrom(bot, combat, threat.position, { distance: Math.max(8, threat.distance + 4), timeoutMs: 5000 }));
+        if (!moved.repositioned && bot.entity.position.distanceTo(start) < 2) netherEscapeRetryAt = Date.now() + 1200;
+        return moved;
+      }
       return actions.fleeFrom(bot, ctx, threat?.position || bot.entity.position);
     },
   };
