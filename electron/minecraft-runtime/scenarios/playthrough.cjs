@@ -455,6 +455,29 @@ async function runDeathRecovery(context, index, entry) {
     state.replace = false;
     return false;
   }
+  // Field food must be reachable before the iron pack is complete. The
+  // expedition outfit only stocks food once its other items are gathered.
+  const plots = !base && !pearlRearm && farmPlotPositions(state);
+  if (recovery.foodGoal != null && recovery.foodGoal === status.goal?.generation) return true;
+  if (plots?.length && hungry(context) && Date.now() >= (recovery.nextFoodAt || 0)) {
+    const wheat = have(bot, 'wheat');
+    const seeds = have(bot, 'wheat_seeds');
+    const harvestable = plots.some(({ x, y, z }) => {
+      const ground = bot.blockAt?.(new Vec3(x, y, z));
+      const crop = bot.blockAt?.(new Vec3(x, y + 1, z));
+      return ground?.name === 'farmland' && (crop?.name === 'wheat'
+        || /^(air|cave_air)$/.test(crop?.name || '') && Number(ground.getProperties?.().moisture) > 0 && seeds > 0);
+    });
+    if (wheat >= 3 || harvestable) {
+      const args = { items: [{ key: 'food', count: 2 }], recoverAtHome: true, farmPlots: plots };
+      recovery.nextFoodAt = Date.now() + SNACK_MS;
+      write('model_ask', { step: 'rearm', phase: 'iron_food', death: death.id, task: 'outfit', args });
+      await companion.submitTask('outfit', args);
+      if (state.audit?.deaths.at(-1)?.id === death.id) recovery.foodGoal = companion.status().goal?.generation;
+      else await companion.pauseTask('playthrough_death_resupply');
+      return true;
+    }
+  }
   if (recovery.goal && status.goal && status.goal.generation === recovery.goal.generation) return true;
   if (recovery.attempts >= RETRIES) {
     if (!entry.stuck) {

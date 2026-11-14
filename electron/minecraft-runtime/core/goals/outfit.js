@@ -666,7 +666,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const carriedFood = countKey('food', state.inventory, kb);
     const foodTarget = !waitForDay && localReserve ? reserveTarget
       : checkedChest && needsProtection && state.food < REGEN_FOOD && carriedFood === 0 && !waitForDay
-        ? resupplyFood.plan(state, critical) : null;
+        ? resupplyFood.plan(state, critical, !critical && device.stocking(state)) : null;
     const waitForFood = foodTarget?.kind === 'wait';
     const waitForHealing = critical && state.food >= REGEN_FOOD;
     const holdShelter = waitForDay || waitForFood || waitForHealing || (critical || localReserve) && routeInterrupted;

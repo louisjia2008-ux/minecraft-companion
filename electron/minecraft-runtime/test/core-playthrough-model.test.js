@@ -370,6 +370,30 @@ test('death during active expedition prep holds gear until home supplies and wor
   assert.deepEqual(events.filter((e) => e.type === 'playthrough_death_recovery_verified').map(({ phase }) => phase), ['base', 'iron']);
 });
 
+test('hungry iron rearm uses known growing crops before sending the miner back out', async () => {
+  const { context, state, asked } = modelContext({ step: 'gear' });
+  const { companion, bot } = context;
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const plots = [{ x: -5, y: 63, z: 3 }];
+  companion.director = { memory: { homestead: { memory: { house } } } };
+  state.goals.farm = { memory: { plots } };
+  state.audit = { deaths: [{ id: 1, at: 1, respawn: { alive: true } }], taskEvents: [] };
+  state.deathRecovery = { death: 1, phase: 'iron', attempts: 2, goal: { generation: 1 } };
+  let goal = { name: 'outfit', generation: 1 };
+  companion.status = () => ({ goal });
+  companion.submitTask = async (task, args) => { asked.push({ task, args }); goal = { name: 'outfit', generation: 2 }; };
+  bot.food = 9;
+  bot.blockAt = (p) => p.y === 63 ? { name: 'farmland' } : { name: 'wheat', getProperties: () => ({ age: 6 }) };
+  await playthroughNatural.onTick(context);
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked, [{ task: 'outfit', args: { items: [{ key: 'food', count: 2 }], recoverAtHome: true, farmPlots: plots } }]);
+  assert.equal(state.deathRecovery.attempts, 2);
+  goal = null;
+  bot.food = 18;
+  await playthroughNatural.onTick(context);
+  assert.deepEqual(asked[1], { task: 'outfit', args: { items: REARM, expeditionFood: true, farmPlots: plots } });
+});
+
 test('gear and eyes ask for the full safe food reserve using the known farm plots', () => {
   const { context, state } = modelContext({ step: 'gear', pick: true });
   state.gearDone = false;
