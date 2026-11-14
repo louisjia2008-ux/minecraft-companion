@@ -629,14 +629,31 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
   // Take one supported step back onto open, firm ground.
   async function stepToGroundBank(ctx, from, centre, sandExit) {
     const dry = dryScoutMovements();
-    const adjacent = dry ? safeScoutMoves(dry, from) : [];
-    const step = adjacent.filter((p) => flatDistance(from, p) === 1 && (!sandExit || p.equals(sandExit)) && scoutGroundAt(p))
-      .sort((a, b) => centre ? flatDistance(a, centre) - flatDistance(b, centre) : 0)[0];
-    const bank = step && new Vec3(step.x, step.y, step.z);
+    if (!dry) return null;
+    const queue = [{ point: from, first: null, depth: 0 }];
+    const seen = new Set([pointKey(from)]);
+    let bank;
+    for (const { point, first, depth } of queue) {
+      const adjacent = safeScoutMoves(dry, point).filter((p) => flatDistance(point, p) === 1
+        && insideScoutTether(p, centre || from, operatingRadius()));
+      adjacent.sort((a, b) => centre ? flatDistance(a, centre) - flatDistance(b, centre) : 0);
+      for (const move of adjacent) {
+        const step = new Vec3(move.x, move.y, move.z);
+        const key = pointKey(step);
+        if (seen.has(key) || sandExit && !step.equals(sandExit)) continue;
+        seen.add(key);
+        if (scoutGroundAt(step)) { bank = first || step; break; }
+        if (!sandExit && depth < 2 && needsGroundBank(step)) {
+          queue.push({ point: step, first: first || step, depth: depth + 1 });
+        }
+      }
+      if (bank) break;
+    }
     if (!bank) return null;
-    const arrived = (p) => bot.entity.onGround && p.floored().equals(bank) && scoutGroundAt(bank);
+    const valid = () => scoutGroundAt(bank) || !sandExit && needsGroundBank(bank);
+    const arrived = (p) => bot.entity.onGround && p.floored().equals(bank) && valid();
     const moved = await walkDry(bot, ctx, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
-      { adjacent: bank, timeoutMs: 2000, arrived });
+      { adjacent: bank, avoid: () => !valid(), timeoutMs: 2000, arrived });
     if (moved.ok && arrived(bot.entity.position)) {
       ctx.record('pearl_scout_ground_bank', { from, to: bank });
       return { ok: true, waited: true };
