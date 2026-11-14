@@ -13,6 +13,7 @@ const { createBlacklist, posKey } = require('../blacklist');
 const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { advanceCaveRetreat, farmlandFooting, standable } = require('../caveRetreat');
 const { abortError, sleep, waitUntil } = require('../confirm');
+const { createExpeditionReturnDetour } = require('./expeditionReturnDetour');
 
 const FOOD_MOBS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const HOME_RADIUS = 48;
@@ -91,6 +92,10 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   const onDryGround = () => bot.entity.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava
     && bodyClear(bot.entity.position);
   const threatsNear = (state) => (state.hostiles || []).some(({ distance }) => distance <= 16);
+  const detour = createExpeditionReturnDetour({ bot, centre, floor, exposed, actions,
+    safe: (state, starting) => state.health >= 12 && state.food >= 12 && (!starting || state.isDay === true)
+      && !state.inWater && !bot.entity.isInWater && !bot.entity.isInLava && !threatsNear(state)
+      && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe')) });
   const calmSpider = (h) => {
     const entity = bot.entities?.[h.id];
     if (!h.position || !RETREAT_SPIDERS.has(h.name) || !entity || entity.name !== h.name || entity.isValid === false
@@ -544,6 +549,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
         returnLeg = 0;
         return { ok: true };
       }
+      if (!scout && returnLeg % headings.length === 0 && await detour.plan(ctx)) return { ok: true };
       return result.ok ? { ok: false, reason: 'expedition_food_return_leg_blocked' } : result;
     }
     returnLeg = 0;
@@ -591,6 +597,11 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       || hostile && ((!scout && !fromOutside) || !onDryGround() || !exposed(feet) || !canWithdraw(state))) return wait(ctx, 'expedition_food_unsafe');
     if (state.inWater || bot.entity.isInWater) {
       return scout || distance(feet) <= SCOUT_RINGS.at(-1) ? scoutAshore(ctx, here) : wait(ctx, 'expedition_food_unsafe');
+    }
+    if (detour.pending()) {
+      const outcome = await detour.advance(ctx);
+      if (!detour.pending()) returnLeg = 0;
+      return outcome;
     }
     if (!scout && !inHouse(feet) && !exposed(feet) && !farmlandFooting(read, bot.entity) && actions.underground?.(bot)) {
       const result = await advanceCaveRetreat(bot, ctx, actions, centre, { visited,
