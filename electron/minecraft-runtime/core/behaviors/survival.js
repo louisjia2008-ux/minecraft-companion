@@ -609,7 +609,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           actions.goTo(bot, combat, new goals.GoalBlock(next.x, next.y, next.z),
             { arrived, timeoutMs: 2500, retryNoProgress: false }));
         if (moved.repositioned) return moved;
-        if (!moved.ok || !arrived()) {
+        const landed = (moved.ok || moved.reason === 'not_arrived')
+          && await waitUntil(arrived, { timeoutMs: 600, signal: ctx.signal });
+        if (!landed) {
           coverRetryAt = Date.now() + 1200;
           return moved.ok ? { ok: false, reason: 'nether_cover_step_not_arrived' } : moved;
         }
