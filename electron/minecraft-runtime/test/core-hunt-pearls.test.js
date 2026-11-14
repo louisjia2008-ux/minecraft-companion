@@ -330,6 +330,34 @@ test('scouting avoids leaf floors and can leave one via a directly reachable gra
   assert.equal(records.at(-1), 'pearl_scout_ground_bank');
 });
 
+test('an unobstructed dry column admits scouting with low live sky light, but a roof or unloaded column does not', async () => {
+  const start = new Vec3(0, 64, 0);
+  const candidate = new Vec3(-1, 64, 0);
+  const above = candidate.offset(0, 3, 0);
+  const shaded = { ...AIR, skyLight: 7 };
+  let overhead = STONE;
+  const movements = { getNeighbors: (p) => p.equals(start) ? [candidate] : [] };
+  const bot = { ...terrain, entity: { position: start, onGround: true }, pathfinder: { movements }, blockAt(p) {
+    if (p.equals(above)) return overhead;
+    return p.y >= 64 ? shaded : STONE;
+  } };
+  const visits = [];
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, hop) => {
+    assert.equal(hop.isEnd(candidate), true);
+    visits.push(candidate);
+    bot.entity.position = candidate;
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record() {}, perceive: () => nightState(bot.entity.position) };
+  assert.equal(skyOpen(bot, start), false);
+  assert.equal((await goal.run(ctx)).reason, 'pearl_scout_no_dry_route');
+  overhead = null;
+  assert.equal((await goal.run(ctx)).reason, 'pearl_scout_no_dry_route');
+  overhead = shaded;
+  await goal.run(ctx);
+  assert.deepEqual(visits, [candidate]);
+});
+
 test('a hunter starting inside the known house walks out through an observed door', async () => {
   const player = new Vec3(0, 64, 0);
   const position = new Vec3(0, 64, -2);
