@@ -167,7 +167,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     let leastRecent = visited.length;
     for (const { point, steps } of nodes) {
       if (steps >= SCOUT_LEG) continue;
-      for (const move of dry.getNeighbors({ x: point.x, y: point.y, z: point.z, remainingBlocks: 0 })) {
+      for (const move of dry.getNeighbors(Object.assign(point.clone(), { remainingBlocks: 0 }))) {
         if (nodes.length >= SCOUT_NODES) return best || transfer;
         const key = pointKey(move);
         if (seen.has(key) || move.parkour || move.toBreak?.length || move.toPlace?.length

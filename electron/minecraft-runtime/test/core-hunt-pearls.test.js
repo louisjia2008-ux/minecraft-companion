@@ -168,7 +168,10 @@ test('scouting takes the connected dry bend when a straight lookout would end in
   const shore = [start];
   for (let z = 1; z <= 5; z += 1) shore.push(new Vec3(0, 64, z));
   for (let x = 1; x <= 7; x += 1) shore.push(new Vec3(x, 64, 5));
-  const neighbors = ({ x, y, z }) => shore.filter((p) => p.y === y && Math.abs(x - p.x) + Math.abs(z - p.z) === 1);
+  const neighbors = (at) => {
+    assert.ok(at.offset(0, -1, 0), 'native companion movement guards need a Vec3');
+    return shore.filter((p) => p.y === at.y && Math.abs(at.x - p.x) + Math.abs(at.z - p.z) === 1);
+  };
   const bot = { ...terrain, entity: { position: start, onGround: true }, pathfinder: { movements: { getNeighbors: neighbors } },
     blockAt(p) {
       if (p.y === 63 && !shore.some((at) => at.x === p.x && at.z === p.z)) return { ...AIR, name: 'water' };
