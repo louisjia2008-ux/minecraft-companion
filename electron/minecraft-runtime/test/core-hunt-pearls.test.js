@@ -702,14 +702,15 @@ test('a long quiet hunt revisits a near camp it actually landed at, then still h
   assert.deepEqual(records.filter(({ type }) => type === 'pearl_near_scout_watch').map(({ at }) => at), [start]);
 });
 
-test('the wider dusk scout proves a dry return before leaving and uses it at dawn', async () => {
+test('the wider dusk scout proves a dry return and records a completed dry watch', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 100 });
   const home = new Vec3(0, 64, 0);
   const camp = home.offset(0, 0, 64);
   const simplePath = (start, end) => Array.from({ length: Math.abs(start.z - end.z) }, (_, i) =>
     start.offset(0, 0, (i + 1) * Math.sign(end.z - start.z)));
   let day = false, foodPieces = 2;
   const ledges = [];
-  const bot = { ...terrain, entity: { position: home.offset(.5, 0, .5), onGround: true },
+  const bot = { ...terrain, time: { day: 8, timeOfDay: 13000 }, entity: { position: home.offset(.5, 0, .5), onGround: true },
     companionHomeAt: () => home, pathfinder: { movements: { getNeighbors: (p) => [p.offset(0, 0, 1), p.offset(0, 0, -1)] },
       *getPathFromTo(dry, position, end) {
         assert.equal(dry.canDig, false);
@@ -739,6 +740,12 @@ test('the wider dusk scout proves a dry return before leaving and uses it at daw
   assert.deepEqual(records.find(({ type }) => type === 'pearl_wide_scout_plan'), {
     type: 'pearl_wide_scout_plan', from: home, camp, sector: 'south', steps: 64, returnSteps: 64 });
   assert.deepEqual(bot.entity.position.floored(), camp);
+  const watch = goal.run(ctx);
+  await Promise.resolve();
+  t.mock.timers.tick(21000);
+  await watch;
+  assert.ok(records.some(({ type }) => type === 'pearl_wide_scout_watch'));
+  assert.equal(records.some(({ type }) => type === 'pearl_wide_scout_dry_sortie'), false);
   day = true;
   for (let i = 0; i < 11; i += 1) {
     assert.equal(goal.isDone(ctx.perceive()), false);
@@ -747,6 +754,42 @@ test('the wider dusk scout proves a dry return before leaving and uses it at daw
   assert.equal(goal.isDone(ctx.perceive()), true);
   assert.ok(records.some(({ type }) => type === 'pearl_wide_scout_home'));
   assert.deepEqual(ledges.at(-1), home);
+  assert.deepEqual(records.find(({ type }) => type === 'pearl_wide_scout_dry_sortie'), {
+    type: 'pearl_wide_scout_dry_sortie', radius: 80, nightDay: 8, from: home, camp, at: home, home,
+    before: 0, after: 0, watchedMs: 21000 });
+});
+
+test('the distant scout starts before dusk and keeps its dry return when dawn beats the first watch', async () => {
+  const home = new Vec3(0, 64, 0), camp = home.offset(60, 0, -60);
+  const bot = { ...terrain, time: { day: 8, timeOfDay: 10500 }, entity: { position: home.offset(.5, 0, .5), onGround: true },
+    companionHomeAt: () => home, pathfinder: { movements: { getNeighbors: (p) => [p.offset(1, 0, -1), p.offset(-1, 0, 1)] },
+      *getPathFromTo(_dry, position, target) {
+        const start = position.floored();
+        const end = target.isEnd(camp) ? camp : home;
+        assert.ok(target.isEnd(end));
+        const step = Math.sign(end.x - start.x);
+        const path = Array.from({ length: Math.abs(end.x - start.x) }, (_, i) => start.offset(step * (i + 1), 0, -step * (i + 1)));
+        yield { result: { status: 'success', path } };
+      } } };
+  const goal = createHuntPearlsGoal({ bot, scoutRadius: 96, actions: { goTo: async (_b, _ctx, target) => {
+    bot.entity.position = new Vec3(target.x + .5, target.y, target.z + .5);
+    return { ok: true };
+  } } });
+  const events = [];
+  const ctx = { signal: new AbortController().signal, record: (type, data) => events.push({ type, ...data }),
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: true, inventory: { iron_sword: 1, bread: 2 } }) };
+  await goal.run(ctx);
+  assert.equal(goal.memory.distantScoutActive, true);
+  assert.equal(events[0].radius, 96);
+  assert.equal(events[0].sector, 'northeast');
+  assert.equal(events.at(-1).type, 'pearl_wide_scout_out_leg');
+  bot.time.day += 1;
+  bot.time.timeOfDay = 600;
+  await goal.run(ctx);
+  assert.equal(events.at(-1).type, 'pearl_wide_scout_return_leg');
+  await goal.run(ctx);
+  assert.equal(events.at(-1).type, 'pearl_wide_scout_home');
+  assert.equal(goal.memory.distantScoutActive, false);
 });
 
 test('dawn returns to the house in short confirmed dry legs and can begin with a detour', async () => {

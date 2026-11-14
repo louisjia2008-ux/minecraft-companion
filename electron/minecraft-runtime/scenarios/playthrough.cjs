@@ -125,17 +125,19 @@ const STEPS = [
     const previous = state?.goals?.pearls?.memory?.scoutCoverage || {};
     const mostSampled = directions.reduce((best, d) => (previous[d] || 0) > (previous[best] || 0) ? d : best, 'north');
     const opposite = directions[(directions.indexOf(mostSampled) + 2) % directions.length];
-    const wide = pearlWantsWide(state) && bot.health >= 18 && bot.food >= 16 && fullArmorWorn(bot)
-      && expeditionFoodCount(bot, perceive(bot).inventory) >= 3;
+    const scoutRadius = pearlScoutRadius(bot, state);
+    const wide = scoutRadius === 80;
     const scoutSector = (wide ? ['south', 'east', 'west', 'north'] : [opposite, ...directions.filter((d) => d !== opposite)])
       .sort((a, b) => (coverage[a] || 0) - (coverage[b] || 0))[0];
-    return { count: Math.max(1, EYES - have(bot, 'ender_eye')), ...(wide ? { scoutRadius: 80 } : {}),
+    return { count: Math.max(1, EYES - have(bot, 'ender_eye')), ...(scoutRadius ? { scoutRadius } : {}),
       ...(wide || Object.keys(coverage).length ? { scoutSector } : {}) };
   },
     when: ({ bot, companion, state }) => {
       const { timeOfDay, day } = bot.time || {};
       if (timeOfDay >= 12500 && timeOfDay < 23000) return true;
       const home = companion?.director && houseOf(companion)?.interiorCenter;
+      if (timeOfDay >= 10000 && timeOfDay < 12500 && pearlScoutRadius(bot, state) === 96
+        && home && bot.entity?.position?.distanceTo(home) <= 16) return true;
       const feet = bot.entity?.position?.floored?.();
       const waterCell = feet && `${feet.x},${feet.y},${feet.z}`;
       return pearlCaveRecoveryNeeded(bot, home, bot.entity?.position)
@@ -228,6 +230,13 @@ function pearlWantsWide(state) {
   return new Set(state?.pearlDryNights || []).size >= 3;
 }
 
+function pearlScoutRadius(bot, state) {
+  if (!pearlWantsWide(state) || bot.health < 18 || bot.food < 16 || !fullArmorWorn(bot)) return undefined;
+  const carried = expeditionFoodCount(bot, perceive(bot).inventory);
+  if (state.pearlWideScoutDry && carried >= 2) return 96;
+  return carried >= 3 ? 80 : undefined;
+}
+
 function observePearlNight(bot, state) {
   const { nightDay, pearlsBeforeNight, scoutCoverage } = state.goals?.pearls?.memory || {};
   const { day, timeOfDay } = bot.time || {};
@@ -241,10 +250,11 @@ async function provisionPearlScouts(context) {
   const { companion, bot, state, write } = context;
   const day = bot.time?.day;
   const time = bot.time?.timeOfDay;
+  const reserve = state.pearlWideScoutDry ? 2 : 3;
   const active = companion.status().goal;
   if (state.pearlFoodRestock && state.pearlFoodRestock.generation === active?.generation) {
     if ((!state.pearlFoodRestock.urgent && time >= 12500)
-      || expeditionFoodCount(bot, state.lastPerceive.inventory) >= 3) {
+      || expeditionFoodCount(bot, state.lastPerceive.inventory) >= reserve) {
       state.pearlFoodRestock = null;
       state.replace = Boolean(active);
       return false;
@@ -259,10 +269,10 @@ async function provisionPearlScouts(context) {
     || state.pearlFoodRestockDay === day
     || (cannotFightHungry ? fightingEnderman(bot, active) || Boolean(active && active.name !== 'hunt_pearls')
       : time >= 10000 || active || position.distanceTo(home) > 16 || !pearlWantsWide(state))
-    || expeditionFoodCount(bot, state.lastPerceive.inventory) >= 3) return false;
+    || expeditionFoodCount(bot, state.lastPerceive.inventory) >= reserve) return false;
   const farmPlots = farmPlotPositions(state);
   if (!farmPlots.length) return false;
-  const args = { items: [{ key: 'food', count: 3 }], recoverAtHome: true, farmPlots };
+  const args = { items: [{ key: 'food', count: reserve }], recoverAtHome: true, farmPlots };
   state.pearlFoodRestockDay = day;
   write('model_ask', { step: 'pearl_food_restock', task: 'outfit', args, day });
   await companion.submitTask('outfit', args);
@@ -557,6 +567,9 @@ const playthroughNatural = {
   // portal for want of obsidian (or flint and steel) sends it back for the gear.
   onEvent(event, state) {
     if (event.type === 'end_exit') state.lastEndExitAt = event.at || Date.now();
+    if (event.type === 'pearl_wide_scout_dry_sortie' && event.behavior === 'goal:hunt_pearls' && event.radius === 80) {
+      state.pearlWideScoutDry = true;
+    }
     if (state.audit && ['goal_set', 'goal_done', 'goal_failed', 'goal_cleared', 'stopped'].includes(event.type)) {
       const evidence = { ...event, at: event.at || Date.now(), phase: activeStage(state) };
       state.audit.taskEvents.push(evidence);
@@ -590,6 +603,8 @@ const playthroughNatural = {
     const step = STEPS[index];
     const entry = state.steps[index];
     if (await runDeathRecovery(context, index, entry) || context.signal?.aborted) return;
+    if (step.id === 'pearls' && state.goals?.pearls?.memory?.distantScoutActive
+      && companion.status().goal?.name === 'hunt_pearls') return;
     if (step.id === 'nether' && state.netherFoodRestock && dimensionOf(bot) === 'overworld' && !step.done(context)) {
       const restock = state.netherFoodRestock;
       const status = companion.status();

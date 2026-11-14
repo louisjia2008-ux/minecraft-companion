@@ -90,6 +90,19 @@ test('pearl scouting widens only with three distinct dry nights and a carried fo
   pearls.count = 1;
   assert.equal(hunt.done(context), false);
   assert.equal(hunt.args(context).scoutRadius, 80);
+  carried = 2;
+  playthroughNatural.onEvent({ type: 'pearl_wide_scout_watch', behavior: 'goal:hunt_pearls', radius: 80 }, state);
+  assert.equal(hunt.args(context).scoutRadius, undefined);
+  playthroughNatural.onEvent({ type: 'pearl_wide_scout_dry_sortie', behavior: 'goal:hunt_pearls', radius: 80 }, state);
+  assert.equal(hunt.args(context).scoutRadius, 96);
+  const house = createStarterHouse({ x: 2, y: 64, z: 4 });
+  context.companion.director = { memory: { homestead: { memory: { house } } } };
+  context.bot.entity.position = new Vec3(house.interiorCenter.x, house.interiorCenter.y, house.interiorCenter.z);
+  context.bot.time.timeOfDay = 10500;
+  assert.equal(hunt.when(context), true);
+  carried = 1;
+  assert.equal(hunt.args(context).scoutRadius, undefined);
+  assert.equal(hunt.when(context), false);
 });
 
 test('a living Nether food return refills the carried reserve and resumes the same rod goal', async () => {
