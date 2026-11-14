@@ -154,6 +154,74 @@ test('home recovery takes a bounded dry ascent after a failed open-sky ravine re
   assert.equal(goal.ownsRouteRecovery(), false);
 });
 
+test('home recovery repairs the missing inner doorstep support from the intact outer doorstep', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const { x, y, z } = house.furniture.door.position;
+  const door = new Vec3(x, y, z);
+  const inside = door.offset(0, 0, 1);
+  const outside = door.offset(0, 0, -1);
+  const gap = inside.offset(0, -1, 0);
+  const ref = gap.offset(-1, 0, 0);
+  const item = { name: 'dirt', count: 2 };
+  let floor = 'air';
+  let visible = false;
+  const events = [];
+  const bot = Object.assign(fakeBot([item]), { game: { dimension: 'overworld' }, time: { timeOfDay: 5000 },
+    health: 20, food: 17, entity: { position: outside.offset(.5, 0, .5), onGround: true } });
+  bot.blockAt = (p) => {
+    if (p.equals(door) || p.equals(door.offset(0, 1, 0))) return { name: 'oak_door',
+      getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper', open: true, facing: 'south', hinge: 'left' }) };
+    const solid = p.equals(gap) ? floor === 'dirt' : p.y === 63 || p.equals(inside.offset(0, 2, 0));
+    return { position: p.floored(), name: p.equals(gap) ? floor : solid ? 'grass_block' : 'air',
+      boundingBox: solid ? 'block' : 'empty', shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.world = { getBlock: bot.blockAt, raycast: () => visible ? { position: ref, face: 5 } : null };
+  const path = [];
+  let placed = 0;
+  const goal = createOutfitGoal({ bot, items: [{ key: 'food', count: 3 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    actions: {
+      goTo: async (_b, _c, { x, y, z }) => {
+        const next = new Vec3(x, y, z);
+        assert.equal(floor, 'dirt');
+        path.push(next);
+        bot.entity.position = next.offset(.5, 0, .5);
+        return { ok: true };
+      },
+      goNear: async () => assert.fail('the damaged entry requires dry cardinal steps'),
+      digBlock: async () => assert.fail('do not dig any existing door or floor'),
+    },
+    skills: {
+      placeAt: async (_b, _c, target, match, options) => {
+        assert.ok(bot.entity.position.floored().equals(outside));
+        assert.deepEqual(target, gap);
+        assert.deepEqual(options.faces, [new Vec3(-1, 0, 0)]);
+        assert.ok(match(item.name));
+        assert.equal(match('gravel'), false);
+        item.count -= 1;
+        floor = item.name;
+        placed += 1;
+        return { ok: true };
+      },
+      takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
+    },
+  });
+  const ctx = { perceive: () => perceive(bot), record: (type, data) => events.push({ type, ...data }) };
+  assert.equal((await goal.run(ctx)).reason, 'resupply_home_floor_no_face');
+  assert.equal(placed, 0);
+  visible = true;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(placed, 1);
+  assert.equal(item.count, 1);
+  assert.deepEqual(events.at(-1), { type: 'resupply_home_floor', position: gap, confirmed: true, reason: undefined });
+  await goal.run(ctx);
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(path, [door, inside]);
+  assert.equal(placed, 1);
+  assert.ok(events.some(({ type }) => type === 'resupply_home_arrived'));
+});
+
 test('critically hurt home recovery closes the real door before nighttime provisioning', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const door = house.furniture.door.position;

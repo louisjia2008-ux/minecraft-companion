@@ -48,6 +48,7 @@ const HOME_DETOUR_RADIUS = 28;
 const HOME_DETOUR_STEPS = 80;
 const RAVINE_HOME_RADIUS = 22;
 const RAVINE_HOME_STEPS = 32;
+const DOOR_FLOOR_FILL = /^(cobblestone|cobbled_deepslate|dirt)$/;
 const APPROACH_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const APPROACH_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|cactus|powder_snow|sweet_berry_bush|campfire|soul_campfire)$/;
 const isPortal = (block) => block?.name === 'nether_portal' || block?.name === 'end_portal';
@@ -510,11 +511,12 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
   let daylightExit = null;
   let detourRemaining = null;
   let homeCut = null;
+  let crossingRepairedFloor = false;
   let ravine = null;
   const failedApproaches = createBlacklist({ ttlMs: 12000 });
   const nearShelter = (position) => Boolean(shelter && position && typeof actions.goTo === 'function'
     && position.y >= shelter.position.y - 5 && Math.hypot(position.x - shelter.position.x, position.z - shelter.position.z) <= 16);
-  goal.ownsRouteRecovery = () => ownsGatherRoute() || ownsShelterRoute || ownsReserveRoute || ravine?.steps > 0
+  goal.ownsRouteRecovery = () => ownsGatherRoute() || ownsShelterRoute || ownsReserveRoute || crossingRepairedFloor || ravine?.steps > 0
     || dimension(bot) === 'overworld' && bot.health > 0 && bot.health < HOME_HEALTH && nearShelter(bot.entity?.position);
   const resetRecovery = () => {
     returned = false; checkedChest = false; lastFoodWait = null; routeInterrupted = false; routeDestination = null;
@@ -523,6 +525,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     daylightExit = null;
     detourRemaining = null;
     homeCut = null;
+    crossingRepairedFloor = false;
     ravine = null;
     failedApproaches.clear();
     clearShelter();
@@ -563,6 +566,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const needsProtection = critical || state.food < HOME_FOOD;
     const missingDoor = shelter?.missingDoor() === true;
     const inside = atResupplyHome(state, home, { verticalSlack: (critical || missingDoor) && shelter ? 0 : 1 });
+    if (inside) crossingRepairedFloor = false;
     const doorstep = shelter?.position.offset(.5, 0, -.5);
     const nearbyHostiles = needsProtection || unarmed ? safety.threats(state, true) : [];
     const ranged = nearbyHostiles.filter((hostile) => RANGED_HOSTILES.has(hostile.name)
@@ -579,6 +583,15 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const exitCells = threshold && [insideDoor, threshold, doorstep.floored()];
     const exitIntact = () => shelter.doorOpen() !== null && read(threshold)?.getProperties()?.facing === 'north'
       && exitCells.every(exitFloor) && [threshold, insideDoor].every((p) => fullBlock(read(p.offset(0, 2, 0))));
+    const thresholdGap = () => shelter?.doorOpen() === true && exitFloor(threshold) && exitFloor(exitCells[2])
+      && /^(air|cave_air)$/.test(read(insideDoor.offset(0, -1, 0))?.name || '')
+      && clearBlock(read(insideDoor)) && clearBlock(read(insideDoor.offset(0, 1, 0)))
+      && fullBlock(read(insideDoor.offset(0, 2, 0)));
+    // Keep an intact, open door on the approach when the first interior
+    // step lost its support. A reachable side face lets us fill it outside.
+    const repairFloor = typeof skills.placeAt === 'function' && typeof bot.world?.raycast === 'function'
+      && Object.entries(state.inventory).some(([name, count]) => count > 0 && DOOR_FLOOR_FILL.test(name))
+      && thresholdGap();
     const exitPoints = exitCells?.map((p) => p.offset(.5, 0, .5));
     const exitSafe = (hostiles, accept) => hostiles.every((hostile) => exitPoints.every((p) =>
       hostile.position.distanceTo(p) > safety.threatRange(hostile) || accept(hostile, p)));
@@ -622,7 +635,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const guardedArrival = !returned && !inside && !needsProtection && !unarmed && nearShelter(state.position)
       && shelter.doorOpen() !== null;
     const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover || guardedArrival
-      || detourRemaining > 0 || ravine?.steps > 0;
+      || detourRemaining > 0 || ravine?.steps > 0 || repairFloor || crossingRepairedFloor;
     ownsShelterRoute = (missingDoor && nearShelter(state.position) || detourRemaining > 0) && (!inside || holdShelter);
     if (shelter && holdShelter) bot.companionResupplySheltered = shelterWitness;
     else clearShelter();
@@ -815,6 +828,34 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       }
       if (open === null) return wait('resupply_door_unconfirmed');
       if (open === false && from.equals(entrance) && bot.entity.onGround) return shelter.setDoor(scoped, true);
+      if (repairFloor && from.equals(entrance) && bot.entity.onGround) {
+        const gap = insideDoor.offset(0, -1, 0);
+        const body = bot.entity.position;
+        if (!thresholdGap() || unsafeToDig(body, insideDoor.offset(.5, 0, .5), activeThreats())) return wait('resupply_home_floor_unsafe');
+        const retry = `floor:${posKey(gap)}`;
+        if (failedApproaches.has(retry)) return wait('resupply_home_floor_cooldown');
+        const faces = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1)].filter((face) => fullBlock(read(gap.plus(face))));
+        const place = new goals.GoalPlaceBlock(gap, bot.world, { range: 4.5, LOS: true, faces });
+        const centred = place.getFaceAndRef(entrance.offset(.5, 1.6, .5));
+        const live = place.getFaceAndRef(body.offset(0, 1.6, 0));
+        if (!centred || !live?.ref.equals(centred.ref)) return wait('resupply_home_floor_no_face');
+        failedApproaches.add(retry, 'resupply_home_floor_attempt');
+        preparingStep = insideDoor.offset(.5, 0, .5);
+        try {
+          const result = await skills.placeAt(bot, scoped, gap, (name) => DOOR_FLOOR_FILL.test(name), { faces: [live.face] });
+          const confirmed = result.ok && standable(read, insideDoor) && bot.entity.onGround
+            && bot.entity.position.floored().equals(entrance);
+          crossingRepairedFloor = confirmed;
+          scoped.record('resupply_home_floor', { position: gap, confirmed, reason: result.reason });
+          return confirmed ? { ok: true } : wait(result.reason || 'resupply_home_floor_unconfirmed');
+        } finally {
+          preparingStep = null;
+        }
+      }
+      if (repairFloor) {
+        const approach = shelterApproach(read, shelter, from, entrance, safeStep, failedApproaches, farmlandStart, true);
+        if (approach) return followStep(scoped, approach, from, feet, farmlandStart, false, entrance, wait);
+      }
       const target = open ? shelter.position.offset(0, 0, 1) : entrance;
       const knownDoor = standable(read, entrance);
       const path = detourRemaining === null
