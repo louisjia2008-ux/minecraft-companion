@@ -388,3 +388,65 @@ test('critical retreat pauses on dry cover for carried safe food, while a visibl
   await retreat.run(ctx);
   assert.equal(bites, 1, 'a visible nearby threat interrupts eating');
 });
+
+test('injured home resupply walks off an overlapping water lip and climbs instead of declaring it surface', async () => {
+  const { bot, cells, origin } = fixture();
+  const bank = origin.offset(0, 0, 1);
+  cells.set(key(origin.offset(0, -1, 0)), water);
+  cells.set(key(bank), air);
+  cells.set(key(bank.offset(0, 1, 0)), air);
+  // An open skylight above the bank is still at the bottom of the chasm.
+  for (let y = 2; y < 70; y += 1) cells.set(key(bank.offset(0, y, 0)), { ...air, skyLight: 15 });
+  const read = bot.blockAt;
+  bot.blockAt = (p) => ({ ...read(p), skyLight: cells.get(key(p))?.name === 'air' ? 15 : 0 });
+  bot.game.minY = 0;
+  bot.game.height = 65;
+  const home = new Vec3(10, 32, 0);
+  const records = [];
+  let cuts = 0;
+  const actions = {
+    underground: () => bot.entity.position.floored().equals(bank),
+    async goTo(_bot, _ctx, goal) {
+      assert.equal(goal.constructor.name, 'GoalBlock', 'never head horizontally for home from this lip');
+      assert.deepEqual([goal.x, goal.y, goal.z], [bank.x, bank.y, bank.z]);
+      bot.entity.position = bank.offset(.5, 0, .5);
+      return { ok: true };
+    },
+    async digBlock(_bot, _ctx, b) {
+      cuts += 1;
+      cells.set(key(b.position), air);
+      return { ok: true };
+    },
+  };
+  bot.pathfinder.movements.getNeighbors = () => [bank];
+  const state = { health: 7.3, food: 11, inventory: {}, hostiles: [] };
+  const ctx = { perceive: () => ({ ...state, position: bot.entity.position }), record: (type) => records.push(type) };
+  const cave = createSurvivalBehaviors({ bot, actions, home: () => home, resupplying: () => true })
+    .find((behavior) => behavior.name === 'cave_retreat');
+
+  bot.entity.position = origin.offset(.5, 0, .5);
+  assert.equal(cave.want(ctx.perceive()), 0, 'no dry foot overlaps the bank');
+  bot.entity.position = origin.offset(.5, 0, .82);
+  bot.game.dimension = 'the_nether';
+  assert.equal(cave.want(ctx.perceive()), 0);
+  bot.game.dimension = 'overworld';
+  assert.equal(cave.want(ctx.perceive()), 1);
+  assert.deepEqual((await cave.run(ctx)).to, bank);
+  assert.equal((await cave.run(ctx)).dug, true);
+  assert.equal(cuts, 1);
+  assert.deepEqual(records, ['cave_retreat_step', 'cave_retreat_cut']);
+});
+
+test('the uphill planner leaves a low open outlet eligible only for ordinary retreat', () => {
+  const { bot, cells, origin } = fixture();
+  const gap = origin.offset(1, 0, 0), outlet = origin.offset(2, 0, 0);
+  cells.set(key(gap), air);
+  cells.set(key(gap.offset(0, 1, 0)), air);
+  for (let y = 0; y < 70; y += 1) cells.set(key(outlet.offset(0, y, 0)), { ...air, skyLight: 15 });
+  bot.game.minY = 0;
+  bot.game.height = 65;
+  const home = new Vec3(-10, 32, 0);
+  assert.equal(planRetreat(bot, origin, home).kind, 'walk');
+  assert.deepEqual(planRetreat(bot, origin, home).target, gap);
+  assert.equal(planRetreat(bot, origin, home, undefined, undefined, undefined, 24).kind, 'stairs');
+});

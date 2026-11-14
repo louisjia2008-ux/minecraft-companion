@@ -58,6 +58,25 @@ function digSafety(bot, read, point, { requireReach = false } = {}) {
   return 'dig';
 }
 
+// The floor of a player's centre cell can be water while the grounded hitbox
+// overlaps an adjacent dry ledge. Know exactly which ledge supports that body.
+function cavePoolBank(bot) {
+  const entity = bot.entity;
+  const at = entity.position;
+  const feet = at.floored();
+  const read = (p) => bot.blockAt(p);
+  if (!entity.onGround || entity.isInWater || entity.isInLava || Math.abs(at.y - feet.y) > .02
+    || read(feet.offset(0, -1, 0))?.name !== 'water' || !open(read(feet)) || !open(read(feet.offset(0, 1, 0)))) return null;
+  const radius = (entity.width || .6) / 2;
+  for (const [dx, dz] of SIDES) {
+    const bank = feet.offset(dx, 0, dz);
+    if (!standable(read, bank)) continue;
+    if (at.x + radius > bank.x && at.x - radius < bank.x + 1
+      && at.z + radius > bank.z && at.z - radius < bank.z + 1) return bank;
+  }
+  return null;
+}
+
 function drySteps(read, feet, minY) {
   const steps = [];
   for (const [dx, dz] of SIDES) for (const dy of [1, 0, -1]) {
@@ -132,7 +151,7 @@ function coveredRun(bot, read, from, depth = 5) {
 
 // Find an existing uphill exit before cutting into the wall. Explore only
 // loaded, dry ground. The returned path is traversed in short rechecked legs.
-function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), risk = () => 0) {
+function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), risk = () => 0, surfaceFloor = -Infinity) {
   const cache = new Map();
   const read = (p) => {
     const cell = key(p);
@@ -157,7 +176,7 @@ function planRetreat(bot, from, home, avoid = () => false, visited = new Set(), 
   for (let i = 0; i < queue.length && i < 1400; i += 1) {
     const node = queue[i];
     const { feet, first, distance } = node;
-    if (first && read(feet.offset(0, 1, 0))?.skyLight === 15 && skyOpen(bot, feet)) {
+    if (first && feet.y >= surfaceFloor && read(feet.offset(0, 1, 0))?.skyLight === 15 && skyOpen(bot, feet)) {
       if (!openExit || distance + node.risk < openExit.distance + openExit.risk) openExit = node;
       if (!node.risk) break;
     }
@@ -292,10 +311,16 @@ async function bridgeCaveGap(bot, ctx, actions, from, home, avoid = () => false)
   return { ok: true, from, to: plan.bank };
 }
 
-async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited, risk, bridgeGap = false } = {}) {
+async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited, risk, bridgeGap = false, surfaceFloor } = {}) {
   if (ctx.signal?.aborted) throw abortError(ctx.signal);
   const from = bot.entity.position.floored();
-  const plan = planRetreat(bot, from, home, avoid, visited, risk);
+  const bank = Number.isFinite(surfaceFloor) && cavePoolBank(bot);
+  if (bank) {
+    if (avoid?.(bank)) return fail('cave_retreat_bank_unsafe');
+    const result = await stepDry(bot, ctx, actions, bank, avoid, 0);
+    return result.ok ? { ...result, from } : result;
+  }
+  const plan = planRetreat(bot, from, home, avoid, visited, risk, surfaceFloor);
   if (!plan) return bridgeGap ? bridgeCaveGap(bot, ctx, actions, from, home, avoid) : fail('cave_retreat_no_dry_route');
   const read = (p) => bot.blockAt(p);
   if (plan.kind === 'stairs') {
@@ -316,11 +341,12 @@ async function advanceCaveRetreat(bot, ctx, actions, home, { avoid, visited, ris
 async function stepDry(bot, ctx, actions, p, avoid, maxDrop) {
   const read = (point) => bot.blockAt(point);
   const result = await walkDry(bot, ctx, actions, new goals.GoalBlock(p.x, p.y, p.z), { avoid, adjacent: p, maxDrop });
-  if (result.ok) await waitUntil(() => bot.entity.onGround && bot.entity.position.floored().equals(p), {
+  if (result.ok || result.reason === 'not_arrived') await waitUntil(() => bot.entity.onGround && bot.entity.position.floored().equals(p), {
     timeoutMs: 500, signal: ctx.signal,
   });
   const to = bot.entity.position.floored();
-  if (!result.ok || !to.equals(p) || !bot.entity.onGround || !standable(read, to)) return fail(result.reason || 'cave_retreat_step_unconfirmed');
+  if (!(result.ok || result.reason === 'not_arrived') || !to.equals(p) || !bot.entity.onGround
+    || !standable(read, to) || avoid?.(to)) return fail(result.reason || 'cave_retreat_step_unconfirmed');
   return { ok: true, to };
 }
 
@@ -405,4 +431,4 @@ async function returnFromCave(bot, ctx, actions, home, avoid) {
     ? { ok: true, atHome: true } : fail(result.reason || 'cave_retreat_home_unconfirmed');
 }
 
-module.exports = { advanceCaveRetreat, evadeInCave, farmlandFooting, planRetreat, returnFromCave, skyOpen, standable, walkDry };
+module.exports = { advanceCaveRetreat, cavePoolBank, evadeInCave, farmlandFooting, planRetreat, returnFromCave, skyOpen, standable, walkDry };

@@ -12,7 +12,7 @@ const { isFireResistancePotion, hasEffect } = require('../netherStructures');
 const { createBlacklist } = require('../blacklist');
 const { ownedItems } = require('../perception');
 const { meleeGeometry, meleeSight } = require('../entityGeometry');
-const { advanceCaveRetreat, evadeInCave, returnFromCave, skyOpen, standable } = require('../caveRetreat');
+const { advanceCaveRetreat, cavePoolBank, evadeInCave, returnFromCave, skyOpen, standable } = require('../caveRetreat');
 const { goals } = require('mineflayer-pathfinder');
 const { recordObservedSelfAggressor } = require('../../vendor/server/minecraft/entitySemantics');
 
@@ -391,9 +391,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const canPlanRetreat = () => typeof bot.blockAt === 'function'
     && typeof bot.pathfinder?.movements?.getNeighbors === 'function';
   const caveSituation = (state) => dryOverworldCritical(state) && !state.sheltered && canPlanRetreat();
+  const chasmRecovery = (state, centre) => Boolean(dimensionOf(bot) === 'overworld' && centre && resupplying()
+    && state.position.y <= centre.y - 12
+    && state.health <= t.healHealth && retreatCanMove(state) && canPlanRetreat()
+    && (actions.underground?.(bot) === true || cavePoolBank(bot)));
   const caveNeedsExit = (state) => {
-    if (!caveSituation(state)) return false;
     const centre = home();
+    if (chasmRecovery(state, centre)) return true;
+    if (!caveSituation(state)) return false;
     if (centre && Math.abs(state.position.y - centre.y) <= 3
       && Math.hypot(state.position.x - centre.x, state.position.z - centre.z) <= 8) return false;
     return actions.underground?.(bot) === true;
@@ -451,12 +456,15 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           return total + (distance < range && visibleThreat(h, at) ? (range - distance) * 2 : 0);
         }, 0);
       };
+      const state = ctx.perceive();
+      if (chasmRecovery(state, centre)) current.surfaceFloor = centre.y - 8;
+      const aboveFloor = here.y >= (current.surfaceFloor ?? -Infinity);
+      if (!aboveFloor) current.surfaced = false;
       const dry = standable((p) => bot.blockAt(p), here);
-      if (!current.surfaced && dry && bot.entity.onGround && skyOpen(bot, here)) {
+      if (!current.surfaced && aboveFloor && dry && bot.entity.onGround && skyOpen(bot, here)) {
         current.surfaced = true;
         ctx.record('cave_retreat_surface', { at: here });
       }
-      const state = ctx.perceive();
       if (Date.now() >= current.nextMealAt && dry && bot.entity.onGround && !burning(bot) && !fireContacts(bot).length
         && state.health <= t.escapeHealth && state.food < t.recoverFood
         && !currentThreats().some((h) => h.distance <= 2.5
@@ -487,7 +495,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         }
         return result;
       }
-      const result = await advanceCaveRetreat(bot, ctx, actions, centre, { avoid, risk, visited: current.visited });
+      const result = await advanceCaveRetreat(bot, ctx, actions, centre, { avoid, risk, visited: current.visited, surfaceFloor: current.surfaceFloor });
       if (result.ok && !result.dug && retreat === current) {
         current.visited.add(`${here.x},${here.y},${here.z}`);
         if (current.visited.size > 80) current.visited.delete(current.visited.values().next().value);
