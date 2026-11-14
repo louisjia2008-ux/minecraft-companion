@@ -638,8 +638,12 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
     const guardedArrival = !returned && !inside && !needsProtection && !unarmed && nearShelter(state.position)
       && shelter.doorOpen() !== null;
     const underHome = !inside && !missingDoor && home.anchor && underFoundation(currentCell);
+    const workingQuarry = checkedChest && state.isDay === true && !needsProtection && !unarmedShelter
+      && goal.memory.gather?.atSurfaceQuarry?.() === true;
+    // A shallow open quarry can look underground from its working steps.
+    // Let its own checked route supply tools while the rearm conditions hold.
     const roofedRim = !inside && !missingDoor && unarmed && home.anchor && outsideHouse(currentCell)
-      && currentCell.y <= home.anchor.y - 4 && safety.homeDistance(state.position) <= 8
+      && !workingQuarry && currentCell.y <= home.anchor.y - 4 && safety.homeDistance(state.position) <= 8
       && defaultActions.underground(bot);
     const guardRoute = critical || unarmedShelter || localReserve || leavingUnderCover || guardedArrival
       || detourRemaining > 0 || ravine?.steps > 0 || underHome || roofedRim || repairFloor || crossingRepairedFloor;

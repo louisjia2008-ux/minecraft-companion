@@ -242,6 +242,48 @@ test('unarmed home rearm climbs a shallow roofed rim outside the house before wa
   assert.equal(goal.ownsRouteRecovery(), true);
 });
 
+test('healthy daytime rearm lets the active quarry work from its dry low entrance', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const door = house.furniture.door.position;
+  const entrance = new Vec3(-2, 60, 4);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [], skyLight: 15 };
+  const stone = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]], diggable: true };
+  const bot = Object.assign(fakeBot(), {
+    health: 20, food: 20, time: { timeOfDay: 3000 }, game: { dimension: 'overworld', minY: 54, height: 28 },
+    entity: { position: new Vec3(3.5, 64, 4.5), onGround: true }, entities: {},
+    blockAt(p) {
+      if (p.x === door.x && p.z === door.z && [door.y, door.y + 1].includes(p.y)) return {
+        name: 'birch_door', getProperties: () => ({ half: p.y === door.y ? 'lower' : 'upper', open: true, facing: 'north' }),
+      };
+      return p.y >= 64 || p.x === entrance.x && p.z === entrance.z && p.y >= entrance.y
+        ? air : { ...stone, position: p };
+    },
+  });
+  const events = [];
+  const goal = createOutfitGoal({ bot, items: [{ key: 'stone_sword', count: 1 }], recoverAtHome: true,
+    home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor, door },
+    skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }) },
+    actions: {
+      goNear: async () => assert.fail('left the known quarry by the ordinary route'),
+      goTo: async () => assert.fail('left the known quarry by a ravine route'),
+      digBlock: async () => assert.fail('dug to escape the known quarry'),
+    },
+    createGather: () => ({
+      atSurfaceQuarry: () => bot.entity.position.floored().equals(entrance),
+      isDone: () => false,
+      progress: () => 0,
+      async run() {
+        events.push('quarry');
+        bot.entity.position = entrance.offset(.5, 0, .5);
+        return { ok: true };
+      },
+    }),
+  });
+  const ctx = { perceive: () => perceive(bot), record: (type) => events.push(type) };
+  for (let tick = 0; tick < 3; tick += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(events, ['resupply_home_arrived', 'resupply_chest_read', 'device_materials', 'quarry', 'quarry']);
+});
+
 test('home recovery repairs the missing inner doorstep support from the intact outer doorstep', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const { x, y, z } = house.furniture.door.position;

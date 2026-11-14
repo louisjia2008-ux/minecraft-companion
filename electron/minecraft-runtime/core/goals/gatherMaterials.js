@@ -1047,6 +1047,7 @@ function createGatherMaterialsGoal({ bot, chest, home, requirements = null, blue
     owed,
     ownsRouteRecovery,
     leaveSurfaceQuarry,
+    atSurfaceQuarry: () => quarry?.atWorksite() === true,
     isDone: (state) => memory.chest !== null && !quarry?.inside() && owed(state?.inventory).length === 0,
     progress: () => memory.steps,
     async run(ctx) {

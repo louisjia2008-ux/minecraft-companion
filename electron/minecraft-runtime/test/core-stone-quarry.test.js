@@ -62,6 +62,9 @@ function fixture({ blocked = false, move = true, cover = 2 } = {}) {
 
 test('a bounded quarry cuts two soil layers, mines multiple stone blocks and exits over intact stairs', async () => {
   const f = fixture();
+  assert.equal(f.quarry.atWorksite(), false);
+  assert.equal((await f.run()).ok, true);
+  assert.equal(f.quarry.atWorksite(), true, 'the verified quarry entrance belongs to the route');
   for (let n = 0; n < 20 && f.picked.length < 2; n += 1) assert.equal((await f.run()).ok, true);
   assert.ok(f.picked.length >= 2);
   assert.deepEqual(f.path.slice(0, 2), [new Vec3(1, 63, 0), new Vec3(2, 62, 0)]);
@@ -70,6 +73,10 @@ test('a bounded quarry cuts two soil layers, mines multiple stone blocks and exi
   assert.equal(f.bot.blockAt(new Vec3(2, 61, 0)).name, 'stone');
   assert.ok(f.cuts.every((p) => p.y >= 60 && p.x > 0));
   assert.equal(f.events.filter(([type]) => type === 'quarry_start').length, 1);
+  assert.equal(f.quarry.atWorksite(), true);
+  f.bot.entity.onGround = false;
+  assert.equal(f.quarry.atWorksite(), false);
+  f.bot.entity.onGround = true;
   for (let n = 0; n < 8 && f.quarry.inside(); n += 1) assert.equal((await f.quarry.leave(f.ctx, f.surface)).ok, true);
   assert.ok(f.bot.entity.position.floored().equals(f.origin));
   assert.equal(await f.quarry.leave(f.ctx, f.surface), null);

@@ -135,6 +135,13 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
 
   const here = () => bot.entity.position.floored();
   const landed = (p) => bot.entity.onGround && here().equals(p) && standable(read, p);
+  function atWorksite() {
+    if (!site || site.closed) return false;
+    const current = here();
+    return (site.route.some((p) => p.equals(current)) || site.pocket?.at.equals(current) === true)
+      && landed(current);
+  }
+
   function inside() {
     if (!site) return false;
     const current = here();
@@ -275,7 +282,7 @@ function createStoneQuarry({ bot, actions, avoid, blacklist }) {
     return moved;
   }
 
-  return { run, leave, active: () => Boolean(site && !site.closed), inside,
+  return { run, leave, active: () => Boolean(site && !site.closed), inside, atWorksite,
     protectsFloor,
     reset: () => { site = null; protectedFloors.clear(); } };
 }
