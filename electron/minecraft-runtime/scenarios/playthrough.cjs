@@ -125,9 +125,12 @@ const STEPS = [
     const previous = state?.goals?.pearls?.memory?.scoutCoverage || {};
     const mostSampled = directions.reduce((best, d) => (previous[d] || 0) > (previous[best] || 0) ? d : best, 'north');
     const opposite = directions[(directions.indexOf(mostSampled) + 2) % directions.length];
-    const scoutSector = [opposite, ...directions.filter((d) => d !== opposite)]
+    const wide = pearlWantsWide(bot, state) && bot.health >= 18 && bot.food >= 16 && fullArmorWorn(bot)
+      && expeditionFoodCount(bot, perceive(bot).inventory) >= 3;
+    const scoutSector = (wide ? ['south', 'east', 'west', 'north'] : [opposite, ...directions.filter((d) => d !== opposite)])
       .sort((a, b) => (coverage[a] || 0) - (coverage[b] || 0))[0];
-    return { count: Math.max(1, EYES - have(bot, 'ender_eye')), ...(Object.keys(coverage).length ? { scoutSector } : {}) };
+    return { count: Math.max(1, EYES - have(bot, 'ender_eye')), ...(wide ? { scoutRadius: 80 } : {}),
+      ...(wide || Object.keys(coverage).length ? { scoutSector } : {}) };
   },
     when: ({ bot, companion, state }) => {
       const { timeOfDay, day } = bot.time || {};
@@ -219,6 +222,51 @@ function pearlScoutCoverage(state) {
     coverage[sector] = (coverage[sector] || 0) + count;
   }
   return coverage;
+}
+
+function pearlWantsWide(bot, state) {
+  return new Set(state?.pearlDryNights || []).size >= 3
+    && have(bot, 'ender_pearl') + have(bot, 'ender_eye') === 0;
+}
+
+function observePearlNight(bot, state) {
+  const { nightDay, pearlsBeforeNight, scoutCoverage } = state.goals?.pearls?.memory || {};
+  const { day, timeOfDay } = bot.time || {};
+  if (Number.isSafeInteger(nightDay) && (day > nightDay || day === nightDay && timeOfDay > 23460)
+    && Object.values(scoutCoverage || {}).some((count) => count > 0) && have(bot, 'ender_pearl') === pearlsBeforeNight) {
+    state.pearlDryNights = [...new Set([...(state.pearlDryNights || []), nightDay])];
+  }
+}
+
+async function provisionPearlScouts(context) {
+  const { companion, bot, state, write } = context;
+  const day = bot.time?.day;
+  const time = bot.time?.timeOfDay;
+  const active = companion.status().goal;
+  if (state.pearlFoodRestock && state.pearlFoodRestock.generation === active?.generation) {
+    if (time >= 12500 || expeditionFoodCount(bot, state.lastPerceive.inventory) >= 3) {
+      state.pearlFoodRestock = null;
+      state.replace = Boolean(active);
+      return false;
+    }
+    return true;
+  }
+  state.pearlFoodRestock = null;
+  const home = companion.director && houseOf(companion)?.interiorCenter;
+  const position = bot.entity?.position;
+  if (!Number.isSafeInteger(day) || !Number.isFinite(time) || time >= 10000
+    || state.pearlFoodRestockDay === day || active || !home || !position || position.distanceTo(home) > 16
+    || !pearlWantsWide(bot, state) || !fullArmorWorn(bot)
+    || expeditionFoodCount(bot, state.lastPerceive.inventory) >= 3) return false;
+  const farmPlots = farmPlotPositions(state);
+  if (!farmPlots.length) return false;
+  const args = { items: [{ key: 'food', count: 3 }], recoverAtHome: true, farmPlots };
+  state.pearlFoodRestockDay = day;
+  write('model_ask', { step: 'pearl_food_restock', task: 'outfit', args, day });
+  await companion.submitTask('outfit', args);
+  const goal = companion.status().goal;
+  if (goal) state.pearlFoodRestock = { generation: goal.generation };
+  return true;
 }
 
 async function dispatch(context, step, entry) {
@@ -592,6 +640,10 @@ const playthroughNatural = {
     // Hungry with nothing to eat and the animals around the house long since
     // hunted: the model sends the bot to its farm for bread, then asks for
     // the step again (the detour is not counted as one of its asks).
+    if (step.id === 'pearls') {
+      observePearlNight(bot, state);
+      if (await provisionPearlScouts(context)) return;
+    }
     const goal = companion.status().goal;
     if (state.snack && (!goal || bot.food >= 18 || Date.now() - (state.snackAt || 0) > SNACK_MS)) {
       state.snack = false;

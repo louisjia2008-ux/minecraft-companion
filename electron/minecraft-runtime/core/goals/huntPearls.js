@@ -16,6 +16,7 @@ const defaultActions = require('../actions');
 const { advanceCaveRetreat, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { meleeSight } = require('../entityGeometry');
 const { applyWalkOnlyMovements } = require('../nether');
+const { expeditionFoodCount } = require('./stockFood');
 const { sleep, waitUntil } = require('../confirm');
 
 const HOME_RANGE = 24;
@@ -34,6 +35,9 @@ const ENDERMAN_EYES = 2.55;
 const ENGAGE_HEALTH = 14;
 const ENGAGE_FOOD = 15;
 const SCOUT_RADIUS = 48;
+const WIDE_SCOUT_RADIUS = 80;
+const WIDE_SCOUT_DWELL_MS = 70000;
+const WIDE_SCOUT_RETRY_LIMIT = 2;
 const SCOUT_LEG = 10;
 const SCOUT_NODES = 320;
 const SCOUT_HISTORY = 64;
@@ -60,16 +64,16 @@ function scoutSectorOf(position, centre) {
   return dz > 0 ? 'south' : 'north';
 }
 
-function pearlCaveRecoveryNeeded(bot, house, position) {
-  if (!house || !position || position.y >= house.y - 2 || flatDistance(position, house) > SCOUT_RADIUS) return false;
+function pearlCaveRecoveryNeeded(bot, house, position, limit = SCOUT_RADIUS) {
+  if (!house || !position || position.y >= house.y - 2 || flatDistance(position, house) > limit) return false;
   const feet = new Vec3(position.x, position.y, position.z).floored();
   return position.y < house.y - 7 || !skyOpen(bot, feet);
 }
 
-function pearlTetherRecoveryNeeded(house, position) {
+function pearlTetherRecoveryNeeded(house, position, limit = SCOUT_RADIUS) {
   if (!house || !position) return false;
   const distance = flatDistance(position, house);
-  return Number.isFinite(distance) && distance > SCOUT_RADIUS && distance <= SCOUT_RADIUS + SCOUT_LEG;
+  return Number.isFinite(distance) && distance > limit && distance <= limit + SCOUT_LEG;
 }
 
 function openScoutColumn(bot, feet) {
@@ -86,22 +90,22 @@ function scoutGround(bot, p) {
   return standable(read, p) && !read(p.offset(0, -1, 0))?.name.endsWith('_leaves') && openScoutColumn(bot, p);
 }
 
-function pearlWaterBank(bot, house) {
+function pearlWaterBank(bot, house, limit = SCOUT_RADIUS) {
   const entity = bot?.entity;
   if (!house || entity?.isInWater !== true || entity.isInLava || !entity.position?.floored) return null;
   const feet = entity.position.floored();
   const head = bot.blockAt(feet.offset(0, 1, 0), false);
   if (!head || !/^(air|cave_air|void_air)$/.test(head.name)) return null;
   return Object.values(DOOR_DIRECTIONS).map(([x, z]) => feet.offset(x, 1, z))
-    .find((p) => flatDistance(p, house) <= SCOUT_RADIUS && scoutGround(bot, p)) || null;
+    .find((p) => flatDistance(p, house) <= limit && scoutGround(bot, p)) || null;
 }
 
 const dryLeafCanopy = (bot, feet) => skyOpen(bot, feet, { allowLeafCanopy: true });
 
-function pearlHomeReturnNeeded(house, position, bot) {
+function pearlHomeReturnNeeded(house, position, bot, limit = HOME_RETURN_RANGE) {
   if (!house || !position) return false;
   const radius = flatDistance(position, house);
-  if (radius <= HOME_RANGE || radius > HOME_RETURN_RANGE || !Number.isFinite(radius)) return false;
+  if (radius <= HOME_RANGE || radius > limit || !Number.isFinite(radius)) return false;
   if (!bot?.blockAt) return false;
   const feet = new Vec3(position.x, position.y, position.z).floored();
   const read = (at) => bot.blockAt(at, false);
@@ -109,8 +113,11 @@ function pearlHomeReturnNeeded(house, position, bot) {
     && (scoutGround(bot, feet) || standable(read, feet) && dryLeafCanopy(bot, feet));
 }
 
-function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skills = defaultSkills, actions = defaultActions } = {}) {
+function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scoutRadius = SCOUT_RADIUS, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
+  if (!Number.isSafeInteger(scoutRadius) || scoutRadius < SCOUT_RADIUS || scoutRadius > WIDE_SCOUT_RADIUS) {
+    throw new TypeError('invalid pearl scout radius');
+  }
   if (scoutSector !== undefined && (typeof scoutSector !== 'string' || !Object.hasOwn(DOOR_DIRECTIONS, scoutSector))) {
     throw new TypeError('invalid pearl scout sector');
   }
@@ -125,6 +132,9 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   let homeFailures = 0;
   let waterFailures = 0;
   let recoveringWater = false;
+  let widePlan;
+  let wideTried = false;
+  let wideFailures = 0;
   const nearCamps = [];
   let nextNearScout = 0;
   let nearScout;
@@ -141,6 +151,9 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   const scoutGroundAt = (p) => scoutGround(bot, p);
   const targetOutdoors = (p) => standable(read, p) && skyOpen(bot, p, { allowLeafCanopy: true });
   const restingAtHome = (p, centre) => centre && p.distanceTo(centre) <= HOME_RETURN_NEAR;
+  const readyForWideScout = (state) => state.health >= 18 && state.food >= 16
+    && expeditionFoodCount(bot, state.inventory) >= 3;
+  const operatingRadius = () => (widePlan ? scoutRadius : SCOUT_RADIUS);
   const readyToHunt = (state) => state.health >= ENGAGE_HEALTH && state.food >= ENGAGE_FOOD
     && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe'));
   const sight = (entity, from = bot.entity.position) => {
@@ -211,7 +224,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   async function regainSurface(ctx, state, house) {
     const from = bot.entity.position.floored();
     if (!bot.entity.onGround || state.inWater || bot.entity.isInLava) return wait(ctx, 'pearl_wait_for_dry_ground');
-    const avoid = (p) => bot.companionHomeSite?.(p) || flatDistance(p, house) > SCOUT_RADIUS
+    const avoid = (p) => bot.companionHomeSite?.(p) || flatDistance(p, house) > operatingRadius()
       || (ctx.perceive().hostiles || []).some((h) => h.position?.distanceTo(p.offset(.5, 0, .5)) <= 5);
     const result = await advanceCaveRetreat(bot, ctx, actions, house, {
       visited: caveVisited, avoid, bridgeGap: true, surfaceFloor: house.y - 2,
@@ -265,7 +278,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
   }
 
   const tetheredOutside = (centre, feet) => tetherFailures < 2
-    && (pearlTetherRecoveryNeeded(centre, feet) || pearlTetherRecoveryNeeded(centre, bot.entity.position))
+    && (pearlTetherRecoveryNeeded(centre, feet, operatingRadius()) || pearlTetherRecoveryNeeded(centre, bot.entity.position, operatingRadius()))
     && bot.entity.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava && scoutGroundAt(feet);
 
   function tetherEntry(from, centre) {
@@ -288,8 +301,8 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
         if (!scoutGroundAt(p)) continue;
         // The pathfinder can stop anywhere inside the block. Rejoin with
         // both the physical body centre and the floor cell inside the tether.
-        if (d <= SCOUT_RADIUS && [p.offset(1, 0, 0), p.offset(0, 0, 1), p.offset(1, 0, 1)]
-          .every((corner) => flatDistance(corner, centre) <= SCOUT_RADIUS)) return p;
+        if (d <= operatingRadius() && [p.offset(1, 0, 0), p.offset(0, 0, 1), p.offset(1, 0, 1)]
+          .every((corner) => flatDistance(corner, centre) <= operatingRadius())) return p;
         nodes.push({ point: p, steps: steps + 1 });
         if (d < nearest) { better = p; nearest = d; }
       }
@@ -329,7 +342,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
         : pearlHomeReturnNeeded(house, bot.entity.position, bot));
   }
 
-  async function planDryRoute(ctx, centre, goal, radius = HOME_RETURN_RANGE + 1) {
+  async function planDryRoute(ctx, centre, goal, radius = HOME_RETURN_RANGE + 1, from = bot.entity.position) {
     const dry = dryScoutMovements();
     if (!dry || typeof bot.pathfinder.getPathFromTo !== 'function') return [];
     const safe = new Map();
@@ -341,7 +354,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     };
     const native = Object.create(dry);
     native.getNeighbors = (p) => safeScoutMoves(dry, p).filter(accepted);
-    const route = bot.pathfinder.getPathFromTo(native, bot.entity.position, goal,
+    const route = bot.pathfinder.getPathFromTo(native, from, goal,
       { timeout: 1100, tickTimeout: 25, searchRadius: 96, optimizePath: false });
     for (const { result } of route) {
       if (result.status === 'success') return result.path.map((p) => new Vec3(p.x, p.y, p.z));
@@ -392,6 +405,95 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       memory.homeReturnBlockedDay = Number.isFinite(day) ? day + (timeOfDay > 23460 ? 1 : 0) : null;
     }
     return wait(ctx, 'pearl_daylight_home_blocked');
+  }
+
+  async function planWideScout(ctx, centre, from) {
+    const directions = [scoutSector || 'south', 'south', 'east', 'west', 'north'];
+    for (const sector of [...new Set(directions)]) {
+      const plan = await planWideSector(ctx, centre, from, sector);
+      if (plan) return plan;
+    }
+    return null;
+  }
+
+  async function planWideSector(ctx, centre, from, sector) {
+    const [dx, dz] = DOOR_DIRECTIONS[sector];
+    const desired = centre.offset(dx * (scoutRadius - 10), 0, dz * (scoutRadius - 10));
+    const around = new goals.GoalNearXZ(desired.x, desired.z, 12);
+    const available = new Map();
+    const site = Object.create(around);
+    site.isEnd = (p) => {
+      if (!around.isEnd(p) || flatDistance(p, centre) < scoutRadius - 16
+        || flatDistance(p, centre) > scoutRadius - 2) return false;
+      const key = pointKey(p);
+      if (!available.has(key)) {
+        const open = [[0, 0], [5, 0], [-5, 0], [0, 5], [0, -5]].filter(([x, z]) =>
+          [-2, -1, 0, 1, 2].some((y) => scoutGroundAt(p.offset(x, y, z)))).length;
+        available.set(key, open >= 4 && fightFooting(p));
+      }
+      return available.get(key);
+    };
+    const route = await planDryRoute(ctx, centre, site, scoutRadius);
+    const camp = route.at(-1);
+    if (!camp) return null;
+    const homeBank = new goals.GoalNear(from.x, from.y, from.z, 1);
+    const returnRoute = await planDryRoute(ctx, centre, homeBank, scoutRadius, camp.offset(.5, 0, .5));
+    if (!returnRoute.length) return null;
+    ctx.record('pearl_wide_scout_plan', { from, camp, sector, steps: route.length, returnSteps: returnRoute.length });
+    return { from, camp, route, returnRoute };
+  }
+
+  function wideShouldReturn(state) {
+    return widePlan && (widePlan.returning || state.isDay !== false || state.health < 15 || state.food < 15
+      || expeditionFoodCount(bot, state.inventory) < 1 || pearls(state) >= count
+      || Number.isFinite(widePlan.until) && Date.now() >= widePlan.until);
+  }
+
+  async function runWideScout(ctx, state, house, from, focus) {
+    if (scoutRadius === SCOUT_RADIUS || !house || bot.entity.onGround !== true || state.inWater || !scoutGroundAt(from)) return null;
+    if (!widePlan && !focus && !wideTried && flatDistance(from, house) <= HOME_RANGE && readyForWideScout(state)) {
+      wideTried = true;
+      widePlan = await planWideScout(ctx, house, from);
+    }
+    if (!widePlan) return null;
+    if (wideShouldReturn(state)) {
+      const plan = widePlan;
+      if (!plan.returning) {
+        plan.returning = true;
+        plan.route = from.equals(plan.camp) ? plan.returnRoute : [];
+      }
+      if (from.distanceTo(plan.from) <= 2) {
+        ctx.record('pearl_wide_scout_home', { at: from, home: house });
+        widePlan = null;
+        return { ok: true, waited: true };
+      }
+      if (wideFailures >= WIDE_SCOUT_RETRY_LIMIT && Date.now() < plan.retryAt) return wait(ctx, 'pearl_wide_scout_return_blocked');
+      if (!plan.route.length) {
+        const homeBank = new goals.GoalNear(plan.from.x, plan.from.y, plan.from.z, 2);
+        plan.route = await planDryRoute(ctx, house, homeBank, scoutRadius + 1);
+      }
+      const next = await walkRouteLeg(ctx, from, plan.route);
+      if (!next) {
+        plan.route = [];
+        wideFailures += 1;
+        plan.retryAt = Date.now() + 10000;
+        return wait(ctx, 'pearl_wide_scout_return_blocked');
+      }
+      wideFailures = 0;
+      ctx.record('pearl_wide_scout_return_leg', { from, to: next, remaining: plan.route.length });
+      return { ok: true, waited: true };
+    }
+    if (widePlan.route.length) {
+      const next = await walkRouteLeg(ctx, from, widePlan.route);
+      if (!next) { widePlan.returning = true; widePlan.route = []; return wait(ctx, 'pearl_wide_scout_outbound_blocked'); }
+      ctx.record('pearl_wide_scout_out_leg', { from, to: next, camp: widePlan.camp, remaining: widePlan.route.length });
+      return { ok: true, waited: true };
+    }
+    if (!widePlan.until) {
+      widePlan.until = Date.now() + WIDE_SCOUT_DWELL_MS;
+      ctx.record('pearl_wide_scout_watch', { at: from, camp: widePlan.camp });
+    }
+    return focus ? null : wait(ctx, 'pearl_wide_scout_watch');
   }
 
   function planSectorRoute(from) {
@@ -563,7 +665,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     }
     const surface = new Map();
     const accept = (p) => {
-      if (flatDistance(p, centre) > SCOUT_RADIUS || flatDistance(p, from) > SCOUT_LEG + 3) return false;
+      if (flatDistance(p, centre) > operatingRadius() || flatDistance(p, from) > SCOUT_LEG + 3) return false;
       const key = pointKey(p);
       if (!surface.has(key)) surface.set(key, scoutGroundAt(p));
       return surface.get(key);
@@ -602,11 +704,11 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     return wait(ctx, result.reason || 'pearl_scout_no_progress');
   }
 
-  const pendingWaterBank = (house) => waterFailures < 2 && typeof actions.swimAshore === 'function' && pearlWaterBank(bot, house);
+  const pendingWaterBank = (house) => waterFailures < 2 && typeof actions.swimAshore === 'function' && pearlWaterBank(bot, house, operatingRadius());
 
   async function regainDryBank(ctx, house, bank, from) {
     recoveringWater = true;
-    const acceptBank = (p) => flatDistance(p, house) <= SCOUT_RADIUS && scoutGroundAt(p);
+    const acceptBank = (p) => flatDistance(p, house) <= operatingRadius() && scoutGroundAt(p);
     if (await actions.swimAshore(bot, ctx, { bank, acceptBank, maxTicks: 45 })
       && !bot.entity.isInWater && bot.entity.onGround === true && bot.entity.position.floored().equals(bank)) {
       waterFailures = 0;
@@ -618,10 +720,12 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
     return wait(ctx, 'pearl_swim_dry_bank_blocked');
   }
 
-  function startNight() {
+  function startNight(ctx) {
     if (memory.sawNight) return;
     memory.sawNight = true;
     memory.nights += 1;
+    memory.nightDay = bot.time?.day;
+    memory.pearlsBeforeNight = pearls(ctx.perceive());
     nextNearScout = Date.now() + NEAR_SCOUT_REPEAT_MS;
   }
 
@@ -632,7 +736,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       || recoveringWater || Boolean(pendingWaterBank(home())),
     // Endermen appear and vanish: a quiet stretch is normal, not a stall.
     noProgressLimit: 40,
-    isDone: (state) => !memory.ascending && !pearlCaveRecoveryNeeded(bot, home(), state.position)
+    isDone: (state) => !widePlan && !memory.ascending && !pearlCaveRecoveryNeeded(bot, home(), state.position)
       && (pearls(state) >= count || ((memory.sawNight || recoveringTether || homeward || recoveringWater) && state.isDay !== false
         && !tetheredOutside(home(), bot.entity.position.floored()) && !wantsHome(state, home())
         && !pendingWaterBank(home()))),
@@ -644,23 +748,27 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       const bank = pendingWaterBank(house);
       if (bank) return regainDryBank(ctx, house, bank, feet);
       if (!bot.entity.isInWater) waterFailures = 0;
-      if (memory.ascending && (!house || flatDistance(feet, house) > SCOUT_RADIUS
+      if (memory.ascending && (!house || flatDistance(feet, house) > operatingRadius()
         || (feet.y >= house.y - 2 && bot.entity.onGround && outdoors(feet) && !state.inWater && !bot.entity.isInLava))) {
         memory.ascending = false;
         caveVisited.clear();
       }
-      if (house && (memory.ascending || pearlCaveRecoveryNeeded(bot, house, state.position))) {
+      if (house && (memory.ascending || pearlCaveRecoveryNeeded(bot, house, state.position, operatingRadius()))) {
         memory.ascending = true;
         return regainSurface(ctx, state, house);
       }
       if (!state.inWater && !homeward && tetheredOutside(house, feet)) {
         memory.centre = house;
         sectorRoute = undefined;
-        if (state.isDay === false) startNight();
+        if (state.isDay === false) startNight(ctx);
         return recoverScoutTether(ctx, feet, house);
       }
-      if (state.isDay === false && tetherFailures >= 2 && pearlTetherRecoveryNeeded(house, feet)) {
+      if (state.isDay === false && tetherFailures >= 2 && pearlTetherRecoveryNeeded(house, feet, operatingRadius())) {
         return wait(ctx, 'pearl_scout_tether_blocked');
+      }
+      if (wideShouldReturn(state)) {
+        const back = await runWideScout(ctx, state, house, feet, null);
+        return back || wait(ctx, 'pearl_wide_scout_return_blocked');
       }
       if (wantsHome(state, house)) return returnInDaylight(ctx, feet, house);
       if (state.isDay !== false) {
@@ -679,7 +787,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       homeward = false;
       homeRoute = [];
       homeFailures = 0;
-      startNight();
+      startNight(ctx);
       // Let survival eat and heal before starting a new fight. An already
       // angry Enderman in reach is still handled by defense.
       if (!readyToHunt(state)) return wait(ctx, 'pearl_wait_for_combat_readiness');
@@ -717,10 +825,11 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, skill
       const centre = memory.centre || home() || state.position;
       const focus = potential.filter(({ entity: e, sight: view }) => view !== 'unknown' && !angry(e)
         && !blacklist.has(`mob:${e.id}`) && !blacklist.has(`approach:${e.id}`)
-        && flatDistance(e.position, centre) <= SCOUT_RADIUS)
+        && flatDistance(e.position, centre) <= operatingRadius())
         .sort((a, b) => Number(b.sight === 'clear') - Number(a.sight === 'clear')
           || a.entity.position.distanceTo(state.position) - b.entity.position.distanceTo(state.position))[0];
-      return scout(ctx, state, focus?.entity, focus?.sight === 'blocked');
+      const wide = scoutRadius > SCOUT_RADIUS && await runWideScout(ctx, state, house, feet, focus?.entity);
+      return wide || scout(ctx, state, focus?.entity, focus?.sight === 'blocked');
     },
   };
 }

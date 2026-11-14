@@ -592,6 +592,52 @@ test('a long quiet hunt revisits a near camp it actually landed at, then still h
   assert.deepEqual(records.filter(({ type }) => type === 'pearl_near_scout_watch').map(({ at }) => at), [start]);
 });
 
+test('the wider dusk scout proves a dry return before leaving and uses it at dawn', async () => {
+  const home = new Vec3(0, 64, 0);
+  const camp = home.offset(0, 0, 64);
+  const simplePath = (start, end) => Array.from({ length: Math.abs(start.z - end.z) }, (_, i) =>
+    start.offset(0, 0, (i + 1) * Math.sign(end.z - start.z)));
+  let day = false, foodPieces = 2;
+  const ledges = [];
+  const bot = { ...terrain, entity: { position: home.offset(.5, 0, .5), onGround: true },
+    companionHomeAt: () => home, pathfinder: { movements: { getNeighbors: (p) => [p.offset(0, 0, 1), p.offset(0, 0, -1)] },
+      *getPathFromTo(dry, position, end) {
+        assert.equal(dry.canDig, false);
+        const start = position.floored();
+        const target = start.equals(camp) ? home : camp;
+        assert.ok(end.isEnd(target));
+        yield { result: { status: 'success', path: simplePath(start, target) } };
+      } } };
+  const goal = createHuntPearlsGoal({ bot, scoutRadius: 80, scoutSector: 'south', actions: {
+    goTo: async (_bot, _ctx, target) => {
+      const next = new Vec3(target.x, target.y, target.z);
+      assert.ok(bot.entity.position.floored().distanceTo(next) <= 10);
+      ledges.push(next);
+      bot.entity.position = next.offset(.5, 0, .5);
+      return { ok: true };
+    },
+  } });
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record: (type, data) => records.push({ type, ...data }),
+    perceive: () => ({ ...nightState(bot.entity.position), isDay: day, inventory: { iron_sword: 1, bread: foodPieces } }) };
+  await goal.run(ctx);
+  assert.equal(records.some(({ type }) => type === 'pearl_wide_scout_plan'), false);
+  bot.entity.position = home.offset(.5, 0, .5);
+  foodPieces = 3;
+  for (let i = 0; i < 10; i += 1) await goal.run(ctx);
+  assert.deepEqual(records.find(({ type }) => type === 'pearl_wide_scout_plan'), {
+    type: 'pearl_wide_scout_plan', from: home, camp, sector: 'south', steps: 64, returnSteps: 64 });
+  assert.deepEqual(bot.entity.position.floored(), camp);
+  day = true;
+  for (let i = 0; i < 10; i += 1) {
+    assert.equal(goal.isDone(ctx.perceive()), false);
+    await goal.run(ctx);
+  }
+  assert.equal(goal.isDone(ctx.perceive()), true);
+  assert.ok(records.some(({ type }) => type === 'pearl_wide_scout_home'));
+  assert.equal(ledges.length, 20);
+});
+
 test('dawn returns to the house in short confirmed dry legs and can begin with a detour', async () => {
   const house = new Vec3(0, 64, 0);
   const start = house.offset(0, 0, -26);
