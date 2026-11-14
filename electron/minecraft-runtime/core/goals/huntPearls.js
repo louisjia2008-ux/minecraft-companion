@@ -30,15 +30,18 @@ const ENGAGE_HEALTH = 14;
 const ENGAGE_FOOD = 15;
 const SCOUT_RADIUS = 48;
 const SCOUT_LEG = 10;
+const SCOUT_NODES = 320;
+const SCOUT_HISTORY = 64;
 const DOOR_DIRECTIONS = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
 
 const MOBS = ['enderman'];
 const isPearl = (n) => n === 'ender_pearl';
+const pointKey = (p) => `${p.x},${p.y},${p.z}`;
 
 function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSkills, actions = defaultActions } = {}) {
   if (!Number.isSafeInteger(count) || count < 1) throw new TypeError('count must be a positive integer');
   const blacklist = createBlacklist({ ttlMs: 60000 });
-  const memory = { centre: null, sector: 0, nights: 0, hunted: 0, sawNight: false };
+  const memory = { centre: null, scoutPositions: [], nights: 0, hunted: 0, sawNight: false };
   const pearls = (state) => state.inventory.ender_pearl || 0;
 
   const creepyIndex = () => bot.registry?.entitiesByName?.enderman?.metadataKeys?.indexOf('creepy') ?? -1;
@@ -126,6 +129,47 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     } finally { restore(); }
   }
 
+  function scoutTarget(from, accept, focus) {
+    const movements = bot.pathfinder?.movements;
+    if (typeof movements?.getNeighbors !== 'function') return null;
+    const dry = Object.assign(Object.create(movements), { canDig: false, allowParkour: false,
+      allow1by1towers: false, scafoldingBlocks: [], maxDropDown: 2, infiniteLiquidDropdownDistance: false });
+    const visited = memory.scoutPositions;
+    const visitedAt = new Map(visited.map((p, i) => [pointKey(p), i]));
+    const aim = focus?.position;
+    const nodes = [{ point: from, steps: 0 }];
+    const seen = new Set([pointKey(from)]);
+    let best = null;
+    let highest = -Infinity;
+    let transfer = null;
+    let leastRecent = visited.length;
+    for (const { point, steps } of nodes) {
+      if (steps >= SCOUT_LEG) continue;
+      for (const move of dry.getNeighbors({ x: point.x, y: point.y, z: point.z, remainingBlocks: 0 })) {
+        if (nodes.length >= SCOUT_NODES) return best || transfer;
+        const key = pointKey(move);
+        if (seen.has(key) || move.parkour || move.toBreak?.length || move.toPlace?.length
+          || Math.abs(move.y - point.y) > 1 || flatDistance(point, move) > Math.SQRT2 || !accept(move)) continue;
+        seen.add(key);
+        const next = new Vec3(move.x, move.y, move.z);
+        nodes.push({ point: next, steps: steps + 1 });
+        if (blacklist.has(`scout:${key}`)) continue;
+        const previous = visitedAt.get(key);
+        if (!aim && previous !== undefined) {
+          // Leave an exhausted patch via the least recently used dry stop.
+          if (previous < leastRecent) { transfer = next; leastRecent = previous; }
+          continue;
+        }
+        // Prefer broader sight coverage when a straight compass ray can lie
+        // across water or underneath a dense canopy.
+        const rank = aim ? flatDistance(from, aim) - flatDistance(next, aim)
+          : Math.min(...visited.map((p) => flatDistance(p, next))) + flatDistance(next, memory.centre) * .85 - (steps + 1) * .1;
+        if ((!aim || rank >= 1) && rank > highest) { best = next; highest = rank; }
+      }
+    }
+    return best || transfer;
+  }
+
   async function scout(ctx, state, focus) {
     const from = bot.entity.position.floored();
     const house = home();
@@ -154,29 +198,31 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, skills = defaultSk
     }
     if (!memory.centre) memory.centre = house && flatDistance(from, house) <= SCOUT_RADIUS ? house : from;
     const centre = memory.centre;
-    const sector = memory.sector;
-    const angle = (sector % 8) * Math.PI / 4;
-    const ring = Math.floor(sector / 8) % 2 ? 36 : 18;
-    const waypoint = focus?.position || centre.offset(Math.round(ring * Math.cos(angle)), 0, Math.round(ring * Math.sin(angle)));
-    const distance = flatDistance(from, waypoint);
-    if (distance <= 4) {
-      if (!focus) memory.sector += 1;
-      return wait(ctx, 'pearl_scout_sector_complete');
+    if (!memory.scoutPositions.at(-1)?.equals(from)) {
+      memory.scoutPositions.push(from);
+      if (memory.scoutPositions.length > SCOUT_HISTORY) memory.scoutPositions.shift();
     }
-    const scale = Math.min(1, SCOUT_LEG / distance);
-    const target = from.offset(Math.round((waypoint.x - from.x) * scale), 0, Math.round((waypoint.z - from.z) * scale));
-    const goal = new goals.GoalNearXZ(target.x, target.z, 2);
     const surface = new Map();
     const accept = (p) => {
       if (flatDistance(p, centre) > SCOUT_RADIUS || flatDistance(p, from) > SCOUT_LEG + 3) return false;
-      const key = `${p.x},${p.y},${p.z}`;
+      const key = pointKey(p);
       if (!surface.has(key)) surface.set(key, outdoors(p));
       return surface.get(key);
     };
-    ctx.record('pearl_surface_scout', { from, target, centre, sector, towardEnderman: Boolean(focus) });
+    let target = scoutTarget(from, accept, focus);
+    if (focus && !target) {
+      blacklist.add(`approach:${focus.id}`, 'pearl_approach_blocked', 15000);
+      focus = null;
+      target = scoutTarget(from, accept);
+    }
+    if (!target) return wait(ctx, 'pearl_scout_no_dry_route');
+    const goal = new goals.GoalBlock(target.x, target.y, target.z);
+    ctx.record('pearl_surface_scout', { from, target, centre, towardEnderman: Boolean(focus) });
+    surface.clear();
     const result = await walkDry(bot, ctx, actions, goal, { timeoutMs: 5000, avoid: (p) => !accept(p) });
     const at = bot.entity.position.floored();
-    if (!focus && (!result.ok || flatDistance(at, waypoint) <= 4)) memory.sector += 1;
+    if (at.equals(target)) return { ok: true, waited: true };
+    blacklist.add(`scout:${pointKey(target)}`, result.reason || 'pearl_scout_not_arrived', 15000);
     if (flatDistance(at, from) >= 2) return { ok: true, waited: true };
     if (focus) blacklist.add(`approach:${focus.id}`, result.reason || 'pearl_approach_blocked', 15000);
     return wait(ctx, result.reason || 'pearl_scout_no_progress');

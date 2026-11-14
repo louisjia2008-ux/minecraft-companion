@@ -119,10 +119,12 @@ test('with an angry enderman already at hand, no other one is stared at', async 
 test('scouting owns short dry surface legs and skips underground targets', async () => {
   const player = new Vec3(0, 64, 0);
   const safe = new Vec3(8, 64, 0);
-  const water = new Vec3(0, 64, 4);
-  const roof = new Vec3(-2, 64, 4);
+  const water = new Vec3(0, 64, 1);
+  const roof = new Vec3(-1, 64, 0);
   const man = { id: 12, name: 'enderman', position: roof };
-  const neighbors = () => [safe, water, roof, new Vec3(49, 64, 0), new Vec3(14, 64, 0), safe.offset(0, -2, 0)];
+  const next = new Vec3(1, 64, 0);
+  const neighbors = (from) => from.x === 0 ? [next, water, roof, new Vec3(49, 64, 0), new Vec3(14, 64, 0), safe.offset(0, -2, 0)]
+    : from.x < safe.x ? [next.offset(from.x, 0, 0)] : [];
   const movements = { getNeighbors: neighbors, canDig: true };
   const bot = { ...terrain, entity: { position: player, onGround: true }, entities: { 12: man }, pathfinder: { movements },
     blockAt(p) {
@@ -132,8 +134,8 @@ test('scouting owns short dry surface legs and skips underground targets', async
     } };
   const goal = createHuntPearlsGoal({ bot, actions: {
     goTo: async (_b, _c, next) => {
-      assert.equal(next.x, 10);
-      assert.deepEqual(movements.getNeighbors(player), [safe]);
+      assert.equal(next.isEnd(safe), true);
+      assert.deepEqual(movements.getNeighbors(player), [new Vec3(1, 64, 0)]);
       assert.equal(movements.canDig, false);
       bot.entity.position = safe;
       return { ok: true };
@@ -155,9 +157,35 @@ test('an obstructed outdoor Enderman does not consume a stare or start a chase',
     lookAt: async () => assert.fail('stared through a wall') };
   const goal = createHuntPearlsGoal({ bot, skills: { huntOne: async () => assert.fail('chased through a wall') } });
   const records = [];
-  await goal.run({ signal: new AbortController().signal, record: (type) => records.push(type),
+  const result = await goal.run({ signal: new AbortController().signal, record: (type) => records.push(type),
     perceive: () => nightState(player) });
-  assert.deepEqual(records, ['pearl_surface_scout']);
+  assert.deepEqual(records, []);
+  assert.equal(result.reason, 'pearl_scout_no_dry_route');
+});
+
+test('scouting takes the connected dry bend when a straight lookout would end in the river', async () => {
+  const start = new Vec3(0, 64, 0);
+  const shore = [start];
+  for (let z = 1; z <= 5; z += 1) shore.push(new Vec3(0, 64, z));
+  for (let x = 1; x <= 7; x += 1) shore.push(new Vec3(x, 64, 5));
+  const neighbors = ({ x, y, z }) => shore.filter((p) => p.y === y && Math.abs(x - p.x) + Math.abs(z - p.z) === 1);
+  const bot = { ...terrain, entity: { position: start, onGround: true }, pathfinder: { movements: { getNeighbors: neighbors } },
+    blockAt(p) {
+      if (p.y === 63 && !shore.some((at) => at.x === p.x && at.z === p.z)) return { ...AIR, name: 'water' };
+      return terrain.blockAt(p);
+    } };
+  const steps = [];
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, goal) => {
+    const target = shore.find((p) => goal.isEnd(p));
+    assert.ok(target, 'the destination has real dry support');
+    steps.push(target);
+    bot.entity.position = target;
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record() {}, perceive: () => nightState(bot.entity.position) };
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.deepEqual(steps, [new Vec3(5, 64, 5), shore.at(-1)]);
 });
 
 test('a hunter starting inside the known house walks out through an observed door', async () => {
