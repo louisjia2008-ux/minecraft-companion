@@ -14,6 +14,7 @@ const { applyWalkOnlyMovements, dimension } = require('../nether');
 const { advanceCaveRetreat, farmlandFooting, standable } = require('../caveRetreat');
 const { abortError, sleep, waitUntil } = require('../confirm');
 const { createExpeditionReturnDetour } = require('./expeditionReturnDetour');
+const { NEAR_HUNT, planScoutFoodApproach } = require('./scoutFoodApproach');
 
 const FOOD_MOBS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
 const HOME_RADIUS = 48;
@@ -22,6 +23,7 @@ const SEARCH_REST_MS = 60000;
 const SCOUT_RINGS = [HOME_RADIUS, 96, 144, 192];
 const SCOUT_LIMIT_MS = 180000;
 const SCOUT_STEPS = 12;
+const SCOUT_HUNT_MARGIN_MS = 30000;
 const DIRECT_HOME_RADIUS = 28;
 const RETREAT_CLEARANCE = 8;
 const RETREAT_SPIDERS = new Set(['spider', 'cave_spider']);
@@ -348,9 +350,9 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     ? ((DUSK - state.timeOfDay + 24000) % 24000) * 50 : 0;
   const scoutFit = (state) => state.health >= 12 && state.food >= 14
     && expeditionFoodCount(bot, state.inventory, kb) >= 2;
-  const scoutTimeLeft = (state) => {
+  const scoutTimeLeft = (state, spareMs = 0) => {
     const elapsed = Date.now() - scout.started;
-    return elapsed < SCOUT_LIMIT_MS && daylightMs(state) > Math.max(30000, elapsed + 20000);
+    return elapsed + spareMs < SCOUT_LIMIT_MS && daylightMs(state) > Math.max(30000, elapsed + 20000) + spareMs;
   };
   const scoutDelay = () => ({ ok: true, waited: true });
 
@@ -364,6 +366,41 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       && await waitUntil(arrived, { timeoutMs: 450, signal: ctx.signal });
     ctx.record(label, { from, to, arrived: landed, ...(scout && { ring: SCOUT_RINGS[scout.ring] }), reason: result.reason });
     return landed;
+  }
+
+  async function scoutTowardFood(ctx, accept) {
+    const mayContinue = () => {
+      const live = ctx.perceive();
+      return scoutFit(live) && scoutTimeLeft(live, SCOUT_HUNT_MARGIN_MS) && !threatsNear(live)
+        && !bot.entity.isInWater && !bot.entity.isInLava;
+    };
+    if (!onDryGround() || !exposed(bot.entity.position.floored())) return false;
+    const farAccept = (entity) => accept(entity) && !blacklist.has(`mob:${entity.id}`);
+    const plan = await planScoutFoodApproach(bot, ctx, { mobs: FOOD_MOBS, accept: farAccept,
+      mayContinue, maxLegSteps: SCOUT_STEPS });
+    if (!plan || !mayContinue()) return false;
+    const guard = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, guard.signal]) : guard.signal;
+    const monitor = setInterval(() => {
+      if (!mayContinue() || !bodyClear(bot.entity.position)) guard.abort('expedition_food_scout_hunt_unsafe');
+    }, 100);
+    try {
+      ctx.record('expedition_food_scout_hunt_approach', { mob: plan.entity.name, id: plan.entity.id,
+        from: plan.from, to: plan.to, approachSteps: plan.approachSteps, returnSteps: plan.returnSteps });
+      if (!await scoutWalk({ ...ctx, signal }, plan.to, 'expedition_food_scout_hunt_step', mayContinue)) {
+        blacklist.add(`mob:${plan.entity.id}`, 'expedition_food_scout_hunt_blocked', 10000);
+      }
+    } catch (error) {
+      if (ctx.signal?.aborted || !guard.signal.aborted) throw error;
+    } finally {
+      clearInterval(monitor);
+    }
+    const at = bot.entity.position.floored();
+    if (onDryGround() && exposed(at) && !at.equals(plan.from) && !scout.trail.at(-1)?.equals(at)) {
+      if (!scout.trail.at(-1)?.equals(plan.from)) scout.trail.push(plan.from);
+      scout.trail.push(at);
+    }
+    return true;
   }
 
   async function scoutOut(ctx, here) {
@@ -683,7 +720,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       }, 150);
       try {
         const animal = await skills.huntOne(bot, { ...ctx, signal: huntGuard.signal }, { mobs: FOOD_MOBS,
-          dropMatch: (name) => edible(name) || name === 'chicken', radius: scout ? 12 : HOME_RADIUS, blacklist, accept });
+          dropMatch: (name) => edible(name) || name === 'chicken', radius: scout ? NEAR_HUNT : HOME_RADIUS, blacklist, accept });
         if (animal.ok && animal.gained > 0) return animal;
         if (!animal.ok && animal.reason !== 'no_mob_in_range') return animal;
       } catch (error) {
@@ -700,6 +737,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
           returning = true;
           return scoutDelay();
         }
+        if (await scoutTowardFood(ctx, accept)) return scoutDelay();
         return scoutOut(ctx, bot.entity.position);
       }
       const growing = crafting && plots.some((p) => canTarget(p) && farming.plotState(bot, p) === 'growing');
