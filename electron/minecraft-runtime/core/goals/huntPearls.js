@@ -41,6 +41,7 @@ const DISTANT_SCOUT_START = 10000;
 const WIDE_SCOUT_DWELL_MS = 70000;
 const WIDE_SCOUT_RETRY_LIMIT = 2;
 const SCOUT_LEG = 10;
+const CANOPY_EXIT_STEPS = 8;
 const SCOUT_NODES = 320;
 const SCOUT_HISTORY = 64;
 const SECTOR_DEPTH = 14;
@@ -630,20 +631,24 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
   async function stepToGroundBank(ctx, from, centre, sandExit) {
     const dry = dryScoutMovements();
     if (!dry) return null;
+    const radius = operatingRadius();
+    const anchor = centre || from;
+    const outside = !insideScoutTether(from, anchor, radius);
+    const withinRecovery = (p, point) => insideScoutTether(p, anchor, radius)
+      || !sandExit && outside && flatDistance(p, anchor) < flatDistance(point, anchor);
     const queue = [{ point: from, first: null, depth: 0 }];
     const seen = new Set([pointKey(from)]);
     let bank;
     for (const { point, first, depth } of queue) {
-      const adjacent = safeScoutMoves(dry, point).filter((p) => flatDistance(point, p) === 1
-        && insideScoutTether(p, centre || from, operatingRadius()));
+      const adjacent = safeScoutMoves(dry, point).filter((p) => flatDistance(point, p) === 1 && withinRecovery(p, point));
       adjacent.sort((a, b) => centre ? flatDistance(a, centre) - flatDistance(b, centre) : 0);
       for (const move of adjacent) {
         const step = new Vec3(move.x, move.y, move.z);
         const key = pointKey(step);
         if (seen.has(key) || sandExit && !step.equals(sandExit)) continue;
         seen.add(key);
-        if (scoutGroundAt(step)) { bank = first || step; break; }
-        if (!sandExit && depth < 2 && needsGroundBank(step)) {
+        if (scoutGroundAt(step) && insideScoutTether(step, anchor, radius)) { bank = first || step; break; }
+        if (!sandExit && depth < (outside ? CANOPY_EXIT_STEPS - 1 : 2) && needsGroundBank(step)) {
           queue.push({ point: step, first: first || step, depth: depth + 1 });
         }
       }

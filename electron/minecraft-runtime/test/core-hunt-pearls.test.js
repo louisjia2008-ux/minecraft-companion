@@ -484,6 +484,33 @@ test('a hunter pushed under leaves can step down onto nearby open grass even aft
   assert.equal(movements.getNeighbors, native);
 });
 
+test('a hunter beyond the tether follows inward dry canopy cells to open ground', async () => {
+  const home = new Vec3(-102, 64, -179);
+  const start = new Vec3(-97, 63, -129);
+  const exit = start.offset(0, 0, -5);
+  const native = (p) => [p.offset(0, 0, 1), p.offset(0, 0, -1)];
+  const bot = { ...terrain, entity: { position: start.offset(.5, 0, .5), onGround: true },
+    companionHomeAt: () => home, pathfinder: { movements: { getNeighbors: native } },
+    blockAt(p) {
+      if (p.y === 62) return { ...STONE, name: 'grass_block' };
+      if (p.y === 66 && p.z > exit.z && p.z <= start.z) return { ...STONE, name: 'oak_leaves' };
+      return AIR;
+    },
+  };
+  const moved = [];
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, target, { arrived }) => {
+    const p = new Vec3(target.x, target.y, target.z);
+    assert.deepEqual(bot.pathfinder.movements.getNeighbors(bot.entity.position.floored()), [p]);
+    moved.push(p);
+    bot.entity.position = p.offset(.5, 0, .5);
+    assert.equal(arrived(bot.entity.position), true);
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record() {}, perceive: () => nightState(bot.entity.position) };
+  for (let leg = 0; leg < 5; leg += 1) await goal.run(ctx);
+  assert.deepEqual(moved, Array.from({ length: 5 }, (_, i) => start.offset(0, 0, -i - 1)));
+});
+
 test('an unobstructed dry column admits scouting with low live sky light, but a roof or unloaded column does not', async () => {
   const start = new Vec3(0, 64, 0);
   const candidate = new Vec3(-1, 64, 0);
