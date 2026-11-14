@@ -683,6 +683,46 @@ test('home resupply can see a known ripe plot beyond the native section scan', a
   await goal.dispose();
 });
 
+test('daylight food reserve permits a ripe plot screened from a lower skeleton', async () => {
+  const house = createStarterHouse({ x: 0, y: 73, z: 0 });
+  const plot = new Vec3(-12, 72, 4);
+  const ripe = plot.offset(0, 1, 0);
+  const green = plot.offset(1, 0, 0);
+  const skeleton = { id: 4, name: 'skeleton', position: new Vec3(-17.5, 68, 4.5), height: 1.99, width: .6 };
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const dirt = { name: 'dirt', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  let cover = false;
+  const bot = Object.assign(fakeBot([{ name: 'stone_sword', count: 1 }]), {
+    health: 20, food: 17, entity: { position: new Vec3(3.5, 73, 4.5), onGround: true },
+    time: { timeOfDay: 6000 }, game: { dimension: 'overworld' }, entities: { 4: skeleton },
+    blockAt(position) {
+      if (position.equals(ripe) || position.equals(green.offset(0, 1, 0))) {
+        return { name: 'wheat', getProperties: () => ({ age: position.equals(ripe) ? 7 : 4 }) };
+      }
+      if (position.equals(plot) || position.equals(green)) return { name: 'farmland' };
+      return cover && position.x >= -16 && position.x <= -14 && position.y <= 72 ? dirt : air;
+    },
+  });
+  const goal = createOutfitGoal({ bot, recoverAtHome: true, items: [{ key: 'food', count: 3 }],
+    farmPlots: [plot, green], home: { chest: house.furniture.chest.position, centre: house.interiorCenter, anchor: house.anchor },
+    skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }) } });
+  await goal.run({ perceive: () => perceive(bot), record() {} });
+  const targets = [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('finished'), 25);
+  await assert.rejects(goal.run({ signal: controller.signal, perceive: () => perceive(bot), record(type) {
+    if (type === 'resupply_food_target') targets.push(type);
+  } }), { code: 'aborted' }).finally(() => clearTimeout(timer));
+  assert.deepEqual(targets, []);
+  cover = true;
+  const ready = new AbortController();
+  await assert.rejects(goal.run({ signal: ready.signal, perceive: () => perceive(bot), record(type, fields) {
+    if (type === 'resupply_food_target') { targets.push(fields.position); ready.abort('target_seen'); }
+  } }), { code: 'aborted' });
+  assert.deepEqual(targets, [ripe]);
+  await goal.dispose();
+});
+
 test('a destroyed doorstep uses supported covered interior and refuses missing floor or visible shooter', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const door = new Vec3(3, 64, 0);

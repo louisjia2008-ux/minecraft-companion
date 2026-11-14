@@ -82,6 +82,13 @@ function blocksThreat(bot, hostile, position) {
   }));
 }
 
+function screenedFarmThreat(bot, hostile, position) {
+  if (!RANGED_HOSTILES.has(hostile.name)) return false;
+  const dimensions = entityDimensions(bot.entities?.[hostile.id] || hostile, bot.registry);
+  return dimensions && hostile.position.y + dimensions.height <= position.y - 1
+    && blocksThreat(bot, hostile, position);
+}
+
 function createKit({ bot, items, kb, resupplyFood, expedition, actions, skills }) {
   const carried = (state, r) => Math.min(r.count, expedition && r.key === 'food'
     ? expeditionFoodCount(bot, state.inventory, kb) : countKey(r.key, state.inventory, kb));
@@ -416,7 +423,10 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmP
     if (home.stations?.crafting_table && countKey('wheat', inventory, kb) >= 3) return { kind: 'bread' };
     const local = critical || keepLocalFarm;
     const hostiles = local ? safety.threats(state) : [];
-    const permitted = local ? (p) => safety.local(p, LOCAL_FOOD_RADIUS - 2) && !safety.exposed(p, hostiles, true)
+    const screenedReserve = keepLocalFarm && !critical && state.isDay === true && state.health >= HOME_HEALTH
+      && state.food >= HOME_FOOD && countKey('stone_sword', state.inventory, kb) > 0;
+    const permitted = local ? (p) => safety.local(p, LOCAL_FOOD_RADIUS - 2) && hostiles.every((hostile) =>
+      !safety.exposed(p, [hostile], true) || screenedReserve && screenedFarmThreat(bot, hostile, p))
       : (p) => p.y >= home.centre.y - 7;
     for (const [key, plot] of harvestedPlots) {
       const stage = farming.plotState(bot, plot);
@@ -698,6 +708,9 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       return Math.min(at.distanceTo(hostile.position), step.distanceTo(hostile.position)) <= range;
     });
     const screenedByWall = (hostile, position) => missingDoor && blocksThreat(bot, hostile, position);
+    const screenedOnFarmRoute = (hostile, position) => localReserve && !needsProtection && !unarmed
+      && bot.health >= HOME_HEALTH && bot.food >= HOME_FOOD && ctx.perceive().isDay === true
+      && screenedFarmThreat(bot, hostile, position);
     const screenedDoorTravel = () => leavingUnderCover || daylightReturn && shelterRoute;
     const houseBody = (p) => p.x >= home.anchor.x && p.x < home.anchor.x + 7
       && p.z >= home.anchor.z && p.z < home.anchor.z + 7;
@@ -721,6 +734,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         const distance = position.distanceTo(hostile.position);
         const range = safety.threatRange(hostile, shelterRoute);
         return distance > range || screenedByRoof(hostile, from, position) || screenedByWall(hostile, position)
+          || screenedOnFarmRoute(hostile, position) && screenedOnFarmRoute(hostile, from.scaled(.5).plus(position.scaled(.5)))
           || screenedDoorTravel() && daylightScreen(hostile, position) && daylightScreen(hostile, from.scaled(.5).plus(position.scaled(.5)))
           || !daylightReturn && routeHome && from && from.distanceTo(hostile.position) <= range
           && distance > from.distanceTo(hostile.position) + .05;
@@ -774,7 +788,8 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           if (distance > range) continue;
           const doorPhantom = inwardDoorStep && threat.name === 'phantom';
           if (doorPhantom && screenedByRoof(threat, inwardDoorStep.from, inwardDoorStep.to, here)
-            || screenedByWall(threat, here) || screenedDoorTravel() && daylightScreen(threat, here)) continue;
+            || screenedByWall(threat, here) || screenedOnFarmRoute(threat, here)
+            || screenedDoorTravel() && daylightScreen(threat, here)) continue;
           if (daylightReturn || doorPhantom || !homebound || !previous.has(threat.id) || previous.get(threat.id) > range
             || moving && distance < last.distanceTo(threat.position) - .1) {
             route.abort(UNSAFE_ROUTE);
