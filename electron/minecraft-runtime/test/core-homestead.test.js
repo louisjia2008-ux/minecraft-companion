@@ -430,6 +430,44 @@ test('missing wool does not delay the house door and only supported surface mobs
     { kind: 'craft', key: 'wool', item: 'white_wool', times: 1, table: false, for: 'bed' });
 });
 
+test('bed wool can use a dry sheep beyond the original local search radius', async () => {
+  const sim = simulate({ failRate: 0 });
+  const house = createStarterHouse({ x: 0, y: 1, z: 0 });
+  const far = new Vec3(175, 1, 3);
+  const wet = far.offset(0, 0, 1);
+  const deep = far.offset(0, -9, 0);
+  const set = (p, name) => sim.world.set([p.x, p.y, p.z].join(','), name);
+  for (const { position, family } of house.blocks) set(position, family === 'planks' ? 'oak_planks' : 'cobblestone');
+  for (const name of ['crafting_table', 'chest', 'furnace']) set(house.furniture[name].position, name);
+  for (const p of house.furniture.torches) set(p, 'torch');
+  set(house.furniture.door.position, 'oak_door');
+  set(house.furniture.door.upper, 'oak_door');
+  set(wet, 'water');
+  sim.bot.blockAt = (p) => {
+    const block = sim.blockAt(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  sim.bot.entity.position = new Vec3(145.5, 1, 3.5);
+  Object.assign(sim.inventory, { cooked_chicken: 10, oak_planks: 3, white_wool: 2 });
+  let hunts = 0;
+  sim.skills.huntOne = async (_bot, _ctx, { mobs, accept }) => {
+    assert.deepEqual(mobs, ['sheep']);
+    assert.equal(accept({ position: wet }), false);
+    assert.equal(accept({ position: deep }), false);
+    assert.equal(accept({ position: far }), true);
+    sim.inventory.white_wool += 1;
+    hunts++;
+    return { ok: true, gained: 1 };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor: house.anchor, gear: [], skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, isDay: true, timeOfDay: 4000 }), record() {} };
+  for (let n = 0; n < 6 && sim.blockAt(house.furniture.bed.position).name !== 'white_bed'; n += 1) {
+    assert.equal((await goal.run(ctx)).ok, true);
+  }
+  assert.equal(hunts, 1);
+  assert.equal(sim.blockAt(house.furniture.bed.position).name, 'white_bed');
+});
+
 test('bed wool leaves the known roof through its open door before surface scouting', async () => {
   const sim = simulate({ failRate: 0 });
   const house = createStarterHouse({ x: 0, y: 1, z: 0 });

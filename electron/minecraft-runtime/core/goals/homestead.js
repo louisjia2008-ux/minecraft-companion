@@ -34,7 +34,8 @@ const EARLY_GEAR = new Set(['stone_sword', 'stone_tier_pickaxe', 'pickaxe', 'woo
 const DOWN = [new Vec3(0, -1, 0)];
 const FOOD_MOBS = new Set(['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom']);
 const NEARBY_FOOD_RADIUS = 16;
-const WOOL_SEARCH_RADIUS = 144;
+const WOOL_SCOUT_RINGS = [48, 88, 128, 160, 192];
+const WOOL_SEARCH_RADIUS = WOOL_SCOUT_RINGS.at(-1) + 16;
 const WOOL_SCOUT_LEG = 32;
 const FILLERS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const isFiller = (name) => FILLERS.has(name);
@@ -668,7 +669,7 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const from = bot.entity.position.clone();
     const sector = woolSector % 8;
     const angle = Math.PI * sector / 4;
-    const range = [48, 88, 128][Math.floor(woolSector / 8) % 3];
+    const range = WOOL_SCOUT_RINGS[Math.floor(woolSector / 8) % WOOL_SCOUT_RINGS.length];
     const x = centre.x + Math.round(Math.cos(angle) * range);
     const z = centre.z + Math.round(Math.sin(angle) * range);
     const dx = x - from.x;
