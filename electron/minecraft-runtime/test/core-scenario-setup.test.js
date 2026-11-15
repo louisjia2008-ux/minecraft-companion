@@ -326,6 +326,8 @@ test('a rejected finishWhen still drains delayed inventory readback before termi
 });
 
 async function queryProcess(t) {
+  let server;
+  t.after(() => server?.stop());
   const f = serverProcess(t, { responds: false });
   f.child.stdin.removeAllListeners('data');
   f.child.stdin.on('data', (chunk) => {
@@ -334,8 +336,7 @@ async function queryProcess(t) {
       f.child.stdout.write('Stopping server\nAll dimensions are saved\n'); f.close();
     }
   });
-  const server = await startVanillaServer({ ...f.options, stopTimeoutMs: 100 });
-  t.after(() => server.stop());
+  server = await startVanillaServer({ ...f.options, stopTimeoutMs: 100 });
   return { ...f, server, reply: (text) => f.child.stdout.write(`${text}\n`) };
 }
 const queryTurn = () => new Promise((resolve) => setImmediate(resolve));
