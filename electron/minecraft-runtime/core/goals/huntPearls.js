@@ -647,7 +647,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
         const key = pointKey(step);
         if (seen.has(key) || sandExit && !step.equals(sandExit)) continue;
         seen.add(key);
-        if (scoutGroundAt(step) && insideScoutTether(step, anchor, radius)) { bank = first || step; break; }
+        if (scoutGroundAt(step)) { bank = first || step; break; }
         if (!sandExit && depth < (outside ? CANOPY_EXIT_STEPS - 1 : 2) && needsGroundBank(step)) {
           queue.push({ point: step, first: first || step, depth: depth + 1 });
         }
