@@ -1257,6 +1257,7 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
+  backedSand,
   drainPocket,
   recentre, surface, underground, unstick, nudge, breakLattice, openHeadroom, openNearDoor, swimAshore, swimToNearbyBank, stepOutOfPool, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,

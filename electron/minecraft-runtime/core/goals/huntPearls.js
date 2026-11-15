@@ -107,9 +107,28 @@ function sandBank(bot, from, centre, limit) {
   if ((ground !== 'sand' && ground !== 'red_sand') || !SCOUT_AIR.test(bot.blockAt(from, false)?.name)
     || !openScoutColumn(bot, from)) return null;
   // A grounded hunter can leave sand without using it for planned scout routes.
-  return Object.values(DOOR_DIRECTIONS).map(([x, z]) => from.offset(x, 0, z))
+  const direct = Object.values(DOOR_DIRECTIONS).map(([x, z]) => from.offset(x, 0, z))
     .filter((p) => insideScoutTether(p, centre, limit) && scoutGround(bot, p))
-    .sort((a, b) => flatDistance(a, centre) - flatDistance(b, centre))[0] || null;
+    .sort((a, b) => flatDistance(a, centre) - flatDistance(b, centre))[0];
+  if (direct) return direct;
+  const read = (p) => bot.blockAt(p, false);
+  const stableSand = (p) => defaultActions.backedSand(read, p) && SCOUT_AIR.test(read(p)?.name) && openScoutColumn(bot, p);
+  if (!stableSand(from)) return null;
+  const queue = [{ at: from, first: null, depth: 0 }];
+  const seen = new Set([pointKey(from)]);
+  for (const { at, first, depth } of queue) {
+    for (const [x, z] of Object.values(DOOR_DIRECTIONS)) {
+      for (const rise of [0, 1]) {
+        const next = at.offset(x, rise, z);
+        const key = pointKey(next);
+        if (seen.has(key) || !insideScoutTether(next, centre, limit)) continue;
+        seen.add(key);
+        if (scoutGround(bot, next)) return first || next;
+        if (!rise && depth < 3 && stableSand(next)) queue.push({ at: next, first: first || next, depth: depth + 1 });
+      }
+    }
+  }
+  return null;
 }
 
 function pearlWaterBank(bot, house, limit = SCOUT_RADIUS) {
@@ -647,7 +666,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
         const key = pointKey(step);
         if (seen.has(key) || sandExit && !step.equals(sandExit)) continue;
         seen.add(key);
-        if (scoutGroundAt(step)) { bank = first || step; break; }
+        if (scoutGroundAt(step) || sandExit) { bank = first || step; break; }
         if (!sandExit && depth < (outside ? CANOPY_EXIT_STEPS - 1 : 2) && needsGroundBank(step)) {
           queue.push({ point: step, first: first || step, depth: depth + 1 });
         }
@@ -655,10 +674,13 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
       if (bank) break;
     }
     if (!bank) return null;
-    const valid = () => scoutGroundAt(bank) || !sandExit && needsGroundBank(bank);
+    const valid = () => scoutGroundAt(bank) || (sandExit
+      ? defaultActions.backedSand(read, bank) && SCOUT_AIR.test(read(bank)?.name) && clearColumn(bank)
+      : needsGroundBank(bank));
     const arrived = (p) => bot.entity.onGround && p.floored().equals(bank) && valid();
     const moved = await walkDry(bot, ctx, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
-      { adjacent: bank, avoid: () => !valid(), timeoutMs: 2000, arrived });
+      { adjacent: bank, supports: (read, p) => p.equals(bank) && valid(),
+        avoid: () => !valid(), timeoutMs: 2000, arrived });
     if (moved.ok && arrived(bot.entity.position)) {
       ctx.record('pearl_scout_ground_bank', { from, to: bank });
       return { ok: true, waited: true };

@@ -665,6 +665,33 @@ test('a hunter resumed on grounded sand can recover onto the grass inside the te
   assert.equal(movements.getNeighbors, native);
 });
 
+test('a grounded hunter can cross backed sand and take one step up to grass', async () => {
+  const home = new Vec3(-102, 64, -179);
+  const start = new Vec3(-92, 64, -195);
+  const route = [start, start.offset(-1, 0, 0), start.offset(-1, 0, -1), start.offset(-1, 1, -2)];
+  const bot = { ...terrain, entity: { position: start.offset(.5, 0, .5), onGround: true },
+    companionHomeAt: () => home, pathfinder: { movements: {
+      getNeighbors: (p) => route.filter((q) => Math.abs(p.x - q.x) + Math.abs(p.z - q.z) === 1),
+    } }, blockAt(p) {
+      if (p.equals(route.at(-1).offset(0, -1, 0))) return { ...STONE, name: 'grass_block' };
+      if (route.slice(0, 3).some((q) => q.x === p.x && q.z === p.z) && p.y >= 61 && p.y <= 63) return { ...STONE, name: 'sand' };
+      return p.y === 60 ? STONE : AIR;
+    },
+  };
+  const destinations = [];
+  const goal = createHuntPearlsGoal({ bot, actions: { goTo: async (_bot, _ctx, target, { arrived }) => {
+    const next = new Vec3(target.x, target.y, target.z);
+    assert.deepEqual(bot.pathfinder.movements.getNeighbors(bot.entity.position.floored()), [next]);
+    destinations.push(next);
+    bot.entity.position = next.offset(.5, 0, .5);
+    assert.equal(arrived(bot.entity.position), true);
+    return { ok: true };
+  } } });
+  const ctx = { signal: new AbortController().signal, record() {}, perceive: () => nightState(bot.entity.position) };
+  for (let i = 1; i < route.length; i += 1) await goal.run(ctx);
+  assert.deepEqual(destinations, route.slice(1));
+});
+
 test('an outlying hunter launched at dawn stops attempting recovery after two guarded route failures', async () => {
   const home = new Vec3(0, 64, 0);
   const start = home.offset(0, 0, -56);
