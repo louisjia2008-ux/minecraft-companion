@@ -39,7 +39,7 @@ function fixture(){
  const candidates=[{direction:2,descend:true},{direction:2,descend:false}];
  // At the first west-down landing, its west and north surroundings below
  // surface are unconfirmed cave; west-flat at surface retains continuations.
- for(const [x,y,z]of[[-2,-1,1],[-1,-1,-2]])cells.set(`${x},${y},${z}`,air(new Vec3(x,y,z))); 
+ for(const [x,y,z]of[[-2,-1,1],[-1,-1,-2]])cells.set(`${x},${y},${z}`,air(new Vec3(x,y,z)));
  return{geometry,readBlock,ledger,from:shore,shore,portal,candidates,cells,ownedSupports:new Set(),maxMs:1000};
 }
 const snap=f=>JSON.stringify({ledger:f.ledger,sets:[...['routeFeet','protectedFloors','open','digCells','confirmedDigCells'].map(k=>[k,[...f.ledger[k]]])],cells:[...f.cells]});
