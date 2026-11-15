@@ -188,6 +188,49 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       return dry(hit) && fullCube(hit);
     }));
   };
+  const checkReserveChest = async (ctx, stationary = false) => {
+    const result = await skills.takeItems(bot, ctx, { position: home.chest, ...(stationary && { stationary: true }),
+      itemMatch: (name) => edible(name) || name === 'chicken' || name === 'wheat' || name === 'wheat_seeds'
+        || fuelNeeded && (name === 'coal' || name === 'charcoal') });
+    if (result.ok || result.reason === 'chest_empty' || result.reason === 'chest_missing') {
+      checkedChest = true;
+      fuelNeeded = false;
+    }
+    return result.reason === 'chest_empty' || result.reason === 'chest_missing' ? { ok: true } : result;
+  };
+  const bakeReserve = async (ctx, count, position) => {
+    const result = await skills.craft(bot, ctx, { item: 'bread', times: count, tablePosition: position });
+    ctx.record('expedition_food_bake', { ok: result.ok, gained: result.gained });
+    if (!result.ok) blacklist.add('bake', result.reason, 15000);
+    return result;
+  };
+  async function screenedHomeStation(ctx, here, activity) {
+    const feet = here.floored();
+    if (!activity || !inHouse(feet) || !onDryGround() || !bot.world?.raycast) return null;
+    const { position, block, run } = activity;
+    const station = asVec(position);
+    const stillSafe = () => {
+      const seen = read(station);
+      return seen?.name === block && fullCube(read(feet.offset(0, 2, 0)))
+        && bot.canSeeBlock?.(seen) === true && defaultActions.withinReach(bot, station, 4)
+        && bot.entity.position.distanceTo(here) < .15 && onDryGround() && homeExitReady(ctx.perceive())
+        && homeExitThreats().every((h) => screenedFrom(h, here));
+    };
+    if (!stillSafe()) return null;
+    const guard = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, guard.signal]) : guard.signal;
+    const monitor = setInterval(() => { if (!stillSafe()) guard.abort('expedition_food_unsafe'); }, 100);
+    try {
+      const result = await run({ ...ctx, signal });
+      ctx.record('expedition_food_screened_home_station', { block, position: station, ok: result.ok, reason: result.reason });
+      return result;
+    } catch (error) {
+      if (ctx.signal?.aborted || !guard.signal.aborted) throw error;
+      return wait(ctx, 'expedition_food_unsafe');
+    } finally {
+      clearInterval(monitor);
+    }
+  }
 
   async function screenedHomeExit(ctx, here) {
     if (!onDryGround() || !bot.world?.raycast || typeof bot.pathfinder?.movements?.getNeighbors !== 'function') return null;
@@ -797,8 +840,17 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       return outcome;
     }
     const hostile = threatsNear(state);
+    const crafting = home.stations?.crafting_table;
+    const oven = home.stations?.furnace;
+    const bake = crafting && state.inventory.wheat >= 3 && !blacklist.has('bake');
+    const bakeCount = Math.floor((state.inventory.wheat || 0) / 3);
+    const checkChest = !checkedChest || fuelNeeded;
     if (hostile && !scout && door && field.length && homeExitReady(state)
       && retreatThreats(state).some((h) => h.name === 'creeper')) {
+      const activity = bake ? { position: crafting, block: 'crafting_table', run: (scoped) => bakeReserve(scoped, bakeCount, crafting) }
+        : checkChest && { position: home.chest, block: 'chest', run: (scoped) => checkReserveChest(scoped, true) };
+      const supplied = await screenedHomeStation(ctx, here.clone(), activity);
+      if (supplied) return supplied;
       const left = await screenedHomeExit(ctx, here);
       if (left) return left;
     }
@@ -825,12 +877,8 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       return result;
     }
     visited.clear();
-    const crafting = home.stations?.crafting_table;
-    const oven = home.stations?.furnace;
     const cook = oven && (state.inventory.chicken > 0 || furnace.input > 0 || furnace.output > 0)
       && !blacklist.has('cook');
-    const bake = crafting && state.inventory.wheat >= 3 && !blacklist.has('bake');
-    const checkChest = !checkedChest || fuelNeeded;
     const homeTask = cook || bake || checkChest;
     const scouting = typeof bot.pathfinder?.getPathFromTo === 'function';
     returning ||= scout ? hostile || homeTask || !scoutFit(state) || !scoutTimeLeft(state) : distance(feet) > HOME_RADIUS;
@@ -866,22 +914,8 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
           if (result.reason === 'no_fuel' && !checkedChest) fuelNeeded = true;
           return result;
         }
-        if (bake) {
-          const result = await skills.craft(bot, ctx, { item: 'bread', times: Math.floor(state.inventory.wheat / 3), tablePosition: crafting });
-          ctx.record('expedition_food_bake', { ok: result.ok, gained: result.gained });
-          if (!result.ok) blacklist.add('bake', result.reason, 15000);
-          return result;
-        }
-        if (checkChest) {
-          const result = await skills.takeItems(bot, ctx, { position: home.chest,
-            itemMatch: (name) => edible(name) || name === 'chicken' || name === 'wheat' || name === 'wheat_seeds'
-              || fuelNeeded && (name === 'coal' || name === 'charcoal') });
-          if (result.ok || result.reason === 'chest_empty' || result.reason === 'chest_missing') {
-            checkedChest = true;
-            fuelNeeded = false;
-          }
-          return result.reason === 'chest_empty' || result.reason === 'chest_missing' ? { ok: true } : result;
-        }
+        if (bake) return bakeReserve(ctx, bakeCount, crafting);
+        if (checkChest) return checkReserveChest(ctx);
       }
       if (state.isDay === false) return wait(ctx, 'expedition_food_waiting_for_daylight');
       const canTarget = (p) => distance(p) <= huntEdge && p.y >= floor;

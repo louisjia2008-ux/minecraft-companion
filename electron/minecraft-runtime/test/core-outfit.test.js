@@ -1926,6 +1926,7 @@ test('expedition stock leaves home on dry footing only while the low creeper sta
   const door = new Vec3(3, 64, 0);
   const air = { name: 'air', boundingBox: 'empty', shapes: [] };
   const stone = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const chest = { name: 'chest' };
   const creeper = { id: 8, name: 'creeper', position: new Vec3(3.5, 60, 12.5), height: 1.7, width: .6 };
   const events = [];
   let screened = true;
@@ -1933,14 +1934,22 @@ test('expedition stock leaves home on dry footing only while the low creeper sta
   const movements = { allowSprinting: true, getNeighbors: (p) => [p.offset(0, 0, -1), p.offset(1, 0, 0)] };
   const bot = Object.assign(fakeBot([{ name: 'iron_sword', count: 1 }]), { health: 20, food: 19, time: { timeOfDay: 3000 },
     game: { dimension: 'overworld' }, entity: { position: inside.offset(.5, 0, .5), onGround: true },
-    entities: { 8: creeper }, world: { raycast: () => screened ? stone : null }, pathfinder: { movements } });
+    entities: { 8: creeper }, world: { raycast: () => screened ? stone : null }, pathfinder: { movements },
+    canSeeBlock: (block) => block === chest });
   bot.blockAt = (p) => {
+    if (p.x === home.chest.x && p.y === home.chest.y && p.z === home.chest.z) return chest;
     if (p.x === door.x && p.z === door.z && (p.y === 64 || p.y === 65)) return { name: 'birch_door',
       getProperties: () => ({ half: p.y === 64 ? 'lower' : 'upper', open: true, facing: 'north', hinge: 'left' }) };
     return p.y === 63 && p.x === 3 || p.y === 66 && p.z >= 0 ? stone : air;
   };
   const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: { ...home, door, centre: { x: 3, y: 64, z: 3 } },
-    farmPlots: [{ x: -12, y: 63, z: 3 }], actions: { async goTo(_bot, ctx, target) {
+    farmPlots: [{ x: -12, y: 63, z: 3 }],
+    skills: { async takeItems(_bot, _ctx, { position, stationary }) {
+      assert.deepEqual(position, home.chest);
+      assert.equal(stationary, true);
+      assert.ok(bot.entity.position.floored().equals(inside));
+      return { ok: false, reason: 'chest_empty' };
+    } }, actions: { async goTo(_bot, ctx, target) {
       assert.deepEqual([target.x, target.y, target.z], [3, 64, 0]);
       assert.deepEqual(movements.getNeighbors(inside), [door]);
       assert.equal(movements.allowSprinting, false);
@@ -1957,6 +1966,8 @@ test('expedition stock leaves home on dry footing only while the low creeper sta
   assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
   assert.ok(bot.entity.position.floored().equals(inside));
   screened = true;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(events.at(-1).type, 'expedition_food_screened_home_station');
   rise = true;
   assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
   assert.ok(bot.entity.position.floored().equals(inside));
