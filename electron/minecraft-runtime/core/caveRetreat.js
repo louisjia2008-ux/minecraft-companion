@@ -67,7 +67,7 @@ function digSafety(bot, read, point, { requireReach = false } = {}) {
 
 // The centre cell can hang over air or water while the grounded hitbox
 // overlaps an adjacent dry ledge. Step onto that support before planning up.
-function caveFootingBank(bot) {
+function caveFootingBank(bot, supports = standable) {
   const entity = bot.entity;
   const at = entity.position;
   const feet = at.floored();
@@ -78,7 +78,7 @@ function caveFootingBank(bot) {
   const radius = (entity.width || .6) / 2;
   for (const [dx, dz] of SIDES) {
     const bank = feet.offset(dx, 0, dz);
-    if (!standable(read, bank)) continue;
+    if (!supports(read, bank)) continue;
     if (at.x + radius > bank.x && at.x - radius < bank.x + 1
       && at.z + radius > bank.z && at.z - radius < bank.z + 1) return bank;
   }

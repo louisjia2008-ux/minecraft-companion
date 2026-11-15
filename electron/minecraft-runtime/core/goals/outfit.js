@@ -281,24 +281,27 @@ async function onSurfacePath(bot, home, run, accept = () => true) {
 
 // Find the next physical foothold, then let the native follower execute only
 // that leg. An adjacent door can be crossed only after both halves are open.
-function shelterApproach(read, shelter, from, target, accept, failed = noFailedSteps, farmlandStart = null, knownDoor = false, detourSteps = 0) {
+function shelterApproach(read, shelter, from, target, accept, failed = noFailedSteps, farmlandStart = null,
+  knownDoor = false, detourSteps = 0, sandStart = false) {
   const door = shelter.position;
   const isDoor = (p) => p.equals(door);
   const dryRead = (p) => {
     const block = read(p);
     return isPortal(block) ? null : block;
   };
-  const dry = (p) => standable(dryRead, p) || isDoor(p) && shelter.doorOpen() === true
+  const sand = (p) => sandStart && defaultActions.backedSand(dryRead, p);
+  const dry = (p) => standable(dryRead, p) || sand(p) || isDoor(p) && shelter.doorOpen() === true
     && standable((cell) => cell.equals(door) || cell.equals(door.offset(0, 1, 0)) ? AIR : dryRead(cell), p);
-  const farm = (p) => farmlandStart && farmlandFooting(dryRead, { onGround: true, position: p.offset(.5, -1 / 16, .5) });
+  const farm = (p) => (farmlandStart || sandStart)
+    && farmlandFooting(dryRead, { onGround: true, position: p.offset(.5, -1 / 16, .5) });
   const safeLeg = (a, b, actualOrigin) => {
     const dy = b.y - a.y;
     const farmOrigin = farm(a);
     const farmDestination = farm(b);
     if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(dy) > 1 || (!farmOrigin && !dry(a))) return false;
-    // Walk out of the field along its level surface. Once on a full block,
-    // the approach cannot enter farmland again or jump onto a crop.
-    if (farmDestination ? !farmOrigin || dy !== 0 : !dry(b)) return false;
+    // Level sand at the water's edge can lead straight onto a field. A
+    // normal full-block approach cannot enter farmland or jump onto crops.
+    if (farmDestination ? !(farmOrigin || sand(a)) || dy !== 0 : !dry(b)) return false;
     // A full bank one level up is 17/16 blocks above this observed farm surface.
     if (farmOrigin && dy < 0) return false;
     if ((isDoor(a) || isDoor(b)) && (a.x !== b.x || dy !== 0)) return false;
@@ -312,7 +315,7 @@ function shelterApproach(read, shelter, from, target, accept, failed = noFailedS
   const floor = detourSteps ? door.y - 5 : Math.max(door.y - 5, knownDoor ? Math.min(door.y, from.y - 1) : from.y - 1);
   // Leaving a low field along level crops can add a few steps before the
   // ordinary route starts on firm ground. Still require the complete route.
-  const maxSteps = detourSteps || (farmlandStart ? 32 : 28);
+  const maxSteps = detourSteps || (farmlandStart || sandStart ? 32 : 28);
   const queue = [{ at: from, first: null, steps: 0 }];
   const seen = new Set([posKey(from)]);
   for (let i = 0; i < queue.length && i < (detourSteps ? 3600 : 1200); i += 1) {
@@ -812,18 +815,19 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
         await sleep(500, scoped.signal);
         return { ok: true, waited: true, reason };
       };
-      const bank = caveFootingBank(bot);
+      const supports = (read, p) => standable(read, p) || defaultActions.backedSand(read, p);
+      const bank = caveFootingBank(bot, supports);
       if (bank) {
         const origin = bot.entity.position;
         const safe = (p) => p.equals(bank) && portalFree(read, origin, p.offset(.5, 0, .5))
           && safeStep(p.offset(.5, 0, .5), origin);
         if (!safe(bank)) return wait('resupply_home_bank_unsafe');
-        const landed = () => bot.entity.onGround && bot.entity.position.floored().equals(bank) && standable(read, bank);
+        const landed = () => bot.entity.onGround && bot.entity.position.floored().equals(bank) && supports(read, bank);
         routeDestination = bank;
-        destinationStillSafe = () => standable(read, bank) && safe(bank);
+        destinationStillSafe = () => supports(read, bank) && safe(bank);
         try {
           const result = await walkDry(bot, scoped, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
-            { adjacent: bank, maxDrop: 0, arrived: landed, avoid: (p) => !safe(p) });
+            { adjacent: bank, maxDrop: 0, supports, arrived: landed, avoid: (p) => !safe(p) });
           if (!(result.ok || result.reason === 'not_arrived')
             || !await waitUntil(landed, { timeoutMs: 500, signal: scoped.signal })) return wait('resupply_home_bank_unconfirmed');
         } finally {
@@ -831,6 +835,7 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
           destinationStillSafe = null;
         }
         scoped.record('resupply_home_bank', { from: feet, to: bank });
+        detourRemaining = null;
         return { ok: true };
       }
       if (missingDoor) {
@@ -899,10 +904,13 @@ function createOutfitGoal({ bot, items, home, kb = KNOWLEDGE, actions = defaultA
       }
       const target = open ? shelter.position.offset(0, 0, 1) : entrance;
       const knownDoor = standable(read, entrance);
+      const sandStart = bot.entity.onGround && defaultActions.backedSand(read, from);
+      if (detourRemaining !== null && (farmlandStart || sandStart)) detourRemaining = null;
       const path = detourRemaining === null
-        && shelterApproach(read, shelter, from, target, safeStep, failedApproaches, farmlandStart, knownDoor);
+        && shelterApproach(read, shelter, from, target, safeStep, failedApproaches, farmlandStart, knownDoor, 0, sandStart);
       if (!path) {
-        if (detourRemaining === null && shelterApproach(read, shelter, from, target, () => true, noFailedSteps, farmlandStart, knownDoor)) {
+        if (detourRemaining === null && shelterApproach(read, shelter, from, target, () => true, noFailedSteps,
+          farmlandStart, knownDoor, 0, sandStart)) {
           return wait('resupply_home_route_unsafe');
         }
         if (knownDoor && !missingDoor && !farmlandStart && !needsProtection && !unarmed && state.isDay === true
