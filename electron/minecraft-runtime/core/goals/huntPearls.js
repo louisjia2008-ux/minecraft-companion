@@ -13,7 +13,7 @@ const { createBlacklist } = require('../blacklist');
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const defaultActions = require('../actions');
-const { advanceCaveRetreat, skyOpen, standable, walkDry } = require('../caveRetreat');
+const { advanceCaveRetreat, caveFootingBank, skyOpen, standable, walkDry } = require('../caveRetreat');
 const { meleeSight } = require('../entityGeometry');
 const { applyWalkOnlyMovements } = require('../nether');
 const { expeditionFoodCount } = require('./stockFood');
@@ -142,6 +142,8 @@ function pearlWaterBank(bot, house, limit = SCOUT_RADIUS) {
 }
 
 const dryLeafCanopy = (bot, feet) => skyOpen(bot, feet, { allowLeafCanopy: true });
+const scoutFooting = (bot, read, p) => scoutGround(bot, p)
+  || standable(read, p) && !read(p.offset(0, -1, 0)).name.endsWith('_leaves') && dryLeafCanopy(bot, p);
 
 function pearlHomeReturnNeeded(house, position, bot, limit = HOME_RETURN_RANGE) {
   if (!house || !position) return false;
@@ -151,7 +153,7 @@ function pearlHomeReturnNeeded(house, position, bot, limit = HOME_RETURN_RANGE) 
   const feet = new Vec3(position.x, position.y, position.z).floored();
   const read = (at) => bot.blockAt(at, false);
   return bot.entity?.onGround === true && !bot.entity.isInWater && !bot.entity.isInLava
-    && (scoutGround(bot, feet) || standable(read, feet) && dryLeafCanopy(bot, feet)
+    && (scoutFooting(bot, read, feet) || caveFootingBank(bot, (read, p) => scoutFooting(bot, read, p))
       || Boolean(sandBank(bot, feet, house, Math.min(limit, SCOUT_RADIUS))));
 }
 
@@ -434,6 +436,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
       const bank = await stepToGroundBank(ctx, from, centre, sandExit);
       if (bank) return bank;
     }
+    if (!scoutGroundAt(from) && await regainScoutFooting(ctx, from)) return { ok: true, waited: true };
     if (bot.entity.onGround && !bot.entity.isInLava && !bot.entity.isInWater && scoutGroundAt(from)) {
       if (!homeRoute.length) {
         const homeBank = new goals.GoalNear(centre.x, centre.y, centre.z, HOME_RETURN_NEAR);
@@ -453,6 +456,17 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
       memory.homeReturnBlockedDay = Number.isFinite(day) ? day + (timeOfDay > 23460 ? 1 : 0) : null;
     }
     return wait(ctx, 'pearl_daylight_home_blocked');
+  }
+
+  async function regainScoutFooting(ctx, from) {
+    const support = caveFootingBank(bot, (read, p) => scoutFooting(bot, read, p));
+    if (!support) return false;
+    const arrived = (at) => bot.entity.onGround && at.floored().equals(support) && scoutFooting(bot, read, support);
+    const result = await walkDry(bot, ctx, actions, new goals.GoalBlock(support.x, support.y, support.z),
+      { adjacent: support, timeoutMs: 2000, arrived });
+    if (!result.ok || !arrived(bot.entity.position)) return false;
+    ctx.record('pearl_scout_regained_footing', { from, to: support });
+    return true;
   }
 
   async function planWideScout(ctx, centre, from) {
@@ -733,24 +747,7 @@ function createHuntPearlsGoal({ bot, count = 12, radius = 64, scoutSector, scout
       return await stepToGroundBank(ctx, from, house, sandExit) || wait(ctx, 'pearl_wait_for_ground_bank');
     }
     if (!scoutGroundAt(from)) {
-      // On a natural lip the grounded collision box can overlap the support
-      // while the centre has crossed into the next, lower column.
-      if (bot.entity.onGround && clearColumn(from)) {
-        const here = bot.entity.position;
-        const bodyRadius = (bot.entity.width || 0.6) / 2;
-        const support = Object.values(DOOR_DIRECTIONS).map(([x, z]) => from.offset(x, 0, z)).find((p) =>
-          here.x + bodyRadius > p.x && here.x - bodyRadius < p.x + 1
-          && here.z + bodyRadius > p.z && here.z - bodyRadius < p.z + 1 && scoutGroundAt(p));
-        if (support) {
-          const arrived = (at) => bot.entity.onGround && at.floored().equals(support) && scoutGroundAt(support);
-          const result = await walkDry(bot, ctx, actions, new goals.GoalBlock(support.x, support.y, support.z),
-            { adjacent: support, timeoutMs: 2000, arrived });
-          if (result.ok && arrived(bot.entity.position)) {
-            ctx.record('pearl_scout_regained_footing', { from, to: support });
-            return { ok: true, waited: true };
-          }
-        }
-      }
+      if (await regainScoutFooting(ctx, from)) return { ok: true, waited: true };
       if (await leaveHouse(ctx, from, house)) return { ok: true, waited: true };
       return wait(ctx, 'pearl_wait_for_surface');
     }

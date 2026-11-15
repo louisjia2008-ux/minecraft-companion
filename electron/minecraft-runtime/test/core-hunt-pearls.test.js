@@ -916,7 +916,7 @@ test('a hunter starting inside the known house walks out through an observed doo
   assert.deepEqual(records, ['pearl_house_exit']);
 });
 
-test('a grounded body straddling leaf litter and a supported lip regains just that footing', async () => {
+async function checkScoutFooting(canopy) {
   const player = new Vec3(-30.9, 70, -24.5);
   const foot = player.floored();
   const support = new Vec3(-32, 70, -25);
@@ -925,6 +925,9 @@ test('a grounded body straddling leaf litter and a supported lip regains just th
   const bot = { ...terrain, entity: { position: player, onGround: true }, pathfinder: { movements },
     blockAt(p) {
       if (p.equals(foot.offset(0, -1, 0))) return { ...AIR, name: 'leaf_litter' };
+      if (canopy && p.y === 74 && (p.x === foot.x || p.x === support.x) && p.z === foot.z) {
+        return { ...STONE, name: 'birch_leaves' };
+      }
       return p.y < 70 ? STONE : AIR;
     } };
   const actions = { goTo: async (_b, _c, target, options) => {
@@ -943,4 +946,8 @@ test('a grounded body straddling leaf litter and a supported lip regains just th
   assert.deepEqual(records, ['pearl_scout_regained_footing']);
   assert.equal(movements.getNeighbors, neighbors);
   assert.equal(movements.canDig, true);
-});
+}
+
+test('a grounded body straddling leaf litter and a supported lip regains just that footing', () => checkScoutFooting(false));
+
+test('leaf canopy does not prevent a grounded scout rejoining actual support', () => checkScoutFooting(true));
