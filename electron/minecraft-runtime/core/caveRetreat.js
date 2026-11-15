@@ -361,7 +361,7 @@ async function stepDry(bot, ctx, actions, p, avoid, maxDrop) {
 
 // Prefer breaking line of sight and keeping altitude over maximizing distance
 // to a point the mob already left. The caller keeps its separate ascent plan.
-async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { allowDescend = true, ranged = false } = {}) {
+async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { allowDescend = true, ranged = false, home } = {}) {
   const read = (p) => bot.blockAt(p);
   const feet = bot.entity.position.floored();
   const farm = !allowDescend && farmlandFooting(read, bot.entity);
@@ -370,20 +370,22 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { all
   const point = (p) => p.offset(.5, 0, .5);
   const start = allowDescend ? point(from) : bot.entity.position.clone();
   const distance = (p) => point(p).distanceTo(threat.position);
+  const homeDistance = (p) => home ? Math.hypot(p.x - home.x, p.z - home.z) : 0;
+  const homeGain = (p) => homeDistance(from) - homeDistance(p);
   const startDistance = start.distanceTo(threat.position);
   ctx.record('cave_evasion_threat', { from: feet, threat: threat.name, id: threat.id, mobAt: threat.position, distance: startDistance,
     ...(farm ? { partialFloor: 'farmland' } : {}) });
   const queue = [{ p: from, first: null, edges: 0 }];
   const seen = new Set([key(from)]);
   let best = null;
-  let coveredAscent = null;
+  let coveredStep = null;
   for (let i = 0; i < queue.length && i < 180; i += 1) {
     const { p, first, edges } = queue[i];
     if (first) {
       const range = distance(p);
       const covered = !visible(threat, point(p));
       const score = ranged
-        ? Number(covered) * 14 + range - edges * .5
+        ? Number(covered) * 14 + range - edges * .5 + homeGain(p)
         : Number(covered) * 14 + Math.min(range, 10) + (p.y - from.y) * 4 - edges * 1.5;
       if ((range >= startDistance + .3 || (covered && range >= 2.5)) && (!best || score > best.score)) {
         best = { first, score };
@@ -397,15 +399,17 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { all
       // The distance gain of the open stair down is temporary if the same
       // pursuer can follow. Advance into an immediately covered uphill cell
       // outside striking range, even when the straight-line gap shrinks.
-      if (allowDescend && !ranged && !first && next.y > from.y && range >= 2.5 && !visible(threat, point(next))) {
-        if (!coveredAscent || range > coveredAscent.range) coveredAscent = { first: next, range };
+      const seekCover = allowDescend && !ranged && next.y > from.y || !allowDescend && ranged && home;
+      if (seekCover && !first && range >= 2.5 && !visible(threat, point(next))) {
+        const score = range + homeGain(next);
+        if (!coveredStep || score > coveredStep.score) coveredStep = { first: next, score };
       }
       if (!first && range < startDistance - (ranged ? .05 : .35)) continue;
       seen.add(id);
       queue.push({ p: next, first: first || next, edges: edges + 1 });
     }
   }
-  if (!best && !coveredAscent) return fail('cave_evasion_no_safe_step');
+  if (!best && !coveredStep) return fail('cave_evasion_no_safe_step');
   const take = (target, coverRequired) => stepDry(bot, ctx, actions, target, (p) => {
     const live = liveThreat(threat.id);
     if (!live) return false;
@@ -413,7 +417,7 @@ async function evadeInCave(bot, ctx, actions, threat, visible, liveThreat, { all
     const margin = ranged ? start.distanceTo(live.position) - .05 : Math.min(2.5, start.distanceTo(live.position));
     return point(p).distanceTo(live.position) < margin;
   }, allowDescend ? 1 : 0);
-  let result = coveredAscent ? await take(coveredAscent.first, true) : null;
+  let result = coveredStep ? await take(coveredStep.first, true) : null;
   // If the pocket stopped being safe before movement, keep the existing
   // dry escape choice. A partially executed step belongs to the next tick.
   if (best && (!result || !result.ok && bot.entity.onGround && bot.entity.position.floored().equals(feet))) {

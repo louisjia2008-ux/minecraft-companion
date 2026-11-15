@@ -422,18 +422,20 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       return live?.isValid && live.name === 'creeper' && ((swell >= 0 && live.metadata?.[swell] > 0)
         || (ignited >= 0 && live.metadata?.[ignited] === true));
     }) || null : null;
-  const fastCreeperStep = { async goTo(body, ctx, goal, options) {
+  const timedEvasion = async (ctx, ms, reason, run) => {
     const deadline = new AbortController();
     const signal = ctx.signal ? AbortSignal.any([ctx.signal, deadline.signal]) : deadline.signal;
     // Bound the complete move, including native recentring before pathing.
-    const timer = setTimeout(() => deadline.abort('creeper_evasion_deadline'), 700);
+    const timer = setTimeout(() => deadline.abort(reason), ms);
     try {
-      return await actions.goTo(body, { ...ctx, signal }, goal, { ...options, timeoutMs: 700 });
+      return await run({ ...ctx, signal });
     } catch (error) {
       if (!deadline.signal.aborted || ctx.signal?.aborted) throw error;
-      return { ok: false, reason: 'creeper_evasion_deadline' };
+      return { ok: false, reason };
     } finally { clearTimeout(timer); }
-  } };
+  };
+  const fastCreeperStep = { goTo: (body, ctx, goal, options) => timedEvasion(ctx, 700, 'creeper_evasion_deadline',
+    (scoped) => actions.goTo(body, scoped, goal, { ...options, timeoutMs: 700 })) };
   const escapeThreat = (state) => threats(state).find((h) => !huntEndermanInReach(state, h)) || null;
   const target = (state) => {
     // In shelter only something that got right next to the bot is fought.
@@ -470,13 +472,54 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const surfaceResupplyEvasion = (state) => caveSituation(state) && resupplying();
   const visibleThreat = (h, at) => clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, 1.6, 0))
     || clearLine(bot, h.position.offset(0, 1, 0), at.offset(0, .5, 0));
+  const exposedShooter = (nearby, at) => nearby.find((h) =>
+    shootsOnSurface(h) && h.distance <= RESUPPLY_RANGED_RANGE && visibleThreat(h, at));
   const resupplyThreat = (state) => {
     const nearby = threats(state);
     const closest = nearby[0];
     if (closest?.name === 'creeper' && closest.distance <= 4) return closest;
     if (closest?.distance <= 2.5 && visibleThreat(closest, state.position)) return closest;
-    const shooter = nearby.find((h) => shootsOnSurface(h) && h.distance <= RESUPPLY_RANGED_RANGE && visibleThreat(h, state.position));
+    const shooter = exposedShooter(nearby, state.position);
     return shooter || (closest?.distance <= t.escapeRange && visibleThreat(closest, state.position) ? closest : null);
+  };
+  const pearlEvasion = (state) => activeGoal() === 'hunt_pearls' && dimensionOf(bot) === 'overworld'
+    && state.health <= t.healHealth && retreatCanMove(state) && canPlanRetreat();
+  const pearlShooter = (state) => {
+    if (!pearlEvasion(state)) return null;
+    const close = escapeThreat(state);
+    if (close && close.distance <= (close.name === 'creeper' ? 4 : 2.5) && !shootsOnSurface(close)
+      && visibleThreat(close, state.position)) return null;
+    return exposedShooter(threats(state), state.position);
+  };
+  const evadePearlShooter = async (ctx, threat) => {
+    const live = (id) => threats(ctx.perceive()).find((h) => h.id === id);
+    const start = bot.entity.position.floored();
+    const grounded = bot.entity.onGround === true;
+    ctx.record('pearl_ranged_escape', { from: start, mob: threat.name, id: threat.id, grounded });
+    if (grounded) {
+      const result = await timedEvasion(ctx, 1500, 'pearl_ranged_escape_deadline',
+        (scoped) => evadeInCave(bot, scoped, actions, threat, visibleThreat, live,
+          { allowDescend: false, ranged: true, home: home() }));
+      if (result.ok || !bot.entity.position.floored().equals(start)) return result;
+    }
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    const state = ctx.perceive();
+    const archer = live(threat.id);
+    if (!archer || !retreatCanMove(state) || !visibleThreat(archer, state.position)) return { ok: true, waited: true };
+    (actions.haltBody || defaultActions.haltBody)(bot);
+    if (bot.inventory?.slots?.[45]?.name === 'shield') {
+      await bot.lookAt(archer.position.offset(0, 1, 0), true);
+      try {
+        bot.activateItem(true);
+        ctx.record('pearl_ranged_escape_shield', { from: start, id: archer.id });
+        await sleep(750, ctx.signal);
+      } finally { bot.deactivateItem(); }
+    } else if (armed(state) && canStrikeFromHere(archer)) {
+      return actions.attack(bot, ctx, archer.id, { pursue: false });
+    } else {
+      await sleep(150, ctx.signal);
+    }
+    return { ok: true, waited: true, reason: 'pearl_ranged_escape_wait' };
   };
   const unarmedResupplyWitch = (state) => dimensionOf(bot) === 'overworld' && retreatCanMove(state)
     && resupplying() && !armed(state) && canPlanRetreat()
@@ -578,6 +621,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const caveEvasion = retreat || caveNeedsExit(state);
       if (!caveEvasion && surfaceResupplyEvasion(state)) return resupplyThreat(state) ? 1 : 0;
       if (!caveEvasion && unarmedResupplyWitch(state)) return 1;
+      if (!caveEvasion && pearlShooter(state)) return 1;
       const threat = caveEvasion ? nearest(state) : escapeThreat(state);
       if (!threat) return 0;
       if (threat.name === 'creeper' && threat.distance <= 4) return 1;
@@ -594,6 +638,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         const evasionRange = SHOOTERS.has(threat.name) ? 10 : 6;
         return threat.distance <= evasionRange && visibleThreat(threat, state.position) ? 1 : 0;
       }
+      if (pearlEvasion(state) && shootsOnSurface(threat)) return 0;
       return threat.distance <= t.escapeRange && (state.health <= t.escapeHealth || threat.selfAggressor && !armed(state)) ? 1 : 0;
     },
     async run(ctx) {
@@ -625,7 +670,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       const caveEvasion = retreat || caveNeedsExit(state);
       const witch = !caveEvasion && unarmedResupplyWitch(state);
       const resupplyEvasion = !caveEvasion && (surfaceResupplyEvasion(state) || witch);
+      const pearlArcher = !priming && !caveEvasion && !resupplyEvasion && pearlShooter(state);
+      if (pearlArcher) return evadePearlShooter(ctx, pearlArcher);
       const threat = priming || (resupplyEvasion ? resupplyThreat(state) || witch : caveEvasion ? nearest(state) : escapeThreat(state));
+      if (threat && !caveEvasion && !resupplyEvasion && pearlEvasion(state) && shootsOnSurface(threat)) {
+        return { ok: true, waited: true };
+      }
       if (criticalHomeResupply(state) && (!threat || state.sheltered)) return { ok: true };
       if (threat && (caveEvasion || resupplyEvasion)) {
         // Keep a critically hurt bot on its ledge while resupply approaches
@@ -1234,6 +1284,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Hungry with nothing to eat: hunt the nearest food animal.
   const animalNear = (state, range) => Object.values(bot.entities || {}).some((e) => FOOD_ANIMALS.includes(e?.name)
     && e.position && !spare(e) && e.position.distanceTo(state.position) <= range);
+  const pearlFoodHome = () => activeGoal() === 'hunt_pearls' && dimensionOf(bot) === 'overworld' ? home() : null;
+  const pearlFoodAnimal = (animal, centre, position) => animal.position?.distanceTo(centre) <= 24
+    && animal.position.distanceTo(position) <= FEEDING_RANGE && !spare(animal);
   let lastHuntAt = 0;
   const safeFoodCount = (state) => Object.entries(state.inventory)
     .reduce((n, [name, count]) => n + (count > 0 && foodCheck(name) && !RISKY_FOODS.has(name) ? count : 0), 0);
@@ -1247,6 +1300,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // Home resupply has a surface food route of its own. Generic hunting
       // must not pull an injured bot back underground while it restocks.
       if (resupplying() || farmSnack() || expeditionStocking(state)) return 0;
+      const pearlHome = pearlFoodHome();
+      if (pearlHome && !Object.values(bot.entities || {}).some((animal) => FOOD_ANIMALS.includes(animal?.name)
+        && pearlFoodAnimal(animal, pearlHome, state.position))) return 0;
       // A failed retreat leg backs off briefly. Keep that pause available for
       // eating or regeneration without starting a new search deeper in the cave.
       if (retreat && dimensionOf(bot) === 'overworld' && retreatCanMove(state)) return 0;
@@ -1288,10 +1344,12 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         return { ok: true };
       }
       // Animals are visible out to about 100 blocks; go for the nearest one seen.
-      const near = feeding();
+      const pearlHome = pearlFoodHome();
+      const near = feeding() || Boolean(pearlHome);
       const stocking = stockingUp(state);
       const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck,
-        radius: stocking ? t.stockRange : near ? FEEDING_RANGE : 96, blacklist: huntBlacklist, accept: (e) => !spare(e) });
+        radius: pearlHome ? FEEDING_RANGE : stocking ? t.stockRange : near ? FEEDING_RANGE : 96, blacklist: huntBlacklist,
+        accept: (e) => pearlHome ? pearlFoodAnimal(e, pearlHome, bot.entity.position) : !spare(e) });
       if (result.ok) lastHuntAt = Date.now();
       // Nothing to hunt in sight: berries, else look further afield instead of waiting to starve.
       // Could not reach anything: the bot itself is probably stuck (tree top, ledge).

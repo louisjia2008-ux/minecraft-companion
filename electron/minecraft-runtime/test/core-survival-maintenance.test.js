@@ -579,6 +579,66 @@ test('hunting pearls, an angry enderman is fought rather than hidden from, hurt 
   assert.ok(s.behavior('hide').want(s.state) > 0, 'other work hides as before');
 });
 
+function pearlEscapeFixture({ blocked = false } = {}) {
+  const from = new Vec3(.5, 64, .5);
+  const archer = { id: 9, name: 'skeleton', position: new Vec3(8.5, 64, .5) };
+  const calls = [];
+  const s = setup({ activeGoal: () => 'hunt_pearls', home: () => new Vec3(0, 64, 20), actions: {
+    underground: () => false,
+    async goTo(bot, _ctx, goal) {
+      const to = new Vec3(goal.x, goal.y, goal.z);
+      calls.push(['walk', to]);
+      bot.entity.position = to.offset(.5, 0, .5);
+      return { ok: true };
+    },
+    async fleeFrom() { assert.fail('the critical scout must stay on a verified edge'); },
+    haltBody() { calls.push('halt'); },
+  } });
+  const { bot } = s;
+  bot.entity.position = from;
+  bot.entity.onGround = true;
+  bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  bot.blockAt = (p) => {
+    const cell = p.floored();
+    const floor = cell.y === 63 && (cell.x === 0 && cell.z === 0
+      || !blocked && (cell.x === -1 && cell.z === 0 || cell.x === 0 && cell.z === 1));
+    const screen = cell.x === 2 && cell.z === 1 && [64, 65].includes(cell.y);
+    const solid = floor || screen;
+    const water = cell.y === 64 && cell.z === -1;
+    return { name: solid ? 'stone' : water ? 'water' : 'air',
+      boundingBox: solid ? 'block' : 'empty', shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const perceive = () => ({ ...s.state, position: bot.entity.position, health: 8,
+    inventory: { iron_sword: 1 }, hostiles: [{ ...archer, distance: archer.position.distanceTo(bot.entity.position) }] });
+  const ctx = { perceive, record: (type) => calls.push(type) };
+  return { ...s, archer, calls, ctx, escape: s.behavior('escape') };
+}
+
+test('an injured pearl scout breaks the archer line of sight on dry ground toward home', async () => {
+  const { archer, calls, ctx, escape } = pearlEscapeFixture();
+  assert.equal(escape.want(ctx.perceive()), 1, 'start recovery before the critical six-health generic panic');
+  assert.equal(escape.want({ ...ctx.perceive(), health: 11 }), 0);
+  const result = await escape.run(ctx);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.to, new Vec3(0, 64, 1));
+  assert.deepEqual(calls, ['pearl_ranged_escape', 'cave_evasion_threat', ['walk', result.to], 'cave_evasion_step']);
+  assert.equal(escape.want(ctx.perceive()), 0, 'escape yields when the shooter is screened');
+  archer.position.x = 4.5;
+  assert.equal(escape.want({ ...ctx.perceive(), health: 5 }), 0, 'the close archer remains screened');
+});
+
+test('a pearl scout boxed in by unsafe terrain faces the archer with the equipped shield', async () => {
+  const { bot, archer, calls, ctx, escape } = pearlEscapeFixture({ blocked: true });
+  bot.inventory.slots[45] = { name: 'shield' };
+  bot.lookAt = async (p) => { calls.push(['look', p]); };
+  bot.activateItem = (offHand) => { calls.push(['activate', offHand]); };
+  bot.deactivateItem = () => { calls.push('deactivate'); };
+  const result = await escape.run(ctx);
+  assert.equal(result.reason, 'pearl_ranged_escape_wait');
+  assert.deepEqual(calls, ['pearl_ranged_escape', 'cave_evasion_threat', 'halt',
+    ['look', archer.position.offset(0, 1, 0)], ['activate', true], 'pearl_ranged_escape_shield', 'deactivate']);
+});
+
 function creeperFixture({ blocked = false } = {}) {
   const calls = [];
   const registry = minecraftData('1.21.8');
