@@ -431,7 +431,10 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmP
       && !blacklist.has(posKey(position)) && permitted(position.offset(.5, 0, .5)));
     if (crop) return { kind: 'wheat', ...crop };
     const growing = crops.filter((crop) => crop.state === 'growing');
-    if (!critical && (!keepLocalFarm || !growing.length)) return { kind: 'forage' };
+    const emptyKnown = !critical && keepLocalFarm && inventory.wheat_seeds > 0 && crops.find(({ position, plot, state }) =>
+      state === 'empty' && knownCrops.some((known) => known.equals(position)) && !blacklist.has(`plant:${posKey(plot)}`)
+      && Number(bot.blockAt(plot)?.getProperties?.()?.moisture) > 0 && permitted(position.offset(.5, 0, .5)));
+    if (!critical && (!keepLocalFarm || !growing.length && !emptyKnown)) return { kind: 'forage' };
     const berries = find('sweet_berry_bush', safety.centre, 24, 16, (b) => Number(b.getProperties?.().age) >= 2)
       .find((p) => !blacklist.has(`berry:${posKey(p)}`) && permitted(p.offset(.5, 0, .5)));
     if (berries) return { kind: 'berries', position: berries };
@@ -439,6 +442,7 @@ function resupplyFoodFromSurface({ bot, home, actions, skills, kb, safety, farmP
       && entity.position && !blacklist.has(`mob:${entity.id}`) && !bot.companionSpare?.(entity)
       && permitted(entity.position));
     if (animal) return { kind: 'animal', position: animal.position, animalId: animal.id };
+    if (emptyKnown) return { kind: 'plant', plot: emptyKnown.plot };
     const basin = irrigation.plan(growing.map((crop) => crop.plot));
     if (basin && permitted(basin.offset(.5, 1, .5))) return { kind: 'irrigate', position: basin };
     return { kind: 'wait', growing: growing.length };

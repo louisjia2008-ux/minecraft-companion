@@ -1912,6 +1912,49 @@ test('healthy home recovery waits for its growing food reserve instead of explor
   assert.equal(records.find(({ type }) => type === 'resupply_food_target')?.kind, 'wheat');
 });
 
+test('home food reserve replants known hydrated farmland before waiting for its other wheat', async () => {
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  const plot = new Vec3(-4, 63, 3);
+  const growing = plot.offset(0, 1, 1);
+  let moisture = 0;
+  let open = false;
+  const bot = Object.assign(fakeBot([{ name: 'stone_sword', count: 1 }, { name: 'wheat_seeds', count: 1 }]), {
+    health: 20, food: 18, time: { timeOfDay: 3000 }, entities: {}, game: { dimension: 'overworld' },
+    entity: { position: new Vec3(3.5, 64, 3.5), onGround: true },
+  });
+  bot.blockAt = (p) => {
+    if (p.equals(plot)) return { name: 'farmland', getProperties: () => ({ moisture }) };
+    if (p.equals(plot.offset(0, 1, 0))) return { name: 'air', boundingBox: 'empty' };
+    if (p.equals(growing)) return { name: 'wheat', getProperties: () => ({ age: 3 }) };
+    if (p.equals(growing.offset(0, -1, 0))) return { name: 'farmland', getProperties: () => ({ moisture: 7 }) };
+    if (p.x === 3 && p.z === 0 && (p.y === 64 || p.y === 65)) {
+      return { name: 'oak_door', getProperties: () => ({ half: p.y === 64 ? 'lower' : 'upper', facing: 'north', hinge: 'left', open }) };
+    }
+    return { name: 'cobblestone', shapes: [[0, 0, 0, 1, 1, 1]] };
+  };
+  bot.activateBlock = async () => { open = !open; };
+  const goal = createOutfitGoal({ bot, recoverAtHome: true, farmPlots: [plot, growing.offset(0, -1, 0)],
+    items: [{ key: 'food', count: 3 }], home: { anchor: house.anchor, centre: house.interiorCenter,
+      chest: house.furniture.chest.position, door: house.furniture.door.position }, actions: { withinReach: () => true },
+    skills: { takeItems: async () => ({ ok: false, reason: 'chest_empty' }) } });
+  const records = [];
+  const run = () => {
+    const controller = new AbortController();
+    return goal.run({ signal: controller.signal, perceive: () => perceive(bot), record: (type, data) => {
+      records.push({ type, ...data });
+      if (type === 'resupply_shelter_wait' || type === 'resupply_food_target') controller.abort();
+    } });
+  };
+  await run();
+  await assert.rejects(run(), { code: 'aborted' });
+  assert.equal(records.find(({ type }) => type === 'resupply_food_wait')?.growing, 1);
+  assert.equal(records.some(({ type }) => type === 'resupply_food_target'), false);
+  moisture = 7;
+  await run();
+  await assert.rejects(run(), { code: 'aborted' });
+  assert.deepEqual(records.at(-1), { type: 'resupply_food_target', kind: 'plant', position: plot });
+});
+
 test('expedition harvest crosses a same-level sand bank only over dry full backing', async (t) => {
   const { createStockFoodGoal } = require('../core/goals/stockFood');
   const farm = require('../core/farming');
