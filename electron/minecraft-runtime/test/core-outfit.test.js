@@ -599,7 +599,7 @@ test('a grounded unarmed return can descend a screened two-level ridge to the or
     } },
   });
   const ctx = { perceive: () => perceive(bot), record() {} };
-  for (const _step of route.slice(1)) assert.equal((await goal.run(ctx)).ok, true);
+  for (const step of route.slice(1)) assert.equal((await goal.run(ctx)).ok, true, `homeward step ${step}`);
   assert.deepEqual(visited, route.slice(1));
   await goal.dispose();
 });
@@ -651,7 +651,7 @@ async function checkDaylightHomeDetour(startsOnFarm) {
   bot.entities[2] = { id: 2, name: 'pillager', position: new Vec3(16.5, 64, north - 7.5) };
   assert.equal((await goal.run(ctx)).reason, startsOnFarm ? 'resupply_home_route_unsafe' : 'resupply_no_dry_home_route');
   delete bot.entities[2];
-  for (const _step of route.slice(1)) assert.equal((await goal.run(ctx)).ok, true);
+  for (const step of route.slice(1)) assert.equal((await goal.run(ctx)).ok, true, `homeward step ${step}`);
   assert.deepEqual(visits, route.slice(1));
   assert.deepEqual(detours.map(({ steps }) => steps), startsOnFarm ? [] : [route.length + 1]);
   await goal.dispose();

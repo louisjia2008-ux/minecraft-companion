@@ -181,7 +181,7 @@ test('casting lava skips the nearest blocked source and fills from a confirmed g
   assert.equal(f.movements.canDig, true);
 });
 
-test('casting lava never uses the bucket if the bank becomes wet or its ray changes after aiming', async (t) => {
+test('casting lava never uses the bucket if the bank becomes wet or its ray changes after aiming', async () => {
   for (const change of ['wet', 'blocked']) {
     const f = lavaBank();
     f.bot.entity.position = f.bank.offset(.5, 0, .5);
