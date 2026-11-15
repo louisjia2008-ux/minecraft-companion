@@ -213,6 +213,38 @@ test('the night shelter remains owned across task restart and a failed dawn exit
   resumed.dispose();
 });
 
+test('an opened night bunker can exit to a grounded dry bank below the original mouth', async (t) => {
+  const actions = require('../core/actions');
+  const { digOut } = require('../core/skills');
+  const top = new Vec3(92, 71, -71);
+  const bank = new Vec3(91, 69, -71);
+  const at = new Vec3(91.658, 69, -69.78);
+  const support = bank.offset(0, -1, 0);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const soil = { name: 'dirt', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const steps = [];
+  const bot = { entity: { position: at, onGround: true }, blockAt: (p) => p.equals(support) ? soil : air,
+    pathfinder: { movements: { getNeighbors: () => [bank, bank.offset(0, 0, 1)] } } };
+  const context = { record: (type, details) => steps.push({ type, ...details }) };
+  const path = t.mock.method(actions, 'goTo', async (_bot, _ctx, goal, options) => {
+    assert.ok(goal.isEnd(bank));
+    assert.ok(!options.arrived());
+    assert.deepEqual(bot.pathfinder.movements.getNeighbors(at.floored()), [bank]);
+    bot.entity.position = bank.offset(.5, 0, .5);
+    return { ok: true };
+  });
+  const fallback = t.mock.method(actions, 'surface', async () => null);
+  const bunker = { top, seal: 'cobblestone' };
+  assert.deepEqual(await digOut(bot, context, bunker, { confirmExit: true }), { ok: true });
+  assert.equal(path.mock.calls.length, 1);
+  assert.equal(fallback.mock.calls.length, 0);
+  assert.deepEqual(steps, [{ type: 'night_bunker_exit_lower_bank', top, from: at.floored(), to: bank }]);
+  bot.entity.position = top.offset(.5, -3, .5);
+  const pending = await digOut(bot, context, bunker, { confirmExit: true });
+  assert.equal(pending.reason, 'bunker_exit_unconfirmed');
+  assert.equal(path.mock.calls.length, 1, 'being physically inside the shaft cannot confirm a lower exterior bank');
+});
+
 test('night rest shelters in the house when the bed is gone', async () => {
   const bot = { entity: { position: new Vec3(40, 64, 0) }, game: { dimension: 'overworld' }, on() {}, removeListener() {} };
   const went = [];

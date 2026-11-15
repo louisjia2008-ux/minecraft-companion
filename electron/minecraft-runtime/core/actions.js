@@ -60,8 +60,7 @@ function openSky(bot, feet) {
  * Below ground: rock or soil over the head, or standing in a pit whose sides
  * rise above head height. Under a tree canopy does not count.
  */
-function underground(bot) {
-  const feet = bot.entity.position.floored();
+function underground(bot, feet = bot.entity.position.floored()) {
   // A goal that knows the local ground level (the house site) says so directly.
   for (let dy = 2; dy < 10; dy += 1) if (solidGround(bot.blockAt(feet.offset(0, dy, 0)))) return true;
   // Below the site's ground level only counts with something overhead: a

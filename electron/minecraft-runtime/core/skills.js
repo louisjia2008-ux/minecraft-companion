@@ -1149,7 +1149,13 @@ async function tossStacks(bot, ctx, items) {
 async function digOut(bot, ctx, bunker, { confirmExit = false } = {}) {
   const top = new Vec3(bunker.top.x, bunker.top.y, bunker.top.z);
   const atSeal = top.offset(0, -1, 0);
-  const outside = () => bot.entity.onGround && bot.entity.position.y >= top.y - .1;
+  const read = (p) => bot.blockAt(p);
+  const sideOfOpenShaft = (p) => read(atSeal)?.boundingBox === 'empty'
+    && p.y >= top.y - 3 && Math.abs(p.x - top.x) + Math.abs(p.z - top.z) <= 4
+    && (p.x !== top.x || p.z !== top.z) && !actions.underground(bot, p);
+  const lowerBank = (p) => sideOfOpenShaft(p) && standable(read, p);
+  const outside = () => bot.entity.onGround && (bot.entity.position.y >= top.y - .1
+    || !bot.entity.isInWater && !bot.entity.isInLava && lowerBank(bot.entity.position.floored()));
   if (confirmExit && outside()) return { ok: true };
   const seal = bot.blockAt(atSeal);
   if (confirmExit && !seal) return fail('bunker_seal_unloaded');
@@ -1160,6 +1166,22 @@ async function digOut(bot, ctx, bunker, { confirmExit = false } = {}) {
     const dug = await actions.digBlock(bot, ctx, seal);
     if (!dug.ok) return dug;
     if (confirmExit && bot.blockAt(atSeal)?.boundingBox !== 'empty') return fail('bunker_open_unconfirmed');
+  }
+  // An exit may meet lower ground beside the shaft. A body can stop with its
+  // centre over the lip even though it is grounded. Confirm the nearby full
+  // footing with one dry step before releasing the bunker to regular work.
+  const from = bot.entity.position.floored();
+  if (confirmExit && bot.entity.onGround && !bot.entity.isInWater && !bot.entity.isInLava && sideOfOpenShaft(from)) {
+    const bank = SIDES4.map(([dx, dz]) => from.offset(dx, 0, dz)).find(lowerBank);
+    if (bank) {
+      const arrived = () => outside() && bot.entity.position.floored().equals(bank);
+      await walkDry(bot, ctx, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
+        { timeoutMs: 4000, maxDrop: 0, adjacent: bank, arrived });
+      if (arrived() || await waitUntil(arrived, { timeoutMs: 500, signal: ctx.signal })) {
+        ctx.record('night_bunker_exit_lower_bank', { top, from, to: bank });
+        return { ok: true };
+      }
+    }
   }
   const saved = bot.companionSurfaceY;
   bot.companionSurfaceY = top.y;
