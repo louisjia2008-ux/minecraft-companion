@@ -8,6 +8,7 @@ const { Vec3 } = require('vec3');
 const { createBrain } = require('../core/brain');
 const { createHomesteadGoal } = require('../core/goals/homestead');
 const { createStarterHouse } = require('../core/blueprints/starterHouse');
+const { planNext } = require('../core/planner');
 
 const RECIPES = {
   oak_planks: [{ oak_log: 1 }, 4], stick: [{ oak_planks: 2 }, 4], crafting_table: [{ oak_planks: 4 }, 1],
@@ -195,4 +196,577 @@ test('the roof step is placed for the roof and removed once the roof is done', a
   assert.ok(events.some((e) => e.type === 'goal_done'));
   assert.equal(placedStair.length, 1);
   for (const p of goal.memory.house.scaffold) assert.equal(sim.blockAt(p).name, 'air');
+});
+
+test('a recovery starts the search for a site over, so a later ask is not failed at once', () => {
+  const sim = simulate({ failRate: 0 });
+  const goal = createHomesteadGoal({ bot: sim.bot, skills: sim.skills, actions: sim.actions });
+  goal.memory.exploreStreak = 21;
+  goal.recover();
+  assert.equal(goal.memory.exploreStreak, 0);
+});
+
+test('homestead gets soil for a table without support before filling unrelated site holes', async () => {
+  const sim = simulate({ failRate: 0 });
+  const house = createStarterHouse({ x: -33, y: 67, z: -9 });
+  const table = house.furniture.crafting_table.position;
+  const floor = new Vec3(table.x, table.y - 1, table.z);
+  const other = new Vec3(-33, 66, -9);
+  const solid = [[0, 0, 0, 1, 1, 1]];
+  const placed = new Map();
+  sim.bot.entity.position = new Vec3(-29.5, 67, -6.5);
+  sim.bot.blockAt = (p) => {
+    const position = new Vec3(p.x, p.y, p.z);
+    const existing = placed.get(position.toString());
+    const name = existing || (position.equals(floor) || position.equals(other) || p.y > 66 ? 'air' : 'dirt');
+    return { name, position, boundingBox: name === 'air' ? 'empty' : 'block', shapes: name === 'air' ? [] : solid };
+  };
+  Object.assign(sim.inventory, { crafting_table: 1, oak_planks: 8, stick: 2, cobblestone: 0 });
+  const operations = [];
+  const motion = { canDig: true, exclusionAreasBreak: [], getNeighbors: () => [] };
+  sim.bot.pathfinder = { movements: motion };
+  const dirt = new Vec3(-40, 66, -5);
+  sim.skills.gatherOne = async (_bot, _ctx, options) => {
+    assert.ok(options.blocks('coarse_dirt'));
+    assert.ok(options.dropMatch('coarse_dirt'));
+    assert.ok(options.exclude(floor));
+    assert.ok(options.targetFilter(dirt));
+    assert.equal(motion.canDig, false);
+    operations.push('gather');
+    sim.inventory.coarse_dirt = 1;
+    return { ok: true };
+  };
+  sim.skills.placeAt = async (_bot, _ctx, p, match) => {
+    const position = new Vec3(p.x, p.y, p.z);
+    const item = Object.keys(sim.inventory).find((name) => sim.inventory[name] > 0 && match(name));
+    assert.ok(item, 'native placement requires a real inventory item');
+    if (item === 'crafting_table') assert.equal(sim.bot.blockAt(floor).name, 'coarse_dirt');
+    sim.inventory[item] -= 1;
+    placed.set(position.toString(), item);
+    operations.push(item);
+    return { ok: true };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor: house.anchor, gear: ['wooden_pickaxe'], skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: sim.perceive, record() {} };
+  for (let i = 0; i < 3; i++) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(operations, ['gather', 'coarse_dirt', 'crafting_table']);
+  assert.equal(sim.bot.blockAt(other).name, 'air');
+  assert.equal(motion.canDig, true);
+});
+
+test('homestead gathers hillside trees from dry standing cells and rejects mineshaft logs before pathing', async () => {
+  const sim = simulate({ failRate: 0 });
+  const anchor = { x: 0, y: 1, z: 0 };
+  const shaft = new Vec3(12, -26, 0);
+  const covered = new Vec3(20, -3, 0);
+  const lowTree = new Vec3(30, -9, 0);
+  const highTree = new Vec3(40, 8, 0);
+  const ground = (x) => x >= 38 ? 7 : x >= 28 ? -10 : x >= 18 ? -4 : 0;
+  sim.bot.blockAt = (p) => {
+    const pos = p.floored();
+    let name = pos.y <= ground(pos.x) ? 'stone' : 'air';
+    if (pos.equals(shaft) || pos.equals(covered) || pos.equals(lowTree) || pos.equals(highTree)) name = 'oak_log';
+    else if (pos.x >= 11 && pos.x <= 13 && pos.y >= -27 && pos.y <= -24) name = pos.y === -27 ? 'stone' : 'cave_air';
+    else if (pos.x >= 17 && pos.x <= 23 && pos.y === 4) name = 'stone';
+    else if (pos.x >= 39 && pos.x <= 42 && pos.y === 11) name = 'spruce_leaves';
+    else if (pos.equals(highTree.offset(1, 0, 0))) name = 'snow';
+    const isOpen = ['air', 'cave_air', 'snow'].includes(name);
+    return { name, position: pos, boundingBox: isOpen ? 'empty' : 'block', shapes: isOpen ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const safe = { x: 41, y: 8, z: 0 };
+  const neighbor = () => [safe,
+    { x: 42, y: 1, z: 0 }, // physical drop even though above the route floor
+    { x: 42, y: 8, z: 0, toBreak: [new Vec3(42, 8, 0)] },
+    { x: 42, y: 8, z: 0, toPlace: [new Vec3(42, 7, 0)] }];
+  const movement = { getNeighbors: neighbor, exclusionAreasBreak: [], canDig: true, allowParkour: true, maxDropDown: 4 };
+  sim.bot.pathfinder = { movements: movement };
+  sim.skills.gatherOne = async (_bot, _ctx, { blocks, targetFilter, acceptStand, radius }) => {
+    assert.ok(blocks('oak_log'));
+    assert.equal(radius, undefined);
+    assert.equal(targetFilter(shaft), false);
+    assert.equal(targetFilter(covered), false);
+    assert.equal(targetFilter(lowTree), true, 'lower exposed hillside is valid');
+    assert.equal(targetFilter(highTree), true, 'higher hillside with canopy and thin snow is valid');
+    assert.equal(acceptStand(highTree.offset(1, 0, 0), highTree), true);
+    assert.equal(acceptStand(highTree.offset(0, 1, 0), highTree), false, 'the log itself cannot support the bot');
+    assert.equal(movement.canDig, false);
+    assert.equal(movement.allowParkour, false);
+    assert.deepEqual(movement.getNeighbors({ y: 8 }), [safe]);
+    return { ok: true };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor, skills: sim.skills, actions: sim.actions });
+  const result = await goal.run({ perceive: sim.perceive, record() {} });
+  assert.equal(result.ok, true);
+  assert.equal(movement.getNeighbors, neighbor);
+  assert.equal(movement.canDig, true);
+  assert.equal(movement.allowParkour, true);
+  assert.equal(movement.maxDropDown, 4);
+});
+
+
+test('homestead falls back to a guarded stone quarry after an exposed face path failure', async () => {
+  const sim = simulate({ failRate: 0 });
+  const anchor = { x: 0, y: 64, z: 0 };
+  const legal = new Vec3(2, 64, -4);
+  const low = new Vec3(20, 49, -4);
+  sim.bot.entity.position = new Vec3(.5, 64, -3.5);
+  sim.bot.entity.onGround = true;
+  sim.inventory.wooden_pickaxe = 1;
+  const key = (p) => p.floored().toString();
+  sim.bot.blockAt = (p) => {
+    const pos = p.floored();
+    const name = sim.world.get(key(p)) || (pos.equals(legal) || pos.equals(low) || pos.y <= 61 ? 'stone'
+      : pos.y < 64 && pos.x < 16 ? 'dirt' : 'air');
+    return { name, position: pos, boundingBox: name === 'air' ? 'empty' : 'block', diggable: name !== 'air',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const operations = [];
+  sim.skills.gatherOne = async (_bot, _ctx, { blocks, targetFilter, radius }) => {
+    assert.ok(blocks('stone'));
+    assert.equal(radius, 32);
+    assert.ok(targetFilter(legal), 'near-house exposed stone is still eligible');
+    assert.equal(targetFilter(low), false, 'deep visible stone is rejected');
+    operations.push('exposed-path-failed');
+    return { ok: false, reason: 'Timeout' };
+  };
+  sim.actions.digBlock = async (_bot, _ctx, block) => {
+    operations.push('quarry-cut');
+    sim.world.set(key(block.position), 'air');
+    return { ok: true };
+  };
+  sim.actions.goTo = async (_bot, _ctx, target) => {
+    sim.bot.entity.position = new Vec3(target.x + .5, target.y, target.z + .5);
+    return { ok: true };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: ['stone_tier_pickaxe'], skills: sim.skills, actions: sim.actions });
+  const result = await goal.run({ perceive: sim.perceive, record: (type) => {
+    if (type === 'quarry_start') operations.push(type);
+  } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(operations, ['exposed-path-failed', 'quarry_start']);
+  assert.equal((await goal.run({ perceive: sim.perceive, record() {} })).ok, true);
+  assert.deepEqual(operations, ['exposed-path-failed', 'quarry_start', 'quarry-cut']);
+});
+
+test('homestead never gathers stone at the deep open-to-sky starting position', async () => {
+  const sim = simulate({ failRate: 0 });
+  const anchor = { x: 0, y: 64, z: 0 };
+  sim.bot.entity.position = new Vec3(12.5, 33, 0.5);
+  sim.inventory.wooden_pickaxe = 1;
+  sim.skills.gatherOne = async () => assert.fail('a deep ravine must not rebase the stone floor');
+  sim.skills.explore = async () => assert.fail('a deep ravine must not start stone exploration');
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: ['stone_tier_pickaxe'], skills: sim.skills, actions: sim.actions });
+  const result = await goal.run({ perceive: sim.perceive, record() {} });
+  assert.deepEqual(result, { ok: true, waited: true, reason: 'stone_surface_wait' });
+});
+
+test('missing wool does not delay the house door and only supported surface mobs are hunted', async () => {
+  const sim = simulate({ failRate: 0 });
+  const house = createStarterHouse({ x: 0, y: 1, z: 0 });
+  const near = new Vec3(-3.5, 1, -3.5);
+  const deep = near.offset(0, -20, 0);
+  const wet = near.offset(0, 0, -2);
+  const blockAt = sim.bot.blockAt;
+  sim.bot.blockAt = (p) => {
+    if (p.equals(wet.floored())) return { name: 'water', boundingBox: 'empty', shapes: [] };
+    const block = blockAt(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const put = ({ x, y, z }, name) => sim.world.set(`${x},${y},${z}`, name);
+  for (const { position, family } of house.blocks) put(position, family === 'planks' ? 'oak_planks' : 'cobblestone');
+  for (const name of ['crafting_table', 'chest', 'furnace']) put(house.furniture[name].position, name);
+  for (const p of house.furniture.torches) put(p, 'torch');
+  sim.inventory.white_wool = 2;
+  sim.inventory.string = 1;
+  sim.inventory.cooked_chicken = 10;
+  sim.inventory.oak_planks = 6;
+  sim.bot.entity.position = new Vec3(-.5, 1, -3.5);
+  sim.bot.pathfinder = { movements: { canDig: true, allow1by1towers: true, exclusionAreasBreak: [], getNeighbors: () =>
+    [near.floored(), deep.floored(), wet.floored()] } };
+  let whiteAppeared = false;
+  const sheep = { id: 1, name: 'sheep', position: near, color: 'white' };
+  const black = { id: 2, name: 'sheep', position: near.offset(-1, 0, 0), color: 'black' };
+  sim.bot.entities = { 1: sheep, 2: black };
+  sim.skills.sheepWool = (_bot, mob) => ({ color: mob.color, sheared: false });
+  const targets = [];
+  sim.skills.huntOne = async (_bot, _ctx, { mobs, accept, penalty }) => {
+    assert.equal(sim.bot.pathfinder.movements.canDig, false);
+    assert.equal(sim.bot.pathfinder.movements.allow1by1towers, false);
+    assert.deepEqual(sim.bot.pathfinder.movements.getNeighbors(near.floored()), [near.floored()]);
+    assert.equal(accept({ ...sheep, position: deep }), false);
+    assert.equal(accept({ ...sheep, position: wet }), false);
+    targets.push(mobs[0]);
+    if (mobs[0] === 'sheep') {
+      assert.equal(penalty(sheep), 0);
+      assert.ok(penalty(black) > 0);
+      if (whiteAppeared) { sim.inventory.white_wool += 1; return { ok: true, gained: 1 }; }
+    } else {
+      assert.deepEqual(mobs, ['spider']);
+    }
+    return { ok: false, reason: 'no_mob_in_range' };
+  };
+  let scouted = false;
+  sim.skills.explore = async () => assert.fail('wool must not use unbounded generic exploration');
+  sim.actions.goTo = async (_bot, _ctx, goal, options) => {
+    assert.equal(options.retryNoProgress, false);
+    assert.equal(sim.bot.pathfinder.movements.canDig, false);
+    assert.ok(Math.hypot(goal.x - sim.bot.entity.position.x, goal.z - sim.bot.entity.position.z) < 34);
+    scouted = true;
+    whiteAppeared = true;
+    return { ok: true };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor: house.anchor, gear: [], skills: sim.skills, actions: sim.actions });
+  const events = [];
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, isDay: true }), record(type, data) { events.push({ type, ...data }); } };
+  for (let n = 0; n < 18 && !sim.blockAt(house.furniture.bed.position).name.endsWith('_bed'); n += 1) {
+    assert.equal((await goal.run(ctx)).ok, true);
+  }
+  assert.ok(scouted);
+  assert.ok(sim.blockAt(house.furniture.door.position).name.endsWith('_door'));
+  assert.ok(sim.blockAt(house.furniture.bed.position).name.endsWith('_bed'));
+  assert.ok(events.findIndex((e) => e.type === 'build' && e.what === 'door') < events.findIndex((e) => e.type === 'wool_surface_scout'));
+  assert.ok(targets.includes('spider'));
+  assert.deepEqual(planNext({ requirements: [{ key: 'bed', count: 1 }], inventory: { white_wool: 2, string: 4 } }),
+    { kind: 'craft', key: 'wool', item: 'white_wool', times: 1, table: false, for: 'bed' });
+});
+
+test('bed wool can use a dry sheep beyond the original local search radius', async () => {
+  const sim = simulate({ failRate: 0 });
+  const house = createStarterHouse({ x: 0, y: 1, z: 0 });
+  const far = new Vec3(175, 1, 3);
+  const wet = far.offset(0, 0, 1);
+  const deep = far.offset(0, -9, 0);
+  const set = (p, name) => sim.world.set([p.x, p.y, p.z].join(','), name);
+  for (const { position, family } of house.blocks) set(position, family === 'planks' ? 'oak_planks' : 'cobblestone');
+  for (const name of ['crafting_table', 'chest', 'furnace']) set(house.furniture[name].position, name);
+  for (const p of house.furniture.torches) set(p, 'torch');
+  set(house.furniture.door.position, 'oak_door');
+  set(house.furniture.door.upper, 'oak_door');
+  set(wet, 'water');
+  sim.bot.blockAt = (p) => {
+    const block = sim.blockAt(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  sim.bot.entity.position = new Vec3(145.5, 1, 3.5);
+  Object.assign(sim.inventory, { cooked_chicken: 10, oak_planks: 3, white_wool: 2 });
+  let hunts = 0;
+  sim.skills.huntOne = async (_bot, _ctx, { mobs, accept }) => {
+    assert.deepEqual(mobs, ['sheep']);
+    assert.equal(accept({ position: wet }), false);
+    assert.equal(accept({ position: deep }), false);
+    assert.equal(accept({ position: far }), true);
+    sim.inventory.white_wool += 1;
+    hunts++;
+    return { ok: true, gained: 1 };
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor: house.anchor, gear: [], skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, isDay: true, timeOfDay: 4000 }), record() {} };
+  for (let n = 0; n < 6 && sim.blockAt(house.furniture.bed.position).name !== 'white_bed'; n += 1) {
+    assert.equal((await goal.run(ctx)).ok, true);
+  }
+  assert.equal(hunts, 1);
+  assert.equal(sim.blockAt(house.furniture.bed.position).name, 'white_bed');
+});
+
+test('bed wool leaves the known roof through its open door before surface scouting', async () => {
+  const sim = simulate({ failRate: 0 });
+  const house = createStarterHouse({ x: 0, y: 1, z: 0 });
+  const start = new Vec3(1, 1, 3);
+  const inside = new Vec3(3, 1, 1);
+  const doorway = new Vec3(3, 1, 0);
+  const outside = new Vec3(3, 1, -1);
+  const foreignRoof = new Vec3(1, 1, -3);
+  const set = (p, name) => sim.world.set([p.x, p.y, p.z].join(','), name);
+  for (const block of house.blocks) set(block.position, block.family === 'planks' ? 'oak_planks' : 'cobblestone');
+  for (const name of ['crafting_table', 'chest', 'furnace']) set(house.furniture[name].position, name);
+  for (const p of house.furniture.torches) set(p, 'torch');
+  set(doorway, 'oak_door');
+  set(doorway.offset(0, 1, 0), 'oak_door');
+  set(foreignRoof.offset(0, 2, 0), 'oak_planks');
+  let open = true;
+  let upperOpen = false;
+  sim.bot.blockAt = (p) => {
+    const b = sim.blockAt(p);
+    if (b.name === 'oak_door') {
+      return { ...b, shapes: [[0, 0, 0, .1875, 1, 1]], getProperties: () => ({
+        half: p.y === doorway.y ? 'lower' : 'upper', open: p.y === doorway.y ? open : upperOpen,
+        facing: 'south', hinge: 'left', powered: false,
+      }) };
+    }
+    return { ...b, shapes: b.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  Object.assign(sim.inventory, { cooked_chicken: 4, oak_planks: 6 });
+  sim.bot.entity.position = start.offset(.5, 0, .5);
+  sim.bot.entity.onGround = true;
+  const native = () => [inside, doorway, outside, foreignRoof];
+  sim.bot.pathfinder = { movements: { canDig: true, allowParkour: true, exclusionAreasBreak: [], getNeighbors: native } };
+  const events = [];
+  const walks = [];
+  let hunts = 0;
+  sim.actions.goTo = async (_bot, _ctx, goal, options) => {
+    const m = sim.bot.pathfinder.movements;
+    assert.equal(m.canDig, false);
+    assert.equal(m.allowParkour, false);
+    if (goal.constructor.name === 'GoalBlock') {
+      assert.ok(goal.isEnd(outside));
+      assert.deepEqual(m.getNeighbors(inside), [inside, doorway, outside]);
+      upperOpen = false;
+      assert.deepEqual(m.getNeighbors(inside), [inside, outside], 'door state is checked again during routing');
+      upperOpen = true;
+      sim.bot.entity.position = outside.offset(.5, 0, .5);
+      assert.equal(options.arrived(), true);
+      walks.push('exit');
+    } else {
+      assert.deepEqual(m.getNeighbors(outside), [outside], 'ordinary wool scouting does not authorize any roof');
+      walks.push('scout');
+    }
+    return { ok: true };
+  };
+  sim.skills.huntOne = async () => { hunts++; return { ok: false, reason: 'no_mob_in_range' }; };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor: house.anchor, gear: [], skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, isDay: true, timeOfDay: 4000 }),
+    record: (type, data) => events.push({ type, ...data }) };
+  assert.equal((await goal.run(ctx)).reason, 'wool_house_exit_blocked');
+  assert.deepEqual(walks, []);
+  assert.equal(hunts, 0);
+  upperOpen = true;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(walks, ['exit']);
+  assert.equal(hunts, 0);
+  for (let n = 0; n < 3 && !walks.includes('scout'); n += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(walks, ['exit', 'scout']);
+  assert.ok(hunts > 0);
+  assert.equal(sim.bot.pathfinder.movements.getNeighbors, native);
+  assert.ok(events.findIndex(e => e.type === 'wool_house_exit') < events.findIndex(e => e.type === 'wool_surface_scout'));
+});
+
+for (const interruption of ['path_timeout', 'breathe']) {
+  test(`homestead defers optional food after ${interruption} and continues to bed wool`, async () => {
+    const sim = simulate({ failRate: 0 });
+    const anchor = { x: 0, y: 1, z: 0 };
+    sim.inventory.porkchop = 2;
+    sim.inventory.chicken = 1;
+    sim.bot.entities = { 1: { id: 1, name: 'chicken', position: new Vec3(8.5, 1, 0.5) } };
+    const controller = new AbortController();
+    const hunts = [];
+    sim.skills.huntOne = async (_bot, _ctx, { mobs, radius }) => {
+      hunts.push({ first: mobs[0], radius });
+      if (mobs[0] === 'sheep') return { ok: true, gained: 1 };
+      if (interruption === 'path_timeout') return { ok: false, reason: 'path_timeout' };
+      controller.abort('preempted_by:breathe');
+      throw Object.assign(new Error('preempted_by:breathe'), { code: 'aborted' });
+    };
+    const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: [], skills: sim.skills, actions: sim.actions });
+    const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, food: 20 }), record() {} };
+    const hunt = goal.run({ ...ctx, signal: controller.signal });
+    if (interruption === 'breathe') await assert.rejects(hunt, { code: 'aborted' });
+    else assert.deepEqual(await hunt, { ok: true, skipped: 'food' });
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.deepEqual(hunts, [{ first: 'cow', radius: 16 }, { first: 'sheep', radius: 96 }]);
+  });
+}
+
+function simulateQuarryHomestead() {
+  const sim = simulate({ failRate: 0 });
+  const anchor = { x: 0, y: 64, z: 0 };
+  const house = createStarterHouse(anchor);
+  const blocks = new Map();
+  const key = ({ x, y, z }) => `${x},${y},${z}`;
+  const setBlock = (position, name) => blocks.set(key(position), name);
+  sim.bot.entity.position = new Vec3(.5, 64, -3.5);
+  sim.bot.entity.onGround = true;
+  sim.inventory.wooden_pickaxe = 1;
+  sim.bot.blockAt = (p) => {
+    const position = p.floored();
+    const name = blocks.get(key(position)) || (position.y <= 61 ? 'stone' : position.y < 64 ? 'dirt' : 'air');
+    return { name, position, boundingBox: name === 'air' ? 'empty' : 'block', diggable: name !== 'air',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const events = [];
+  const seen = (type) => events.some((entry) => entry.type === type);
+  sim.skills.gatherOne = async () => ({ ok: false, reason: 'no_target_in_range' });
+  sim.actions.goTo = async (_bot, _ctx, target) => {
+    sim.bot.entity.position = new Vec3(target.x + .5, target.y, target.z + .5);
+    return { ok: true };
+  };
+  sim.actions.digBlock = async (_bot, _ctx, block) => {
+    setBlock(block.position, 'air');
+    return { ok: true };
+  };
+  sim.actions.surface = async () => {
+    if (sim.bot.entity.position.y >= 64) return null;
+    events.push({ type: 'generic_surface' });
+    sim.bot.entity.position = new Vec3(.5, 64, -3.5);
+    return { ok: true };
+  };
+  const clock = { timeOfDay: 6000 };
+  const ctx = {
+    perceive: () => ({ ...sim.perceive(), timeOfDay: clock.timeOfDay }),
+    record: (type, data) => events.push({ type, ...data }),
+  };
+  const goal = createHomesteadGoal({ bot: sim.bot, anchor, gear: ['stone_tier_pickaxe'], skills: sim.skills, actions: sim.actions });
+  return { sim, house, setBlock, events, seen, clock, ctx, goal };
+}
+
+test('homestead defers foundation work and generic recovery until the guarded cave ascent', async () => {
+  const { sim, house, setBlock, events, seen, ctx, goal } = simulateQuarryHomestead();
+  const feet = new Vec3(12, 33, -12);
+  sim.bot.entity.position = feet.offset(.5, 0, .5);
+  sim.bot.canDigBlock = () => true;
+  sim.inventory.dirt = 4;
+  setBlock(house.foundation[0], 'air');
+  setBlock(feet, 'air');
+  setBlock(feet.offset(0, 1, 0), 'air');
+  const lavaWall = feet.offset(0, 0, 1);
+  setBlock(lavaWall, 'lava');
+  const cuts = [];
+  const dig = sim.actions.digBlock;
+  sim.actions.digBlock = async (...args) => {
+    const { position } = args[2];
+    assert.ok(position.distanceTo(feet) < 4);
+    assert.notEqual(position.distanceTo(lavaWall), 1, 'keep the lava wall sealed');
+    cuts.push(position);
+    return dig(...args);
+  };
+  let repairs = 0;
+  sim.skills.placeAt = async (_bot, _ctx, target) => {
+    assert.deepEqual(target, house.foundation[0]);
+    repairs++;
+    return { ok: true };
+  };
+  sim.actions.unstick = async () => assert.fail('generic unstick could walk into the cave hazard');
+  sim.actions.goNear = async () => assert.fail('cannot route directly to a repair from the cave');
+  const run = () => goal.run({ ...ctx, perceive: () => ({ ...ctx.perceive(), health: 17, food: 13 }) });
+  goal.recover();
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal(goal.ownsCaveAscent(), false);
+  assert.equal((await run()).ok, true);
+  assert.equal(goal.ownsCaveAscent(), true);
+  assert.equal((await run()).ok, true);
+  assert.equal(cuts.length, 2);
+  assert.equal(repairs, 0);
+  assert.equal(seen('generic_surface'), false);
+  assert.ok(events.some(({ type, ok }) => type === 'homestead_cave_recovery' && ok));
+  sim.bot.entity.position = feet.offset(.5, 31, .5);
+  assert.equal(goal.ownsCaveAscent(), true, 'supported covered ascent remains active above the original depth gate');
+  const blockAt = sim.bot.blockAt;
+  sim.bot.blockAt = () => null;
+  const wait = new AbortController();
+  await assert.rejects(goal.run({ ...ctx, signal: wait.signal, record(type, data) {
+    ctx.record(type, data);
+    if (type === 'homestead_cave_recovery') wait.abort();
+  } }), { code: 'aborted' });
+  assert.equal(goal.ownsCaveAscent(), false, 'a blocked ascent releases provisioning');
+  assert.equal(repairs, 0);
+  sim.bot.blockAt = blockAt;
+  sim.bot.entity.position = new Vec3(1.5, 64, 1.5);
+  assert.equal(goal.ownsRouteRecovery(), false);
+  assert.equal((await run()).ok, true);
+  assert.equal(repairs, 1);
+});
+
+test('homestead finishes the active stone quarry and protects its floor from exposed gathering', async () => {
+  const { sim, house, setBlock, events, seen, clock, ctx, goal } = simulateQuarryHomestead();
+  setBlock(house.foundation[0], 'air');
+
+  for (let i = 0; i < 14 && !events.some((e) => e.type === 'quarry_dig' && e.block === 'stone'); i += 1) {
+    assert.equal((await goal.run(ctx)).ok, true);
+  }
+  assert.ok(seen('quarry_step'));
+  assert.ok(events.some((e) => e.type === 'quarry_dig' && e.block === 'stone'));
+  assert.equal(seen('generic_surface'), false);
+  assert.equal(seen('site_fill'), false);
+
+  clock.timeOfDay = 12500;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(seen('quarry_exit'));
+  assert.equal(seen('generic_surface'), false);
+
+  const entry = events.find((event) => event.type === 'quarry_start').position;
+  const entryFloor = entry.offset(0, -1, 0);
+  const exposedStone = entryFloor.offset(0, 0, -12);
+  setBlock(entryFloor, 'stone');
+  setBlock(exposedStone, 'stone');
+  clock.timeOfDay = 6000;
+  for (let i = 0; i < 80 && !seen('quarry_blocked'); i += 1) await goal.run(ctx);
+  assert.equal(events.find((event) => event.type === 'quarry_blocked')?.reason, 'quarry_exhausted');
+
+  let checkedExposedTargets = false;
+  sim.skills.gatherOne = async (_bot, _ctx, { exclude }) => {
+    assert.ok(sim.bot.entity.position.floored().equals(entry));
+    assert.equal(exclude(entryFloor), true);
+    assert.equal(exclude(exposedStone), false);
+    checkedExposedTargets = true;
+    return { ok: true };
+  };
+  for (let i = 0; i < 8 && !checkedExposedTargets; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(checkedExposedTargets);
+});
+
+test('homestead stays in the quarry for furnace stone and returns to craft once it has enough', async () => {
+  const { sim, house, setBlock, events, seen, ctx, goal } = simulateQuarryHomestead();
+  for (const block of house.blocks) setBlock(block.position, block.family === 'planks' ? 'oak_planks' : 'cobblestone');
+  const furniture = house.furniture;
+  setBlock(furniture.crafting_table.position, 'crafting_table');
+  setBlock(furniture.chest.position, 'chest');
+  setBlock(furniture.door.position, 'oak_door');
+  setBlock(furniture.door.upper, 'oak_door');
+  setBlock(furniture.bed.position, 'white_bed');
+  setBlock(furniture.bed.head, 'white_bed');
+  for (const torch of furniture.torches) setBlock(torch, 'torch');
+  sim.inventory.stone_pickaxe = 1;
+  sim.inventory.cooked_chicken = 4;
+  sim.actions.collectDrops = async () => {
+    sim.inventory.cobblestone = (sim.inventory.cobblestone || 0) + 1;
+    return { ok: true };
+  };
+  let crafted = false;
+  sim.skills.craft = async (_bot, _ctx, { item, tablePosition }) => {
+    assert.equal(item, 'furnace');
+    assert.deepEqual(tablePosition, furniture.crafting_table.position);
+    assert.ok(sim.inventory.cobblestone >= 8);
+    assert.ok(sim.bot.entity.position.floored().equals(events.find((e) => e.type === 'quarry_start').position));
+    crafted = true;
+    return { ok: true, usedTable: true };
+  };
+
+  for (let i = 0; i < 70 && !crafted; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(crafted, 'the furnace plan should finish collecting stone and return to its crafting table');
+  const firstExit = events.findIndex((e) => e.type === 'quarry_exit');
+  assert.ok(firstExit > 0);
+  assert.ok(events.slice(0, firstExit).filter((e) => e.type === 'quarry_dig' && e.block === 'stone').length >= 8);
+  assert.equal(seen('generic_surface'), false);
+});
+
+test('homestead keeps a witnessed respawn when monsters refuse sleep and throttles the next try', async (t) => {
+  const { sim, house, setBlock, events, clock, ctx, goal } = simulateQuarryHomestead();
+  for (const block of house.blocks) setBlock(block.position, block.family === 'planks' ? 'oak_planks' : 'cobblestone');
+  const { bed, door } = house.furniture;
+  setBlock(bed.position, 'white_bed');
+  setBlock(bed.head, 'white_bed');
+  setBlock(door.position, 'oak_door');
+  setBlock(door.upper, 'oak_door');
+  const center = house.interiorCenter;
+  sim.bot.entity.position = new Vec3(center.x + .5, center.y, center.z + .5);
+  clock.timeOfDay = 13000;
+  let attempts = 0;
+  sim.skills.useBed = async () => {
+    attempts += 1;
+    return { ok: false, reason: 'bed_blocked', spawnSet: true };
+  };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  async function step() {
+    const result = goal.run(ctx);
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(3000);
+    return result;
+  }
+  assert.equal((await step()).waited, true);
+  assert.equal(goal.memory.verified.bed, true);
+  assert.equal(events.find(({ action }) => action === 'bed_wait')?.reason, 'bed_blocked');
+  assert.equal((await step()).waited, true);
+  assert.equal(attempts, 1);
+  t.mock.timers.tick(15000);
+  assert.equal((await step()).waited, true);
+  assert.equal(attempts, 2);
 });

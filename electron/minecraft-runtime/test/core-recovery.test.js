@@ -85,7 +85,25 @@ test('discardable lists junk first, then whatever exceeds one stack, never what 
   const list = discardable({ gravel: 5, cobblestone: 100, dirt: 30, oak_sapling: 12, stone_pickaxe: 1, flint: 2 },
     (name) => name === 'flint');
   assert.deepEqual(list, [{ name: 'gravel', count: 5 }, { name: 'cobblestone', count: 36 }, { name: 'oak_sapling', count: 4 }]);
-  assert.deepEqual(discardable({ stone_pickaxe: 1, bread: 3, dirt: 64 }), []);
+  assert.deepEqual(discardable({ stone_pickaxe: 1, bread: 3, cobblestone: 64 }), []);
+  // Ground cover picked up on the way, and sticks past a stack.
+  assert.deepEqual(discardable({ wildflowers: 37, leaf_litter: 20, stick: 208, bread: 3 }),
+    [{ name: 'wildflowers', count: 37 }, { name: 'leaf_litter', count: 20 }, { name: 'stick', count: 144 }]);
+  // Nothing else to lose: the dirt goes, the whole stack.
+  assert.deepEqual(discardable({ dirt: 37, redstone: 50, iron_pickaxe: 1 }), [{ name: 'dirt', count: 37 }]);
+  assert.deepEqual(discardable({ raw_copper: 41, coal: 127, feather: 20 }),
+    [{ name: 'raw_copper', count: 41 }, { name: 'coal', count: 63 }]);
+  // Wool of every colour from the sheep killed for food, and clay from a riverbed.
+  assert.deepEqual(discardable({ white_wool: 31, gray_wool: 3, black_wool: 6, clay_ball: 64 }),
+    [{ name: 'white_wool', count: 15 }, { name: 'black_wool', count: 3 }, { name: 'clay_ball', count: 48 }]);
+});
+
+test('inventory cleanup keeps the flint for a stack of arrows', () => {
+  const clutter = { gravel: 5, leaf_litter: 48, cobblestone: 70 };
+  const ammo = { flint: 16, stick: 16, feather: 16, arrow: 64 };
+  const discard = [{ name: 'gravel', count: 5 }, { name: 'leaf_litter', count: 48 }, { name: 'cobblestone', count: 6 }];
+  assert.deepEqual(discardable({ ...clutter, ...ammo }), discard);
+  assert.deepEqual(discardable({ ...clutter, ...ammo, flint: 19 }), [...discard, { name: 'flint', count: 3 }]);
 });
 
 test('two path failures in a row unstick the body, for any goal', async () => {
@@ -116,6 +134,66 @@ test('a goal failing while the bot has not moved for a while is treated as stuck
   assert.equal(unsticks, 1);
   assert.ok(events.some((e) => e.type === 'unstick' && e.why === 'not_moving'));
   await brain.dispose();
+});
+
+for (const trigger of ['path_failures', 'not_moving']) {
+  test(`walk-only Nether ${trigger} remains owned by the trip instead of generic unstick`, async () => {
+    const bot = fakeBot();
+    bot.game = { dimension: 'minecraft:the_nether' };
+    bot.pathfinder = { movements: { companionWalkOnly: true } };
+    let clock = 0;
+    let calls = 0;
+    const recovery = createRecovery({ bot, now: () => clock,
+      actions: { unstick: async () => { calls += 1; return { ok: true }; } } });
+    const unstick = recovery.behaviors.find((b) => b.name === 'unstick');
+    const perceive = perceiveFor(bot);
+    recovery.observe({ type: 'goal_set' });
+    assert.equal(unstick.want(perceive()), 0);
+    for (let i = 0; i < 2; i += 1) recovery.observe({ type: 'behavior_finished', behavior: 'goal:gather_materials',
+      ok: false, reason: trigger === 'path_failures' ? 'NoPath' : 'quartz_no_reachable_target' });
+    if (trigger === 'not_moving') clock = 46000;
+    assert.equal(unstick.want(perceive()), 0);
+    // A behavior selected just before the trip acquired the profile must
+    // recheck ownership before issuing any body action as well.
+    const records = [];
+    const result = await unstick.run({ perceive, signal: new AbortController().signal,
+      record: (type, data) => records.push({ type, ...data }) });
+    assert.equal(calls, 0);
+    assert.deepEqual(result, { ok: false, reason: 'trip_recovery_owned' });
+    assert.ok(records.some((r) => r.type === 'unstick_deferred' && r.delegate === 'nether_trip'));
+    bot.pathfinder.movements.companionWalkOnly = false;
+    assert.equal(unstick.want(perceive()), 0.9, 'ordinary recovery resumes when the trip releases its profile');
+    recovery.dispose();
+  });
+}
+
+test('an active scoped surface route owns recovery until the goal releases it', async () => {
+  const bot = fakeBot();
+  let owned = true;
+  let calls = 0;
+  const recovery = createRecovery({ bot, ownsRouteRecovery: () => owned,
+    actions: { unstick: async () => { calls += 1; return { ok: true }; } } });
+  const perceive = perceiveFor(bot);
+  const unstick = recovery.behaviors.find((behavior) => behavior.name === 'unstick');
+  recovery.observe({ type: 'goal_set' });
+  for (let i = 0; i < 2; i += 1) recovery.observe({ type: 'behavior_finished', behavior: 'goal:homestead', ok: false, reason: 'NoPath' });
+  assert.equal(unstick.want(perceive()), 0);
+  assert.deepEqual(await unstick.run({ perceive, record() {} }), { ok: false, reason: 'goal_route_recovery_owned' });
+  assert.equal(calls, 0);
+  owned = false;
+  assert.equal(unstick.want(perceive()), .9);
+  recovery.dispose();
+});
+
+test('an overworld walk-only profile does not disable ordinary stuck recovery', () => {
+  const bot = fakeBot();
+  bot.game = { dimension: 'overworld' };
+  bot.pathfinder = { movements: { companionWalkOnly: true } };
+  const recovery = createRecovery({ bot });
+  recovery.observe({ type: 'goal_set' });
+  for (let i = 0; i < 2; i += 1) recovery.observe({ type: 'behavior_finished', behavior: 'goal:test', ok: false, reason: 'NoPath' });
+  assert.equal(recovery.behaviors.find((b) => b.name === 'unstick').want(perceiveFor(bot)()), 0.9);
+  recovery.dispose();
 });
 
 test('a goal that fails while the bot keeps moving is not stuck', async () => {
@@ -272,6 +350,28 @@ test('too many deaths in an hour end the goal as a death loop instead of dying f
   await brain.dispose();
 });
 
+test('a goal asked again after a death loop is not failed by the deaths before it', async () => {
+  const bot = fakeBot();
+  let clock = 0;
+  const { brain, events } = wire({ bot, perceive: perceiveFor(bot), now: () => clock });
+  const goal = () => ({ name: 'g', isDone: () => false, progress: () => 0, run: (ctx) => sleep(5, ctx.signal).then(() => ({ ok: true })) });
+  brain.setGoal(goal());
+  for (let i = 0; i < 9; i += 1) {
+    bot.entity.position = new Vec3(i * 100, 64, 0);
+    bot.emit('death');
+    clock += 60000;
+  }
+  await sleep(5);
+  assert.equal(events.filter((e) => e.type === 'goal_failed').length, 1);
+  brain.setGoal(goal());
+  bot.entity.position = new Vec3(1000, 64, 0);
+  bot.emit('death');
+  await sleep(5);
+  assert.equal(events.filter((e) => e.type === 'goal_failed').length, 1);
+  assert.equal(brain.status().goal?.name ?? brain.status().goal, 'g');
+  await brain.dispose();
+});
+
 test('deaths spread over more than an hour do not end the goal', async () => {
   const bot = fakeBot();
   let clock = 0;
@@ -353,4 +453,89 @@ test('brain.failGoal ends the goal with the given reason and stops its run', asy
   assert.equal(brain.status().goal, null);
   assert.deepEqual(events.find((e) => e.type === 'goal_failed').reasons, ['death_loop']);
   await brain.dispose();
+});
+
+test('spare bows, nether scaffolding and seeds beyond what is kept go from a full bag', () => {
+  const list = discardable({ bow: 3, basalt: 66, wheat_seeds: 29, flint_and_steel: 1, iron_sword: 1 });
+  assert.deepEqual(list, [{ name: 'bow', count: 2 }, { name: 'basalt', count: 34 }]);
+});
+
+test('armour left in the bag is put on while nothing is close', async () => {
+  const bot = fakeBot();
+  const items = [{ name: 'iron_helmet', count: 1 }, { name: 'iron_boots', count: 1 }, { name: 'shield', count: 1 }];
+  bot.inventory.items = () => items;
+  bot.inventory.slots = [];
+  const worn = [];
+  bot.equip = async (item, slot) => { worn.push(`${item.name}@${slot}`); bot.inventory.slots[{ head: 5, feet: 8, 'off-hand': 45 }[slot]] = item; };
+  const wear = createRecovery({ bot }).behaviors.find((b) => b.name === 'wear_armor');
+  const state = perceiveFor(bot)();
+  assert.equal(wear.want({ ...state, hostiles: [{ distance: 3 }] }), 0, 'not mid-fight');
+  assert.ok(wear.want(state) > 0);
+  const result = await wear.run({ perceive: () => state, record() {}, signal: new AbortController().signal });
+  assert.equal(result.ok, true);
+  assert.deepEqual(worn, ['iron_helmet@head', 'iron_boots@feet', 'shield@off-hand']);
+  assert.equal(wear.want(state), 0);
+});
+
+test('in water under a ceiling, an empty bucket scoops the water away', async () => {
+  const { drainPocket } = require('../core/actions');
+  const world = new Map([['0,-5,0', 'water'], ['0,-4,0', 'water'], ['0,-3,0', 'deepslate']]);
+  const blockAt = (p) => {
+    const name = world.get(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`) || 'deepslate';
+    return { name, position: p.floored ? p.floored() : p, boundingBox: name === 'water' || name === 'air' ? 'empty' : 'block', getProperties: () => ({ level: 0 }) };
+  };
+  let aimed = null;
+  const items = [{ name: 'bucket', count: 1 }];
+  const bot = { entity: { position: new Vec3(0.5, -4.8, 0.5), isInWater: true }, blockAt,
+    inventory: { items: () => items }, equip: async () => {},
+    lookAt: async (p) => { aimed = p.floored(); },
+    activateItem: () => { world.delete(`${aimed.x},${aimed.y},${aimed.z}`); world.set(`${aimed.x},${aimed.y},${aimed.z}`, 'air'); items[0] = { name: 'water_bucket', count: 1 }; } };
+  const records = [];
+  assert.equal(await drainPocket(bot, { signal: new AbortController().signal, record: (t) => records.push(t) }), true);
+  assert.ok(records.includes('drain_pocket'));
+  // Open sky above: swimming up works, nothing is scooped.
+  world.set('0,-3,0', 'air');
+  items[0] = { name: 'bucket', count: 1 };
+  assert.equal(await drainPocket(bot, { signal: new AbortController().signal, record() {} }), false);
+});
+
+test('fed by water running in from aside, the inflow is walled off and the hole drains', async () => {
+  const { drainPocket } = require('../core/actions');
+  // Bot's cells 0,-5,0 and 0,-4,0 hold running water fed from -1,-4,0 and -1,-3,0; a lid at 0,-3,0.
+  const world = new Map([['0,-5,0', 'water'], ['0,-4,0', 'water'], ['-1,-4,0', 'water'], ['-1,-3,0', 'water'], ['0,-3,0', 'cobblestone'], ['-1,-2,0', 'air']]);
+  const nameAt = (x, y, z) => world.get(`${x},${y},${z}`) || 'deepslate';
+  const blockAt = (p) => {
+    const f = p.floored ? p.floored() : p;
+    const name = nameAt(f.x, f.y, f.z);
+    return { name, position: f, boundingBox: name === 'water' || name === 'air' ? 'empty' : 'block', getProperties: () => ({ level: 3 }) };
+  };
+  const placed = [];
+  const bot = { entity: { position: new Vec3(0.5, -4.8, 0.5), isInWater: true }, blockAt,
+    inventory: { items: () => [{ name: 'cobblestone', count: 20 }] }, equip: async () => {}, lookAt: async () => {},
+    placeBlock: async (ref, face) => {
+      const at = ref.position.plus(face);
+      placed.push(`${at.x},${at.y},${at.z}`);
+      world.set(`${at.x},${at.y},${at.z}`, 'cobblestone');
+      // Cut off from its feed, the bot's water runs away.
+      if (nameAt(-1, -4, 0) !== 'water') { world.set('0,-4,0', 'air'); world.set('0,-5,0', 'air'); }
+    } };
+  const records = [];
+  assert.equal(await drainPocket(bot, { signal: new AbortController().signal, record: (t) => records.push(t) }), true);
+  assert.ok(placed.includes('-1,-4,0'), placed.join(' '));
+  assert.ok(!placed.some((p) => p === '0,-5,0' || p === '0,-4,0'), 'never into its own cells');
+  assert.ok(records.includes('block_inflow'));
+});
+
+test('a deadly place at night is bunkered in, but not while hunting pearls in that night', () => {
+  const bot = fakeBot();
+  bot.game = { dimension: 'minecraft:overworld' };
+  let clock = 0;
+  let goal = 'outfit';
+  const recovery = createRecovery({ bot, now: () => clock, activeGoal: () => goal });
+  for (let i = 0; i < 3; i += 1) { bot.emit('death'); clock += 1000; }
+  const bunker = recovery.behaviors.find((b) => b.name === 'danger_bunker');
+  const night = { ...perceiveFor(bot)(), isDay: false };
+  assert.equal(bunker.want(night), 1);
+  goal = 'hunt_pearls';
+  assert.equal(bunker.want(night), 0);
 });

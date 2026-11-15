@@ -12,21 +12,26 @@ const device = { anchor: position, facing, count: integer() };
 function schema(properties = {}, required = []) {
   return { type: 'object', additionalProperties: false, properties, required };
 }
+const requirements = { type: 'array', minItems: 1, maxItems: 64,
+  items: schema({ key: { type: 'string', enum: Object.keys(KNOWLEDGE) }, count: integer() }, ['key', 'count']) };
 const GOAL_SCHEMAS = Object.freeze({
   gatherLogs: schema({ count: integer() }, ['count']),
   homestead: schema({ anchor: position }),
   farm: schema({ center: position, plots: integer(1, 64), bread: integer() }),
   ranch: schema({ center: position, kind: { type: 'string', enum: ['cow', 'sheep', 'mooshroom', 'goat', 'pig', 'chicken', 'rabbit'] },
     target: integer(1, 64), size: integer(4, 32) }),
-  gatherMaterials: schema({ chest: position, requirements: { type: 'array', minItems: 1, maxItems: 64,
-    items: schema({ key: { type: 'string', enum: Object.keys(KNOWLEDGE) }, count: integer() }, ['key', 'count']) } }, ['chest', 'requirements']),
+  gatherMaterials: schema({ chest: position, requirements }, ['chest', 'requirements']),
+  outfit: schema({ items: requirements }, ['items']),
+  huntPearls: schema({ count: integer(), radius: integer(1, 512), scoutSector: facing, scoutRadius: integer(48, 80) }),
   cobbleGenerator: schema({ anchor: position, facing, harvest: integer(), collector: { type: 'boolean' } }),
   autoSmelter: schema({ ...device, input: item, output: item, fuel: item }),
   caneFarm: schema(device), mobFarm: schema(device), ironFarm: schema(device),
   carpetDuper: schema(device), railDuper: schema(device), fishing: schema(device),
   netherQuartz: schema({ count: integer(), roam: integer(1, 512) }),
+  netherExpedition: schema({ blazeRods: integer(0), witherSkulls: integer(0), trades: integer(0),
+    skullTries: integer(0), roam: integer(1, 512) }),
   enterEnd: schema(), endDragon: schema(), endCity: schema({ chests: integer(1, 64) }),
-  endJourney: schema({ chests: integer(1, 64), withCity: { type: 'boolean' } }),
+  endJourney: schema({ chests: integer(1, 64), withCity: { type: 'boolean' }, home: { type: 'boolean' } }),
 });
 const CONTROL_SCHEMAS = Object.freeze({
   getStatus: schema(), listTools: schema(), getTask: schema({ taskId }, ['taskId']),

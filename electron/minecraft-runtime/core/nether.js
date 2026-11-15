@@ -9,8 +9,9 @@
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const actions = require('./actions');
-const { waitUntil, runCancellable, sleep } = require('./confirm');
+const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { posKey } = require('./blacklist');
+const { skyOpen, standable } = require('./caveRetreat');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -57,10 +58,13 @@ function portalFrame(base, axis = 'x') {
 
 const passable = (b) => b && (AIR.has(b.name) || (b.boundingBox === 'empty' && !/water|lava|fire/.test(b.name)));
 const ground = (b) => b && b.boundingBox === 'block' && !/lava|water|magma|_leaves|gravel|sand$/.test(b.name);
+const frameClearable = (b) => passable(b) && !b.shapes?.length && b.getProperties?.()?.waterlogged !== true;
 
 /** A site needing no digging: solid ground under the frame and in front, open air above. */
 function portalSiteOk(bot, base, axis) {
   const frame = portalFrame(base, axis);
+  const home = bot.companionHomeSite;
+  if (home && [...frame.cells.map((c) => c.pos), ...frame.interior].some((p) => home(p))) return false;
   for (let u = 0; u <= 3; u += 1) {
     const foot = axis === 'x' ? base.offset(u, 0, 0) : base.offset(0, 0, u);
     if (!ground(bot.blockAt(foot.offset(0, -1, 0)))) return false;
@@ -93,25 +97,72 @@ function findPortalSite(bot, radius = 16) {
   return best;
 }
 
+const SCOUT_SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+function portalScoutStep(bot, from, to) {
+  const dy = to.y - from.y;
+  const read = (p) => bot.blockAt(p);
+  if (Math.abs(from.x - to.x) + Math.abs(from.z - to.z) !== 1 || Math.abs(dy) > 1
+    || !standable(read, from) || !standable(read, to)) return false;
+  if (!dy) return true;
+  const head = read((dy > 0 ? from : to).offset(0, 2, 0));
+  return frameClearable(head);
+}
+
+// Probe nearby slopes from the construction stance, rather than guessing a
+// portal base at the bot's present elevation and then hoping for a route.
+function scoutPortalSite(bot) {
+  const from = bot.entity.position.floored();
+  if (!bot.entity.onGround || !standable((p) => bot.blockAt(p), from)) return null;
+  const queue = [{ at: from, prior: null, depth: 0 }];
+  const seen = new Set([posKey(from)]);
+  for (let i = 0; i < queue.length && i < 1800; i += 1) {
+    const node = queue[i];
+    const { at, depth } = node;
+    if (depth) {
+      const base = at.offset(-1, 0, -1);
+      const axis = ['x', 'z'].find((a) => portalSiteOk(bot, base, a));
+      if (axis && skyOpen(bot, at)) {
+        const path = [];
+        for (let n = node; n; n = n.prior) path.push(n.at);
+        return { site: { base, axis }, path: path.reverse() };
+      }
+    }
+    if (depth >= 32) continue;
+    for (const [dx, dz] of SCOUT_SIDES) for (const dy of [0, 1, -1]) {
+      const next = at.offset(dx, dy, dz);
+      const key = posKey(next);
+      if (seen.has(key) || Math.abs(next.y - from.y) > 7
+        || Math.max(Math.abs(next.x - from.x), Math.abs(next.z - from.z)) > 24
+        || !portalScoutStep(bot, at, next)) continue;
+      seen.add(key);
+      queue.push({ at: next, prior: node, depth: depth + 1 });
+    }
+  }
+  return null;
+}
+
 const FACES = [new Vec3(0, -1, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1), new Vec3(0, 1, 0)];
 
 /**
  * Places one block against a known neighbour without a line-of-sight check:
  * the server only checks reach, and the frame's top row faces are above eye level.
  */
-async function placeFrameBlock(bot, ctx, pos, itemMatch, against, stand) {
-  const current = bot.blockAt(pos);
+async function placeFrameBlock(bot, ctx, pos, itemMatch, against, stand, work = actions) {
+  let current = bot.blockAt(pos);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
-  if (current && !AIR.has(current.name)) {
-    if (current.boundingBox !== 'empty') return fail('occupied', { block: current.name });
-    const dug = await actions.digBlock(bot, ctx, current);
-    if (!dug.ok) return dug;
-  }
+  if (current && !frameClearable(current)) return fail('occupied', { block: current.name });
   const item = bot.inventory.items().find((i) => itemMatch(i.name));
   if (!item) return fail('no_material');
-  if (!actions.withinReach(bot, pos, 4.2) || bodyIn(bot, pos)) {
-    const moved = await actions.goTo(bot, ctx, new goals.GoalBlock(stand.x, stand.y, stand.z), { timeoutMs: 20000 });
-    if (!moved.ok && (!actions.withinReach(bot, pos, 4.5) || bodyIn(bot, pos))) return moved;
+  if (!work.withinReach(bot, pos, 4.2) || bodyIn(bot, pos)) {
+    const moved = await work.goTo(bot, ctx, new goals.GoalBlock(stand.x, stand.y, stand.z), { timeoutMs: 20000 });
+    if (!work.withinReach(bot, pos, 4.5) || bodyIn(bot, pos)) return moved.ok ? fail('out_of_reach') : moved;
+  }
+  current = bot.blockAt(pos);
+  if (current && itemMatch(current.name)) return { ok: true, already: true };
+  if (!frameClearable(current)) return fail(current ? 'occupied' : 'portal_frame_unloaded', { block: current?.name });
+  if (!AIR.has(current.name)) {
+    const dug = await work.digBlock(bot, ctx, current);
+    if (!dug.ok) return dug;
   }
   let ref = against ? bot.blockAt(against) : null;
   if (!ref || ref.boundingBox !== 'block') {
@@ -140,7 +191,7 @@ function bodyIn(bot, cell) {
 }
 
 /** Builds one missing frame block per call; ignites once the frame is whole. */
-async function buildPortalStep(bot, ctx, site) {
+async function buildPortalStep(bot, ctx, site, work = actions) {
   const frame = portalFrame(site.base, site.axis);
   if (frame.interior.some((p) => bot.blockAt(p)?.name === 'nether_portal')) return { ok: true, lit: true };
   const stand = frame.stand;
@@ -149,7 +200,7 @@ async function buildPortalStep(bot, ctx, site) {
     const done = cell.corner ? block && block.boundingBox === 'block' : block?.name === 'obsidian';
     if (done) continue;
     const match = cell.corner ? (n) => CORNERS.has(n) : (n) => n === 'obsidian';
-    const result = await placeFrameBlock(bot, ctx, cell.pos, match, cell.against, stand);
+    const result = await placeFrameBlock(bot, ctx, cell.pos, match, cell.against, stand, work);
     return result.ok ? { ok: true, placed: posKey(cell.pos) } : result;
   }
   // Fire needs open air in the frame: clear anything that fell or grew inside.
@@ -188,26 +239,13 @@ async function ignite(bot, ctx, frame) {
  * Walks into the portal at `portal` (a bottom portal cell) and waits for the
  * server to move the bot to the other dimension. Confirmed by the dimension.
  */
-async function travel(bot, ctx, portal, { timeoutMs = 20000 } = {}) {
+async function travel(bot, ctx, portal, { timeoutMs = 20000, settleMs = 6000, cooldownMs = 2500, tries = 3 } = {}) {
   const from = dimension(bot);
   const p = new Vec3(portal.x, portal.y, portal.z);
   const inPortal = () => bot.blockAt(bot.entity.position.floored())?.name === 'nether_portal';
-  const already = bot.entity.position.floored().equals(p);
-  const walkIn = async () => {
-    await cooled();
-    const near = await actions.goNear(bot, ctx, p, 3, { timeoutMs: 60000 });
-    if (!near.ok && bot.entity.position.distanceTo(p) > 6) return near;
-    const inside = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), {
-      timeoutMs: 15000, arrived: () => inPortal() || dimension(bot) !== from,
-    });
-    if (!inside.ok && dimension(bot) === from) return inside;
-    await centre();
-    return { ok: true };
-  };
   // A portal sheet is a quarter block thick: a body at the edge of its cell
-  // never touches it. Onto the middle, in short presses (the frame stands
-  // either side, and a forced portal's ledge is only a block wider). Not
-  // sneaking: a crouched bot in the middle of a portal was never sent across.
+  // never touches it. Use short, unsneaked centring presses on the forced
+  // portal's narrow ledge, on the initial entry and every re-entry.
   const centre = async () => {
     const mid = p.offset(0.5, 0, 0.5);
     try {
@@ -224,26 +262,38 @@ async function travel(bot, ctx, portal, { timeoutMs = 20000 } = {}) {
       bot.setControlState?.('forward', false);
     }
   };
-  // Back in too soon after stepping out, the portal's cooldown starts over.
   const cooled = async () => {
-    const wait = (bot.companionLeftPortalAt || 0) + 1500 - Date.now();
+    const wait = (bot.companionLeftPortalAt || 0) + cooldownMs - Date.now();
     if (wait > 0) await sleep(wait, ctx.signal);
   };
-  if (!already) {
-    const walked = await walkIn();
-    if (!walked.ok) return walked;
+  const enter = async () => {
+    await cooled();
+    const inside = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), {
+      timeoutMs: 15000, arrived: () => inPortal() || dimension(bot) !== from,
+    });
+    if (!inside.ok && dimension(bot) === from) return inside;
+    await centre();
+    return { ok: true };
+  };
+  if (!bot.entity.position.floored().equals(p)) {
+    const near = await actions.goNear(bot, ctx, p, 3, { timeoutMs: 60000 });
+    if (!near.ok && bot.entity.position.distanceTo(p) > 6) return near;
+    const inside = await enter();
+    if (!inside.ok) return inside;
   } else {
     await centre();
   }
   actions.haltBody(bot);
-  let moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs: already ? Math.min(timeoutMs, 8000) : timeoutMs, signal: ctx.signal });
-  // Still in the portal it came out of (a forced portal's ledge left no room
-  // to step off): no crossing until the body has left it once. Out and back in.
-  if (!moved && inPortal()) {
+  let moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs: Math.min(settleMs, timeoutMs), signal: ctx.signal });
+  // Standing in the arrival portal keeps its cooldown alive. Leave it,
+  // wait off the sheet, then retry a bounded number of times.
+  for (let i = 1; !moved && i < tries; i += 1) {
     await leavePortal(bot, ctx);
-    ctx.record?.('portal_reenter', { out: !inPortal() });
-    const walked = await walkIn();
-    if (!walked.ok) return walked;
+    ctx.record?.('portal_reenter', { attempt: i, out: !inPortal() });
+    await sleep(cooldownMs, ctx.signal);
+    if (dimension(bot) !== from) { moved = true; break; }
+    const inside = await enter();
+    if (!inside.ok) return inside;
     actions.haltBody(bot);
     moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs, signal: ctx.signal });
   }
@@ -316,7 +366,7 @@ function applyNetherMovements(bot) {
   const m = bot.pathfinder?.movements;
   if (!m || m.companionNether) return () => {};
   const saved = { maxDropDown: m.maxDropDown, digCost: m.digCost, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length,
-    scaffold: m.scafoldingBlocks, sprint: m.allowSprinting };
+    scaffold: m.scafoldingBlocks, sprint: m.sprintSetting ?? m.allowSprinting };
   m.companionNether = true;
   m.maxDropDown = 3;
   // Netherrack breaks in an instant, so plain paths tunnel straight through
@@ -341,6 +391,370 @@ function applyNetherMovements(bot) {
     m.exclusionAreasStep.length = saved.steps;
     m.companionNether = false;
   };
+}
+
+/** Quartz walks own their excavation: native paths may only use existing ground. */
+function applyWalkOnlyMovements(bot) {
+  const m = bot.pathfinder?.movements;
+  if (!m || m.companionWalkOnly) return () => {};
+  const keys = ['canDig', 'allowParkour', 'allow1by1towers', 'scafoldingBlocks', 'maxDropDown', 'companionWalkOnly',
+    'infiniteLiquidDropdownDistance', 'getNeighbors', 'companionPhysicalDropLimit', 'companionPhysicalDropGuard'];
+  const saved = keys.map((key) => [key, Object.hasOwn(m, key), m[key]]);
+  m.companionWalkOnly = true;
+  m.canDig = false;
+  m.allowParkour = false;
+  m.allow1by1towers = false;
+  m.scafoldingBlocks = [];
+  // The native limit compares feet to the supporting block, one below the
+  // landing feet. A one-block physical descent therefore needs depth two.
+  // Enforce the physical delta separately, including any upstream moves
+  // that did not consult the native dropdown limit.
+  m.maxDropDown = Math.min(m.maxDropDown ?? 2, 2);
+  m.infiniteLiquidDropdownDistance = false;
+  const neighbors = m.getNeighbors;
+  if (typeof neighbors === 'function') {
+    const guarded = function (node, ...args) {
+      return neighbors.call(this, node, ...args).filter((move) => Number.isFinite(node.y) && Number.isFinite(move.y)
+        && move.y >= node.y - 1 && move.y <= node.y + 1 && !move.toBreak?.length && !move.toPlace?.length);
+    };
+    m.getNeighbors = guarded;
+    m.companionPhysicalDropLimit = 1;
+    m.companionPhysicalDropGuard = guarded;
+  }
+  return () => {
+    for (const [key, owned, value] of saved) {
+      if (owned) m[key] = value;
+      else delete m[key];
+    }
+  };
+}
+
+const LOOKOUT_HAZARD = /^(water|lava|bubble_column|fire|soul_fire|magma_block|campfire|soul_campfire|powder_snow|cactus)$/;
+const LOOKOUT_LOOSE = /^(gravel|sand|red_sand|.*_concrete_powder)$/;
+const LOOKOUT_ROCK = /^(netherrack|blackstone|basalt|soul_soil)$/;
+const lookoutDry = (b) => b && !LOOKOUT_HAZARD.test(b.name) && b.getProperties?.()?.waterlogged !== true;
+const lookoutOpen = (b) => lookoutDry(b) && b.boundingBox === 'empty';
+const lookoutSupport = (b) => lookoutDry(b) && b.boundingBox === 'block' && !LOOKOUT_LOOSE.test(b.name)
+  && b.shapes?.some(([x, y, z, right, top, back]) => x === 0 && y === 0 && z === 0 && right === 1 && top >= .75 && back === 1);
+
+function lookoutMoveSafe(bot, node, move, read = (p) => bot.blockAt(p)) {
+  const from = new Vec3(node.x, node.y, node.z);
+  const to = new Vec3(move.x, move.y, move.z);
+  const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+  if (![dx, dy, dz].every(Number.isInteger) || Math.abs(dx) > 1 || Math.abs(dz) > 1 || Math.abs(dy) > 1
+    || (!dx && !dz) || move.parkour || move.toPlace?.length) return false;
+  if (!lookoutSupport(read(to.offset(0, -1, 0)))) return false;
+  const cuts = move.toBreak || [];
+  const breakable = (p) => {
+    if (dy || (dx && dz) || p.x !== to.x || p.z !== to.z || p.y < to.y || p.y > to.y + 1) return false;
+    const rock = read(p);
+    const above = read(p.offset(0, 1, 0));
+    return lookoutDry(rock) && LOOKOUT_ROCK.test(rock.name) && !bot.companionProtectBlock?.(rock)
+      && lookoutDry(above) && !LOOKOUT_LOOSE.test(above.name)
+      && FACES.every((face) => lookoutDry(read(p.plus(face))));
+  };
+  if (cuts.some((p) => !breakable(p))) return false;
+  const clear = (p) => lookoutOpen(read(p)) || cuts.some((cut) => p.equals(cut));
+  if (!clear(to) || !clear(to.offset(0, 1, 0))) return false;
+  if (dy && !lookoutOpen(read((dy > 0 ? from : to).offset(0, 2, 0)))) return false;
+  if (dx && dz) {
+    // The body cuts across both corners. A native diagonal can otherwise
+    // have a valid endpoint on the far side of an unsupported cliff edge.
+    for (const corner of [from.offset(dx, 0, 0), from.offset(0, 0, dz)]) {
+      const feet = corner.offset(0, dy, 0);
+      if (!lookoutSupport(read(feet.offset(0, -1, 0))) || !lookoutOpen(read(feet)) || !lookoutOpen(read(feet.offset(0, 1, 0)))
+        || dy && !lookoutOpen(read((dy > 0 ? corner : feet).offset(0, 2, 0)))) return false;
+    }
+  }
+  return true;
+}
+
+// A search hint for the native pathfinder. The actual movement still replans
+// each short leg with its native neighbors and the same terrain guard.
+function lookoutCardinalMoves(bot, from, read) {
+  const moves = [];
+  for (const [dx, dz] of SCOUT_SIDES) for (const dy of [0, 1, -1]) {
+    const to = new Vec3(from.x + dx, from.y + dy, from.z + dz);
+    if (!lookoutSupport(read(to.offset(0, -1, 0)))) continue;
+    const cuts = dy ? [] : [to, to.offset(0, 1, 0)].filter((p) => !lookoutOpen(read(p)));
+    const move = Object.assign(to, { hash: posKey(to), cost: 1 + 1.25 * cuts.length, toBreak: cuts, toPlace: [] });
+    if (lookoutMoveSafe(bot, from, move, read)) moves.push(move);
+  }
+  return moves;
+}
+
+/** Limits a plain Nether lookout leg to loaded ground or a checked horizontal cut. */
+async function withLookoutTerrain(bot, run, accept = () => true) {
+  const movements = bot.pathfinder?.movements;
+  const neighbors = movements?.getNeighbors;
+  if (typeof neighbors !== 'function') return run();
+  const keys = ['getNeighbors', 'allowParkour', 'allow1by1towers', 'infiniteLiquidDropdownDistance'];
+  const saved = keys.map((key) => [key, Object.hasOwn(movements, key), movements[key]]);
+  const guarded = function (node, ...args) {
+    return neighbors.call(this, node, ...args).filter((move) => accept(move) && lookoutMoveSafe(bot, node, move));
+  };
+  Object.assign(movements, { getNeighbors: guarded, allowParkour: false, allow1by1towers: false, infiniteLiquidDropdownDistance: false });
+  try {
+    return await run();
+  } finally {
+    if (movements.getNeighbors === guarded) for (const [key, owned, value] of saved) {
+      if (owned) movements[key] = value;
+      else delete movements[key];
+    }
+  }
+}
+
+const FORTRESS_COMBAT_RADIUS = 12;
+const COMBAT_PORTAL = /^(nether_portal|end_portal|end_gateway)$/;
+const combatOpen = (block) => lookoutOpen(block) && !COMBAT_PORTAL.test(block.name);
+
+function combatFooting(bot, p) {
+  return lookoutSupport(bot.blockAt(p.offset(0, -1, 0)))
+    && combatOpen(bot.blockAt(p)) && combatOpen(bot.blockAt(p.offset(0, 1, 0)));
+}
+
+/** Cross one known dry, full-block step down using a bounded movement pulse. */
+async function descendCombatStep(bot, ctx, from, to, work = actions) {
+  const liveTerrain = () => inNether(bot) && portalScoutStep(bot, from, to)
+    && combatFooting(bot, from) && combatFooting(bot, to) && lavaRisk(bot, to) === 0;
+  if (to.y !== from.y - 1 || !bot.entity.onGround || !bot.entity.position.floored().equals(from)
+    || !liveTerrain()) return false;
+  const origin = from.offset(.5, 0, .5);
+  const target = to.offset(.5, 0, .5);
+  const heading = new Vec3(to.x - from.x, 0, to.z - from.z);
+  const settled = () => bot.entity.onGround && bot.entity.position.floored().equals(from)
+    && Math.hypot(bot.entity.velocity?.x || 0, bot.entity.velocity?.z || 0) <= .025;
+  const centred = () => Math.hypot(bot.entity.position.x - origin.x, bot.entity.position.z - origin.z) <= .15;
+  const body = () => {
+    const at = bot.entity.position;
+    const delta = at.minus(origin);
+    return { at, along: delta.dot(heading), lateral: Math.abs(delta.x * heading.z - delta.z * heading.x) };
+  };
+  const safe = ({ at, along, lateral }) => liveTerrain() && !bot.entity.isInWater && !bot.entity.isInLava
+    && at.y >= to.y - .02 && at.y <= from.y + .08 && along >= -.2 && along <= 1.24 && lateral <= .15;
+  work.haltBody(bot);
+  try {
+    if (!await waitUntil(settled, { timeoutMs: 400, signal: ctx.signal })) return false;
+    if (!centred()) await work.recentre(bot, ctx, { accept: (p) => p.equals(from) && liveTerrain() });
+    if (!await waitUntil(settled, { timeoutMs: 400, signal: ctx.signal }) || !centred() || !safe(body())) return false;
+    await bot.lookAt(target.offset(0, from.y - to.y + (bot.entity.eyeHeight || 1.62), 0), true);
+    // Stay on the axis of the two adjoining footholds and brake as the
+    // player's collision box clears the upper block.
+    for (let i = 0; i < 24; i += 1) {
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      const current = body();
+      if (!safe(current)) return false;
+      if (bot.entity.onGround && current.at.floored().equals(to)
+        && Math.hypot(current.at.x - target.x, current.at.z - target.z) <= .21) return true;
+      const advance = bot.entity.velocity?.dot(heading) || 0;
+      bot.setControlState('forward', current.along < .83 && current.along + Math.max(0, advance) * 3 < .94);
+      await sleep(50, ctx.signal);
+      bot.setControlState('forward', false);
+    }
+    return false;
+  } finally {
+    work.haltBody(bot);
+  }
+}
+
+function combatBodyLane(bot, position, floorY, dx, dz, leaving = () => false) {
+  // Native path nodes are centred, but following an entity can cut a corner
+  // before that centre. Check the real 0.6-wide body and its braking distance.
+  for (const fraction of [0, 0.5, 1]) {
+    const x = position.x + dx * fraction;
+    const z = position.z + dz * fraction;
+    for (let i = Math.floor(x - .3 + 1e-6); i <= Math.floor(x + .3 - 1e-6); i += 1) {
+      for (let j = Math.floor(z - .3 + 1e-6); j <= Math.floor(z + .3 - 1e-6); j += 1) {
+        const cell = new Vec3(i, floorY, j);
+        if (combatFooting(bot, cell)) continue;
+        if (combatOpen(bot.blockAt(cell)) && combatFooting(bot, cell.offset(0, -1, 0))) continue;
+        // A full step up or a wall physically stops the horizontal body. It
+        // still needs a verified dry supporting face, rather than a fluid.
+        if (lookoutSupport(bot.blockAt(cell)) || leaving(cell)) continue;
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A grounded player may already be on magma or brush the rim of an adjacent
+// blocked column. Withdraw from precisely that contact before letting the
+// combat action decide where to move. Do not inherit an unrestricted goal.
+async function leaveCombatFooting(bot, ctx, origin, from) {
+  if (!bot.entity.onGround || bot.entity.isInLava || bot.entity.isInWater) return false;
+  const read = (p) => bot.blockAt(p);
+  if (!combatOpen(read(from)) || !combatOpen(read(from.offset(0, 1, 0)))) return false;
+  const support = read(from.offset(0, -1, 0));
+  const centre = (p) => p.offset(.5, 0, .5);
+  const touches = (cell) => Math.abs(cell.x + .5 - origin.x) < .8 - 1e-6
+    && Math.abs(cell.z + .5 - origin.z) < .8 - 1e-6;
+  const leaving = (cell) => touches(cell);
+  const sides = SCOUT_SIDES.map(([x, z]) => from.offset(x, 0, z));
+  // The body's centre can hang past a step while its collision box still
+  // stands on the bordering tile. Its actual supporting face tells us which
+  // way to sneak, without treating the column under the centre as navigable.
+  const lip = combatOpen(support) && sides.find((cell) => combatFooting(bot, cell) && touches(cell)
+    && read(cell.offset(0, -1, 0)).shapes.some(([x, y, z, right, top, back]) =>
+      !x && !y && !z && right === 1 && back === 1 && Math.abs(cell.y - 1 + top - origin.y) < .02));
+  if (!combatFooting(bot, from) && support?.name !== 'magma_block' && !lip) return false;
+  const safeEdge = (to) => combatFooting(bot, to)
+    && (from.equals(to) || lookoutMoveSafe(bot, from, to, read));
+  const clearLane = (at, to) => combatBodyLane(bot, at, from.y, centre(to).x - at.x, centre(to).z - at.z, leaving);
+  const retry = lip ? [lip] : combatFooting(bot, from) ? [from] : sides.flatMap((p) => [p, p.offset(0, 1, 0)]);
+  const to = retry.filter((p) => safeEdge(p) && clearLane(origin, p))
+    .sort((a, b) => lavaRisk(bot, a) - lavaRisk(bot, b))[0];
+  if (!to) return false;
+  const target = centre(to);
+  const toward = target.minus(origin);
+  const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(to)
+    && (!lip || bot.entity.position.distanceTo(target) < .19)
+    && combatFooting(bot, to) && combatBodyLane(bot, bot.entity.position, to.y, 0, 0);
+  const controller = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
+  const check = () => {
+    const at = bot.entity.position;
+    const backFromLip = lip && (!bot.entity.onGround || at.minus(origin).dot(toward) < -.02);
+    if (!inNether(bot) || bot.entity.isInLava || bot.entity.isInWater || !safeEdge(to)
+      || at.y < from.y - .05 || at.y > Math.max(from.y, to.y) + 1.3
+      || Math.abs(at.x - origin.x) + Math.abs(at.z - origin.z) > 1.65 || backFromLip || !clearLane(at, to)) {
+      controller.abort('fortress_combat_exit_changed');
+      actions.haltBody(bot);
+    }
+  };
+  const movements = bot.pathfinder.movements;
+  const native = movements.getNeighbors;
+  const oldSneak = bot.companionSneaking;
+  bot.on?.('physicsTick', check);
+  bot.on?.('forcedMove', check);
+  try {
+    if (lip) {
+      actions.haltBody(bot);
+      bot.companionSneaking = true;
+      bot.setControlState('sneak', true);
+      for (let i = 0; i < 30 && !arrived(); i += 1) {
+        if (signal.aborted) throw abortError(signal);
+        await bot.lookAt(target.offset(0, 1.6, 0), true);
+        check();
+        if (signal.aborted) throw abortError(signal);
+        bot.setControlState('forward', true);
+        await sleep(50, signal);
+      }
+      bot.setControlState('forward', false);
+    } else if (from.equals(to)) await actions.recentre(bot, { ...ctx, signal });
+    else {
+      movements.getNeighbors = function (node, ...args) {
+        return from.equals(node) ? native.call(this, node, ...args)
+          .filter((move) => to.equals(move) && safeEdge(to) && !move.toBreak?.length && !move.toPlace?.length) : [];
+      };
+      try {
+        await runCancellable(() => bot.pathfinder.goto(new goals.GoalBlock(to.x, to.y, to.z)),
+          { signal, timeoutMs: 2300, cancel: () => actions.haltBody(bot) });
+      } catch (error) {
+        if (isAbort(error)) throw error;
+      }
+    }
+    if (!await waitUntil(arrived, { timeoutMs: 550, signal })) return false;
+    ctx.record?.('fortress_combat_reposition', {
+      from: origin, to: target, support: (lip ? read(lip.offset(0, -1, 0)) : support)?.name,
+      mode: lip ? 'supported_lip' : from.equals(to) ? 'recentre' : 'leave_hazard',
+    });
+    return true;
+  } catch (error) {
+    if (ctx.signal?.aborted || !controller.signal.aborted || !isAbort(error)) throw error;
+    return false;
+  } finally {
+    bot.removeListener?.('physicsTick', check);
+    bot.removeListener?.('forcedMove', check);
+    movements.getNeighbors = native;
+    if (oldSneak === undefined) delete bot.companionSneaking;
+    else bot.companionSneaking = oldSneak;
+    actions.haltBody(bot);
+  }
+}
+
+/** Keep combat, pursuit and drop recovery on nearby, loaded Nether footing. */
+async function withFortressCombatTerrain(bot, ctx, run) {
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const pathfinder = bot.pathfinder;
+  const movements = pathfinder?.movements;
+  if (!movements && typeof bot.blockAt !== 'function') return run(ctx);
+  const position = bot.entity?.position;
+  if (!position || typeof movements?.getNeighbors !== 'function' || typeof bot.blockAt !== 'function') {
+    return fail('fortress_combat_unsafe_footing');
+  }
+  const origin = position.clone();
+  const floorAt = (p) => Math.ceil(p.y - .001);
+  let floorY = floorAt(origin);
+  const controller = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
+  const atFoot = (p) => new Vec3(Math.floor(p.x), floorAt(p), Math.floor(p.z));
+  const stop = (reason) => {
+    controller.abort(reason);
+    actions.haltBody(bot);
+    ctx.record?.('fortress_combat_terrain_blocked', { reason, origin, position: bot.entity?.position, floorY });
+  };
+  if (!inNether(bot) || !bot.entity.onGround || bot.entity.isInLava || bot.entity.isInWater) {
+    stop('fortress_combat_unsafe_footing');
+    return fail(controller.signal.reason);
+  }
+  const check = () => {
+    if (signal.aborted) return;
+    const entity = bot.entity;
+    const p = entity.position;
+    if (!inNether(bot) || entity.isInLava || entity.isInWater || p.y < floorY - 1.05) {
+      stop('fortress_combat_unsafe_footing');
+      return;
+    }
+    if (p.distanceTo(origin) > FORTRESS_COMBAT_RADIUS) {
+      stop('fortress_combat_move_limit');
+      return;
+    }
+    if (entity.onGround && combatFooting(bot, atFoot(p))) floorY = floorAt(p);
+    const controls = bot.controlState || {};
+    const yaw = entity.yaw || 0;
+    const along = Number(Boolean(controls.forward)) - Number(Boolean(controls.back));
+    const across = Number(Boolean(controls.right)) - Number(Boolean(controls.left));
+    const dx = (entity.velocity?.x || 0) * 1.8 - .24 * (along * Math.sin(yaw) + across * Math.cos(yaw));
+    const dz = (entity.velocity?.z || 0) * 1.8 + .24 * (along * Math.cos(yaw) - across * Math.sin(yaw));
+    if (!combatBodyLane(bot, p, floorY, dx, dz)) stop('fortress_combat_unsafe_footing');
+  };
+  const restoreWalk = applyWalkOnlyMovements(bot);
+  const saved = [[movements, 'allowSprinting', movements.sprintSetting ?? movements.allowSprinting],
+    [movements, 'allowFreeMotion', movements.allowFreeMotion], [pathfinder, 'enablePathShortcut', pathfinder.enablePathShortcut]]
+    .map(([owner, key, value]) => [owner, key, Object.hasOwn(owner, key), value]);
+  for (const [owner, key] of saved) owner[key] = false;
+  bot.setControlState?.('sprint', false);
+  try {
+    const from = atFoot(origin);
+    if (!combatFooting(bot, from) || !combatBodyLane(bot, origin, floorY, 0, 0)) {
+      if (await leaveCombatFooting(bot, ctx, origin, from)) return { ok: true, repositioned: true };
+      stop('fortress_combat_unsafe_footing');
+      return fail(controller.signal.reason);
+    }
+    bot.on?.('physicsTick', check);
+    bot.on?.('forcedMove', check);
+    check();
+    if (!controller.signal.aborted) {
+      const accept = (move) => !move.toBreak?.length && combatFooting(bot, new Vec3(move.x, move.y, move.z))
+        && lavaRisk(bot, new Vec3(move.x, move.y, move.z)) === 0
+        && new Vec3(move.x + .5, move.y, move.z + .5).distanceTo(origin) <= FORTRESS_COMBAT_RADIUS;
+      const result = await withLookoutTerrain(bot, () => run({ ...ctx, signal }), accept);
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      if (!controller.signal.aborted) return result;
+    }
+  } catch (error) {
+    if (!controller.signal.aborted || ctx.signal?.aborted || !isAbort(error)) throw error;
+  } finally {
+    bot.removeListener?.('physicsTick', check);
+    bot.removeListener?.('forcedMove', check);
+    for (const [owner, key, owned, value] of saved) {
+      if (owned) owner[key] = value;
+      else delete owner[key];
+    }
+    restoreWalk();
+  }
+  return fail(controller.signal.reason);
 }
 
 /**
@@ -393,6 +807,8 @@ function lavaNear(bot, range = 2) {
 module.exports = {
   SCAFFOLD,
   netherScaffolding, scaffoldCount, withLavaMarginsLifted,
-  dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
-  applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
+  dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, scoutPortalSite, portalScoutStep,
+  buildPortalStep, ignite, travel, leavePortal,
+  applyNetherMovements, applyWalkOnlyMovements, withLookoutTerrain, withFortressCombatTerrain, descendCombatStep,
+  lookoutCardinalMoves, lavaRisk, lavaNear, NEVER_BREAK,
 };

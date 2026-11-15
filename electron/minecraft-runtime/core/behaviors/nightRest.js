@@ -15,38 +15,54 @@ const { sleep } = require('../confirm');
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
 
+// Within this the bed is used straight away (useBed walks to it).
+const NEAR_BED = 16;
+
 /** `home()` returns { bed, centre } once the house is finished (bed null if it is gone), otherwise null. */
 function createNightRest({ bot, home, actions = defaultActions, skills = defaultSkills, now = Date.now,
   farDistance = 64, retryBedMs = 20000 } = {}) {
   if (!bot || typeof home !== 'function') throw new TypeError('bot and home are required');
-  let bunker = null;
   let bedRefusedUntil = 0;
 
   const where = () => {
     try { return home(); } catch { return null; }
   };
+  const insideHome = ({ centre }, p) => Math.abs(p.x - centre.x - .5) < 2.6
+    && Math.abs(p.z - centre.z - .5) < 2.6 && Math.abs(p.y - centre.y) < .8;
 
   const behavior = {
     name: 'night_rest',
     band: BAND.MAINTENANCE,
     want(state) {
-      if (bunker) return 0.8;
-      if (state.isDay !== false || state.sheltered || dimensionOf(bot) !== 'overworld') return 0;
-      if (!where()) return 0;
-      if (typeof actions.underground === 'function' && actions.underground(bot)) return 0;
+      if (dimensionOf(bot) !== 'overworld') return 0;
+      if (bot.companionNightBunker) return 0.8;
+      if (state.isDay !== false || state.sheltered) return 0;
+      const spot = where();
+      if (!spot) return 0;
+      // The finished house's roof can read as underground. Work in a real
+      // cave should keep running, but a player already indoors can use bed.
+      if (actions.underground?.(bot) && !(spot.bed && insideHome(spot, bot.entity.position))) return 0;
+      if (spot.bed && now() < bedRefusedUntil && insideHome(spot, bot.entity.position)) return 0;
       return 0.8;
     },
     async run(ctx) {
       const state = ctx.perceive();
+      const bunker = bot.companionNightBunker;
       if (bunker) {
-        if (state.isDay === false) {
+        if (state.isDay !== true) {
           await sleep(3000, ctx.signal);
           return { ok: true, waited: true };
         }
-        ctx.record('night_rest', { action: 'dig_out' });
-        const out = await skills.digOut(bot, ctx, bunker);
-        bunker = null;
-        bot.companionSheltered = false;
+        ctx.record('night_rest', { action: 'dig_out', top: bunker.top, seal: bunker.seal });
+        const out = await skills.digOut(bot, ctx, bunker, { confirmExit: true });
+        if (bot.companionNightBunker === bunker) {
+          if (out.ok || out.reason === 'bunker_seal_changed') {
+            delete bot.companionNightBunker;
+            bot.companionSheltered = false;
+          } else if (out.opened) {
+            bot.companionSheltered = false;
+          }
+        }
         return out;
       }
       const spot = where();
@@ -59,12 +75,16 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
         ctx.record('night_rest', { action: 'dig_in', distance: Math.round(distance) });
         const dug = await skills.digIn(bot, ctx, { sealMatch: (n) => SEALS.has(n) });
         if (!dug.ok) return dug;
-        bunker = dug.bunker;
+        bot.companionNightBunker = dug.bunker;
         bot.companionSheltered = true;
+        ctx.record('night_rest', { action: 'bunker_sealed', top: dug.bunker.top, seal: dug.bunker.seal });
         return { ok: true };
       }
       if (spot.bed && now() >= bedRefusedUntil) {
-        if (distance > 3) {
+        // Close by, the bed is walked to by using it: a walk to "near the bed"
+        // could end outside the wall beside it, and the next night_rest found
+        // it still too far and walked again, all night long.
+        if (distance > NEAR_BED) {
           ctx.record('night_rest', { action: 'go_home', distance: Math.round(distance) });
           return actions.goNear(bot, ctx, bed, 2, { timeoutMs: 90000 });
         }
@@ -83,7 +103,11 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
       return { ok: true, waited: true };
     },
   };
-  const onDeath = () => { bunker = null; };
+  const onDeath = () => {
+    if (!bot.companionNightBunker) return;
+    delete bot.companionNightBunker;
+    bot.companionSheltered = false;
+  };
   bot.on?.('death', onDeath);
   behavior.dispose = () => bot.removeListener?.('death', onDeath);
   return behavior;

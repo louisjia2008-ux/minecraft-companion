@@ -16,6 +16,8 @@ const { createHomesteadGoal } = require('./goals/homestead');
 const { createFarmGoal } = require('./goals/farm');
 const { createRanchGoal } = require('./goals/ranch');
 const { installDigTimeFix } = require('./digTime');
+const { installCheapDigging } = require('./mining');
+const { installPlacedMemory } = require('./placed');
 const { createGatherMaterialsGoal } = require('./goals/gatherMaterials');
 const { createCobbleGeneratorGoal } = require('./goals/cobbleGenerator');
 const { createAutoSmelterGoal } = require('./goals/autoSmelter');
@@ -32,23 +34,48 @@ const { createEndDragonGoal } = require('./goals/endDragon');
 const { createEnterEndGoal } = require('./goals/enterEnd');
 const { createEndCityGoal } = require('./goals/endCity');
 const { createEndJourneyGoal } = require('./goals/endJourney');
-const { createDefaultCards } = require('./goals/registry');
+const { createDefaultCards, homeOf } = require('./goals/registry');
+const { createOutfitGoal } = require('./goals/outfit');
+const { createHuntPearlsGoal } = require('./goals/huntPearls');
 const { createDirector } = require('./director');
 const { haltBody } = require('./actions');
 const { installInventoryCompatibility } = require('./inventory');
 const { installEdgeNudge } = require('./edgeNudge');
+const { installEntityGeometry } = require('./entityGeometry');
 const { trackReturnPositions } = require('./pathReturn');
 const { installOpenDoorPassage, uninstallOpenDoorPassage } = require('./openDoorPassage');
 
+// How long a hunt for a night mob keeps night rest away after its last step.
+const NIGHT_HUNT_MS = 5 * 60 * 1000;
+// Goals that bring food themselves: hunger leaves the body to them.
+const FEEDING_GOALS = new Set(['farm', 'stock_food']);
+
+// Out after dark only with a sword in the bag and a chestplate on.
+function fitForNight(bot) {
+  return Boolean(bot.inventory?.items?.().some((i) => i.name.endsWith('_sword')) && bot.inventory?.slots?.[6]);
+}
+
 // Never build scaffolding, pillar up or parkour on the surface: the bot must not leave
 // self-placed obstacles behind, and a target that needs such moves is skipped.
+const SPRINT_FOOD = 18;
 function configureMovements(bot) {
   const movements = new Movements(bot);
   movements.canDig = true;
   movements.allow1by1towers = false;
   movements.scafoldingBlocks = [];
   movements.allowParkour = false;
-  movements.allowSprinting = true;
+  // Sprinting costs a food point every 40 blocks; walking costs nothing. A
+  // bot sprinting everywhere spent a third of its hours hunting for food.
+  // It sprints only on a full stomach (whoever else turns sprinting off, the
+  // nether and the End, still does).
+  let sprint = true;
+  Object.defineProperty(movements, 'allowSprinting', {
+    configurable: true, enumerable: true,
+    get: () => sprint && !(Number.isFinite(bot.food) && bot.food < SPRINT_FOOD),
+    set: (value) => { sprint = Boolean(value); },
+  });
+  // What was set, hunger aside: saved and restored around the nether and the End.
+  Object.defineProperty(movements, 'sprintSetting', { configurable: true, get: () => sprint });
   movements.maxDropDown = 4; // a 4-block drop costs one heart; 3 strands the bot on tree tops
   movements.infiniteLiquidDropdownDistance = false;
   movements.canOpenDoors = true;
@@ -78,17 +105,24 @@ function configureMovements(bot) {
   return movements;
 }
 
-function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false } = {}) {
+function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = false, retirementTimeoutMs = 20000 } = {}) {
   if (!bot) throw new TypeError('bot is required');
+  if (!Number.isFinite(retirementTimeoutMs) || retirementTimeoutMs <= 0 || retirementTimeoutMs > 2147483647) {
+    throw new TypeError('retirementTimeoutMs must be a positive timer duration');
+  }
   const priorHomeProtection = bot.companionProtectBlock;
   installInventoryCompatibility(bot);
   installDigTimeFix(bot);
   const removeEdgeNudge = installEdgeNudge(bot);
   if (!bot.pathfinder) bot.loadPlugin(pathfinder);
+  installCheapDigging(bot);
+  const removePlacedMemory = installPlacedMemory(bot);
+  const removeEntityGeometry = installEntityGeometry(bot);
   const configuredMovements = configureMovements(bot);
 
   // Stuck bodies, full bags and death loops are recovered for every goal alike.
-  const recovery = createRecovery({ bot });
+  const recovery = createRecovery({ bot, activeGoal: () => brain?.status().goal?.name,
+    ownsRouteRecovery: () => !paused && goalOwner?.goal?.ownsRouteRecovery?.() === true });
   // Animals the current goal keeps (a ranch's herd) are not hunted for food.
   let spare = () => false;
   let director = null;
@@ -103,14 +137,43 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   let retiring = 0;
   let retirementFailed = false;
   let goalOwner = null;
+  // The connection owns this evidence even while a cached goal is retired.
+  // Goal-local death listeners cannot witness deaths during other tasks.
+  const priorBodyLife = Object.getOwnPropertyDescriptor(bot, 'companionBodyLife');
+  const bodyLifeOwner = Object.freeze({});
+  let bodyLifeEpoch = 0;
+  const readBodyLife = () => !disposed && bot.companionBodyLife === readBodyLife
+    ? { owner: bodyLifeOwner, epoch: bodyLifeEpoch } : null;
+  Object.defineProperty(bot, 'companionBodyLife', { value: readBodyLife, writable: true, configurable: true });
   const assertActive = () => {
     if (disposed) throw Object.assign(new Error('Companion is disposed'), { code: 'disposed' });
   };
+  const assertBodyAvailable = () => {
+    assertActive();
+    if (brain?.status().blocked) throw Object.assign(new Error('An aborted behavior still owns the body; wait for it to settle'),
+      { code: 'retirement_timeout', retryable: false });
+  };
+  async function joinRetirement() {
+    let timer;
+    try {
+      await Promise.race([retirement, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error('Goal retirement has not settled'),
+          { code: 'retirement_timeout', retryable: false })), retirementTimeoutMs);
+      })]);
+    } finally { clearTimeout(timer); }
+  }
   // Nights after the house is done: home to bed, whatever goal runs. The
   // homestead goal keeps handling its own nights while it builds.
   const nightRest = createNightRest({ bot, home: () => {
     const house = director?.memory.homestead?.memory?.house;
-    if (!house || brain?.status().goal?.name === 'homestead') return null;
+    // Building the house handles its own nights; pearls are hunted in the dark.
+    if (!house || goalOwner?.goal?.recoverAtHome === true
+      || ['homestead', 'hunt_pearls'].includes(brain?.status().goal?.name)) return null;
+    // Nor while a goal hunts a mob that only comes out at night (spiders for a bow's string):
+    // sleeping skips the very night it waits for. Only armed and armoured, though: respawned
+    // empty-handed it went straight back out and died again and again.
+    const hunt = bot.companionNightHunt;
+    if (brain?.status().goal && hunt && Date.now() - hunt.at < NIGHT_HUNT_MS && fitForNight(bot)) return null;
     const bed = house.furniture.bed.position;
     const block = bot.blockAt(new Vec3(bed.x, bed.y, bed.z));
     // Out of sight means far away (it digs in there); seen and gone means sleep without it.
@@ -118,7 +181,14 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   } });
   const homeMaintenance = createHomeMaintenance({ bot, home: () => director?.memory.homestead,
     activeGoal: () => brain?.status().goal?.name });
-  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity) }), ...recovery.behaviors,
+  const behaviors = [...createSurvivalBehaviors({ bot, spare: (entity) => spare(entity),
+    feeding: () => FEEDING_GOALS.has(brain?.status().goal?.name),
+    resupplying: () => goalOwner?.goal?.recoverAtHome === true,
+    farmSnack: () => !paused && goalOwner?.goal?.farmSnack === true && brain?.status().goal?.name === 'farm',
+    expeditionStocking: (state) => !paused && goalOwner?.goal?.expeditionStocking?.(state) === true,
+    homesteadCaveAscent: () => !paused && goalOwner?.goal?.ownsCaveAscent?.() === true,
+    activeGoal: () => brain?.status().goal?.name,
+    home: () => (director ? homeOf(director.memory)?.centre || null : null) }), ...recovery.behaviors,
     nightRest, homeMaintenance, ...createEndHazards({ bot, onEvent: (event) => onEvent(event) })];
   const usedGoals = new Set();
   function retireGoal(owner) {
@@ -156,9 +226,11 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     try { brain.setGoal(goal, metadata); } catch (error) { retireGoal(owner); throw error; }
   };
   brain = createBrain({
+    abandonMs: retirementTimeoutMs,
     perceive: () => perceive(bot),
     behaviors,
     onEvent: (event) => {
+      if (event.type === 'behavior_abandoned') haltBody(bot);
       if (event.type === 'goal_set' && goalOwner) goalOwner.generation = event.generation;
       // Release invocation-owned listeners/movement hooks, not a historical
       // list of all goals ever submitted to this long-lived companion.
@@ -177,10 +249,12 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   // Its goals go through useGoal too, so an autonomous ranch also spares its herd.
   const directorBrain = { status: () => brain.status(), setGoal: useGoal, clearGoal: (reason) => brain.clearGoal(reason) };
   director = createDirector({ brain: directorBrain, perceive: () => perceive(bot), cards, stageOf, onEvent });
+  // Where home is, for a bot lost at sea (actions.swimAshore).
+  bot.companionHomeAt = () => homeOf(director.memory)?.centre || null;
   if (autonomy) director.enable();
   const timer = setInterval(() => {
     if (disposed) return;
-    try { if (!paused && !dispatching && !retiring && !retirementFailed) director.tick(); } catch (error) { onEvent({ type: 'autonomy_error', at: Date.now(), reason: String(error?.message || error) }); }
+    try { if (!paused && !dispatching && !retiring && !retirementFailed && !brain.status().blocked) director.tick(); } catch (error) { onEvent({ type: 'autonomy_error', at: Date.now(), reason: String(error?.message || error) }); }
     brain.tick().catch(() => {});
   }, tickMs);
   timer.unref?.();
@@ -193,6 +267,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   // drank again, and burned to death at the next blaze.
   const onDeath = () => {
     if (disposed) return;
+    bodyLifeEpoch += 1;
     if (bot.entity?.effects) bot.entity.effects = {};
     haltBody(bot);
     brain.interrupt('death').catch(() => {});
@@ -202,15 +277,15 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
   bot.on('respawn', onRespawn);
 
   function startPlayerGoal(create, metadata, returnGoal = true) {
-    assertActive();
+    assertBodyAvailable();
     const epoch = ++taskEpoch;
     dispatching += 1;
     const operation = dispatch.then(async () => {
       assertActive();
       if (epoch !== taskEpoch) throw Object.assign(new Error('Task dispatch was cancelled'), { code: 'aborted' });
       if (goalOwner) await brain.clearGoal('replaced');
-      await retirement;
-      assertActive();
+      await joinRetirement();
+      assertBodyAvailable();
       if (epoch !== taskEpoch) throw Object.assign(new Error('Task dispatch was cancelled'), { code: 'aborted' });
       // Factories themselves can install listeners or movement overrides, so
       // construct only after the previous invocation restored its resources.
@@ -218,6 +293,16 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       director.notePlayerGoal();
       paused = false;
       useGoal(goal, metadata);
+      const running = brain.status().running;
+      const takingOver = goal.recoverAtHome === true && ['provision', 'recover_drops'].includes(running)
+        || running === 'provision' && (goal.farmSnack === true || goal.expeditionStocking?.(perceive(bot)) === true);
+      if (epoch === taskEpoch && takingOver) {
+        // Release an old hunt before the new goal takes responsibility for food.
+        const reason = goal.farmSnack === true ? 'farm_snack' : goal.recoverAtHome === true ? 'home_resupply' : 'expedition_food';
+        await brain.interrupt(reason);
+        assertActive();
+        if (epoch !== taskEpoch) throw Object.assign(new Error('Task dispatch was cancelled'), { code: 'aborted' });
+      }
       await brain.tick();
       return returnGoal ? goal : undefined;
     }).finally(() => { dispatching -= 1; });
@@ -234,6 +319,8 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
         const goal = Object.keys(options).length === 0 && director.memory.homestead
           ? director.memory.homestead : createHomesteadGoal({ bot, ...options });
         director.memory.homestead = goal;
+        // Asked again: the search for a site starts over.
+        if (goal.memory) goal.memory.exploreStreak = 0;
         return goal;
       }, metadata ?? { taskId: options?.taskId });
     },
@@ -256,32 +343,54 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     carpetDuper: goalMethod(createCarpetDuperGoal),
     railDuper: goalMethod(createRailDuperGoal),
     fishing: goalMethod(createFishingGoal),
+    /** Endermen at night until the bag holds `count` pearls (or the night ends). */
+    huntPearls: goalMethod(createHuntPearlsGoal),
+    /** Carry `items` ([{ key, count }]), gathered into the house chest first, and wear the armour among them. */
+    outfit(options = {}, metadata) {
+      const home = homeOf(director.memory);
+      if (!home) return Promise.reject(Object.assign(new Error('No finished house yet'), { code: 'no_home' }));
+      return startPlayerGoal(() => createOutfitGoal({ bot, ...options, home }), metadata ?? { taskId: options?.taskId });
+    },
   };
 
   function dispose() {
     if (disposal) return disposal;
-    disposed = true;
-    taskEpoch += 1;
-    paused = false;
-    clearInterval(timer);
-    bot.removeListener('death', onDeath);
-    bot.removeListener('respawn', onRespawn);
-    removeEdgeNudge();
+    if (!disposed) {
+      disposed = true;
+      taskEpoch += 1;
+      paused = false;
+      clearInterval(timer);
+      bot.removeListener('death', onDeath);
+      bot.removeListener('respawn', onRespawn);
+      removeEdgeNudge();
+      removePlacedMemory();
+      removeEntityGeometry();
+    }
     // Both calls start synchronously: director cannot choose more work, and
     // brain cannot restart a reflex while an abort or goal cleanup is pending.
     const stoppingDirector = director.disable('disposed');
     const stoppingBrain = brain.dispose();
-    disposal = (async () => {
+    stoppingDirector.catch(() => {});
+    const operation = (async () => {
+      // Never dispose invocation-owned resources while its continuation can
+      // still use them. A timeout rejects shutdown; a later call may retry.
       const errors = [];
+      for (const join of [() => stoppingBrain, () => stoppingDirector, joinRetirement]) {
+        try { await join(); } catch (error) {
+          if (error?.code === 'retirement_timeout') { haltBody(bot); throw error; }
+          errors.push(error);
+        }
+      }
       const attempt = async (cleanup) => { try { await cleanup(); } catch (error) { errors.push(error); } };
       for (const behavior of behaviors) await attempt(() => behavior.dispose?.());
       await attempt(() => recovery.dispose());
-      await attempt(() => stoppingDirector);
-      await attempt(() => stoppingBrain);
-      await attempt(() => retirement);
       for (const goal of usedGoals) await attempt(() => goal.dispose?.());
       usedGoals.clear();
       goalOwner = null;
+      if (bot.companionBodyLife === readBodyLife) {
+        if (priorBodyLife) Object.defineProperty(bot, 'companionBodyLife', priorBodyLife);
+        else delete bot.companionBodyLife;
+      }
       if (bot.companionProtectBlock === director.memory.homestead?.memory.protectBlock) {
         if (priorHomeProtection === undefined) delete bot.companionProtectBlock;
         else bot.companionProtectBlock = priorHomeProtection;
@@ -290,7 +399,9 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       uninstallOpenDoorPassage(bot, configuredMovements);
       if (errors.length) throw new AggregateError(errors, 'Companion cleanup failed');
     })();
-    return disposal;
+    disposal = operation;
+    operation.catch((error) => { if (error?.code === 'retirement_timeout' && disposal === operation) disposal = null; });
+    return operation;
   }
 
   return {
@@ -310,6 +421,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
     /** Lets the bot choose its own goals while no player task is set. */
     setAutonomy(on) {
       assertActive();
+      if (on) assertBodyAvailable();
       if (on && retirementFailed) throw Object.assign(new Error('Goal cleanup failed; dispose this companion'),
         { code: 'cleanup_failed', retryable: false });
       if (on) director.enable();
@@ -322,7 +434,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       taskEpoch += 1;
       paused = false;
       await Promise.all([director.disable(reason), brain.clearGoal(reason)]);
-      await retirement;
+      await joinRetirement();
     },
     /** Suspend task selection and goal work, without suspending safety. */
     async pauseTask(reason = 'task_paused') {
@@ -341,7 +453,7 @@ function createCompanion({ bot, onEvent = () => {}, tickMs = 250, autonomy = fal
       taskEpoch += 1;
       paused = false;
       await Promise.all([director.disable(reason), brain.stop(reason)]);
-      await retirement;
+      await joinRetirement();
       haltBody(bot);
     },
     status: () => ({ ...brain.status(), paused, disposed, cleanupFailed: retirementFailed, recovery: recovery.status(), autonomy: director.status() }),

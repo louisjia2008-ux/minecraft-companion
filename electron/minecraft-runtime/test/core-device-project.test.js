@@ -51,6 +51,17 @@ test('a device project gathers what the bag lacks into the chest, takes it out, 
   assert.ok(goal.progress({}) >= 13);
 });
 
+test('ordinary device projects keep chest delivery semantics and reserve the entire already-counted share', async () => {
+  let options;
+  const goal = createDeviceProjectGoal({ bot: { entity: { position: new Vec3(17, 64, 3) } },
+    name: 'ordinary_project', device: fakeDevice(), home,
+    createGather: (asked) => { options = asked; return { isDone: () => false, progress: () => 0, run: async () => ({ ok: true }) }; } });
+  await goal.run(ctx({ hopper: 1 }));
+  assert.equal(options.countWorn, false);
+  assert.deepEqual(options.requirements, [{ key: 'hopper', count: 1 }]);
+  assert.deepEqual(options.reserved, { hopper: 1 });
+});
+
 test('the mine dug by one gather is handed to the next', async () => {
   const device = fakeDevice();
   const made = [];
@@ -137,6 +148,101 @@ test('night rest sleeps at home after dark and leaves underground work alone', a
   await rest.run(context);
   await rest.run(context);
   assert.deepEqual(calls, ['go', 'sleep']);
+});
+
+test('night rest a few blocks from the bed uses it straight away instead of walking near it again', async () => {
+  const bot = { entity: { position: new Vec3(9, 64, 1) }, game: { dimension: 'overworld' }, on() {}, removeListener() {} };
+  const calls = [];
+  const actions = { underground: () => false, goNear: async () => { calls.push('go'); return { ok: true }; } };
+  const skills = { useBed: async () => { calls.push('sleep'); return { ok: true, slept: true }; } };
+  const rest = createNightRest({ bot, home: () => ({ bed: { x: 5, y: 64, z: 1 }, centre: { x: 3, y: 64, z: 3 } }), actions, skills });
+  const night = { isDay: false, sheltered: false };
+  await rest.run({ signal: new AbortController().signal, record() {}, perceive: () => night });
+  assert.deepEqual(calls, ['sleep']);
+});
+
+test('night rest uses a bed under the home roof and yields while a failed sleep backs off', async () => {
+  const position = new Vec3(3.5, 64, 3.5);
+  const bot = { entity: { position }, game: { dimension: 'overworld' } };
+  const home = () => ({ bed: { x: 5, y: 64, z: 3 }, centre: { x: 3, y: 64, z: 3 } });
+  const state = { isDay: false, sheltered: false };
+  const rest = createNightRest({ bot, home, actions: { underground: () => true },
+    skills: { useBed: async () => ({ ok: false, reason: 'bed_near_hostiles' }) } });
+  bot.entity.position = position.offset(0, -2, 0);
+  assert.equal(rest.want(state), 0);
+  bot.entity.position = position;
+  assert.ok(rest.want(state) > 0);
+  const run = AbortSignal.timeout(25);
+  await assert.rejects(rest.run({ signal: run, record() {}, perceive: () => state }), { code: 'aborted' });
+  assert.equal(rest.want(state), 0);
+});
+
+test('the night shelter remains owned across task restart and a failed dawn exit', async () => {
+  const bot = { entity: { position: new Vec3(108.5, 70, 0.5), onGround: true }, game: { dimension: 'overworld' }, on() {}, removeListener() {} };
+  const home = () => ({ centre: { x: 3, y: 64, z: 3 } });
+  const bunker = { top: { x: 108, y: 70, z: 0 }, seal: 'cobblestone' };
+  const calls = [], events = [];
+  const skills = {
+    async digIn() { calls.push('seal'); return { ok: true, bunker }; },
+    async digOut(_bot, _ctx, descriptor) {
+      assert.equal(descriptor, bunker);
+      calls.push('exit');
+      return calls.length === 2 ? { ok: false, opened: true, reason: 'bunker_exit_unconfirmed' } : { ok: true };
+    },
+  };
+  const actions = { underground: () => false };
+  const night = { isDay: false }, day = { isDay: true };
+  const ctx = (state) => ({ perceive: () => state, record: (_type, event) => events.push(event) });
+  const rest = createNightRest({ bot, home, actions, skills });
+  await rest.run(ctx(night));
+  rest.dispose();
+  assert.equal(bot.companionNightBunker, bunker);
+  assert.equal(bot.companionSheltered, true);
+  assert.deepEqual(events[1], { action: 'bunker_sealed', top: bunker.top, seal: bunker.seal });
+
+  const resumed = createNightRest({ bot, home, actions, skills });
+  assert.ok(resumed.want(day) > 0);
+  assert.equal((await resumed.run(ctx(day))).reason, 'bunker_exit_unconfirmed');
+  assert.equal(bot.companionNightBunker, bunker);
+  assert.equal(bot.companionSheltered, false);
+  assert.ok(resumed.want(day) > 0);
+  assert.equal((await resumed.run(ctx(day))).ok, true);
+  assert.equal(bot.companionNightBunker, undefined);
+  assert.equal(resumed.want(day), 0);
+  assert.deepEqual(calls, ['seal', 'exit', 'exit']);
+  resumed.dispose();
+});
+
+test('an opened night bunker can exit to a grounded dry bank below the original mouth', async (t) => {
+  const actions = require('../core/actions');
+  const { digOut } = require('../core/skills');
+  const top = new Vec3(92, 71, -71);
+  const bank = new Vec3(91, 69, -71);
+  const at = new Vec3(91.658, 69, -69.78);
+  const support = bank.offset(0, -1, 0);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const soil = { name: 'dirt', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const steps = [];
+  const bot = { entity: { position: at, onGround: true }, blockAt: (p) => p.equals(support) ? soil : air,
+    pathfinder: { movements: { getNeighbors: () => [bank, bank.offset(0, 0, 1)] } } };
+  const context = { record: (type, details) => steps.push({ type, ...details }) };
+  const path = t.mock.method(actions, 'goTo', async (_bot, _ctx, goal, options) => {
+    assert.ok(goal.isEnd(bank));
+    assert.ok(!options.arrived());
+    assert.deepEqual(bot.pathfinder.movements.getNeighbors(at.floored()), [bank]);
+    bot.entity.position = bank.offset(.5, 0, .5);
+    return { ok: true };
+  });
+  const fallback = t.mock.method(actions, 'surface', async () => null);
+  const bunker = { top, seal: 'cobblestone' };
+  assert.deepEqual(await digOut(bot, context, bunker, { confirmExit: true }), { ok: true });
+  assert.equal(path.mock.calls.length, 1);
+  assert.equal(fallback.mock.calls.length, 0);
+  assert.deepEqual(steps, [{ type: 'night_bunker_exit_lower_bank', top, from: at.floored(), to: bank }]);
+  bot.entity.position = top.offset(.5, -3, .5);
+  const pending = await digOut(bot, context, bunker, { confirmExit: true });
+  assert.equal(pending.reason, 'bunker_exit_unconfirmed');
+  assert.equal(path.mock.calls.length, 1, 'being physically inside the shaft cannot confirm a lower exterior bank');
 });
 
 test('night rest shelters in the house when the bed is gone', async () => {

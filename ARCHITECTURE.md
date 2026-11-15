@@ -58,7 +58,7 @@ goNear 的 native timeout/fallback 共享一个原始绝对期限；父取消不
 - `tools/scenario-result.cjs` 将服务端合同、超时、最终 brain 状态和 harness 错误合并为强失败关闭结果。`run-scenarios` 取消并等待 hook、完成清理后才写最后 result；任意一轮失败使 CLI 非零退出。
 - `tools/run-regression.cjs` 聚合 full/quick 的子进程与 summary；`run-e2e.cjs` 管理独立种子的 E2E session。二者不能用组件通过抵消某轮失败。
 
-在 E2E 中，早期家园完成后仍须保持最终房屋、铁装与家具合同；两台机器必须实际完成并产出，四类故障必须恢复，最后仍存活。测试冻结 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，867 文件 sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`。原样完整 runtime full7 自然通过 3326/3326；正式 full03 于 2026-10-24 02:15:09.845—03:27:27.151 UTC 自然完成，24 场景、32/32 轮全部通过，原始结果、退出码与源码/driver 一致。 最终E2E home95/95、gear各1、generator收集8、smelter熔炼5/收集4；已知补煤退化后自主恢复和历史失败见 [VALIDATION.md](VALIDATION.md)。新core仍未接入桌面宿主。
+在 E2E 中，早期家园完成后仍须保持最终房屋、铁装与家具合同；两台机器必须实际完成并产出，四类故障必须恢复，最后仍存活。测试冻结 `a22a73a4a7294ab5409b6e74ee882b2603ab528b`，867 文件 sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`。原样完整 runtime full7 自然通过 3326/3326；正式 full03 于 2026-10-24 02:15:09.845—03:27:27.151 UTC 自然完成，24 场景、32/32 轮全部通过，原始结果、退出码与源码/driver 一致。 最终E2E home95/95、gear各1、generator收集8、smelter熔炼5/收集4；已知补煤退化后自主恢复和历史失败见 [VALIDATION.md](VALIDATION.md)。该历史冻结的游戏验证不包括桌面宿主。
 
 直接场景 CLI 的中断会先 quiesce/join，再关闭结果流并 console stop，summary 保留独立 batch cleanup 收据；批次清理错误使进程非零退出，已经关闭的 round JSONL 保留原样。父 driver 必须另行转发信号。两个真实 door/CLI 控制 probe 与完整玩法验收分别记账。
 
@@ -71,7 +71,7 @@ goNear 的 native timeout/fallback 共享一个原始绝对期限；父取消不
 - `electron/minecraft-runtime/runtime.js`：旧代理、世界连接、观察和调度循环组装；默认导入 vendor 的 `createMinecraftTaskAgent`。
 - `vendor/server/minecraftTaskAgent.js`、`vendor/server/minecraft/`、`vendor/server/action/`：旧任务规划、动作/owner/lease、寻路、家具、生存、战斗、清障及学习合同。
 
-把新 core 接入宿主还需连接身份与事件转换、玩家任务/API 映射、取消/暂停/恢复/重连、持久化边界和实际 UI 到独立服务端终态验收。现有 UI 或 macOS shell 冒烟不证明这条新链已存在。
+桌面选择 **Core · 采集原木** 后，`MinecraftService` 通过 `index.js --engine core` 启动独立子进程，按任务 ID 转换生命周期事件，并从 `getStatus` 读取观察与库存。这个入口只暴露结构化采木和现有控制按钮。CLI 仍提供完整的结构化工具目录。
 
 ## 证据与发布
 

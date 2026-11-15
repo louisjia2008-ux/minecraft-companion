@@ -19,9 +19,11 @@ const defaultActions = require('../actions');
 const nether = require('../nether');
 const end = require('../end');
 const structures = require('../netherStructures');
+const { createNetherSpawnerStaging } = require('../netherSpawnerStaging');
 const { createPortalTrip } = require('../netherTrip');
 const { createBlacklist, posKey } = require('../blacklist');
 const { waitUntil, runCancellable, sleep } = require('../confirm');
+const { expeditionFoodCount } = require('./stockFood');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -31,8 +33,12 @@ const ARMOR_RANK = ['leather', 'golden', 'chainmail', 'iron', 'diamond', 'nether
 const SCAN_EVERY_MS = 10000;
 // Below this the fortress is left to its mobs until health is back.
 const HUNT_HEALTH = 15;
+const FORTRESS_RETURN_FOOD = 2;
+const FORTRESS_HUNT_RANGE = 12;
 // How far above or below the bot a wither skeleton is still hunted.
 const HUNT_DY_WITHER = 12;
+const BLAZE_SPAWN_RANGE = 15;
+const SPAWNER_LEG_RANGE = 12;
 
 function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trades = 10, roam = 400, skullTries = 0,
   skills = defaultSkills, actions = defaultActions } = {}) {
@@ -46,27 +52,48 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   };
   // A skull is luck (5.5% a kill with Looting III). With skullTries set, that
   // many wither skeletons killed without one ends the hunt for it.
-  bot.on?.('entityDead', (e) => {
+  const onEntityDead = (e) => {
     if (e?.name === 'wither_skeleton' && e.position && bot.entity?.position && e.position.distanceTo(bot.entity.position) <= 6) {
       memory.witherKills += 1;
     }
-  });
+  };
+  bot.on?.('entityDead', onEntityDead);
   // Where the bot has stood in the nether, every six blocks: the way home.
   // A straight walk to the portal bridged the lava sea it had walked round
   // on the way out, and ran out of blocks half way across.
   memory.crumbs = [];
   const dropCrumb = () => {
     const e = bot.entity;
-    if (!e?.position || !e.onGround || e.isInLava || !nether.inNether(bot)) return;
+    if (memory.returning || !e?.position || !e.onGround || e.isInLava || !nether.inNether(bot)) return;
     const last = memory.crumbs[memory.crumbs.length - 1];
     if (last && last.distanceTo(e.position) < 6) return;
     memory.crumbs.push(e.position.floored());
     if (memory.crumbs.length > 4000) memory.crumbs.shift();
   };
   bot.on?.('move', dropCrumb);
+  // Asked again, the task starts where the last ask left off: the lookouts
+  // already walked, the structures already seen and the trail home. Each
+  // new goal started the rings over and walked the first 300 blocks again.
+  const KEPT = ['explore', 'fortress', 'bastion', 'spawner', 'visited', 'crumbs', 'netherPortal', 'overworldPortal'];
+  const saved = bot.companionNetherSearch;
+  if (saved) for (const key of KEPT) if (saved[key] != null) memory[key] = saved[key];
+  const keepSearch = () => { bot.companionNetherSearch = Object.fromEntries(KEPT.map((key) => [key, memory[key]])); };
+  // A lookout the bot died on the way to (the lava sea at y 31, a ghast's
+  // knock-back into it) is not tried again, by this ask or the next: the walk
+  // there is the same, and a bot died five times running heading for one.
+  const deadly = (bot.companionDeadlyLookouts = bot.companionDeadlyLookouts || new Set());
+  const markDeadly = () => {
+    if (memory.heading) deadly.add(memory.heading);
+    memory.heading = null;
+  };
+  bot.on?.('death', markDeadly);
   const trip = createPortalTrip({ bot, memory, actions });
+  const spawnerStaging = createNetherSpawnerStaging({ bot, actions });
 
   const rods = (state) => state.inventory.blaze_rod || 0;
+  let spawnerHuntStalls = 0;
+  let stagingRetryAt = 0;
+  let stagingSpawner = null;
   const skulls = (state) => state.inventory.wither_skeleton_skull || 0;
   const gold = (state) => state.inventory.gold_ingot || 0;
   const skullsWanted = (state) => skulls(state) < witherSkulls && !(skullTries > 0 && memory.witherKills >= skullTries);
@@ -182,27 +209,35 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const away = Math.atan2(home.z - memory.bastion.z, home.x - memory.bastion.x);
       m.index = Math.round(((away % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 4)) % 8;
     }
-    const target = centre ? around(m.index, centre) : lookout(m.index, home);
+    const pick = () => (centre ? around(m.index, centre) : lookout(m.index, home));
+    let target = pick();
+    for (let skipped = 0; skipped < 32 && deadly.has(`${target.x},${target.z}`); skipped += 1) {
+      m.index += 1;
+      target = pick();
+    }
+    memory.heading = `${target.x},${target.z}`;
     ctx.record('explore', { lookout: m.index, x: target.x, z: target.z, ...(centre ? { around: posKey(centre) } : {}),
       want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
-    const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8), { timeoutMs: 60000, arrived: () => true });
-    // A walk that went nowhere last time (an island in the lava sea, a ledge
-    // under a fortress): bridge and tower this time.
-    const bridge = centre || m.stuck > 0 || boxedIn();
+    // A blocked lookout on ordinary terrain should try a different direction.
+    // Circling a known structure is still an approach on existing terrain.
+    const bridge = !centre && boxedIn();
+    const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8),
+      { timeoutMs: 60000, arrived: () => true, retryNoProgress: bridge });
     if (bridge) await stockScaffolding(ctx, 16);
     const start = bot.entity.position.clone();
-    const result = await (bridge ? withScaffolding(walk) : walk());
+    const result = await (bridge ? withScaffolding(walk) : nether.withLookoutTerrain(bot, walk));
     const moved = bot.entity.position.distanceTo(start);
     const left = Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
     scan(ctx, true);
-    // Reached it, or stuck short of it twice: on to the next lookout.
-    m.misses = moved < 10 ? m.misses + 1 : 0;
-    m.stuck = moved < 10 ? (m.stuck || 0) + 1 : 0;
-    if (left <= 16 || m.misses >= 2) {
+    // A failed guarded leg does not prove the bot is on an island.
+    const nearer = Math.hypot(start.x - target.x, start.z - target.z) - left;
+    const progressed = moved >= 10 && (bridge || result.ok || nearer >= 10);
+    m.misses = progressed ? 0 : m.misses + 1;
+    if (left <= 16 || m.misses >= (bridge ? 2 : 1)) {
       m.index += 1;
       m.misses = 0;
     }
-    return moved >= 10 ? { ok: true, moved: Math.round(moved) } : fail(result.ok ? 'explore_blocked' : result.reason);
+    return progressed ? { ok: true, moved: Math.round(moved) } : fail(result.ok ? 'explore_blocked' : result.reason);
   }
 
   /** Walks to a reachable cell of the structure's floor near `around`; far ones in legs. */
@@ -336,10 +371,20 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const crumb = crumbs[index];
     ctx.record('retrace', { to: posKey(crumb), index, of: crumbs.length });
     const start = here.clone();
-    const result = await withScaffolding(() => actions.goNear(bot, ctx, crumb, 2, { timeoutMs: 45000 }), { cobble: true });
-    if (bot.entity.position.distanceTo(start) >= 3) {
+    let result;
+    try {
+      result = await structureWalk(() => actions.goNear(bot, ctx, crumb, 2, { timeoutMs: 14000, retryNoProgress: false }));
+    } catch (error) {
+      // After cover or a shield interrupts a local retreat, give the next
+      // witnessed approach a turn instead of reselecting the same ledge.
+      if (isAbort(error) && start.distanceTo(bot.entity.position) < 2) {
+        blacklist.add(`crumb:${posKey(crumb)}`, 'retrace_interrupted', 12000);
+      }
+      throw error;
+    }
+    if (bot.entity.onGround && bot.entity.position.distanceTo(crumb) < start.distanceTo(crumb) - 2) {
       memory.retraceMisses = 0;
-      memory.crumbAt = index;
+      if (bot.entity.position.distanceTo(crumb) <= 3.5) memory.crumbAt = index;
       return result.ok ? result : { ok: true, moved: true };
     }
     blacklist.add(`crumb:${posKey(crumb)}`, result.reason || 'not_moved');
@@ -351,21 +396,257 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return result;
   }
 
+  async function leaveFortressByTrail(ctx, spawner) {
+    const start = bot.entity.position.floored();
+    if (!bot.entity.onGround || !memory.netherPortal || memory.leftSpawner) return null;
+    const cache = new Map();
+    const read = (p) => {
+      const key = posKey(p);
+      if (!cache.has(key)) cache.set(key, bot.blockAt(p));
+      return cache.get(key);
+    };
+    const end = memory.crumbs.findIndex((p) => p.distanceTo(spawner) < BLAZE_SPAWN_RANGE);
+    if (end <= 0) return null;
+    const targets = memory.crumbs.slice(0, end).filter((p) => p.distanceTo(spawner) >= SPAWNER_CLEAR && p.distanceTo(start) <= 50);
+    if (!targets.length) return null;
+    const nodes = [{ point: start, previous: null, depth: 0 }];
+    const seen = new Set([posKey(start)]);
+    let best = null;
+    for (let i = 0; i < nodes.length && i < 2200; i += 1) {
+      const node = nodes[i];
+      const { point, depth } = node;
+      if (point.distanceTo(spawner) >= SPAWNER_CLEAR && targets.some((p) => p.distanceTo(point) <= 2)) {
+        best = node;
+        break;
+      }
+      if (depth >= 58) continue;
+      for (const move of nether.lookoutCardinalMoves(bot, point, read)) {
+        const next = new Vec3(move.x, move.y, move.z);
+        const key = posKey(next);
+        if (seen.has(key) || !safeSpawnerMove(move, read) || blacklist.has(`fortress_exit:${posKey(point)}>${key}`)) continue;
+        seen.add(key);
+        nodes.push({ point: next, previous: node, depth: depth + 1 });
+      }
+    }
+    if (!best?.previous) return null;
+    const route = [];
+    for (let node = best; node.previous; node = node.previous) route.unshift(node.point);
+    ctx.record('fortress_exit_route', { from: start, to: best.point, legs: route.length });
+    const result = await walkFortressRoute(ctx, route.slice(0, 8), 'fortress_exit');
+    if (result.moved && route.length <= 8) {
+      const joined = targets.find((p) => p.distanceTo(best.point) <= 2);
+      memory.crumbAt = memory.crumbs.indexOf(joined);
+      memory.leftSpawner = true;
+    }
+    return result;
+  }
+
+  async function retraceDryTrail(ctx, portal) {
+    const finder = bot.pathfinder;
+    const here = bot.entity.position.floored();
+    if (!bot.entity.onGround || typeof finder?.getPathFromTo !== 'function' || !finder.movements) return null;
+    const distance = (p) => p.distanceTo(portal);
+    const usable = (p, index) => (memory.crumbAt == null || index < memory.crumbAt)
+      && p.distanceTo(here) <= 66 && distance(here) - distance(p) >= 5
+      && !blacklist.has(`dry_crumb:${posKey(p)}`);
+    const cache = new Map();
+    const read = (p) => {
+      const key = posKey(p);
+      if (!cache.has(key)) cache.set(key, bot.blockAt(p));
+      return cache.get(key);
+    };
+    const candidates = memory.crumbs.map((point, index) => ({ point, index }))
+      .filter(({ point, index }) => usable(point, index) && nether.lavaRisk({ blockAt: read }, point) === 0)
+      .sort((a, b) => distance(a.point) - distance(b.point)).slice(0, 12);
+    if (distance(here) <= 66 && distance(here) > 4) candidates.unshift({ point: portal, index: -1 });
+    if (!candidates.length && !memory.dryReturn?.from.equals(here)) return null;
+    if (!memory.dryReturn?.route.length || !memory.dryReturn.from.equals(here)) {
+      const profile = Object.create(finder.movements);
+      profile.getNeighbors = (point) => nether.lookoutCardinalMoves(bot, point, read).filter((move) =>
+        move.distanceTo(here) <= 86 && safeSpawnerMove(move, read)
+        && !blacklist.has(`dry_return:${posKey(point)}>${posKey(move)}`));
+      const pick = (point) => candidates.find((entry) => entry.point.distanceTo(point) <= 2);
+      const goal = { isEnd: (point) => Boolean(pick(point)),
+        heuristic: (point) => Math.max(0, Math.min(...candidates.map(({ point: p }) => p.distanceTo(point))) - 2) };
+      for (const { result } of finder.getPathFromTo(profile, here, goal, { timeout: 1200, tickTimeout: 22, optimizePath: false })) {
+        if (result.status === 'success' && result.path.length) {
+          const target = pick(result.path.at(-1));
+          if (!target) break;
+          memory.dryReturn = { from: here, target, route: result.path.map(({ x, y, z }) => new Vec3(x, y, z)) };
+          ctx.record('retrace_dry_route', { from: here, to: target.point, index: target.index, legs: result.path.length });
+          break;
+        }
+        if (result.status !== 'partial') break;
+        await sleep(0, ctx.signal);
+      }
+    }
+    const plan = memory.dryReturn;
+    if (!plan?.from.equals(here)) return null;
+    const segment = plan.route.slice(0, 8);
+    const result = await walkFortressRoute(ctx, segment, 'dry_return');
+    if (result.moved) {
+      plan.route.splice(0, segment.length);
+      plan.from = bot.entity.position.floored();
+      if (!plan.route.length) {
+        memory.crumbAt = plan.target.index;
+        memory.dryReturn = null;
+        ctx.record('retrace_dry_joined', { at: plan.from, to: plan.target.point, index: plan.target.index });
+      }
+    } else {
+      memory.dryReturn = null;
+    }
+    return result;
+  }
+
   async function stockForTravel(ctx) {
     if (nether.scaffoldCount(bot) >= 64 || Date.now() - (memory.travelStockedAt || 0) < 60000) return;
     memory.travelStockedAt = Date.now();
     await stockScaffolding(ctx, 56);
   }
 
-  async function approach(ctx, kind, cells) {
+  const structureWalk = (run) => nether.withLookoutTerrain(bot, run);
+  const safeSpawnerMove = (move, read) => !move.toBreak?.length && !move.toPlace?.length
+    && nether.lavaRisk({ blockAt: read }, new Vec3(move.x, move.y, move.z)) === 0;
+
+  function walkSpawnerLeg(ctx, goal, arrived) {
+    return structureWalk(async () => {
+      const movement = bot.pathfinder.movements;
+      const previous = movement.getNeighbors;
+      const start = bot.entity.position.clone();
+      const read = (p) => bot.blockAt(p);
+      function boundedNeighbors(node) {
+        return previous.call(this, node).filter((move) => start.distanceTo(move) <= SPAWNER_LEG_RANGE && safeSpawnerMove(move, read));
+      }
+      movement.getNeighbors = boundedNeighbors;
+      try {
+        return await actions.goTo(bot, ctx, goal, { timeoutMs: 18000, arrived, retryNoProgress: false });
+      } finally {
+        if (movement.getNeighbors === boundedNeighbors) movement.getNeighbors = previous;
+      }
+    });
+  }
+
+  function walkTowardStructure(ctx, target, range) {
+    return structureWalk(() => actions.goNear(bot, ctx, target, range, { timeoutMs: 25000, retryNoProgress: false }));
+  }
+
+  function approached(start, target) {
     const here = bot.entity.position;
+    return bot.entity.onGround && !bot.entity.isInLava && start.distanceTo(target) - here.distanceTo(target) >= 3;
+  }
+
+  async function planStructureDetour(ctx, kind, target, range) {
+    const pathfinder = bot.pathfinder;
+    if (!bot.entity.onGround || !pathfinder?.getPathFromTo || typeof pathfinder.movements?.getNeighbors !== 'function') return null;
+    const start = bot.entity.position.clone();
+    if (start.distanceTo(target) <= range + (kind === 'spawner' ? 0 : 1)) return null;
+    const arrival = new goals.GoalNear(target.x, target.y, target.z, range + 1);
+    return structureWalk(async () => {
+      // Prefer the complete, if longer, path over the closest cell A* reached
+      // before the direct walk timed out. Execute it as short native legs.
+      const profile = Object.create(pathfinder.movements);
+      const observed = new Map();
+      const read = (p) => {
+        const key = posKey(p);
+        if (!observed.has(key)) observed.set(key, bot.blockAt(p));
+        return observed.get(key);
+      };
+      profile.getNeighbors = (node) => nether.lookoutCardinalMoves(bot, node, read).filter((move) => move.distanceTo(start) <= 104
+        && (kind !== 'spawner' || safeSpawnerMove(move, read)));
+      const nearDeck = (node) => kind === 'fortress' && target.distanceTo(node) <= 8
+        && [node, ...HORIZONTAL.map((face) => node.plus(face))].some((p) => [-2, -1, 0]
+          .some((dy) => read(p.offset(0, dy, 0))?.name === 'nether_bricks'));
+      // Prefer the height of the deck when routing toward a first sighting,
+      // which is often the masonry behind or below the actual floor.
+      const height = kind === 'fortress' ? Math.max(target.y, start.y + 8) : target.y;
+      const aim = new Vec3(target.x, height, target.z);
+      const goal = { isEnd: (node) => kind === 'spawner' ? target.distanceTo(node.offset(.5, 0, .5)) <= range - 1
+        : arrival.isEnd(node) || nearDeck(node), heuristic: (node) => 3 * aim.distanceTo(node) };
+      let closest = null;
+      for (const { result } of pathfinder.getPathFromTo(profile, start, goal, { timeout: 12000, tickTimeout: 18, optimizePath: false })) {
+        if (result.status === 'success') { closest = result.path; break; }
+        if (result.path.length >= 16 && start.distanceTo(aim) - result.path.at(-1).distanceTo(aim) >= 12) closest = result.path;
+        if (result.status !== 'partial') break;
+        await sleep(0, ctx.signal);
+      }
+      if (!closest || closest.length < (kind === 'spawner' ? 1 : 3)) return null;
+      return closest.filter((_p, i, route) => i % 8 === 7 || i === route.length - 1);
+    });
+  }
+
+  async function followStructureDetour(ctx, kind, target, range) {
+    let detour = memory.structureDetour;
+    const displaced = kind === 'spawner' && detour?.kind === kind
+      && bot.entity.position.distanceTo(detour.route[0]) > SPAWNER_LEG_RANGE;
+    if (detour?.kind !== kind || !detour.target.equals(target) || displaced) {
+      const route = await planStructureDetour(ctx, kind, target, range);
+      if (!route) return null;
+      detour = { kind, target, range, route };
+      memory.structureDetour = detour;
+    }
+    const next = detour.route[0];
+    const inCell = () => next.equals(bot.entity.position.floored());
+    const arrived = () => bot.entity.onGround && !bot.entity.isInLava && inCell();
+    const hop = new goals.GoalBlock(next.x, next.y, next.z);
+    ctx.record('structure_detour', { kind, target: posKey(target), via: posKey(next), left: detour.route.length });
+    const moved = kind === 'spawner' ? await walkSpawnerLeg(ctx, hop, arrived)
+      : await structureWalk(() => actions.goTo(bot, ctx, hop, { timeoutMs: 18000, arrived, retryNoProgress: false }));
+    // The native goal can resolve in the destination while a jump is landing.
+    const landed = arrived() || (inCell() && await waitUntil(arrived, { timeoutMs: 650, signal: ctx.signal }));
+    if (!landed) {
+      memory.structureDetour = null;
+      return moved.ok ? fail('structure_detour_not_arrived') : moved;
+    }
+    detour.route.shift();
+    if (!detour.route.length) memory.structureDetour = null;
+    return { ok: true, moved: true };
+  }
+
+  // A short, level gap directly in front of a seen deck has a known landing.
+  async function crossDeckGap(ctx, stand) {
+    const feet = bot.entity.position.floored();
+    if (!bot.entity.onGround || feet.y !== stand.y) return null;
+    const dx = stand.x - feet.x, dz = stand.z - feet.z;
+    const length = Math.abs(dx) + Math.abs(dz);
+    if ((dx === 0) === (dz === 0) || length < 2 || length > 8 || towerBlocks() < length + 3) return null;
+    const direction = new Vec3(Math.sign(dx), 0, Math.sign(dz));
+    const at = (n) => feet.plus(direction.scaled(n));
+    const full = (p) => bot.blockAt(p.offset(0, -1, 0))?.shapes
+      ?.some(([x, y, z, x2, y2, z2]) => x === 0 && y === 0 && z === 0 && x2 === 1 && y2 === 1 && z2 === 1);
+    const clear = (p) => [p, p.offset(0, 1, 0)].every((cell) => /^((cave|void)_)?air$/.test(bot.blockAt(cell)?.name || ''));
+    if (!full(feet) || !full(stand) || !clear(stand)) return null;
+    for (let n = 1; n < length; n += 1) {
+      const cell = at(n);
+      if (!clear(cell) || (!full(cell) && bot.blockAt(cell.offset(0, -1, 0))?.boundingBox !== 'empty')) return null;
+    }
+    if (full(at(1))) return null;
+    for (let n = 1; n <= length; n += 1) {
+      const previous = at(n - 1), next = at(n);
+      const validateNext = () => {
+        const at = bot.entity.position.floored();
+        return bot.entity.onGround && !bot.entity.isInLava && (at.equals(previous) || at.equals(next))
+          && full(at) && clear(next) && (n < length || full(next)) ? { ok: true } : fail('structure_bridge_changed');
+      };
+      const step = await end.bridgeStep(bot, ctx, stand.offset(0.5, 0, 0.5),
+        { blocks: TOWER, keepWalls: true, validateNext });
+      if (!step.ok || !bot.entity.onGround || !next.equals(bot.entity.position.floored())) return fail('structure_bridge_blocked');
+    }
+    return { ok: true, moved: length };
+  }
+
+  async function approach(ctx, kind, cells) {
+    const here = bot.entity.position.clone();
     const target = cells.find((p) => !blacklist.has(`${kind}:${posKey(p)}`));
-    if (!target) return fail(`${kind}_unreachable`);
+    if (!target) return kind === 'fortress' ? explore(ctx, memory.fortress) : fail(`${kind}_unreachable`);
     ctx.record('approach', { kind, target: posKey(target), distance: Math.round(target.distanceTo(here)) });
     const stand = target.offset(0, 1, 0);
-    if (stand.y - here.y > 3) await stockScaffolding(ctx, stand.y - here.y);
-    const result = await withScaffolding(() => actions.goNear(bot, ctx, stand, 2, { timeoutMs: 120000 }));
-    if (!result.ok && bot.entity.position.distanceTo(here) < 6) blacklist.add(`${kind}:${posKey(target)}`, result.reason);
+    const result = await walkTowardStructure(ctx, stand, 2);
+    if (result.ok || approached(here, stand)) return result.ok ? result : { ok: true, moved: true };
+    const crossed = await crossDeckGap(ctx, stand);
+    if (crossed?.ok) return crossed;
+    const detour = await followStructureDetour(ctx, kind, stand, 2);
+    if (detour?.ok) return detour;
+    blacklist.add(`${kind}:${posKey(target)}`, result.reason);
     return result;
   }
 
@@ -421,10 +702,10 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await stockScaffolding(ctx, climb);
       // A few left over at the top: what it steps out of lava with.
       if (towerBlocks() < climb + 4) return giveUp('few_blocks', fail('tower_blocks'));
-      const walk = await withScaffolding(() => actions.goTo(bot, ctx, new goals.GoalBlock(spot.stand.x, spot.stand.y, spot.stand.z),
-        { timeoutMs: 60000 }));
+      const walk = await structureWalk(() => actions.goTo(bot, ctx, new goals.GoalBlock(spot.stand.x, spot.stand.y, spot.stand.z),
+        { timeoutMs: 25000, retryNoProgress: false }));
       const at = bot.entity.position.floored();
-      if (at.x !== spot.stand.x || at.z !== spot.stand.z || Math.abs(at.y - spot.stand.y) > 1) {
+      if (!bot.entity.onGround || !at.equals(spot.stand) || !open(spot.stand) || !solid(spot.stand.offset(0, -1, 0))) {
         return giveUp(walk.reason || 'not_arrived', walk.ok ? fail('tower_not_reached') : walk);
       }
     }
@@ -432,7 +713,8 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     await end.pillarUp(bot, ctx, spot.top, { maxSteps: climb + 6, blocks: towerBlocks(RUBBLE) >= climb ? RUBBLE : TOWER,
       stop: () => Boolean(bot.entity?.isInLava) || bot.health < 8 });
     if (bot.entity.position.y < spot.top - 0.5) return giveUp('pillar_short', fail('tower_short'));
-    const step = await actions.goTo(bot, ctx, new goals.GoalBlock(spot.deck.x, spot.deck.y + 1, spot.deck.z), { timeoutMs: 10000 });
+    const step = await structureWalk(() => actions.goTo(bot, ctx, new goals.GoalBlock(spot.deck.x, spot.deck.y + 1, spot.deck.z),
+      { timeoutMs: 10000, retryNoProgress: false }));
     const onDeck = inFortress();
     ctx.record('towered', { onDeck, y: Math.round(bot.entity.position.y) });
     if (onDeck) return { ok: true };
@@ -538,6 +820,22 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return wanted;
   }
 
+  async function pursueSpawner(ctx, here) {
+    const spawner = memory.spawner;
+    if (!spawner) return null;
+    if (here.distanceTo(spawner) <= BLAZE_SPAWN_RANGE) {
+      if (memory.structureDetour?.kind === 'spawner') memory.structureDetour = null;
+      return null;
+    }
+    const result = await followStructureDetour(ctx, 'spawner', spawner, BLAZE_SPAWN_RANGE);
+    if (result?.ok) return result;
+    blacklist.add(`spawner:${posKey(spawner)}`, result?.reason || 'spawner_route_unavailable', 60000);
+    memory.spawner = null;
+    memory.waitSince = 0;
+    memory.spawnerWaiting = false;
+    return null;
+  }
+
   async function fortressStep(ctx, state) {
     const mobs = fortressTarget(state);
     const here = bot.entity.position;
@@ -554,20 +852,65 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const apples = bot.inventory.items().filter((i) => /golden_apple$/.test(i.name)).reduce((n, i) => n + i.count, 0);
       if (near && !(apples >= 2 && inFortress())) {
         ctx.record('fall_back', { health: Math.round(state.health), from: near.name });
-        const moved = await actions.fleeFrom(bot, ctx, near.position, { distance: 16, timeoutMs: 10000 });
-        return moved.ok || bot.entity.position.distanceTo(here) >= 4 ? { ok: true, waited: true } : moved;
+        const start = here.clone();
+        const clearance = Math.min(15, Math.max(8, near.distance + 4));
+        const moved = await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
+          actions.fleeFrom(bot, combat, near.position, { distance: clearance, timeoutMs: 10000 }));
+        if (moved.repositioned || bot.entity.position.distanceTo(start) >= 2) return { ok: true, waited: true };
+        if (!moved.ok) return moved;
       }
       actions.haltBody(bot);
       await sleep(2000, ctx.signal);
       return { ok: true, waited: true };
+    }
+    const onDeck = inFortress();
+    if (onDeck) {
+      if (memory.structureDetour?.kind === 'fortress') memory.structureDetour = null;
+      if (!memory.visited.fortress) {
+        memory.visited.fortress = true;
+        ctx.record('structure_entered', { kind: 'fortress', position: posKey(here.floored()) });
+      }
+    }
+    if (mobs.includes('blaze')) {
+      // The first recorded bricks can be at the end of a different wing.
+      // Search the loaded fortress from the current deck, and keep the
+      // observed spawner only while its block remains loaded and intact.
+      if (memory.spawner && bot.blockAt(memory.spawner)?.name !== 'spawner') {
+        memory.spawner = null;
+        memory.waitSince = 0;
+        memory.spawnerWaiting = false;
+        if (memory.structureDetour?.kind === 'spawner') memory.structureDetour = null;
+      }
+      if (onDeck && !memory.spawner && Date.now() >= (memory.nextSpawnerScan || 0)) {
+        memory.nextSpawnerScan = Date.now() + 5000;
+        memory.spawner = structures.findSpawners(bot, here, 128)
+          .find((p) => !blacklist.has(`spawner:${posKey(p)}`) && bot.blockAt(p)?.name === 'spawner'
+            && deckFloor(p, 8, 1).length) || null;
+        if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner), from: posKey(here.floored()) });
+      }
+    }
+    const mayStage = mobs.includes('blaze') && memory.spawner && bot.blockAt(memory.spawner)?.name === 'spawner'
+      && (spawnerStaging.pending() || here.distanceTo(memory.spawner) <= BLAZE_SPAWN_RANGE);
+    if (!mayStage || stagingSpawner && !memory.spawner.equals(stagingSpawner)) {
+      spawnerStaging.clear();
+      spawnerHuntStalls = 0;
+    }
+    stagingSpawner = mayStage ? memory.spawner : null;
+    if (mayStage && (spawnerStaging.pending() || spawnerHuntStalls >= 3 && Date.now() >= stagingRetryAt)) {
+      const result = await spawnerStaging.run(ctx, { spawner: stagingSpawner });
+      if (result?.staging || result?.repositioned) return result;
+      spawnerHuntStalls = 0;
+      stagingRetryAt = Date.now() + (result?.staged ? 120000 : 25000);
+      if (result?.ok) return result;
     }
     // Wither skeletons spawn anywhere in the fortress's bounds, on the
     // netherrack under and beside the decks too: one is worth a short climb
     // or drop. A fortress gave 25 kills in 85 minutes while patrols walked
     // past those below. Blazes float, so theirs stays level.
     const reach = (e) => (e.name === 'wither_skeleton' ? HUNT_DY_WITHER : 6);
+    const canHunt = (e) => Math.abs(e.position.y - bot.entity.position.y) <= reach(e);
     const target = Object.values(bot.entities).find((e) => mobs.includes(e.name) && e.position
-      && e.position.distanceTo(here) <= 40 && Math.abs(e.position.y - here.y) <= reach(e) && !blacklist.has(`mob:${e.id}`));
+      && e.position.distanceTo(here) <= FORTRESS_HUNT_RANGE && canHunt(e) && !blacklist.has(`mob:${e.id}`));
     if (!target && mobs.includes('wither_skeleton')) {
       const seen = Object.values(bot.entities).filter((e) => e.name === 'wither_skeleton' && e.position && e.position.distanceTo(here) <= 64);
       if (seen.length && Date.now() - (memory.sightedAt || 0) > 30000) {
@@ -585,17 +928,35 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     // Boxed in (a pillar under a blaze it cannot reach): get somewhere first.
     if (target && !boxedIn()) {
       const name = target.name;
-      const result = await skills.huntOne(bot, ctx, {
-        mobs, radius: 40, blacklist, dropMatch: (n) => n === 'blaze_rod' || n === 'wither_skeleton_skull',
-        accept: (e) => Math.abs(e.position.y - bot.entity.position.y) <= reach(e),
-      });
+      const result = await nether.withFortressCombatTerrain(bot, ctx, (combat) => skills.huntOne(bot, combat, {
+        mobs, radius: FORTRESS_HUNT_RANGE, blacklist, dropMatch: (n) => n === 'blaze_rod' || n === 'wither_skeleton_skull',
+        accept: canHunt,
+      }));
+      if (result.repositioned) return result;
       if (result.ok) {
         memory.kills[name] = (memory.kills[name] || 0) + 1;
         ctx.record('kill', { mob: name, kills: memory.kills[name], gained: result.gained });
+        spawnerHuntStalls = 0;
+      } else if (mayStage && name === 'blaze' && /^(chase_stuck|line_of_sight_blocked|fortress_combat_unsafe_footing|NoPath)$/.test(result.reason || '')) {
+        spawnerHuntStalls += 1;
       }
+      if (/^fortress_combat_/.test(result.reason || '')) blacklist.add(`mob:${target.id}`, result.reason, 3500);
       return result;
     }
-    if (!inFortress()) {
+    if (mobs.includes('blaze')) {
+      if (memory.spawner && (onDeck || memory.structureDetour?.kind === 'spawner')) {
+        const leg = await pursueSpawner(ctx, here);
+        if (leg) return leg;
+      }
+    } else if (onDeck && !memory.spawner) {
+      // Skull-only patrols still avoid the original nearby blaze spawners.
+      memory.spawner = structures.findSpawners(bot, memory.fortress, 96)[0] || null;
+      if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner) });
+    }
+    const byspawner = memory.spawner && rods(state) < blazeRods && here.distanceTo(memory.spawner) <= BLAZE_SPAWN_RANGE;
+    if (!onDeck && !byspawner) {
+      const detour = memory.structureDetour;
+      if (detour?.kind === 'fortress') return followStructureDetour(ctx, detour.kind, detour.target, detour.range);
       if (marooned()) {
         const crossed = await causeway(ctx);
         if (crossed.ok) return crossed;
@@ -613,80 +974,113 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       if (here.distanceTo(memory.fortress) <= 8) return explore(ctx, memory.fortress);
       return approachStructure(ctx, 'fortress');
     }
-    if (!memory.visited.fortress) {
-      memory.visited.fortress = true;
-      ctx.record('structure_entered', { kind: 'fortress', position: posKey(here.floored()) });
-    }
-    if (!memory.spawner) {
-      memory.spawner = structures.findSpawners(bot, memory.fortress, 96)[0] || null;
-      if (memory.spawner) ctx.record('spawner', { position: posKey(memory.spawner) });
-    }
     // Blazes come from the spawner; wither skeletons spawn anywhere in the fortress.
     // Wait by the spawner a while, then walk the corridors for a bit.
     const now = Date.now();
     if (!memory.waitSince) memory.waitSince = now;
-    const byspawner = memory.spawner && rods(state) < blazeRods;
     if (byspawner && now - memory.waitSince < 45000) {
-      if (here.distanceTo(memory.spawner) > 7) {
-        const floor = deckFloor(memory.spawner, 8, 32)
-          .filter((p) => p.distanceTo(memory.spawner) >= 3)
-          .sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
-        if (floor.length) return approach(ctx, 'spawner', floor);
+      if (!memory.spawnerWaiting) {
+        ctx.record('spawner_in_range', { position: posKey(memory.spawner), from: posKey(here.floored()),
+          distance: here.distanceTo(memory.spawner) });
+        memory.spawnerWaiting = true;
       }
       actions.haltBody(bot);
       await sleep(2000, ctx.signal);
       return { ok: true, waited: true };
     }
     memory.waitSince = 0;
-    return patrol(ctx, memory.fortress, 'fortress', state);
+    memory.spawnerWaiting = false;
+    return patrol(ctx, state);
   }
 
   // With the rods in, the spawner's blazes only fill the mob cap: wither
   // skeletons are found in the corridors away from it (3 of 58 kills by it).
   const SPAWNER_CLEAR = 24;
 
-  /** A walk to a random floor cell 12-40 blocks away inside the structure. */
-  async function patrol(ctx, centre, kind, state) {
-    const here = bot.entity.position;
-    const band = (lo, hi) => (p) => { const d = p.distanceTo(here); return d >= lo && d <= hi; };
-    const avoid = kind === 'fortress' && memory.spawner && state && rods(state) >= blazeRods
-      ? (p) => p.distanceTo(memory.spawner) >= SPAWNER_CLEAR : () => true;
-    // A pillar foot by the lava sea counts as fortress floor too: from there
-    // the decks are far overhead and walks to them fail one after another.
-    // After two such misses, tower up to a deck instead.
-    if (kind === 'fortress' && (memory.highMisses || 0) >= 2) {
-      memory.highMisses = 0;
-      const climbed = await climbTo(ctx, { minClimb: CLIMB });
-      if (climbed.ok) return climbed;
+  /** Sample nearby positions on an observed, supported fortress route. */
+  async function patrol(ctx, state) {
+    const here = bot.entity.position.floored();
+    const spawner = memory.spawner;
+    const huntingBlaze = spawner && rods(state) < blazeRods;
+    const observed = new Map();
+    const read = (p) => {
+      const key = posKey(p);
+      if (!observed.has(key)) observed.set(key, bot.blockAt(p));
+      return observed.get(key);
+    };
+    const nodes = [{ point: here, previous: null, depth: 0 }];
+    const seen = new Set([posKey(here)]);
+    let pick = null;
+    let best = Infinity;
+    for (let i = 0; bot.entity.onGround && i < nodes.length; i += 1) {
+      const node = nodes[i];
+      const { point, depth } = node;
+      if (depth >= 3 && read(point.offset(0, -1, 0))?.name === 'nether_bricks') {
+        const spawnerDistance = spawner?.distanceTo(point.offset(.5, 0, .5)) ?? 0;
+        const score = Math.abs(depth - 7) + 2 * Math.abs(point.y - here.y)
+          + (huntingBlaze ? Math.abs(spawnerDistance - 8) : spawner ? Math.max(0, SPAWNER_CLEAR - spawnerDistance) : 0)
+          + (blacklist.has(`patrol:${posKey(point)}`) ? 20 : 0);
+        if (score < best) { pick = node; best = score; }
+      }
+      if (depth >= 8) continue;
+      for (const move of nether.lookoutCardinalMoves(bot, point, read)) {
+        const next = new Vec3(move.x, move.y, move.z);
+        const key = posKey(next);
+        if (seen.has(key) || !safeSpawnerMove(move, read)
+          || blacklist.has(`patrol_edge:${posKey(point)}>${key}`)
+          || huntingBlaze && next.offset(.5, 0, .5).distanceTo(spawner) > BLAZE_SPAWN_RANGE) continue;
+        seen.add(key);
+        nodes.push({ point: next, previous: node, depth: depth + 1 });
+      }
     }
-    // On the level it walks now first: a walk down to a lower ledge is a
-    // walk along the drop, and the falls from it ended in the lava sea.
-    const level = (p) => Math.abs(p.y + 1 - here.y) <= 6;
-    let floor = deckFloor(here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p) && level(p));
-    if (!floor.length) floor = deckFloor(here, 48, 512).filter((p) => band(12, 40)(p) && avoid(p));
-    if (!floor.length) floor = deckFloor(centre, 96, 512).filter((p) => band(12, 96)(p) && avoid(p));
-    if (!floor.length) floor = deckFloor(here, 48, 512).filter(band(12, 40));
-    if (!floor.length) floor = deckFloor(centre, 96, 512).filter(band(12, 96));
-    // Nothing else to walk to here: go and stand by the spawner (or the first brick
-    // seen); already there, look around from a lookout instead.
-    const fallback = kind === 'fortress' && memory.spawner ? memory.spawner : centre;
-    if (!floor.length) return here.distanceTo(fallback) <= 8 ? explore(ctx, fallback) : approachStructure(ctx, kind, fallback);
-    const pick = floor[Math.floor(Math.random() * floor.length)];
-    ctx.record('patrol', { kind, target: posKey(pick) });
-    const result = await actions.goNear(bot, ctx, pick.offset(0, 1, 0), 2, { timeoutMs: 45000 });
-    const high = pick.y + 1 - here.y > CLIMB;
-    memory.highMisses = !result.ok && high ? (memory.highMisses || 0) + 1 : 0;
-    return result.ok ? { ok: true, waited: true } : result;
+    if (!pick) {
+      actions.haltBody(bot);
+      await sleep(1200, ctx.signal);
+      return { ok: true, waited: true };
+    }
+    const route = [];
+    for (let node = pick; node.previous; node = node.previous) route.unshift(node.point);
+    ctx.record('patrol', { kind: 'fortress', target: posKey(pick.point), from: here, legs: route.length });
+    const result = await walkFortressRoute(ctx, route, 'patrol_edge');
+    if (result.moved) blacklist.add(`patrol:${posKey(pick.point)}`, 'visited', 60000);
+    return result;
+  }
+
+  async function walkFortressRoute(ctx, route, failedEdge) {
+    for (const next of route) {
+      const from = bot.entity.position.floored();
+      const live = (p) => bot.blockAt(p);
+      const checked = nether.lookoutCardinalMoves(bot, from, live).some((move) => move.equals(next) && safeSpawnerMove(move, live));
+      const arrived = () => bot.entity.onGround && bot.entity.position.floored().equals(next);
+      let result = fail('fortress_patrol_step_changed');
+      if (checked && next.y < from.y) {
+        if (await nether.descendCombatStep(bot, ctx, from, next, actions)) result = { ok: true };
+      } else if (checked) {
+        result = await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
+          actions.goTo(bot, combat, new goals.GoalBlock(next.x, next.y, next.z), { arrived, timeoutMs: 2500, retryNoProgress: false }));
+      }
+      if (result.repositioned) return result;
+      actions.haltBody?.(bot);
+      const settled = () => arrived() && Math.hypot(bot.entity.velocity?.x || 0, bot.entity.velocity?.z || 0) <= .025;
+      if (!(result.ok || result.reason === 'not_arrived') || !await waitUntil(settled, { timeoutMs: 650, signal: ctx.signal })) {
+        blacklist.add(`${failedEdge}:${posKey(from)}>${posKey(next)}`, result.reason, 9000);
+        return result.ok ? fail('fortress_step_unconfirmed') : result;
+      }
+    }
+    return { ok: true, moved: true };
   }
 
   /** No floor known yet (seen from afar): walk towards the first block seen. */
   async function approachStructure(ctx, kind, p = memory[kind]) {
-    const here = bot.entity.position;
+    const here = bot.entity.position.clone();
     ctx.record('approach', { kind, target: posKey(p), distance: Math.round(p.distanceTo(here)) });
-    await stockScaffolding(ctx, p.y - here.y);
-    const result = await withScaffolding(() => actions.goNear(bot, ctx, p, 4, { timeoutMs: 120000 }));
-    if (!result.ok && bot.entity.position.distanceTo(here) < 6) return explore(ctx, p);
-    return result;
+    const active = memory.structureDetour;
+    if (active?.kind === kind) return followStructureDetour(ctx, kind, active.target, active.range);
+    const result = await walkTowardStructure(ctx, p, 4);
+    if (result.ok || approached(here, p)) return result.ok ? result : { ok: true, moved: true };
+    const detour = await followStructureDetour(ctx, kind, p, 4);
+    if (detour?.ok) return detour;
+    return explore(ctx, p);
   }
 
   // ---- bartering ------------------------------------------------------------
@@ -880,7 +1274,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     const count = () => bot.inventory.items().filter((i) => i.name === name).reduce((n, i) => n + i.count, 0);
     const before = count();
     ctx.record('loot', { item: name, distance: Math.round(drop.position.distanceTo(bot.entity.position)) });
-    const moved = await withScaffolding(() => actions.goNear(bot, ctx, drop.position.clone(), 0.5, { timeoutMs: 30000 }));
+    const moved = await nether.withFortressCombatTerrain(bot, ctx, (combat) =>
+      actions.goNear(bot, combat, drop.position.clone(), 0.5, { timeoutMs: 12000, retryNoProgress: false }));
+    if (moved.repositioned) return moved;
     await waitUntil(() => count() > before || !bot.entities[drop.id], { timeoutMs: 1500, signal: ctx.signal });
     if (count() > before) return { ok: true, looted: name };
     blacklist.add(`loot:${drop.id}`, moved.reason || 'not_picked', 30000);
@@ -897,6 +1293,45 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return null;
   }
 
+  /** Back through the portal, stocked to bridge and climb the whole way. */
+  async function headHome(ctx) {
+    // The walk home can cross a lava sea: a run with every rod, skull and
+    // trade bridged its 100 netherrack away and spent the last 20 minutes on
+    // its own bridge 40 blocks short; another bridged a stack and a half
+    // across 110 blocks of sea under a portal 40 blocks up. Fill up once,
+    // while there is something to dig, with enough to bridge and climb the
+    // whole way, and build with the cobblestone too. Again after a fall:
+    // one bot lost its footing digging the deck it stood on and landed in
+    // the lava sea 40 blocks under the portal with nothing to climb with.
+    memory.returning = true;
+    const portal = memory.netherPortal;
+    const here = bot.entity.position;
+    if (memory.spawner && (here.distanceTo(memory.spawner) <= SPAWNER_CLEAR || memory.spawnerExitStarted)) {
+      memory.spawnerExitStarted = true;
+      const exit = await leaveFortressByTrail(ctx, memory.spawner);
+      if (exit) return exit;
+    }
+    if (portal && here.distanceTo(portal) > 4) {
+      const dry = await retraceDryTrail(ctx, portal);
+      if (dry) return dry;
+    }
+    const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
+    if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
+      && Date.now() - (memory.homeStockedAt || 0) > 60000) {
+      memory.homeStockedAt = Date.now();
+      await stockScaffolding(ctx, need, HOME_STOCK);
+    }
+    if (portal && here.distanceTo(portal) > 24) {
+      if (marooned()) {
+        const crossed = await causeway(ctx, { home: true });
+        if (crossed.ok) return crossed;
+      }
+      const leg = await retraceHome(ctx);
+      if (leg) return leg;
+    }
+    return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
+  }
+
   async function netherStep(ctx, state) {
     trip.enterNetherMode();
     trip.netherPortal();
@@ -906,39 +1341,24 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       await sleep(1000, ctx.signal);
       return { ok: true, waited: true };
     }
-    // Run out of blocks, a fall into the lava sea has no way out and the walk
-    // home has nothing to bridge with (a run with every rod, skull and trade
-    // in hand spent its last hour 135 blocks from the portal): keep some.
+    if (allDone(state)) return headHome(ctx);
+    // Save enough food to heal on the return trail. Commit to returning
+    // before a meal moving health above the hunt threshold restarts combat.
+    const carriedFood = expeditionFoodCount(bot, state.inventory);
+    if (memory.returnForFood || typeof actions.pickFood === 'function' && fortressWork(state)
+      && (carriedFood <= FORTRESS_RETURN_FOOD && Number.isFinite(state.food) && state.food < 20
+        || state.health < HUNT_HEALTH && state.food < 18 && !actions.pickFood(bot))) {
+      if (!memory.returnForFood) {
+        memory.returnForFood = true;
+        ctx.record('retreat', { health: Math.round(state.health), food: state.food, carriedFood, reason: 'food_reserve' });
+      }
+      return headHome(ctx);
+    }
+    // On the way out, leave the spawner before spending time at a mine.
+    // Expeditions still need a scaffold reserve for travel elsewhere.
     if (nether.scaffoldCount(bot) < SCAFFOLD_LOW && Date.now() - (memory.restockedAt || 0) > 60000) {
       memory.restockedAt = Date.now();
       await stockScaffolding(ctx, 16);
-    }
-    if (allDone(state)) {
-      // The walk home can cross a lava sea: a run with every rod, skull and
-      // trade bridged its 100 netherrack away and spent the last 20 minutes on
-      // its own bridge 40 blocks short; another bridged a stack and a half
-      // across 110 blocks of sea under a portal 40 blocks up. Fill up once,
-      // while there is something to dig, with enough to bridge and climb the
-      // whole way, and build with the cobblestone too. Again after a fall:
-      // one bot lost its footing digging the deck it stood on and landed in
-      // the lava sea 40 blocks under the portal with nothing to climb with.
-      const portal = memory.netherPortal;
-      const here = bot.entity.position;
-      const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
-      if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
-        && Date.now() - (memory.homeStockedAt || 0) > 60000) {
-        memory.homeStockedAt = Date.now();
-        await stockScaffolding(ctx, need, HOME_STOCK);
-      }
-      if (portal && here.distanceTo(portal) > 24) {
-        if (marooned()) {
-          const crossed = await causeway(ctx, { home: true });
-          if (crossed.ok) return crossed;
-        }
-        const leg = await retraceHome(ctx);
-        if (leg) return leg;
-      }
-      return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
     }
     const lost = lostKit(state);
     if (lost) return fail(lost);
@@ -992,8 +1412,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       blacklist.clear?.();
       memory.explore = { index: memory.explore.index, leftBastion: memory.explore.leftBastion };
       memory.waitSince = 0;
+      memory.leftSpawner = false;
     },
     async run(ctx) {
+      keepSearch();
+      // Set again by explore below; a death outside a lookout walk marks none.
+      memory.heading = null;
       await wearArmour(ctx);
       const state = ctx.perceive();
       if (nether.inNether(bot)) {
@@ -1003,13 +1427,19 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       }
       trip.leaveNetherMode();
       if (allDone(state)) return { ok: true };
+      if (memory.returnForFood) {
+        ctx.record('expedition_resupply_required', { reason: 'food_reserve', rods: rods(state) });
+        return fail('expedition_food_resupply_required');
+      }
       // Respawned without it: going back through to the fortress only dies again.
       const lost = lostKit(state);
       if (lost) return fail(lost);
       return trip.toNether(ctx, state);
     },
     dispose() {
+      bot.removeListener?.('entityDead', onEntityDead);
       bot.removeListener?.('move', dropCrumb);
+      bot.removeListener?.('death', markDeadly);
       trip.leaveNetherMode();
     },
   };

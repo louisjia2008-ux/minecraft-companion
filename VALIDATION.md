@@ -1,5 +1,17 @@
 # Core validation report — v0.1.0-alpha.1 / 2026-10-24
 
+> **2026-11-06 05:10 CST 开发状态：候选13限定恢复修复已完成定向及独立审查，尚未完整离线或游戏验收。** 仅原桥面返程准入、目标恢复状态与全会话死亡owner三处生产修改；461相关/独立54项通过，原桥梁Native与护栏36函数保持原样，查询不修改实际支撑记忆，不扩物资/预算/时间。最新完整八项仍仅属于下方候选12；13须独立冻结、锁定依赖及全八项后再真实验证。当前发布阻断。
+
+> **2026-11-06 04:20 CST 当前：候选12完整八项通过，真实游戏仍发布阻断。** 未提交 tree `75b64d5c4efe7d807fda44a8615cdb46008e8c4e` / sourceHash `0fd1a2a283a44995dc468a98a9ab1b3a51b1f7793470763997ecf6de4a8d0b5b`，952文件不变。依赖就绪后的完整原八项：runtime4029/4029、core1021/1021、host74/security6/acceptance25/setup18、lint/typecheck通过，0fail/cancel/skip/todo。首轮归档未准备依赖的完整FAIL与两项10s超时取消另留原日志，不以重验覆盖。12人工岸阶段已自然FAIL300432ms，真实2石英/0死，未完成8矿；原正式石英、独立E2E三组与当前受控死亡仍运行；完整full35/43、自然1/2各16h、原city101与当前受控死亡/宿主等仍须独立验收。11的E2E3PASS只属11；11full为13PASS+2显式中断+28未执行，natural1为3死后保存中断，均非整套通过。11死亡补给安全再入和实战防御子门通过，但0石英/off_confirmed_route整体FAIL。详见[本轮记录](docs/validation/2026-11-05/HANDOFF.md)。
+
+以下带时间的更新与冻结结果均为历史检查点，不替代上述当前身份。
+
+> **2026-11-06 01:22 CST 当前：候选09完整八项通过，仍发布阻断。** runtime3942/3942、core934/934、其它六项通过，947源码SHA未变。09正式石英/E2E3/人工岸边运行中；full35/43及09自然1/2等必要实服验收尚无完整结果。07自然旧轮因源码更新保存中断（5/12死，非PASS），08全量失败保留。
+
+> **2026-11-06 00:41 CST 更新：候选08完整八项整体FAIL。** 六项通过；runtime3933/3934与core925/926各同一cached项目cancel后resume失败，0取消、947源码SHA不变。09窄修复中；无08游戏通过。07自然种子1/2仍运行，第104分钟分别2/5死；不能替代当前整套验收。详见[本轮记录](docs/validation/2026-11-05/HANDOFF.md)。
+
+> **历史验证报告。** 本页原有结果仅对下方记录的 source/driver 冻结有效。2026-11-05 接手的最新 PR/CI、#32 cancelled 子测试定位、#31 原样离线结果、种子差异及本轮整合验收状态见 [HANDOFF](docs/validation/2026-11-05/HANDOFF.md)。当前不满足发布门槛；本轮未打包或发布。
+
 **Frozen a22 offline and gameplay result: PASS; source developer preview v0.1.0-alpha.1.** Tested freeze: `a22a73a4a7294ab5409b6e74ee882b2603ab528b` (867 files, sourceHash `2b47b336ab2279cc27e12ebebf418e508e557e5b09ce4b35a91f97690bf3e73f`). The original complete runtime full7 naturally passed 3326/3326. Formal full03 naturally passed all24scenarios/32rounds, 2026-10-24 02:15:09.845—03:27:27.151 UTC, exit0, with matching final summary/JSONL and unchanged source/driver. The final importer independently reports ALL_PASS/32rounds/issues0. Every scenario has confirmed console save/close. Earlier complete offline failures, interrupted campaigns and observed recovery costs remain below; passing this finite campaign is not arbitrary-world reliability or desktop integration acceptance. Archive/install/privacy/publication receipts are distinct from the tested gameplay snapshot.
 
 ## 主分支旧干路前缀用例的原生移动超时

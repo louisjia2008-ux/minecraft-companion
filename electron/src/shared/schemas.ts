@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { API_VERSION } from './contracts';
+import { MINECRAFT_CORE_MAX_LOGS } from './minecraft';
 
 const idSchema = z.string().uuid();
 const textSchema = z.string().trim().min(1).max(32_000);
@@ -71,7 +72,7 @@ export const minecraftConnectionSchema = z.object({
   auth: z.enum(['offline', 'microsoft']),
   version: z.string().trim().max(32).regex(/^(auto|1\.\d+(?:\.\d+)?)$/u),
   ownerName: z.string().trim().max(16).regex(/^[A-Za-z0-9_]*$/u),
-  executorMode: z.enum(['strict', 'hybrid']),
+  executorMode: z.enum(['strict', 'hybrid', 'core']),
   providerId: idSchema.nullable(),
 }).strict().superRefine((value, context) => {
   if (value.auth === 'offline' && !/^[A-Za-z0-9_]{1,16}$/u.test(value.username)) {
@@ -87,6 +88,7 @@ export const invokePayloadSchemas = {
   'minecraft:connect': minecraftConnectionSchema,
   'minecraft:disconnect': emptySchema,
   'minecraft:submit': z.object({ command: z.string().trim().min(1).max(2000) }).strict(),
+  'minecraft:gather-logs': z.object({ count: z.number().int().min(1).max(MINECRAFT_CORE_MAX_LOGS) }).strict(),
   'minecraft:control': z.object({ action: z.enum(['pause', 'resume', 'cancel', 'stop', 'refresh']) }).strict(),
   'minecraft:chat': z.object({ message: z.string().trim().min(1).max(240).refine((value) => !value.startsWith('/') && !hasControlCharacters(value), 'Enter a chat message, without server commands.') }).strict(),
   'app:get-state': emptySchema,

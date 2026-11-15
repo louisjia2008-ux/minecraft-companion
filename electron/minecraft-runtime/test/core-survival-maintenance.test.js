@@ -3,14 +3,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
 const { createSurvivalBehaviors } = require('../core/behaviors/survival');
+const { perceive } = require('../core/perception');
 const { createBrain } = require('../core/brain');
 const { sleep } = require('../core/confirm');
+const { swimToNearbyBank } = require('../core/actions');
 const { EventEmitter } = require('node:events');
 const minecraftData = require('minecraft-data');
 
-function setup(options = {}) {
+function setup(options = {}, registry = { foodsByName: { beef: {}, cooked_beef: {}, rotten_flesh: {} } }) {
   const bot = { entity: { position: new Vec3(0, 64, 0) }, game: { dimension: 'overworld' },
-    registry: { foodsByName: { beef: {}, cooked_beef: {}, rotten_flesh: {} } }, inventory: { slots: [] } };
+    registry, inventory: { slots: [] } };
   const state = { alive: true, health: 2.5, food: 16, inventory: {}, hostiles: [], isDay: true,
     sheltered: false, position: bot.entity.position };
   const behaviors = createSurvivalBehaviors({ bot, ...options });
@@ -49,6 +51,85 @@ test('carried food is eaten first, and an unusable risky item does not block saf
   const risky = { ...s.state, health: 9, inventory: { rotten_flesh: 1 } };
   assert.equal(s.behavior('eat').want(risky), 0);
   assert.ok(s.behavior('provision').want(risky) > 0);
+});
+
+test('only viable homestead ascent holds food searches, with food and emergencies still available', () => {
+  let ownsAscent = true;
+  const s = setup({ homesteadCaveAscent: () => ownsAscent });
+  const hunger = { ...s.state, health: 17, food: 12 };
+  const provision = s.behavior('provision');
+  assert.equal(provision.want(hunger), 0);
+  assert.ok(s.behavior('eat').want({ ...hunger, inventory: { cooked_beef: 1 } }) > 0);
+  assert.ok(s.behavior('breathe').want({ ...hunger, inWater: true, oxygen: 1 }) > 0);
+  s.bot.entity.isInLava = true;
+  assert.ok(s.behavior('leave_lava').want(hunger) > 0);
+  s.bot.entity.isInLava = false;
+  assert.ok(provision.want({ ...hunger, food: 6 }) > 0);
+  ownsAscent = false;
+  assert.ok(provision.want(hunger) > 0);
+});
+
+test('an active cave retreat cooldown allows eating but does not start a new food search', async () => {
+  let hunts = 0;
+  let eats = 0;
+  let underground = true;
+  const s = setup({ skills: { async huntOne() { hunts += 1; return { ok: true }; } }, actions: {
+    underground: () => underground,
+    async eat() {
+      eats += 1;
+      delete s.state.inventory.beef;
+      s.state.food = 20;
+      return { ok: true };
+    },
+  } });
+  s.bot.entity.onGround = true;
+  s.bot.blockAt = () => null;
+  s.bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  const events = [];
+  const brain = createBrain({ perceive: () => s.state, now: () => 1000,
+    behaviors: ['cave_retreat', 'provision', 'eat'].map(s.behavior),
+    onEvent: (event) => events.push(event) });
+  try {
+    await brain.tick();
+    await brain.idle();
+    await brain.tick();
+    assert.ok(events.some((event) => event.behavior === 'cave_retreat' && event.reason === 'cave_retreat_no_dry_route'));
+    assert.deepEqual(brain.status().cooldowns.map(({ name }) => name), ['cave_retreat']);
+    assert.equal(hunts, 0);
+    s.state.inventory.beef = 1;
+    await brain.tick();
+    await brain.idle();
+    assert.equal(eats, 1);
+    assert.equal(hunts, 0);
+    assert.equal(s.behavior('cave_retreat').want({ ...s.state, inWater: true }), 0);
+    assert.ok(s.behavior('breathe').want({ ...s.state, inWater: true, oxygen: 1 }));
+    s.bot.game.dimension = 'the_nether';
+    assert.equal(s.behavior('cave_retreat').want(s.state), 0);
+    s.bot.game.dimension = 'overworld';
+    underground = false;
+    assert.ok(s.behavior('provision').want({ ...s.state, food: 16 }));
+  } finally { await brain.dispose(); }
+});
+
+test('provisioning below ground hands the body to a guarded ascent before looking for food', async () => {
+  let hunted = 0;
+  const s = setup({ actions: { underground: () => true }, skills: {
+    async huntOne() { hunted += 1; return { ok: true }; },
+  } });
+  s.bot.blockAt = () => null;
+  s.bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  const hungry = { ...s.state, health: 20, food: 12 };
+  const provision = s.behavior('provision');
+  const retreat = s.behavior('cave_retreat');
+  const events = [];
+  assert.ok(provision.want(hungry) > 0);
+  assert.equal(retreat.want(hungry), 0);
+  await provision.run({ perceive: () => hungry, record: (event) => events.push(event) });
+  assert.equal(hunted, 0);
+  assert.deepEqual(events, ['provision_cave_ascent']);
+  assert.ok(retreat.want(hungry) > 0);
+  assert.equal(provision.want(hungry), 0);
+  assert.ok(s.behavior('eat').want({ ...hungry, inventory: { beef: 1 } }) > 0);
 });
 
 test('a running device yields to injured provisioning and eating, preserving its goal', async () => {
@@ -94,10 +175,12 @@ function endermanFixture(creepy) {
   const mob = { id: 9, name: 'enderman', position: new Vec3(1, 64, 0), metadata: { [index]: creepy } };
   bot.entities[mob.id] = mob;
   let attacks = 0;
-  const behaviors = createSurvivalBehaviors({ bot, actions: { attack: async () => { attacks += 1; return { ok: true }; } } });
+  let goal = null;
+  const behaviors = createSurvivalBehaviors({ bot, activeGoal: () => goal,
+    actions: { attack: async () => { attacks += 1; return { ok: true }; } } });
   const state = { alive: true, health: 20, food: 20, isDay: true, sheltered: false,
     inventory: { iron_sword: 1 }, position: bot.entity.position, hostiles: [{ ...mob, distance: 1 }] };
-  return { bot, mob, state, attacks: () => attacks, behavior: (name) => behaviors.find((b) => b.name === name) };
+  return { bot, mob, state, attacks: () => attacks, setGoal: (name) => { goal = name; }, behavior: (name) => behaviors.find((b) => b.name === name) };
 }
 
 test('a calm nearby enderman is never an attack target, including inside shelter and after unrelated damage', async () => {
@@ -120,6 +203,40 @@ test('an angry enderman retains hiding, low-health escape and close self-defense
   assert.ok(s.behavior('defend').want({ ...s.state, sheltered: true }) > 0);
 });
 
+test('an unarmed bot flees the neutral mob identified by its own native damage event', async () => {
+  const bot = Object.assign(new EventEmitter(), {
+    health: 16, food: 20, entity: { id: 1, position: new Vec3(0, 64, 0) },
+    registry: minecraftData('1.21.8'), inventory: { slots: [] }, entities: {},
+  });
+  const bear = { id: 2, name: 'polar_bear', type: 'animal', position: new Vec3(2, 64, 0) };
+  const bystander = { ...bear, id: 3, position: new Vec3(3, 64, 0) };
+  bot.entities = { 1: bot.entity, 2: bear, 3: bystander };
+  const fleeTargets = [];
+  const behaviors = createSurvivalBehaviors({ bot, actions: { fleeFrom: async (_bot, _ctx, target) => {
+    fleeTargets.push(target);
+    return { ok: true };
+  } } });
+  const escape = behaviors.find(({ name }) => name === 'escape');
+  const defend = behaviors.find(({ name }) => name === 'defend');
+  try {
+    bot.emit('entityHurt', bystander, bear);
+    bot.emit('entityHurt', bot.entity);
+    assert.deepEqual(perceive(bot).hostiles, []);
+    bot.emit('entityHurt', bot.entity, bear);
+    const state = perceive(bot);
+    assert.deepEqual(state.hostiles.map(({ id }) => id), [bear.id]);
+    assert.equal(state.hostiles[0].selfAggressor, true);
+    assert.ok(escape.want(state) > 0);
+    assert.equal(defend.want(state), 0);
+    await escape.run({ perceive: () => perceive(bot), record() {} });
+    assert.deepEqual(fleeTargets, [bear.position]);
+    bot.entities[bear.id] = { ...bear };
+    assert.deepEqual(perceive(bot).hostiles, []);
+  } finally {
+    for (const behavior of behaviors) behavior.dispose?.();
+  }
+});
+
 test('a melee swing followed by damage retains enderman self-defense even before angry metadata arrives', () => {
   const s = endermanFixture(false);
   s.bot.emit('entitySwingArm', s.mob);
@@ -128,4 +245,483 @@ test('a melee swing followed by damage retains enderman self-defense even before
   assert.ok(s.behavior('hide').want(s.state) > 0);
   assert.ok(s.behavior('escape').want({ ...s.state, health: 2.5 }) > 0);
   assert.ok(s.behavior('defend').want({ ...s.state, sheltered: true }) > 0);
+});
+
+test('hurt in water: no healing in place (it sinks), and up for air before the air runs low', () => {
+  const s = setup();
+  const wet = { ...s.state, food: 18, inWater: true, oxygen: 15 };
+  assert.equal(s.behavior('recover').want(wet), 0);
+  assert.ok(s.behavior('breathe').want(wet) > 0);
+  assert.equal(s.behavior('breathe').want({ ...wet, health: 20 }), 0);
+  assert.equal(s.behavior('breathe').want({ ...wet, oxygen: 20 }), 0);
+  // A bubble or two lost to a meal does not cut the meal short.
+  assert.equal(s.behavior('breathe').want({ ...wet, oxygen: 18 }), 0);
+  assert.ok(s.behavior('recover').want({ ...wet, inWater: false }) > 0);
+});
+
+test('breathing swims to an open water column before attempting to drain a shore overhang', async () => {
+  const controls = [];
+  const looks = [];
+  let drains = 0;
+  let digs = 0;
+  const s = setup({ actions: {
+    drainPocket: async () => { drains += 1; return true; },
+    digBlock: async () => { digs += 1; },
+  } });
+  Object.assign(s.bot, {
+    oxygenLevel: 4,
+    blockAt: (p) => {
+      const open = p.x === 1 && p.z === 0 && p.y >= 64;
+      const name = open ? (p.y < 66 ? 'water' : 'air') : 'stone';
+      return { name, boundingBox: open ? 'empty' : 'block' };
+    },
+    lookAt: async (p) => { looks.push(p); },
+    setControlState: (key, value) => {
+      controls.push([key, value]);
+      if (key === 'forward' && value) { s.bot.oxygenLevel = 20; s.bot.entity.isInWater = false; }
+    },
+    canDigBlock: () => true,
+  });
+  s.bot.entity.isInWater = true;
+  const result = await s.behavior('breathe').run({ signal: new AbortController().signal });
+  assert.equal(result.ok, true);
+  assert.equal(drains, 0, 'the reachable air column takes priority over draining');
+  assert.equal(digs, 0, 'the shore overhang is left intact');
+  assert.equal(looks[0].x, 1.5);
+  assert.ok(controls.some(([key, value]) => key === 'forward' && value));
+  assert.deepEqual(controls.slice(-2), [['jump', false], ['forward', false]]);
+});
+
+test('breathing with no air column drains first, then gives a slow lid dig its measured time', async () => {
+  const calls = [];
+  const s = setup({ actions: {
+    drainPocket: async () => { calls.push('drain'); return false; },
+    digBlock: async (_bot, _ctx, _block, options) => {
+      calls.push(options.timeoutMs);
+      s.bot.oxygenLevel = 20;
+      s.bot.entity.isInWater = false;
+    },
+  } });
+  Object.assign(s.bot, {
+    oxygenLevel: 4,
+    blockAt: (p) => ({ name: p.y < 66 ? 'water' : 'stone', boundingBox: p.y < 66 ? 'empty' : 'block' }),
+    setControlState() {},
+    canDigBlock: () => true,
+    digTime: () => 20000,
+  });
+  s.bot.entity.isInWater = true;
+  assert.equal((await s.behavior('breathe').run({ signal: new AbortController().signal })).ok, true);
+  assert.deepEqual(calls, ['drain', 21500]);
+});
+
+test('regaining air in an open pool keeps the body until it reaches a checked bank', async () => {
+  const start = new Vec3(94.5, 59, 128.5);
+  const bank = new Vec3(94, 63, 124);
+  const records = [];
+  const s = setup({ actions: { swimToNearbyBank } });
+  Object.assign(s.bot.entity, { position: start.clone(), isInWater: true, onGround: false });
+  let toward;
+  Object.assign(s.bot, {
+    oxygenLevel: 4,
+    blockAt(p) {
+      if (p.x === 94 && p.z >= 125 && p.y <= 62) {
+        return { name: 'water', boundingBox: 'empty', shapes: [], getProperties: () => ({ level: 0 }) };
+      }
+      if (p.y <= 62 || (p.x !== 94 && p.y <= 66)) return { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+      return { name: 'air', boundingBox: 'empty', shapes: [] };
+    },
+    lookAt: async (p) => { toward = p; },
+    setControlState(key, value) {
+      if (!value) return;
+      if (key === 'jump' && s.bot.entity.position.y < 62) {
+        s.bot.entity.position.y = 62;
+        s.bot.entity.isInWater = false;
+        s.bot.oxygenLevel = 6;
+      }
+      if (key !== 'forward') return;
+      s.bot.entity.position.z = toward.z;
+      if (Math.floor(toward.z) === bank.z) {
+        s.bot.entity.position.y = bank.y;
+        s.bot.entity.isInWater = false;
+        s.bot.entity.onGround = true;
+      }
+    },
+  });
+  const result = await s.behavior('breathe').run({ signal: new AbortController().signal,
+    record: (type, data) => records.push({ type, ...data }) });
+  assert.deepEqual(result, { ok: true, ashore: true });
+  assert.deepEqual(records, [
+    { type: 'breathe_bank_route', from: new Vec3(94, 63, 128), bank, distance: 4 },
+    { type: 'breathe_bank_result', bank, landed: true },
+  ]);
+  assert.deepEqual(s.bot.entity.position.floored(), bank);
+});
+
+test('a shallow shore never accepts sand without solid backing and a route to stable dry footing', async () => {
+  const start = new Vec3(0.5, 62, 0.5);
+  const full = (name) => ({ name, boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] });
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const water = { name: 'water', boundingBox: 'empty', shapes: [], getProperties: () => ({ level: 0 }) };
+  const s = setup({ actions: { swimToNearbyBank } });
+  Object.assign(s.bot.entity, { position: start, isInWater: true, onGround: false });
+  let solidBacking = false;
+  Object.assign(s.bot, { blockAt(p) {
+    if (p.x === 0 && p.z >= 0 && p.y === 62) return water;
+    if (p.x === 0 && p.z === -1 && p.y === 62) return full('sand');
+    if (p.x === 0 && p.z === -1 && p.y === 61 && solidBacking) return full('stone');
+    return air;
+  } });
+  const ctx = { record: () => assert.fail('began moving with no proven stable shore') };
+  assert.equal(await swimToNearbyBank(s.bot, ctx), false);
+  solidBacking = true;
+  assert.equal(await swimToNearbyBank(s.bot, ctx), false);
+});
+
+test('a goal that brings its own food (the farm) keeps provisioning out of its way', () => {
+  let feeding = false;
+  const s = setup({ feeding: () => feeding });
+  const hungry = { ...s.state, health: 20, food: 4 };
+  assert.ok(s.behavior('provision').want(hungry) > 0);
+  feeding = true;
+  assert.equal(s.behavior('provision').want(hungry), 0);
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(10, 64, 0) } };
+  assert.ok(s.behavior('provision').want(hungry) > 0, 'a cow close by is still hunted');
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(80, 64, 0) } };
+  assert.equal(s.behavior('provision').want(hungry), 0);
+});
+
+test('a search for food keeps within reach of home', async () => {
+  const seen = [];
+  const s = setup({ home: () => new Vec3(100, 64, -20), skills: {
+    huntOne: async () => ({ ok: false, reason: 'no_mob_in_range' }),
+    pickBerries: async () => ({ ok: false, reason: 'no_berries' }),
+    explore: async (_bot, _ctx, memory) => { seen.push(memory.around); return { ok: true }; } } });
+  await s.behavior('provision').run({ record() {}, perceive: () => s.state, signal: new AbortController().signal });
+  assert.deepEqual(seen, [{ x: 100, z: -20, radius: 160 }]);
+});
+
+test('generic provisioning yields to home resupply while eating remains available', () => {
+  const s = setup({ resupplying: () => true });
+  assert.equal(s.behavior('provision').want({ ...s.state, food: 0 }), 0);
+  assert.ok(s.behavior('eat').want({ ...s.state, food: 0, inventory: { cooked_beef: 1 } }) > 0);
+});
+
+test('explore past its radius heads back towards the centre', async () => {
+  const skills = require('../core/skills');
+  const actions = require('../core/actions');
+  const goTo = actions.goTo;
+  let target = null;
+  const bot = { entity: { position: new Vec3(400, 64, 0) } };
+  actions.goTo = async (_b, _c, goal) => { target = goal; bot.entity.position = new Vec3(370, 64, 0); return { ok: true }; };
+  try {
+    const memory = { heading: Math.PI / 2, around: { x: 0, z: 0, radius: 160 } };
+    assert.ok((await skills.explore(bot, { record() {} }, memory)).ok);
+    assert.ok(target.x < 400 && Math.abs(target.z) < 1, JSON.stringify(target));
+  } finally { actions.goTo = goTo; }
+});
+
+test('right after a kill with more animals close by, provision hunts a few more for the bag', async () => {
+  const s = setup({ skills: { huntOne: async () => { s.state.inventory.beef = (s.state.inventory.beef || 0) + 1; return { ok: true }; } } });
+  const fed = () => ({ ...s.state, health: 20, food: 20 });
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(10, 64, 0) } };
+  // Not hungry, nothing hunted yet: no reason to.
+  assert.equal(s.behavior('provision').want(fed()), 0);
+  s.state.food = 4;
+  await s.behavior('provision').run({ record() {}, perceive: () => s.state, signal: new AbortController().signal });
+  assert.equal(s.state.inventory.beef, 1);
+  assert.ok(s.behavior('provision').want(fed()) > 0, 'one beef, a cow 10 blocks off');
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(60, 64, 0) } };
+  assert.equal(s.behavior('provision').want(fed()), 0, 'the next cow is far');
+  s.bot.entities = { 1: { name: 'cow', position: new Vec3(10, 64, 0) } };
+  s.state.inventory.beef = 6;
+  assert.equal(s.behavior('provision').want(fed()), 0, 'the bag is stocked');
+});
+
+test('a verified surface rod checkpoint only restores pickup while armed and fit by daylight', () => {
+  const bot = new EventEmitter();
+  bot.game = { dimension: 'overworld' };
+  bot.entity = { position: new Vec3(1, 64, 0), onGround: true };
+  bot.registry = { foodsByName: {} };
+  bot.companionSavedSurfaceDrops = { dimension: 'overworld', position: { x: 30, y: 64, z: 0 }, timeLeftMs: 150000 };
+  const recover = createSurvivalBehaviors({ bot }).find((behavior) => behavior.name === 'recover_drops');
+  const state = { alive: true, health: 20, food: 20, inventory: { stone_sword: 1 }, hostiles: [],
+    isDay: true, sheltered: false, onGround: true, inWater: false, position: bot.entity.position };
+  assert.ok(recover.want(state) > 0);
+  assert.equal(recover.want({ ...state, isDay: false }), 0);
+  assert.equal(recover.want({ ...state, inventory: {} }), 0);
+  assert.equal(recover.want({ ...state, onGround: false }), 0);
+  assert.equal(recover.want({ ...state, health: 12 }), 0);
+  recover.dispose();
+});
+
+test('drops are gone back for only when something dropped, and never into the lava that killed', () => {
+  const bot = Object.assign(new EventEmitter(), { entity: { position: new Vec3(0, 64, 0) }, game: { dimension: 'overworld' },
+    registry: { foodsByName: {} }, inventory: { slots: [], items: () => items }, blockAt: () => ({ name: feet }) });
+  let items = [];
+  let feet = 'air';
+  const recoverDrops = createSurvivalBehaviors({ bot }).find((b) => b.name === 'recover_drops');
+  const state = { alive: true, health: 20, food: 20, inventory: {}, hostiles: [], isDay: true, sheltered: false,
+    position: new Vec3(10, 64, 0) };
+  // Respawned with an empty bag: the drops lie where it died.
+  bot.emit('death');
+  bot.emit('spawn');
+  assert.ok(recoverDrops.want(state) > 0);
+  // keepInventory: back alive with everything, nothing to go back for.
+  items = [{ name: 'diamond_pickaxe' }];
+  bot.emit('death');
+  bot.emit('spawn');
+  assert.equal(recoverDrops.want(state), 0);
+  // Burnt in lava: nothing left there either.
+  items = [];
+  feet = 'lava';
+  bot.emit('death');
+  bot.emit('spawn');
+  assert.equal(recoverDrops.want(state), 0);
+});
+
+test('a cave death does not draw an unarmed respawn back underground', async () => {
+  const bot = Object.assign(new EventEmitter(), {
+    entity: { position: new Vec3(0, 12, 0) }, game: { dimension: 'overworld' }, companionSurfaceY: 64,
+    registry: { foodsByName: { cooked_beef: {} } }, inventory: { slots: [], items: () => [] },
+    blockAt: () => ({ name: 'air' }),
+  });
+  let moved = 0;
+  const recoverDrops = createSurvivalBehaviors({ bot, actions: {
+    goNear: async () => { moved += 1; return { ok: true }; },
+    collectDrops: async () => ({ ok: true }),
+  } }).find((behavior) => behavior.name === 'recover_drops');
+  const state = {
+    alive: true, health: 20, food: 20, inventory: {}, hostiles: [], sheltered: false, position: new Vec3(3, 64, 0),
+  };
+  bot.emit('death');
+  assert.equal(recoverDrops.want(state), 0, 'wait for the new life before deciding whether to retrieve items');
+  bot.emit('spawn');
+  const ctx = { perceive: () => state, record() {}, signal: new AbortController().signal };
+  assert.equal(recoverDrops.want(state), 0);
+  assert.equal((await recoverDrops.run(ctx)).reason, 'drop_recovery_not_ready');
+  assert.equal(moved, 0);
+
+  state.inventory = { stone_pickaxe: 1, stone_sword: 1, cooked_beef: 2, iron_chestplate: 1 };
+  assert.equal(recoverDrops.want(state), 0, 'carrying armour does not protect the bot');
+  bot.inventory.slots[6] = { name: 'iron_chestplate' };
+  assert.ok(recoverDrops.want(state) > 0);
+  assert.equal((await recoverDrops.run(ctx)).ok, true);
+  assert.equal(moved, 1);
+  recoverDrops.dispose();
+});
+
+test('hurt but not badly, with nothing to eat and too full to heal, the bot gets food', () => {
+  const s = setup();
+  const hurt = { ...s.state, health: 10.8, food: 16, inventory: { chicken: 5 } };
+  assert.ok(s.behavior('provision').want(hurt) > 0);
+  assert.equal(s.behavior('provision').want({ ...hurt, health: 17 }), 0);
+  assert.equal(s.behavior('provision').want({ ...hurt, food: 18 }), 0);
+});
+
+test('an unarmed home resupply evades a visible witch before critical health and never pursues it', async () => {
+  let resupplying = true;
+  let screened = false;
+  const calls = [];
+  const s = setup({
+    resupplying: () => resupplying,
+    actions: {
+      underground: () => false,
+      async goTo(bot, _ctx, target) {
+        assert.deepEqual([target.x, target.y, target.z], [-1, 64, 0]);
+        calls.push('guarded');
+        bot.entity.position = new Vec3(target.x + .5, target.y, target.z + .5);
+        return { ok: true };
+      },
+      async fleeFrom() { assert.fail('unarmed resupply must use a safe dry edge'); },
+      async attack(_bot, _ctx, id, options) { calls.push([id, options]); return { ok: true }; },
+    },
+  });
+  const witch = { id: 7, name: 'witch', position: new Vec3(8.5, 64, .5), width: .6, height: 1.95, isValid: true };
+  s.bot.entity.position = new Vec3(.5, 64, .5);
+  s.bot.entity.onGround = true;
+  s.bot.entities = { [witch.id]: witch };
+  s.bot.world = { raycast: () => screened ? { boundingBox: 'block' } : null };
+  s.bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  s.bot.blockAt = (p) => {
+    const solid = p.y < 64 || p.y < 66 && (Math.floor(p.z) !== 0 || p.x < -1 || screened && Math.floor(p.x) === 2);
+    const name = solid ? 'stone' : 'air';
+    return { name, boundingBox: solid ? 'block' : 'empty', shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const state = { ...s.state, health: 20, food: 20 };
+  const perceive = () => ({ ...state, position: s.bot.entity.position,
+    hostiles: [{ ...witch, distance: witch.position.distanceTo(s.bot.entity.position) }] });
+  const escape = s.behavior('escape');
+  const defend = s.behavior('defend');
+  assert.equal(escape.want(perceive()), 1);
+  assert.deepEqual((await escape.run({ perceive, record() {} })).to, new Vec3(-1, 64, 0));
+  screened = true;
+  assert.equal(escape.want(perceive()), 0);
+  screened = false;
+  witch.position.x = 4;
+  assert.equal(defend.want(perceive()), 0, 'there is no bare-handed pursuit during recovery');
+  resupplying = false;
+  assert.equal(defend.want(perceive()), 1, 'ordinary surface defense is preserved');
+  assert.equal(escape.want(perceive()), 0);
+  resupplying = true;
+  witch.position.x = 1.5;
+  assert.equal(defend.want(perceive()), 1);
+  await defend.run({ perceive, record() {} });
+  assert.deepEqual(calls, ['guarded', [witch.id, { pursue: false }]]);
+});
+
+test('hunting pearls, an angry enderman is fought rather than hidden from, hurt or not', () => {
+  const s = endermanFixture(true);
+  s.setGoal('hunt_pearls');
+  assert.equal(s.behavior('hide').want(s.state), 0);
+  assert.ok(s.behavior('defend').want(s.state) > 0);
+  assert.equal(s.behavior('hide').want({ ...s.state, health: 8 }), 0, 'a hole dug mid-fight is death');
+  s.setGoal('outfit');
+  assert.ok(s.behavior('hide').want(s.state) > 0, 'other work hides as before');
+});
+
+function pearlEscapeFixture({ blocked = false } = {}) {
+  const from = new Vec3(.5, 64, .5);
+  const archer = { id: 9, name: 'skeleton', position: new Vec3(8.5, 64, .5) };
+  const calls = [];
+  const s = setup({ activeGoal: () => 'hunt_pearls', home: () => new Vec3(0, 64, 20), actions: {
+    underground: () => false,
+    async goTo(bot, _ctx, goal) {
+      const to = new Vec3(goal.x, goal.y, goal.z);
+      calls.push(['walk', to]);
+      bot.entity.position = to.offset(.5, 0, .5);
+      return { ok: true };
+    },
+    async fleeFrom() { assert.fail('the critical scout must stay on a verified edge'); },
+    haltBody() { calls.push('halt'); },
+  } });
+  const { bot } = s;
+  bot.entity.position = from;
+  bot.entity.onGround = true;
+  bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  bot.blockAt = (p) => {
+    const cell = p.floored();
+    const floor = cell.y === 63 && (cell.x === 0 && cell.z === 0
+      || !blocked && (cell.x === -1 && cell.z === 0 || cell.x === 0 && cell.z === 1));
+    const screen = cell.x === 2 && cell.z === 1 && [64, 65].includes(cell.y);
+    const solid = floor || screen;
+    const water = cell.y === 64 && cell.z === -1;
+    return { name: solid ? 'stone' : water ? 'water' : 'air',
+      boundingBox: solid ? 'block' : 'empty', shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const perceive = () => ({ ...s.state, position: bot.entity.position, health: 8,
+    inventory: { iron_sword: 1 }, hostiles: [{ ...archer, distance: archer.position.distanceTo(bot.entity.position) }] });
+  const ctx = { perceive, record: (type) => calls.push(type) };
+  return { ...s, archer, calls, ctx, escape: s.behavior('escape') };
+}
+
+test('an injured pearl scout breaks the archer line of sight on dry ground toward home', async () => {
+  const { archer, calls, ctx, escape } = pearlEscapeFixture();
+  assert.equal(escape.want(ctx.perceive()), 1, 'start recovery before the critical six-health generic panic');
+  assert.equal(escape.want({ ...ctx.perceive(), health: 11 }), 0);
+  const result = await escape.run(ctx);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.to, new Vec3(0, 64, 1));
+  assert.deepEqual(calls, ['pearl_ranged_escape', 'cave_evasion_threat', ['walk', result.to], 'cave_evasion_step']);
+  assert.equal(escape.want(ctx.perceive()), 0, 'escape yields when the shooter is screened');
+  archer.position.x = 4.5;
+  assert.equal(escape.want({ ...ctx.perceive(), health: 5 }), 0, 'the close archer remains screened');
+});
+
+test('a pearl scout boxed in by unsafe terrain faces the archer with the equipped shield', async () => {
+  const { bot, archer, calls, ctx, escape } = pearlEscapeFixture({ blocked: true });
+  bot.inventory.slots[45] = { name: 'shield' };
+  bot.lookAt = async (p) => { calls.push(['look', p]); };
+  bot.activateItem = (offHand) => { calls.push(['activate', offHand]); };
+  bot.deactivateItem = () => { calls.push('deactivate'); };
+  const result = await escape.run(ctx);
+  assert.equal(result.reason, 'pearl_ranged_escape_wait');
+  assert.deepEqual(calls, ['pearl_ranged_escape', 'cave_evasion_threat', 'halt',
+    ['look', archer.position.offset(0, 1, 0)], ['activate', true], 'pearl_ranged_escape_shield', 'deactivate']);
+});
+
+function creeperFixture({ blocked = false } = {}) {
+  const calls = [];
+  const registry = minecraftData('1.21.8');
+  const s = setup({ actions: {
+    underground: () => true,
+    async goTo(bot, _ctx, step, { timeoutMs }) {
+      assert.equal(timeoutMs, 700);
+      calls.push('guarded');
+      bot.entity.position = new Vec3(step.x + .5, step.y, step.z + .5);
+      return { ok: true };
+    },
+    async fleeFrom(_bot, _ctx, target) { calls.push(['flee', target]); return { ok: true }; },
+    haltBody() { calls.push('halt'); },
+  } }, registry);
+  const { bot } = s;
+  const keys = registry.entitiesByName.creeper.metadataKeys;
+  const creeper = { id: 4, isValid: true, name: 'creeper', position: new Vec3(4.25, 64, .5), metadata: [] };
+  const zombie = { id: 5, isValid: true, name: 'zombie', position: new Vec3(2, 64, .5) };
+  bot.entity.position = new Vec3(.5, 64, .5);
+  bot.entity.onGround = true;
+  bot.entities = { 4: creeper, 5: zombie };
+  bot.pathfinder = { movements: { getNeighbors: () => [] } };
+  bot.blockAt = (p) => {
+    const solid = p.y < 64 || p.y >= 66 || (blocked && (p.x < 0 || p.z < 0 || p.z >= 1));
+    return { name: solid ? 'stone' : 'air', boundingBox: solid ? 'block' : 'empty', shapes: solid ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  const prime = (value) => { creeper.metadata[keys.indexOf('swell_dir')] = value; };
+  const perceive = () => ({ ...s.state, health: 18, food: 16, position: bot.entity.position, inventory: { iron_sword: 1 },
+    hostiles: Object.values(bot.entities).map((mob) => ({ ...mob, distance: mob.position.distanceTo(bot.entity.position) }))
+      .sort((a, b) => a.distance - b.distance) });
+  return { ...s, creeper, zombie, calls, perceive, prime, escape: s.behavior('escape') };
+}
+
+test('native creeper priming takes priority over a closer zombie while underground', async () => {
+  const f = creeperFixture();
+  const events = [];
+  f.prime(-1);
+  assert.equal(f.escape.want(f.perceive()), 0, 'ordinary mixed-mob targeting still favors the zombie');
+  f.prime(1);
+  assert.ok(f.escape.want(f.perceive()) > 0);
+  assert.equal(f.escape.want({ ...f.perceive(), inWater: true }), 0);
+  assert.equal(f.escape.want({ ...f.perceive(), sheltered: true }), 0);
+  const result = await f.escape.run({ perceive: f.perceive, record: (type, data) => events.push({ type, ...data }) });
+  assert.equal(result.ok, true);
+  assert.ok(f.bot.entity.position.distanceTo(f.creeper.position) > 3.75);
+  assert.deepEqual(f.calls, ['guarded']);
+  assert.equal(events.find(({ type }) => type === 'escape_primed_creeper').id, f.creeper.id);
+});
+
+test('a primed creeper in a cramped cave raises the already equipped shield when no safe step exists', async () => {
+  const f = creeperFixture({ blocked: true });
+  const { bot, creeper, calls } = f;
+  bot.inventory.slots[45] = { name: 'shield' };
+  bot.activateItem = (offHand) => { calls.push(['activate', offHand]); };
+  bot.lookAt = async (p) => { calls.push(['look', p]); f.prime(-1); };
+  bot.deactivateItem = () => { calls.push('deactivate'); };
+  f.prime(1);
+  assert.deepEqual(await f.escape.run({ perceive: f.perceive, record() {} }), { ok: true, waited: true });
+  assert.deepEqual(calls, ['halt', ['activate', true], ['look', creeper.position.offset(0, 1, 0)], 'deactivate']);
+});
+
+test('a confirmed native Enderman attacker in reach gets a stationary counter, with other threats preserved', async () => {
+  const registry = minecraftData('1.21.8');
+  const bot = Object.assign(new EventEmitter(), { entity: { position: new Vec3(0, 64, 0) }, registry,
+    game: { dimension: 'overworld' }, inventory: { slots: [] }, entities: {},
+    world: { raycast: () => null }, blockAt: () => ({ boundingBox: 'empty' }) });
+  const enderman = { id: 2, name: 'enderman', isValid: true, position: new Vec3(3.1, 64, 0) };
+  bot.entities[enderman.id] = enderman;
+  const seen = [];
+  const behaviors = createSurvivalBehaviors({ bot, activeGoal: () => 'hunt_pearls', actions: {
+    attack: async (_bot, _ctx, id, options) => { seen.push({ id, options }); return { ok: true }; },
+  } });
+  const behavior = (name) => behaviors.find((entry) => entry.name === name);
+  const target = { ...enderman, distance: 3.1 };
+  const state = { health: 5, inventory: { iron_sword: 1 }, hostiles: [target], position: bot.entity.position };
+  assert.equal(behavior('defend').want(state), 0, 'nearby neutral metadata is not aggression');
+  bot.emit('entityHurt', bot.entity, enderman);
+  assert.equal(behavior('escape').want(state), 0);
+  assert.ok(behavior('defend').want(state) > 0);
+  await behavior('defend').run({ perceive: () => state, record() {} });
+  assert.deepEqual(seen, [{ id: enderman.id, options: { pursue: false } }]);
+  assert.ok(behavior('escape').want({ ...state, inventory: {} }) > 0);
+  assert.ok(behavior('escape').want({ ...state, hostiles: [target, { name: 'creeper', distance: 3.5 }] }) > 0);
+  bot.world.raycast = () => ({ boundingBox: 'block' });
+  assert.ok(behavior('escape').want(state) > 0, 'cannot counter a mob behind cover');
 });

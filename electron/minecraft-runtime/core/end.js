@@ -8,7 +8,7 @@
 const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const actions = require('./actions');
-const { waitUntil, sleep } = require('./confirm');
+const { waitUntil, sleep, abortError } = require('./confirm');
 const { dimension } = require('./nether');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
@@ -214,7 +214,7 @@ function applyEndMovements(bot) {
   if (!m || m.companionEnd) return () => {};
   const saved = {
     maxDropDown: m.maxDropDown, towers: m.allow1by1towers, scaffold: m.scafoldingBlocks, placeCost: m.placeCost,
-    steps: m.exclusionAreasStep.length, cantBreak: new Set(m.blocksCantBreak), sprint: m.allowSprinting,
+    steps: m.exclusionAreasStep.length, cantBreak: new Set(m.blocksCantBreak), sprint: m.sprintSetting ?? m.allowSprinting,
     parkour: m.allowParkour,
   };
   m.companionEnd = true;
@@ -277,7 +277,21 @@ const LIQUID = /^(water|lava)$/;
 const touchesLiquid = (bot, p) => [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
   .some(([x, y, z]) => LIQUID.test(bot.blockAt(p.offset(x, y, z))?.name || ''));
 
-async function bridgeStep(bot, ctx, target, { avoidLiquids = false, blocks = BRIDGE, keepWalls = false } = {}) {
+async function bridgeStep(bot, ctx, target, options = {}) {
+  if (!options.prepareNext) return bridgeStepBody(bot, ctx, target, options);
+  const old = bot.getControlState?.('sneak') || false;
+  const flag = bot.companionSneaking;
+  bot.companionSneaking = true;
+  bot.setControlState('sneak', true);
+  try { return await bridgeStepBody(bot, ctx, target, options); }
+  finally {
+    bot.setControlState('forward', false);
+    bot.setControlState('sneak', ctx.signal?.aborted ? false : old);
+    bot.companionSneaking = flag;
+  }
+}
+
+async function bridgeStepBody(bot, ctx, target, { avoidLiquids = false, blocks = BRIDGE, keepWalls = false, prepareNext, validateNext } = {}) {
   const started = Date.now();
   // Never lay a block from mid-air: the walk before may still be settling.
   if (!bot.entity.onGround && !(await waitUntil(() => bot.entity.onGround, { timeoutMs: 1500, signal: ctx.signal }))) {
@@ -290,6 +304,17 @@ async function bridgeStep(bot, ctx, target, { avoidLiquids = false, blocks = BRI
   const ahead = feet.plus(dir);
   // Underground, opening a cell beside water or lava floods the tunnel.
   if (avoidLiquids && (touchesLiquid(bot, ahead) || touchesLiquid(bot, ahead.offset(0, 1, 0)))) return fail('liquid_ahead');
+  if (validateNext) {
+    const checked = await validateNext({ feet, ahead, dir, phase: 'before_clear' });
+    if (!checked?.ok) return checked || fail('bridge_validate_failed');
+  }
+  // Protection is ready before opening an old side wall or placing/moving
+  // onto the next central floor. End bridging has no preparation by default.
+  let prepared;
+  if (prepareNext) {
+    prepared = await prepareNext({ feet, ahead, dir });
+    if (!prepared?.ok) return prepared || fail('bridge_prepare_failed');
+  }
   for (const cell of [ahead.offset(0, 1, 0), ahead]) {
     const b = bot.blockAt(cell);
     if (!b || b.boundingBox === 'empty') continue;
@@ -297,6 +322,9 @@ async function bridgeStep(bot, ctx, target, { avoidLiquids = false, blocks = BRI
     if (keepWalls) return fail('bridge_wall', { block: b.name });
     if (UNBREAKABLE.test(b.name) || !bot.canDigBlock(b)) return fail('bridge_wall', { block: b.name });
     const dug = await actions.digBlock(bot, ctx, b);
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    const position = prepared?.assertPosition?.();
+    if (position && !position.ok) return position;
     if (!dug.ok) return dug;
   }
   const floor = bot.blockAt(ahead.offset(0, -1, 0));
@@ -314,6 +342,21 @@ async function bridgeStep(bot, ctx, target, { avoidLiquids = false, blocks = BRI
     const placed = await waitUntil(() => bot.blockAt(ahead.offset(0, -1, 0))?.boundingBox === 'block', { timeoutMs: 1500, signal: ctx.signal });
     if (!placed) return fail('bridge_place_failed');
   }
+  if (validateNext) {
+    const checked = await validateNext({ feet, ahead, dir, phase: 'after_clear' });
+    if (!checked?.ok) return checked || fail('bridge_validate_failed');
+  }
+  if (prepared?.afterClear) {
+    const completed = await prepared.afterClear();
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    const position = prepared.assertPosition?.();
+    if (position && !position.ok) return position;
+    if (!completed?.ok) return completed || fail('bridge_prepare_failed');
+    if (validateNext) {
+      const checked = await validateNext({ feet, ahead, dir, phase: 'after_guard' });
+      if (!checked?.ok) return checked || fail('bridge_validate_failed');
+    }
+  }
   // Step onto it sneaking, stopping on its centre: the physics never lets a
   // sneaking body walk off an edge, whatever the timing.
   const centre = ahead.offset(0.5, 0, 0.5);
@@ -325,6 +368,11 @@ async function bridgeStep(bot, ctx, target, { avoidLiquids = false, blocks = BRI
       const p = bot.entity.position;
       if (Math.hypot(p.x - centre.x, p.z - centre.z) < 0.3) break;
       await bot.lookAt(centre.offset(0, 1.6, 0), true);
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      if (validateNext) {
+        const checked = await validateNext({ feet, ahead, dir, phase: 'before_pulse' });
+        if (!checked?.ok) return checked || fail('bridge_validate_failed');
+      }
       bot.setControlState('forward', true);
       await sleep(50, ctx.signal);
     }

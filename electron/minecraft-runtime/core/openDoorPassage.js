@@ -1,6 +1,27 @@
 'use strict';
 
 const installed = new WeakMap();
+const isDoor = (block) => !!block && /_door$/.test(block.name || '');
+const DOOR_AXIS = { north: 'z', south: 'z', east: 'x', west: 'x' };
+
+// Swept 0.6-wide player body. The centre follows the door normal and its
+// tangent stays between .2 and .8 across both loaded halves.
+function openDoorPassage(at, point) {
+  const lower = at(point);
+  if (!isDoor(lower)) return null;
+  const lo = lower.getProperties();
+  const axis = DOOR_AXIS[lo.facing];
+  if (lo.half !== 'lower' || lo.open !== true || !axis) return null;
+  const upper = at(lower.position.offset(0, 1, 0));
+  if (!upper || upper.type !== lower.type || !isDoor(upper)) return null;
+  const hi = upper.getProperties();
+  if (hi.half !== 'upper' || ['open', 'facing', 'hinge', 'powered'].some((key) => hi[key] !== lo[key])) return null;
+  const intersects = (s) => s[1] < 1 && s[4] > 0 && (axis === 'x' ? s[2] < .8 && s[5] > .2 : s[0] < .8 && s[3] > .2);
+  if (![lower, upper].every((block) => Array.isArray(block.shapes) && block.shapes.length > 0
+    && block.shapes.every((s) => Array.isArray(s) && s.length === 6 && s.every(Number.isFinite) && !intersects(s)))) return null;
+  return { lower, upper, axis };
+}
+
 function uninstallOpenDoorPassage(bot, movements) {
   const current = installed.get(bot);
   if (current && (!movements || current.movements === movements)) current.dispose();
@@ -15,38 +36,28 @@ function installOpenDoorPassage(bot, movements) {
   previous?.dispose();
   let disposed = false;
   const waypoint = Symbol('validatedOpenDoorWaypoint');
-  const isDoor = (block) => !!block && /_door$/.test(block.name || '');
   const at = (point) => bot.blockAt(point, false);
-  const axis = { north: 'z', south: 'z', east: 'x', west: 'x' };
-  // Swept 0.6-wide player body, not merely the centre point: movement spans
-  // the whole door cell along its normal, while the tangent stays .2..8.
-  const intersectsPassage = (shape, normal) => shape[1] < 1 && shape[4] > 0 &&
-    (normal === 'x' ? shape[2] < .8 && shape[5] > .2 : shape[0] < .8 && shape[3] > .2);
-  function passage(point) {
-    const lower = at(point);
-    if (!isDoor(lower)) return null;
-    const lo = lower.getProperties();
-    if (lo.half !== 'lower' || lo.open !== true || !axis[lo.facing]) return null;
-    const upper = at(lower.position.offset(0, 1, 0));
-    if (!upper || upper.type !== lower.type || !isDoor(upper)) return null;
-    const hi = upper.getProperties();
-    if (hi.half !== 'upper' || ['open', 'facing', 'hinge', 'powered'].some((key) => hi[key] !== lo[key])) return null;
-    if (![lower, upper].every((block) => Array.isArray(block.shapes) && block.shapes.length > 0 &&
-      block.shapes.every((shape) => Array.isArray(shape) && shape.length === 6 && shape.every(Number.isFinite) && !intersectsPassage(shape, axis[lo.facing])))) return null;
-    return { lower, upper, axis: axis[lo.facing] };
-  }
+  const passage = (point) => openDoorPassage(at, point);
+  // One step through a door along its normal: level, or a drop out of the
+  // door cell, or a jump up into it (a doorstep one lower than the floor,
+  // as natural ground often is). Never through a door's side.
   function normalStep(from, to) {
     // Native postprocessing centres nodes that remain in a partial AStar
     // context. Compare their grid columns; keep the exact vertical guard.
-    if (from.y !== to.y) return false;
+    if (!Number.isInteger(from.y - to.y)) return false;
     from = from.floored();
     to = to.floored();
-    if (from.y !== to.y || Math.abs(to.x - from.x) + Math.abs(to.z - from.z) !== 1) return false;
+    if (Math.abs(to.x - from.x) + Math.abs(to.z - from.z) !== 1) return false;
+    const along = (door) => door && (door.axis === 'x' ? from.z === to.z : from.x === to.x);
+    if (from.y !== to.y) {
+      const fromDoor = isDoor(at(from));
+      const toDoor = isDoor(at(to));
+      if (fromDoor === toDoor) return false;
+      if (fromDoor) return to.y < from.y && along(passage(from));
+      return to.y === from.y + 1 && along(passage(to));
+    }
     const doors = [from, to].filter((point) => isDoor(at(point)));
-    return doors.length > 0 && doors.every((point) => {
-      const door = passage(point);
-      return door && (door.axis === 'x' ? from.z === to.z : from.x === to.x);
-    });
+    return doors.length > 0 && doors.every((point) => along(passage(point)));
   }
 
   // Native Movements.getBlock annotates its input. Give it an independent
@@ -87,6 +98,22 @@ function installOpenDoorPassage(bot, movements) {
     } finally { admitted = null; }
   };
   movements.getMoveForward = wrappedForward;
+  // Up into a door from a doorstep one lower: the door's two cells are the
+  // head room this move checks.
+  const nativeJumpUp = movements.getMoveJumpUp;
+  const wrappedJumpUp = function (node, direction, neighbors) {
+    if (disposed) return nativeJumpUp.call(this, node, direction, neighbors);
+    const next = node.offset(direction.x, 1, direction.z).floored();
+    if (!isDoor(at(next))) return nativeJumpUp.call(this, node, direction, neighbors);
+    if (!normalStep(node, next)) return;
+    admitted = [passage(next)];
+    const count = neighbors.length;
+    try {
+      nativeJumpUp.call(this, node, direction, neighbors);
+      for (const move of neighbors.slice(count)) move[waypoint] = { x: next.x, y: next.y, z: next.z };
+    } finally { admitted = null; }
+  };
+  movements.getMoveJumpUp = wrappedJumpUp;
   const nativeNeighbors = movements.getNeighbors;
   const wrappedNeighbors = function (node) {
     if (disposed) return nativeNeighbors.call(this, node);
@@ -127,6 +154,7 @@ function installOpenDoorPassage(bot, movements) {
     bot.removeListener('path_update', onPath);
     if (movements.getBlock === wrappedGetBlock) movements.getBlock = nativeGetBlock;
     if (movements.getMoveForward === wrappedForward) movements.getMoveForward = nativeForward;
+    if (movements.getMoveJumpUp === wrappedJumpUp) movements.getMoveJumpUp = nativeJumpUp;
     if (movements.getNeighbors === wrappedNeighbors) movements.getNeighbors = nativeNeighbors;
     if (wrapper && bot.pathfinder.getPathFromTo === wrapper) bot.pathfinder.getPathFromTo = nativeFromTo;
     if (installed.get(bot) === record) installed.delete(bot);
@@ -134,4 +162,4 @@ function installOpenDoorPassage(bot, movements) {
   installed.set(bot, record);
   return movements;
 }
-module.exports = { installOpenDoorPassage, uninstallOpenDoorPassage };
+module.exports = { installOpenDoorPassage, openDoorPassage, uninstallOpenDoorPassage };

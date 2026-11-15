@@ -24,6 +24,7 @@ const installMinecraft = (state: MinecraftSnapshot = idle()) => {
     connect: vi.fn(async () => state),
     disconnect: vi.fn(async () => ({ ...idle(), connectionState: 'disconnected' as const })),
     submit: vi.fn(async () => state), control: vi.fn(async () => state), sendChat: vi.fn(async () => state),
+    gatherLogs: vi.fn(async () => state),
     onChanged: vi.fn((listener) => {
       listeners.add(listener);
       return () => { listeners.delete(listener); unsubscribe(); };
@@ -75,6 +76,48 @@ describe('MinecraftPage', () => {
     fireEvent.change(screen.getByLabelText('AI provider'), { target: { value: provider.id } });
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     await waitFor(() => expect(api.connect).toHaveBeenCalledWith(expect.objectContaining({ executorMode: 'hybrid', providerId: provider.id })));
+  });
+
+  it('accepts a structured log count in Core mode and keeps accepted tasks active', async () => {
+    const { api } = installMinecraft();
+    const coreState = connected();
+    const task = { id: 'core-task', goal: 'gatherLogs', status: 'accepted' };
+    vi.mocked(api.connect).mockResolvedValueOnce(coreState);
+    vi.mocked(api.gatherLogs).mockResolvedValueOnce({ ...coreState, task });
+    vi.mocked(api.control).mockResolvedValueOnce({ ...coreState, task: { ...task, status: 'cancelled' } });
+    renderPage([provider]);
+
+    const connectButton = await screen.findByRole('button', { name: 'Connect' });
+    await waitFor(() => expect(connectButton).toBeEnabled());
+    const mode = screen.getByLabelText('Task execution');
+    fireEvent.change(mode, { target: { value: 'hybrid' } });
+    fireEvent.change(screen.getByLabelText('AI provider'), { target: { value: provider.id } });
+    fireEvent.change(mode, { target: { value: 'core' } });
+    expect(screen.queryByLabelText('What should your companion do?')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Message to players')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Inventory', level: 2 })).toBeInTheDocument();
+    expect(screen.queryByLabelText('AI provider')).not.toBeInTheDocument();
+
+    const submit = screen.getByRole('button', { name: 'Gather logs' });
+    const count = screen.getByRole('spinbutton', { name: 'Additional logs' });
+    expect(count).toHaveValue(3);
+    expect(submit).toBeDisabled();
+    fireEvent.click(connectButton);
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(api.connect).toHaveBeenCalledWith(expect.objectContaining({ executorMode: 'core', providerId: null }));
+    for (const value of ['', '0', '1.5', '65']) {
+      fireEvent.change(count, { target: { value } });
+      expect(submit).toBeDisabled();
+    }
+    fireEvent.change(count, { target: { value: '64' } });
+    fireEvent.click(submit);
+    expect(await screen.findByText('Task status: Accepted')).toBeInTheDocument();
+    expect(api.gatherLogs).toHaveBeenCalledExactlyOnceWith(64);
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }));
+    expect(await screen.findByText('Task status: Cancelled')).toBeInTheDocument();
+    expect(api.control).toHaveBeenCalledExactlyOnceWith('cancel');
+    expect(submit).toBeEnabled();
   });
 
   it('gates tasks on actual observed connection, supports task controls, and preserves observed zero health', async () => {

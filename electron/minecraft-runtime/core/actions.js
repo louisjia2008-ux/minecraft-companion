@@ -6,10 +6,13 @@
 //     observed (block gone, item counted, hunger restored), not when a call returns.
 // Recovery is not done here: the caller picks another target or gives up.
 
+const { Vec3 } = require('vec3');
 const { goals } = require('mineflayer-pathfinder');
 const { waitUntil, runCancellable, sleep, abortError } = require('./confirm');
 const { ownedItems } = require('./perception');
 const { dropReturnPosition } = require('./pathReturn');
+const { meleeGeometry, meleeSight, MeleeFollowGoal, entitySizeEvidence } = require('./entityGeometry');
+const { standable, walkDry } = require('./caveRetreat');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -26,6 +29,7 @@ function haltBody(bot) {
 const CLIMB_BLOCKS = ['dirt', 'cobblestone', 'cobbled_deepslate'];
 async function withClimbing(bot, targetY, run) {
   const movements = bot.pathfinder?.movements;
+  if (movements?.companionWalkOnly) return run();
   if (!movements || !Number.isFinite(targetY) || targetY - bot.entity.position.y <= 3 || !underground(bot)) return run();
   const saved = { towers: movements.allow1by1towers, scaffold: movements.scafoldingBlocks };
   movements.allow1by1towers = true;
@@ -56,8 +60,7 @@ function openSky(bot, feet) {
  * Below ground: rock or soil over the head, or standing in a pit whose sides
  * rise above head height. Under a tree canopy does not count.
  */
-function underground(bot) {
-  const feet = bot.entity.position.floored();
+function underground(bot, feet = bot.entity.position.floored()) {
   // A goal that knows the local ground level (the house site) says so directly.
   for (let dy = 2; dy < 10; dy += 1) if (solidGround(bot.blockAt(feet.offset(0, dy, 0)))) return true;
   // Below the site's ground level only counts with something overhead: a
@@ -77,18 +80,36 @@ function underground(bot) {
  * snag on a wall corner during the pathfinder's first diagonal move, which
  * then replans the same move forever.
  */
-async function recentre(bot, ctx) {
-  const centre = bot.entity.position.floored().offset(0.5, 0, 0.5);
+async function recentre(bot, ctx, { accept = () => true } = {}) {
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const feet = bot.entity.position.floored();
+  const supported = () => bot.entity.onGround === true
+    && bot.blockAt(feet.offset(0, -1, 0))?.boundingBox === 'block'
+    && bot.entity.position.floored().equals(feet) && accept(feet, bot.entity.position);
+  // Swimming, ladders and a body already falling are the native planner's.
+  if (!supported()) return;
+  const centre = feet.offset(0.5, 0, 0.5);
   const distance = () => Math.hypot(bot.entity.position.x - centre.x, bot.entity.position.z - centre.z);
+  const previousSneak = Boolean(bot.controlState?.sneak);
+  const previousCompanionSneaking = bot.companionSneaking;
   try {
-    for (let i = 0; i < 20 && distance() > 0.15; i += 1) {
+    bot.setControlState('sprint', false);
+    bot.companionSneaking = true;
+    bot.setControlState('sneak', true);
+    for (let i = 0; i < 30 && distance() > 0.15 && supported(); i += 1) {
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
       await bot.lookAt(centre.offset(0, bot.entity.position.y - centre.y + 1.6, 0), true);
-      bot.setControlState('sprint', false);
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      if (!supported()) break;
       bot.setControlState('forward', true);
-      await sleep(Math.min(150, distance() * 250), ctx.signal);
+      await sleep(50, ctx.signal);
+      bot.setControlState('forward', false);
     }
   } finally {
     bot.setControlState('forward', false);
+    bot.setControlState('sneak', previousSneak);
+    if (previousCompanionSneaking === undefined) delete bot.companionSneaking;
+    else bot.companionSneaking = previousCompanionSneaking;
   }
 }
 
@@ -196,19 +217,23 @@ async function goNear(bot, ctx, position, range = 2, options = {}) {
 }
 
 /** Moves to any spot from which `block` can be seen and dug. */
-function goToDig(bot, ctx, block, options = {}) {
+async function goToDig(bot, ctx, block, { acceptStand, ...options } = {}) {
+  const arrived = () => withinReach(bot, block.position)
+    && (!acceptStand || bot.entity.onGround && acceptStand(bot.entity.position.floored()));
   // Plants have no collision shape, so a line-of-sight goal can never be met.
-  if (block.boundingBox === 'empty') {
-    return goTo(bot, ctx, new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2), {
-      targetY: block.position.y, ...options, arrived: () => withinReach(bot, block.position),
-    });
+  const plant = block.boundingBox === 'empty';
+  const goal = plant ? new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2)
+    : new goals.GoalLookAtBlock(block.position, bot.world, { reach: 4 });
+  if (acceptStand) {
+    const reachesBlock = goal.isEnd.bind(goal);
+    goal.isEnd = (node) => acceptStand(node) && reachesBlock(node);
   }
-  const goal = new goals.GoalLookAtBlock(block.position, bot.world, { reach: 4 });
-  return goTo(bot, ctx, goal, {
-    targetY: block.position.y - 1,
-    ...options,
-    arrived: () => withinReach(bot, block.position),
-  });
+  const targetY = block.position.y - (plant ? 0 : 1);
+  const result = await goTo(bot, ctx, goal, { targetY, ...options, arrived });
+  // Native pathfinding can finish during the final fall to its stance.
+  if (acceptStand && result.reason === 'not_arrived' && !bot.entity.onGround
+    && await waitUntil(arrived, { timeoutMs: 600, signal: ctx.signal })) return { ok: true };
+  return result;
 }
 
 function withinReach(bot, position, reach = 4.5) {
@@ -233,6 +258,20 @@ async function digBlock(bot, ctx, block, { timeoutMs = 12000, tool: chosen = nul
   // timing assumes, and the break is rejected. Wait to land (not in water).
   if (!bot.entity.onGround && !bot.entity.isInWater) {
     await waitUntil(() => bot.entity.onGround, { timeoutMs: 1500, signal: ctx.signal });
+  }
+  if (bot.pathfinder?.movements?.companionWalkOnly) {
+    const body = bot.entity.position;
+    const supportsBody = position.y === Math.floor(body.y) - 1
+      && position.x < body.x + 0.3 && position.x + 1 > body.x - 0.3
+      && position.z < body.z + 0.3 && position.z + 1 > body.z - 0.3;
+    if (supportsBody) {
+      const below = bot.blockAt(position.offset(0, -1, 0));
+      const fullShape = !below?.shapes || (below.shapes.length === 1 && below.shapes[0].length === 6
+        && below.shapes[0].every((value, i) => value === [0, 0, 0, 1, 1, 1][i]));
+      if (!below || below.boundingBox !== 'block' || !fullShape || /lava|water|fire|magma|campfire|cactus/.test(below.name)) {
+        return fail('unsafe_support_dig');
+      }
+    }
   }
   try {
     await runCancellable(() => bot.dig(current, true), {
@@ -333,39 +372,53 @@ function weaponScore(name) {
   return -1;
 }
 
-async function equipBestWeapon(bot) {
-  const best = bot.inventory.items()
+function bestHandWeapon(bot) {
+  return bot.inventory.items()
     .map((item) => ({ item, score: weaponScore(item.name) }))
     .filter((entry) => entry.score >= 0)
-    .sort((a, b) => b.score - a.score)[0];
-  if (best && bot.heldItem?.name !== best.item.name) {
-    try { await bot.equip(best.item, 'hand'); } catch { /* fight with whatever is held */ }
+    .sort((a, b) => b.score - a.score)[0]?.item;
+}
+
+async function equipBestWeapon(bot) {
+  const best = bestHandWeapon(bot);
+  if (best && bot.heldItem?.name !== best.name) {
+    try { await bot.equip(best, 'hand'); } catch { /* retry at melee reach */ }
   }
   const shield = bot.inventory.items().find((item) => item.name === 'shield');
   const offhand = bot.inventory.slots?.[45];
   if (shield && offhand?.name !== 'shield') {
     try { await bot.equip(shield, 'off-hand'); } catch { /* optional */ }
   }
+  return best?.name;
 }
 
 // Mobs that a stray sweep turns on the bot, the whole pack at once.
 const BYSTANDERS = new Set(['zombified_piglin', 'piglin', 'enderman', 'villager', 'iron_golem']);
 const bystanderBeside = (bot, target) => Object.values(bot.entities).some((e) => e !== target && BYSTANDERS.has(e.name)
   && e.position && e.position.distanceTo(target.position) <= 2.5 && e.position.distanceTo(bot.entity.position) <= 4.5);
+const MELEE_COOLDOWN_MS = 625;
 
 /** Fights one entity until it is gone, the timeout passes, or the signal aborts. */
-async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3 } = {}) {
-  await equipBestWeapon(bot);
+async function attack(bot, ctx, entityId, { timeoutMs = 15000, reach = 3, pursue = true } = {}) {
   const deadline = Date.now() + timeoutMs;
-  // Chasing something up on the surface from a pit needs the same climbing allowance.
-  const first = bot.entities[entityId];
-  if (first && first.position.y - bot.entity.position.y >= 1.5 && underground(bot)) {
-    return withClimbing(bot, first.position.y + 4, () => attackLoop(bot, ctx, entityId, deadline, reach));
+  try {
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    const name = await equipBestWeapon(bot);
+    if (ctx.signal?.aborted) throw abortError(ctx.signal);
+    if (Date.now() >= deadline) return fail('combat_timeout');
+    const weapon = { name, selectedAt: Date.now() };
+    // Chasing something up on the surface from a pit needs the same climbing allowance.
+    const first = bot.entities[entityId];
+    if (pursue && first && first.position.y - bot.entity.position.y >= 1.5 && underground(bot)) {
+      return await withClimbing(bot, first.position.y + 4, () => attackLoop(bot, ctx, entityId, deadline, reach, weapon, pursue));
+    }
+    return await attackLoop(bot, ctx, entityId, deadline, reach, weapon, pursue);
+  } finally {
+    haltBody(bot);
   }
-  return attackLoop(bot, ctx, entityId, deadline, reach);
 }
 
-async function attackLoop(bot, ctx, entityId, deadline, reach) {
+async function attackLoop(bot, ctx, entityId, deadline, reach, weapon, pursue) {
   // A chase that has not closed in for 8 s is not going to (cliff, water, canopy).
   let closest = Infinity;
   let closestAt = Date.now();
@@ -374,39 +427,104 @@ async function attackLoop(bot, ctx, entityId, deadline, reach) {
   let died = false;
   let hits = 0;
   let lastDistance = Infinity;
+  let lastSentAt = null;
+  let decisionKey = null;
   const onDead = (entity) => { if (entity?.id === entityId) died = true; };
   bot.on?.('entityDead', onDead);
   try {
     while (Date.now() < deadline) {
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      if (died) return { ok: true, died, hits };
       const target = bot.entities[entityId];
       if (!target || !target.isValid) return died || (hits > 0 && lastDistance <= reach + 2) ? { ok: true, died, hits } : fail('target_lost');
-      const distance = target.position.distanceTo(bot.entity.position);
+      const geometry = meleeGeometry(bot.entity, target, bot.registry);
+      if (!geometry) {
+        ctx.record?.('combat_geometry_unknown', { targetId: entityId, mob: target.name, nativeWidth: target.width,
+          nativeHeight: target.height, metadata: target.metadata ?? null, evidence: entitySizeEvidence(target, bot.registry) });
+        return fail('unknown_target_geometry');
+      }
+      const distance = geometry.distance;
+      const sight = distance <= reach ? meleeSight(bot, geometry) : 'out_of_reach';
+      const canStrike = distance <= reach && sight === 'clear';
       lastDistance = distance;
       if (distance < closest - 0.5) { closest = distance; closestAt = Date.now(); }
-      if (distance > reach && Date.now() - closestAt > 8000) return fail('chase_stuck');
-      if (distance > reach) {
-        // Set once: GoalFollow tracks the target itself, and resetting it every
+      const key = `${geometry.size},${canStrike},${sight}`;
+      if (key !== decisionKey) {
+        decisionKey = key;
+        ctx.record?.('combat_geometry', { targetId: entityId, mob: target.name, size: geometry.size,
+          width: geometry.width, height: geometry.height, feetDistance: geometry.feetDistance, reachDistance: distance,
+          sight, mode: canStrike ? 'strike' : pursue ? 'approach' : 'hold', reach });
+      }
+      if (!canStrike && !pursue) return fail('target_outside_stationary_reach');
+      if (!canStrike && Date.now() - closestAt > 8000) {
+        return fail(distance > reach ? 'chase_stuck' : sight === 'blocked' ? 'line_of_sight_blocked' : 'line_of_sight_unknown');
+      }
+      let sent = false;
+      if (!canStrike) {
+        // Set once: the observed hitbox goal tracks the target itself, and resetting it every
         // tick restarts path planning before any path is found.
         const current = bot.pathfinder.goal;
-        if (!(current instanceof goals.GoalFollow) || current.entity !== target) {
-          bot.pathfinder.setGoal(new goals.GoalFollow(target, 1.5), true);
+        if (!(current instanceof MeleeFollowGoal) || current.entity !== target || current.reach !== reach) {
+          bot.pathfinder.setGoal(new MeleeFollowGoal(bot, target, reach), true);
         }
       } else {
         bot.pathfinder.setGoal(null);
-        await bot.lookAt(target.position.offset(0, (target.height || 1.6) * 0.8, 0), true);
+        if (weapon.name && bot.heldItem?.name !== weapon.name) {
+          // Pathfinder can leave the selected hand on a pickaxe, a building block
+          // or an exhausted scaffold slot. The original weapon may also have broken.
+          const item = bot.inventory.items().find((item) => item.name === weapon.name) || bestHandWeapon(bot);
+          weapon.name = item?.name;
+          if (item) {
+            if (bot.heldItem?.name !== item.name) {
+              try { await bot.equip(item, 'hand'); } catch { /* confirm the selected item below */ }
+            }
+            if (ctx.signal?.aborted) throw abortError(ctx.signal);
+            if (died) return { ok: true, died, hits };
+            if (bot.heldItem?.name !== item.name) return fail('weapon_equip_failed');
+            weapon.selectedAt = Date.now();
+            await sleep(Math.min(MELEE_COOLDOWN_MS, Math.max(0, deadline - weapon.selectedAt)), ctx.signal);
+            // Let live reach and sight run again after the hand change and cooldown.
+            continue;
+          }
+        }
+        const aim = distance > 1e-6 ? geometry.point : target.position.offset(0, geometry.height * 0.5, 0);
+        await bot.lookAt(aim, true);
+        if (ctx.signal?.aborted) throw abortError(ctx.signal);
+        if (died) return { ok: true, died, hits };
         // A sword's sweep from the ground also hits whatever stands beside the
         // target: one sweep at a wither skeleton angered a zombified piglin
         // pack, which beat the bot down into the lava. Hit mid-jump there, as
         // it falls: a critical hit, which never sweeps.
         if (bot.entity.onGround && bystanderBeside(bot, target)) {
-          bot.setControlState('jump', true);
-          await waitUntil(() => !bot.entity.onGround && (bot.entity.velocity?.y ?? 0) < 0, { timeoutMs: 800, signal: ctx.signal }).catch(() => {});
-          bot.setControlState('jump', false);
+          if (!pursue && bot.heldItem?.name.endsWith('_sword')) return fail('stationary_sweep_bystander');
+          if (pursue) {
+            bot.setControlState('jump', true);
+            await waitUntil(() => !bot.entity.onGround && (bot.entity.velocity?.y ?? 0) < 0, { timeoutMs: 800, signal: ctx.signal }).catch(() => {});
+            bot.setControlState('jump', false);
+          }
         }
-        bot.attack(target);
-        hits += 1;
+        if (ctx.signal?.aborted) throw abortError(ctx.signal);
+        if (died) return { ok: true, died, hits };
+        // Looking and the optional jump yield to packets. Recheck the same
+        // live target and its sightline immediately before the attack packet.
+        const fresh = bot.entities[entityId] === target && target.isValid && meleeGeometry(bot.entity, target, bot.registry);
+        if (Date.now() < deadline && fresh && fresh.distance <= reach && meleeSight(bot, fresh) === 'clear'
+          && (!weapon.name || bot.heldItem?.name === weapon.name)) {
+          bot.attack(target);
+          const sentAt = Date.now();
+          ctx.record?.('combat_attack', { targetId: entityId, mob: target.name, size: fresh.size,
+            width: fresh.width, height: fresh.height, feetDistance: fresh.feetDistance, reachDistance: fresh.distance,
+            weapon: bot.heldItem?.name || null, sentAt, sinceWeaponSelectionMs: sentAt - weapon.selectedAt,
+            sincePreviousAttackMs: lastSentAt === null ? null : sentAt - lastSentAt });
+          lastSentAt = sentAt;
+          lastDistance = fresh.distance;
+          hits += 1;
+          sent = true;
+        }
       }
-      await sleep(distance > reach ? 150 : 625, ctx.signal); // sword attack cooldown
+      await sleep(sent ? MELEE_COOLDOWN_MS : 150, ctx.signal);
+      if (ctx.signal?.aborted) throw abortError(ctx.signal);
+      if (died) return { ok: true, died, hits };
     }
     return fail('combat_timeout');
   } finally {
@@ -483,9 +601,94 @@ async function dropThroughLeaves(bot, ctx) {
   return start.y - bot.entity.position.y >= 1;
 }
 
+/**
+ * Shut in water under a ceiling (a flooded hole in a cave): scoop the water
+ * up with an empty bucket so the bot can breathe and dig its way out. A bot
+ * with no pickaxe spent hours in one, surfacing for air under the rock.
+ */
+async function drainPocket(bot, ctx) {
+  if (!bot.entity?.isInWater || typeof bot.blockAt !== 'function' || typeof bot.inventory?.items !== 'function') return false;
+  const feet = bot.entity.position.floored();
+  const head = feet.offset(0, 1, 0);
+  const ceiling = bot.blockAt(feet.offset(0, 2, 0));
+  if (!ceiling || ceiling.boundingBox !== 'block') return false;
+  const bucket = bot.inventory.items().find((i) => i.name === 'bucket');
+  const sources = [];
+  for (const base of [head, feet]) {
+    for (const [dx, dy, dz] of [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+      const b = bot.blockAt(base.offset(dx, dy, dz));
+      if (b?.name === 'water' && Number(b.getProperties?.().level) === 0) sources.push(b);
+    }
+  }
+  if (!bucket || !sources.length) return blockInflow(bot, ctx, feet);
+  try { await bot.equip(bucket, 'hand'); } catch (error) { if (error?.code === 'aborted') throw error; return false; }
+  let drained = 0;
+  for (const target of sources) {
+    if (!bot.inventory.items().some((i) => i.name === 'bucket')) break;
+    await bot.lookAt(target.position.offset(0.5, 0.5, 0.5), true);
+    await sleep(100, ctx.signal);
+    try { bot.activateItem(); } catch { /* checked below */ }
+    if (await waitUntil(() => bot.blockAt(target.position)?.name !== 'water'
+      || Number(bot.blockAt(target.position)?.getProperties?.().level) !== 0, { timeoutMs: 1000, signal: ctx.signal })) drained += 1;
+  }
+  if (drained) ctx.record?.('drain_pocket', { drained, at: `${feet.x},${feet.y},${feet.z}` });
+  if (drained) return true;
+  return blockInflow(bot, ctx, feet);
+}
+
+const FILLERS = ['cobblestone', 'cobbled_deepslate', 'dirt', 'netherrack', 'stone'];
+/**
+ * No source to scoop (the hole is fed by water running in from aside): wall
+ * the inflow off with blocks, so the water drains away and the bot stands
+ * dry under the lid, free to dig. True once its head is out of water.
+ */
+async function blockInflow(bot, ctx, feet) {
+  const own = new Set([0, 1].map((dy) => `${feet.x},${feet.y + dy},${feet.z}`));
+  const inflow = [];
+  for (const dy of [1, 2]) {
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const b = bot.blockAt(feet.offset(dx, dy, dz));
+      if (b?.name === 'water') inflow.push(b);
+    }
+  }
+  if (!inflow.length || typeof bot.placeBlock !== 'function') return false;
+  const filler = bot.inventory.items().find((i) => FILLERS.includes(i.name));
+  if (!filler) return false;
+  try { await bot.equip(filler, 'hand'); } catch (error) { if (error?.code === 'aborted') throw error; return false; }
+  let walled = 0;
+  for (const cell of inflow) {
+    for (const [dx, dy, dz] of [[0, -1, 0], [0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+      const ref = bot.blockAt(cell.position.offset(dx, dy, dz));
+      if (!ref || ref.boundingBox !== 'block' || own.has(`${ref.position.x},${ref.position.y},${ref.position.z}`)) continue;
+      try {
+        await bot.lookAt(ref.position.offset(0.5 - dx * 0.5, 0.5 - dy * 0.5, 0.5 - dz * 0.5), true);
+        await bot.placeBlock(ref, new Vec3(-dx, -dy, -dz));
+        walled += 1;
+      } catch (error) {
+        if (error?.code === 'aborted') throw error;
+        continue;
+      }
+      break;
+    }
+  }
+  if (!walled) return false;
+  ctx.record?.('block_inflow', { walled, at: `${feet.x},${feet.y},${feet.z}` });
+  // Running water left behind drains in a few ticks.
+  return waitUntil(() => bot.blockAt(feet.offset(0, 1, 0))?.name !== 'water', { timeoutMs: 4000, signal: ctx.signal });
+}
+
 async function unstick(bot, ctx) {
   const under = bot.blockAt(bot.entity.position.offset(0, -1, 0));
   if (under && under.name.endsWith('_leaves') && await dropThroughLeaves(bot, ctx)) return { ok: true, moved: 'off_canopy' };
+  // Shut in by a closed door (shut for the night, never opened again by a
+  // goal that is not the house's): the planner passes open doors only. An
+  // hour of NoPath went by inside the house. Open it.
+  if (await openNearDoor(bot, ctx)) return { ok: true, moved: 'opened_door' };
+  // Afloat out at sea: the planner finds no path over open water. A bot sat
+  // in a kelp bed far from land for over an hour. Swim for the nearest shore.
+  if (await swimAshore(bot, ctx)) return { ok: true, moved: 'swam_ashore' };
+  if (await stepOutOfPool(bot, ctx)) return { ok: true, moved: 'out_of_pool' };
+  if (await drainPocket(bot, ctx)) return { ok: true, moved: 'drained_pocket' };
   if (await nudge(bot, ctx)) return { ok: true, moved: 'nudged' };
   const start = bot.entity.position.clone();
   const movements = bot.pathfinder.movements;
@@ -522,6 +725,10 @@ async function unstick(bot, ctx) {
     // Perched in a lattice of fences (a fortress balcony rail): the pathfinder
     // plans nothing from a fence top. An hour went by there. Break them away.
     if (await breakLattice(bot, ctx) && await walkOut()) return { ok: true, moved: 'broke_lattice' };
+    // Afloat in a one-block hole of water under a low ceiling: the bot cannot
+    // rise the step out, and nothing below is solid to dig. Half an hour went
+    // by there. Open the headroom and try again.
+    if (!nether && await openHeadroom(bot, ctx) && await walkOut()) return { ok: true, moved: 'opened_headroom' };
   } finally {
     movements.maxDropDown = saved;
   }
@@ -534,6 +741,309 @@ async function unstick(bot, ctx) {
     if (start.y - bot.entity.position.y >= 2) return { ok: true, moved: 'dug_down' };
   }
   return bot.entity.position.distanceTo(start) > 2 ? { ok: true, moved: 'partial' } : fail('stuck');
+}
+
+/** Digs the block over the bot's head and those beside its head. True if any went. */
+const SEA = new Set(['water', 'kelp', 'kelp_plant', 'seagrass', 'tall_seagrass', 'bubble_column']);
+const OPEN_AIR = /^(air|cave_air|void_air)$/;
+const SHORE_SAND = new Set(['sand', 'red_sand']);
+
+function backedSand(read, feet) {
+  const support = feet.offset(0, -1, 0);
+  const sand = (block) => SHORE_SAND.has(block?.name) && block.shapes?.length === 1
+    && block.shapes[0].length === 6 && block.shapes[0].every((value, i) => value === Number(i >= 3));
+  if (!sand(read(support))) return false;
+  for (let depth = 1; depth <= 4; depth += 1) {
+    const backing = read(support.offset(0, -depth, 0));
+    if (sand(backing)) continue;
+    return standable((p) => p.equals(support) ? backing : read(p), feet);
+  }
+  return false;
+}
+
+// After surfacing for air, stay in control until a nearby observed bank is
+// reached. Returning immediately can let the body sink between breath cycles.
+async function swimToNearbyBank(bot, ctx) {
+  const read = (p) => bot.blockAt(p, false);
+  const clear = (p) => OPEN_AIR.test(read(p)?.name);
+  const surface = (p) => {
+    const below = read(p.offset(0, -1, 0));
+    return below?.name === 'water' && Number(below.getProperties?.()?.level) === 0
+      && clear(p) && clear(p.offset(0, 1, 0));
+  };
+  const dry = (p) => standable(read, p) && !read(p.offset(0, -1, 0)).name.endsWith('_leaves')
+    && clear(p.offset(0, 2, 0));
+  const sand = (p) => clear(p) && clear(p.offset(0, 1, 0)) && clear(p.offset(0, 2, 0)) && backedSand(read, p);
+  const shoreSteps = (bank) => {
+    const queue = [{ at: bank, steps: [] }];
+    const seen = new Set([bank.toString()]);
+    for (const { at, steps } of queue) {
+      if (steps.length >= 3) continue;
+      for (const [dx, dz] of SIDES) for (const dy of [0, 1, -1]) {
+        const p = at.offset(dx, dy, dz);
+        const key = p.toString();
+        if (seen.has(key) || dy && !clear((dy > 0 ? at : p).offset(0, 2, 0))) continue;
+        if (dry(p)) return [...steps, p];
+        if (!sand(p)) continue;
+        seen.add(key);
+        queue.push({ at: p, steps: [...steps, p] });
+      }
+    }
+    return null;
+  };
+  const feet = bot.entity.position.floored();
+  const from = [feet, feet.offset(0, 1, 0), feet.offset(0, 2, 0), feet.offset(0, 3, 0)].find(surface);
+  const nearSurface = () => {
+    const position = bot.entity.position;
+    return position.y >= from.y - 1.5 && clear(position.offset(0, bot.entity.eyeHeight ?? 1.62, 0).floored());
+  };
+  if (!from) return false;
+  let route;
+  let sandRoute;
+  for (const [dx, dz] of SIDES) {
+    const water = [from];
+    for (let distance = 1; distance <= 6 && distance < (route?.water.length ?? Infinity); distance += 1) {
+      const p = from.offset(dx * distance, 0, dz * distance);
+      const bank = [p, p.offset(0, 1, 0)].find(dry);
+      if (bank) { route = { water, bank }; break; }
+      const beach = [p, p.offset(0, 1, 0)].find(sand);
+      if (beach) {
+        const steps = shoreSteps(beach);
+        if (steps && water.length < (sandRoute?.water.length ?? Infinity)) sandRoute = { water, bank: beach, steps };
+        break;
+      }
+      if (!surface(p)) break;
+      water.push(p);
+    }
+  }
+  route ||= sandRoute;
+  if (!route) return false;
+  const { bank, water, steps } = route;
+  const nextToBank = water.at(-1);
+  const target = nextToBank.offset(.5, 0, .5);
+  const forward = bank.minus(nextToBank);
+  const nearLane = (p) => Math.abs(forward.x ? p.z - target.z : p.x - target.x) <= .22;
+  const laneOpen = (position) => {
+    const p = position.floored();
+    const radius = (bot.entity.width || .6) / 2;
+    const skirt = forward.x
+      ? [Math.floor(position.z - radius), Math.floor(position.z + radius)].map((z) => new Vec3(p.x, from.y, z))
+      : [Math.floor(position.x - radius), Math.floor(position.x + radius)].map((x) => new Vec3(x, from.y, p.z));
+    return skirt.every(surface);
+  };
+  const acceptingBank = steps ? sand : dry;
+  const clearStep = (a, b) => a.y === b.y || clear((b.y > a.y ? a : b).offset(0, 2, 0));
+  const acceptsStep = (p, i) => (i === steps.length - 1 ? dry(p) : sand(p)) && clearStep(i === 0 ? bank : steps[i - 1], p);
+  const valid = () => acceptingBank(bank) && (!steps || steps.every(acceptsStep)) && water.every(surface)
+    && !bot.entity.isInLava && laneOpen(bot.entity.position);
+  if (!valid()) return false;
+  ctx.record?.('breathe_bank_route', { from, bank, distance: water.length });
+  try {
+    for (let tick = 0; tick < 100 && valid(); tick += 1) {
+      const position = bot.entity.position;
+      const cell = position.floored();
+      if (!water.some((p) => p.x === cell.x && p.z === cell.z)) return false;
+      if (!nearSurface()) {
+        bot.setControlState('forward', false);
+        bot.setControlState('jump', true);
+        await sleep(50, ctx.signal);
+        continue;
+      }
+      const centered = Math.hypot(position.x - target.x, position.z - target.z) <= .35;
+      const aligned = centered && nearLane(position);
+      if (aligned && bank.y <= cell.y + 1) {
+        const landed = await swimAshore(bot, ctx, { maxTicks: 50, bank,
+          acceptBank: (p) => acceptingBank(p) && (!steps || steps.every(acceptsStep)), surfaceY: from.y });
+        ctx.record?.('breathe_bank_result', { bank, landed });
+        if (!landed || !steps) return landed;
+        let previous = bank;
+        for (const [i, p] of steps.entries()) {
+          const accepts = i === steps.length - 1 ? dry : sand;
+          if (!bot.entity.position.floored().equals(previous) || !sand(previous) || !acceptsStep(p, i)) return false;
+          const arrived = (pos) => bot.entity.onGround === true && !bot.entity.isInWater && pos.floored().equals(p) && accepts(p);
+          const moved = await walkDry(bot, ctx, { goTo }, new goals.GoalBlock(p.x, p.y, p.z), {
+            adjacent: p, supports: (_read, point) => accepts(point), arrived, timeoutMs: 2500,
+          });
+          if (!(moved.ok || moved.reason === 'not_arrived') || !await waitUntil(() => arrived(bot.entity.position), {
+            timeoutMs: 600, signal: ctx.signal,
+          })) return false;
+          ctx.record?.('breathe_sand_bank_step', { from: previous, to: p });
+          previous = p;
+        }
+        return true;
+      }
+      if (!aligned) await bot.lookAt(new Vec3(target.x, position.y + (bot.entity.eyeHeight ?? 1.62), target.z), true);
+      ctx.signal?.throwIfAborted();
+      if (!valid()) return false;
+      bot.setControlState('forward', !aligned);
+      bot.setControlState('jump', true);
+      await sleep(50, ctx.signal);
+    }
+  } finally {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+  }
+  return false;
+}
+/** Out on open water, swims along the surface to the nearest land within sight. True once ashore. */
+async function swimAshore(bot, ctx, { maxTicks = 1200, bank, acceptBank, surfaceY } = {}) {
+  const feet = bot.entity.position.floored();
+  const wet = (p) => SEA.has(bot.blockAt(p)?.name);
+  if (!wet(feet) && !wet(feet.offset(0, -1, 0))) return false;
+  if (bank) {
+    // A caller can supply a verified adjacent landing without asking the
+    // general open-water search to choose a distant shore.
+    const canLand = () => acceptBank?.(bank) && !wet(bank) && !wet(bank.offset(0, 1, 0));
+    if (!canLand() || Math.abs(feet.x - bank.x) + Math.abs(feet.z - bank.z) !== 1
+      || bank.y < feet.y || bank.y > feet.y + 1) return false;
+    const landed = () => bot.entity.onGround === true && !bot.entity.isInWater
+      && bot.entity.position.floored().equals(bank) && canLand();
+    const centre = bank.offset(.5, 0, .5);
+    try {
+      bot.pathfinder?.setGoal(null);
+      bot.setControlState('sprint', false);
+      for (let i = 0; i < maxTicks && !landed(); i += 1) {
+        const p = bot.entity.position;
+        const column = p.floored();
+        if (!canLand() || bot.entity.isInLava || (column.x !== feet.x || column.z !== feet.z)
+          && (column.x !== bank.x || column.z !== bank.z)) break;
+        const close = Math.hypot(p.x - centre.x, p.z - centre.z) < .18;
+        if (!close) await bot.lookAt(new Vec3(centre.x, p.y + (bot.entity.eyeHeight ?? 1.62), centre.z), true);
+        bot.setControlState('forward', !close);
+        // At the surface Mineflayer briefly alternates the water flag during
+        // each bounce. Continue jumping while crossing onto dry bank support.
+        bot.setControlState('jump', bot.entity.isInWater === true || (surfaceY !== undefined && p.y >= surfaceY - 1));
+        await sleep(50, ctx.signal);
+      }
+      return landed();
+    } finally {
+      bot.setControlState('forward', false);
+      bot.setControlState('jump', false);
+    }
+  }
+  // Not a puddle: open water all round.
+  if (![[2, 0], [-2, 0], [0, 2], [0, -2]].every(([dx, dz]) => wet(feet.offset(dx, -1, dz)))) return false;
+  // Solid ground about the water's level with open air over it.
+  const shore = bot.findBlock({ maxDistance: 96, matching: (b) => b.boundingBox === 'block' && !SEA.has(b.name),
+    useExtraInfo: (b) => b.position.y >= feet.y - 2 && b.position.y <= feet.y + 1
+      && bot.blockAt(b.position.offset(0, 1, 0))?.boundingBox === 'empty' && !SEA.has(bot.blockAt(b.position.offset(0, 1, 0))?.name) });
+  // No land in sight: swim a stretch towards home, the way back to land.
+  const home = typeof bot.companionHomeAt === 'function' ? bot.companionHomeAt() : null;
+  if (!shore && !home) return false;
+  const start = bot.entity.position.clone();
+  const leg = home && Math.min(64, Math.hypot(home.x - start.x, home.z - start.z));
+  const heading = home && Math.atan2(home.z - start.z, home.x - start.x);
+  const target = shore ? shore.position.offset(0.5, 1, 0.5)
+    : new Vec3(start.x + Math.cos(heading) * leg, start.y, start.z + Math.sin(heading) * leg);
+  ctx.record('swim_ashore', { to: shore ? shore.position : target.floored(), home: !shore,
+    distance: Math.round(Math.hypot(target.x - start.x, target.z - start.z)) });
+  try {
+    for (let i = 0; i < maxTicks; i += 1) {
+      const here = bot.entity.position;
+      if (Math.hypot(here.x - target.x, here.z - target.z) < 1.2 || (bot.entity.onGround && !wet(here.floored()))) break;
+      await bot.lookAt(target.offset(0, 0.6, 0), true);
+      bot.setControlState('forward', true);
+      bot.setControlState('jump', true);
+      await sleep(50, ctx.signal);
+    }
+  } finally {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+  }
+  // Out, or beside the shore with a step left for the planner; out at sea, a good stretch nearer home.
+  const end = bot.entity.position;
+  if (!shore) return Math.hypot(end.x - start.x, end.z - start.z) > 16;
+  return !wet(end.floored()) || Math.hypot(end.x - target.x, end.z - target.z) < 1.5;
+}
+
+/**
+ * In a pool walled higher than a jump out of water (a flooded pit whose rim
+ * stands two over the surface): dig the rim down to a step one block over
+ * the water and climb out onto it. A bot swam in a 4x4 pit for an hour.
+ */
+async function stepOutOfPool(bot, ctx, { maxTicks = 200 } = {}) {
+  const feet = bot.entity.position.floored();
+  const wet = (p) => SEA.has(bot.blockAt(p)?.name);
+  if (!wet(feet) && !wet(feet.offset(0, -1, 0))) return false;
+  let top = wet(feet) ? feet : feet.offset(0, -1, 0);
+  while (wet(top.offset(0, 1, 0))) top = top.offset(0, 1, 0);
+  const here = bot.entity.position;
+  const ledges = [];
+  for (let dx = -4; dx <= 4; dx += 1) {
+    for (let dz = -4; dz <= 4; dz += 1) {
+      const from = top.offset(dx, 0, dz);
+      if (!wet(from) || bot.blockAt(from.offset(0, 1, 0))?.boundingBox !== 'empty') continue;
+      for (const [sx, sz] of SIDES) {
+        const ledge = from.offset(sx, 0, sz);
+        const b = bot.blockAt(ledge);
+        if (b?.boundingBox !== 'block' || wet(ledge)) continue;
+        ledges.push({ ledge, from, d: Math.hypot(ledge.x + 0.5 - here.x, ledge.z + 0.5 - here.z) });
+      }
+    }
+  }
+  ledges.sort((a, b) => a.d - b.d);
+  const swimTo = async (target, done) => {
+    try {
+      for (let i = 0; i < maxTicks && !done(); i += 1) {
+        // Eyes level or up: looking down at the water swims the bot under.
+        const p = bot.entity.position;
+        await bot.lookAt(new Vec3(target.x, Math.max(target.y, p.y + 1.62), target.z), true);
+        bot.setControlState('forward', true);
+        bot.setControlState('jump', true);
+        await sleep(50, ctx.signal);
+      }
+    } finally {
+      bot.setControlState('forward', false);
+      bot.setControlState('jump', false);
+    }
+  };
+  for (const { ledge, from } of ledges.slice(0, 4)) {
+    const cells = [ledge.offset(0, 1, 0), ledge.offset(0, 2, 0)];
+    if (cells.some((c) => { const b = bot.blockAt(c); return FLUID.test(b?.name || '') || (b?.boundingBox !== 'empty' && b?.diggable === false); })) continue;
+    // Swim up against the ledge, then cut the rim above it away.
+    const beside = from.offset(0.5, 0.5, 0.5);
+    await swimTo(beside, () => Math.hypot(bot.entity.position.x - beside.x, bot.entity.position.z - beside.z) < 0.8);
+    let open = true;
+    for (const c of cells) {
+      const b = bot.blockAt(c);
+      if (!b || b.boundingBox === 'empty') continue;
+      const dug = await digBlock(bot, ctx, b, { timeoutMs: Math.max(8000, (Number(bot.digTime?.(b)) || 0) + 3000) });
+      if (!dug.ok) { open = false; break; }
+    }
+    if (!open) continue;
+    const step = ledge.offset(0.5, 1, 0.5);
+    ctx.record('step_out_of_pool', { ledge: `${ledge.x},${ledge.y},${ledge.z}` });
+    await swimTo(step, () => bot.entity.onGround && !wet(bot.entity.position.floored()));
+    if (!wet(bot.entity.position.floored()) && bot.entity.position.y >= ledge.y + 0.9) return true;
+  }
+  return false;
+}
+
+const WOODEN_DOOR = /^(?!iron_).*_door$/;
+/** Opens the nearest closed wooden door within a few blocks. True if one opened. */
+async function openNearDoor(bot, ctx) {
+  const block = bot.findBlock({ maxDistance: 6, useExtraInfo: true, matching: (b) => WOODEN_DOOR.test(b.name)
+    && b.getProperties?.().half === 'lower' && b.getProperties().open === false });
+  if (!block) return false;
+  if (!withinReach(bot, block.position)) await goNear(bot, ctx, block.position, 2, { timeoutMs: 15000 });
+  if (!withinReach(bot, block.position)) return false;
+  try { await bot.activateBlock(bot.blockAt(block.position)); } catch { return false; }
+  return waitUntil(() => bot.blockAt(block.position)?.getProperties?.().open === true, { timeoutMs: 1500, signal: ctx.signal });
+}
+
+async function openHeadroom(bot, ctx) {
+  const head = bot.entity.position.floored().offset(0, 1, 0);
+  const cells = [head.offset(0, 1, 0), ...[[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => head.offset(dx, 0, dz))];
+  let dug = 0;
+  for (const cell of cells) {
+    const block = bot.blockAt(cell);
+    if (!block || block.boundingBox !== 'block' || !bot.canDigBlock(block)) continue;
+    // Never open a ceiling that holds back water or lava.
+    if (['water', 'lava'].includes(bot.blockAt(cell.offset(0, 1, 0))?.name)) continue;
+    const result = await digBlock(bot, ctx, block);
+    if (result.ok) dug += 1;
+  }
+  return dug > 0;
 }
 
 const LATTICE = /(_fence|_wall|iron_bars|_pane)$/;
@@ -633,7 +1143,9 @@ async function digStairsUp(bot, ctx, targetY, { maxSteps = 24 } = {}) {
     for (const p of [feet.offset(0, 2, 0), ahead.offset(0, 2, 0), ahead.offset(0, 1, 0)]) {
       const b = bot.blockAt(p);
       if (b && b.boundingBox !== 'empty') {
-        const dug = await digBlock(bot, ctx, b, { timeoutMs: 8000 });
+        // Deepslate by hand takes 15 seconds a block: the timeout follows the dig.
+        const digMs = typeof bot.digTime === 'function' ? bot.digTime(b) : 0;
+        const dug = await digBlock(bot, ctx, b, { timeoutMs: Math.max(8000, (Number(digMs) || 0) + 3000) });
         if (!dug.ok) return climbed;
       }
     }
@@ -744,6 +1256,8 @@ async function surface(bot, ctx) {
 }
 
 module.exports = {
-  recentre, surface, underground, unstick, nudge, breakLattice, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
+  backedSand,
+  drainPocket,
+  recentre, surface, underground, unstick, nudge, breakLattice, openHeadroom, openNearDoor, swimAshore, swimToNearbyBank, stepOutOfPool, gatherClimbBlocks, digStairsUp, digStairsDown, goTo, goNear, goToDig, withinReach, digBlock, collectDrops, countItems, eat, pickFood, attack, fleeFrom,
   equipBestWeapon, haltBody, weaponScore, droppedItemName, RISKY_FOODS,
 };

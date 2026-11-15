@@ -18,9 +18,17 @@ describe('Minecraft IPC boundary', () => {
   });
 
   it('requires an explicit provider selection for model-assisted play', () => {
+    expect(minecraftConnectionSchema.parse({ ...config, executorMode: 'core' }).executorMode).toBe('core');
     expect(minecraftConnectionSchema.safeParse({ ...config, executorMode: 'hybrid' }).success).toBe(false);
     expect(minecraftConnectionSchema.safeParse({ ...config, executorMode: 'hybrid', providerId: '16bdf5fa-68e6-4290-acb3-fb472473b387' }).success).toBe(true);
     expect(minecraftConnectionSchema.safeParse({ ...config, auth: 'microsoft', username: 'player@example.test' }).success).toBe(true);
+  });
+
+  it('accepts only an integer log count on the structured desktop task channel', () => {
+    expect(parseInvokeRequest('minecraft:gather-logs', { version: 1, payload: { count: 3 } })).toEqual({ count: 3 });
+    for (const payload of [{ count: 0 }, { count: 65 }, { count: 1.5 }, { count: '3' }, { count: 3, replaceCurrent: true }]) {
+      expect(() => parseInvokeRequest('minecraft:gather-logs', { version: 1, payload })).toThrow();
+    }
   });
 
   it('keeps game chat separate from slash commands and accepts only declared controls', () => {

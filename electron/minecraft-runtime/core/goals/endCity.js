@@ -27,11 +27,13 @@ const FAR_RINGS = [[2.25, 12], [3, 16], [4, 20], [5, 24]];
 const STONE_STOCK = 320;
 const RESTOCK_AT = 48;
 const outer = (bot) => Math.hypot(bot.entity.position.x, bot.entity.position.z) > 400;
+const areaKey = (p) => `${Math.floor(p.x / 16)},${Math.floor(p.z / 16)}`;
 
 function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills = defaultSkills } = {}) {
   const blacklist = createBlacklist({ ttlMs: 300000 });
   const memory = { looted: new Set(), taken: 0, gatewayUsed: false, pearls: 0, cityAt: null, heading: null,
-    explored: 0, elytra: false, bridged: 0, seenFrames: 0, emptyCities: [] };
+    explored: 0, searchAttempts: 0, stoneCollected: 0, visited: new Set([areaKey(bot.entity.position)]),
+    elytra: false, bridged: 0, seenFrames: 0, emptyCities: [] };
   let restore = null;
   const enterMode = () => { if (!restore) restore = end.applyEndMovements(bot); };
   const hasElytra = () => actions.countItems(bot, (n) => n === 'elytra') > 0;
@@ -44,8 +46,8 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     if (gateways.length === 0) {
       // The gateways ring the island 96 blocks out: walk out toward that ring.
       const here = bot.entity.position.clone();
-      const a = Math.atan2(here.z, here.x) + (memory.explored % 2 ? 0.6 : 0);
-      memory.explored += 1;
+      const a = Math.atan2(here.z, here.x) + (memory.searchAttempts % 2 ? 0.6 : 0);
+      memory.searchAttempts += 1;
       const stand = end.surfaceAt(bot, Math.round(Math.cos(a) * 70), Math.round(Math.sin(a) * 70));
       ctx.record('gateway_search', { to: at(stand) });
       if (!stand) return fail('no_gateway_in_sight');
@@ -315,6 +317,27 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
 
   async function explore(ctx) {
     const here = bot.entity.position.clone();
+    const feet = here.floored();
+    const here0 = bot.blockAt(feet.offset(0, -1, 0));
+    const low = bridgeBlocks() < RESTOCK_AT && !(here0?.name === 'end_stone' && onIsland(here0.position));
+    // Resupply before selecting another search leg. A failed return keeps
+    // its known island and reserve; it must not turn into a forward bridge.
+    if (low && memory.lastStone) {
+      ctx.record('restock_walk', { to: at(memory.lastStone), blocks: bridgeBlocks() });
+      const back = await actions.goNear(bot, ctx, memory.lastStone, 1, { timeoutMs: 120000 });
+      if (!back.ok) {
+        ctx.record('restock_failed', { to: at(memory.lastStone), reason: back.reason, blocks: bridgeBlocks() });
+        return back;
+      }
+      const ground = bot.entity.onGround && bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
+      if (bot.entity.position.distanceTo(memory.lastStone) > 2.5 || ground?.name !== 'end_stone' || !onIsland(ground.position)) {
+        ctx.record('restock_failed', { to: at(memory.lastStone), reason: 'restock_not_arrived', blocks: bridgeBlocks() });
+        return fail('restock_not_arrived');
+      }
+      const got = await gatherStone(ctx, STONE_STOCK);
+      if (got.ok) memory.lastStone = bot.entity.position.floored();
+      return got;
+    }
     // Back where the last search started (pulled back, or walking in circles): next waypoint.
     if (memory.searchFrom && here.distanceTo(memory.searchFrom) < 8) memory.blocked = true;
     else memory.stuck = 0;
@@ -324,26 +347,14 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     const toGoal = Math.hypot(goal.x - here.x, goal.z - here.z);
     memory.heading = gapAwareHeading(here, new Vec3((goal.x - here.x) / toGoal, 0, (goal.z - here.z) / toGoal));
     const target = here.plus(memory.heading.scaled(Math.min(40, toGoal)));
-    ctx.record('city_search', { to: at(target), waypoint: at(goal), left: memory.waypoints.length, explored: memory.explored });
-    memory.explored += 1;
+    memory.searchAttempts += 1;
+    ctx.record('city_search', { to: at(target), waypoint: at(goal), left: memory.waypoints.length,
+      explored: memory.explored, attempt: memory.searchAttempts });
     // On a bridge or an island's lip the pathfinder walks off the edge: keep bridging.
-    const feet = here.floored();
     // A wide gap ahead (or no blocks left to bridge it): pearl across.
     if (gapAlong(here, memory.heading) >= 10 || bridgeBlocks() < 16) {
       const hop = await pearlHop(ctx, memory.heading);
       if (hop) return hop;
-    }
-    // Running low on a bridge: back along it to the last island and dig
-    // there, while there are still blocks for a gap on the way. One run ran
-    // dry on a bridge over the void and spent its last forty minutes on it.
-    const here0 = bot.blockAt(feet.offset(0, -1, 0));
-    const low = bridgeBlocks() < RESTOCK_AT && !(here0?.name === 'end_stone' && onIsland(here0.position));
-    if (low && memory.lastStone) {
-      ctx.record('restock_walk', { to: at(memory.lastStone), blocks: bridgeBlocks() });
-      const back = await actions.goNear(bot, ctx, memory.lastStone, 1, { timeoutMs: 120000 });
-      memory.lastStone = null;
-      if (!back.ok) return back;
-      return gatherStone(ctx, STONE_STOCK);
     }
     // No way back: bridge (never walk: one bot walked off into the void) to
     // the nearest island level with the bridge that the blocks left reach.
@@ -410,11 +421,107 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
       if (dug % 6 === 0) await actions.collectDrops(bot, ctx, bot.entity.position, (n) => n === 'end_stone', { radius: 6, timeoutMs: 4000 });
     }
     await actions.collectDrops(bot, ctx, bot.entity.position, (n) => n === 'end_stone', { radius: 6, timeoutMs: 4000 });
-    ctx.record('stone_gathered', { dug, blocks: bridgeBlocks(), before: start });
-    return bridgeBlocks() > start ? { ok: true } : fail('no_stone_here');
+    const stocked = bridgeBlocks();
+    const gained = Math.max(0, stocked - start);
+    if (gained > 0) {
+      memory.stoneCollected += gained;
+      memory.stoneTriedAt = bot.entity.position.floored();
+    }
+    ctx.record('stone_gathered', { dug, blocks: stocked, before: start, gained, confirmed: gained > 0 });
+    return gained > 0 ? { ok: true } : fail('no_stone_here');
   }
 
   const done = () => hasElytra() || memory.looted.size >= chests;
+
+  async function runOnce(ctx) {
+    // Died out there: back through the portal; the drops wait on the island.
+    if (!end.inEnd(bot)) {
+      const back = await returnToEnd(bot, ctx, { actions });
+      if (back.ok && end.inEnd(bot)) memory.returnHops = (memory.returnHops || 0) + 1;
+      return back;
+    }
+    enterMode();
+    await end.wearArmor(bot);
+    if (done()) return { ok: true };
+    const ground = bot.entity.onGround && bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
+    if (ground?.name === 'end_stone' && outer(bot) && onIsland(ground.position)) memory.lastStone = ground.position.offset(0, 1, 0);
+    // A pearl that hit the gateway's bedrock leaves the bot up on it.
+    if (!outer(bot) && end.stranded(bot)) {
+      const down = await end.descendSpiral(bot, ctx);
+      ctx.record('descent', { steps: down.steps ?? 0, reason: down.reason || null });
+      return down;
+    }
+    if (!outer(bot)) {
+      if (!end.exitPortalLit(bot) && !city.findGateway(bot, 160).length) return fail('dragon_alive');
+      return useGateway(ctx);
+    }
+    const frame = city.elytraFrames(bot).find((f) => !blacklist.has(`frame:${f.id}`));
+    if (frame) {
+      memory.seenFrames += 1;
+      return takeElytra(ctx, frame);
+    }
+    // A scan of the loaded chunks for purpur takes seconds: once per 32
+    // blocks travelled or 20 s, and chests are looked for only near a city.
+    const now = Date.now();
+    const pos = bot.entity.position;
+    if (!memory.scan || now - memory.scan.at > 20000 || pos.distanceTo(memory.scan.from) > 32) {
+      const seen = city.findCity(bot, 256, { skip: (p) => blacklist.has(cityKeyOf(p))
+        || memory.emptyCities.some((c) => Math.hypot(c.x - p.x, c.z - p.z) < 64) });
+      memory.scan = { at: now, from: pos.clone(), purpur: seen && city.cityBase(bot, seen) };
+      if (memory.scan.purpur) {
+        const all = bot.findBlocks({ matching: bot.registry.blocksByName.chest.id, maxDistance: 96, count: 32 });
+        ctx.record('city_scan', { purpur: at(memory.scan.purpur), chests: all.length, loot: city.cityChests(bot, 96).length,
+          looted: memory.looted.size, skipped: all.filter((p) => blacklist.has(posKey(p))).length });
+      }
+    }
+    const nearCity = memory.scan.purpur && pos.distanceTo(memory.scan.purpur) < 128;
+    const chestsLeft = !nearCity ? [] : city.cityChests(bot, 96).filter((p) => !memory.looted.has(posKey(p)) && !blacklist.has(posKey(p)));
+    if (chestsLeft.length) {
+      const here = bot.entity.position.clone();
+      chestsLeft.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
+      return lootChest(ctx, chestsLeft[0]);
+    }
+    const purpur = memory.scan.purpur;
+    const cityKey = purpur && cityKeyOf(purpur);
+    // At the door with no chest or ship in sight: a small city with no
+    // loot. One run went back and forth under such a tower for the whole
+    // hour, the nearest purpur pulling it back after every search leg.
+    if (purpur && bot.entity.position.distanceTo(purpur) <= 16 && !blacklist.has(cityKey)) {
+      ctx.record('city_empty', { at: at(purpur) });
+      blacklist.add(cityKey, 'city_empty', 3600000);
+      memory.emptyCities.push(purpur);
+      memory.scan = null;
+      return explore(ctx);
+    }
+    if (purpur && bot.entity.position.distanceTo(purpur) > 12 && !blacklist.has(cityKey)) {
+      if (!memory.cityAt) ctx.record('city_seen', { at: at(purpur) });
+      memory.cityAt = purpur;
+      const before = bot.entity.position.clone();
+      // Still on a bridge or a lip: the pathfinder walks off it. Bridge on.
+      if (atEdge()) {
+        const bridged = await end.bridgeToward(bot, ctx, new Vec3(purpur.x, before.y, purpur.z), { maxSteps: 48 });
+        memory.bridged += bridged.steps || 0;
+        if ((bridged.steps || 0) > 0) return { ok: true };
+        blacklist.add(cityKey, 'unreachable', 120000);
+        return fail(bridged.reason || 'city_blocked');
+      }
+      const moved = await actions.goNear(bot, ctx, purpur, 4, { timeoutMs: 90000 });
+      if (moved.ok || bot.entity.position.distanceTo(before) > 8) return moved.ok ? moved : { ok: true };
+      const bridged = await end.bridgeToward(bot, ctx, new Vec3(purpur.x, bot.entity.position.y, purpur.z), { maxSteps: 48 });
+      memory.bridged += bridged.steps || 0;
+      if ((bridged.steps || 0) === 0) blacklist.add(cityKey, 'unreachable', 120000);
+      return bridged;
+    }
+    // Bridging eats blocks: top up from an island's end stone before
+    // leaving it (out on a bridge there is nothing to mine).
+    const under = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0))?.name;
+    const underBlock = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
+    if (bridgeBlocks() < STONE_STOCK - 64 && under === 'end_stone' && onIsland(underBlock.position) && !memory.stoneTriedAt?.equals?.(bot.entity.position.floored())) {
+      const got = await gatherStone(ctx, STONE_STOCK);
+      if (got.ok) return got;
+    }
+    return explore(ctx);
+  }
 
   return {
     name: 'end_city',
@@ -423,97 +530,22 @@ function createEndCityGoal({ bot, chests = 2, actions = defaultActions, skills =
     memory,
     isDone: () => done(),
     progress: () => (memory.returnHops || 0) + (memory.gatewayUsed ? 100 : 0) + memory.looted.size * 100 + (hasElytra() ? 500 : 0)
-      + Math.floor(memory.explored / 2) + Math.floor(memory.bridged / 8),
+      + memory.explored + Math.floor(memory.stoneCollected / 8),
     recover() { blacklist.clear(); memory.heading = null; memory.blocked = true; },
     async run(ctx) {
-      // Died out there: back through the portal; the drops wait on the island.
-      if (!end.inEnd(bot)) {
-        const back = await returnToEnd(bot, ctx, { actions });
-        if (back.ok) memory.returnHops = (memory.returnHops || 0) + 1;
-        return back;
+      const from = bot.entity.position.clone();
+      const result = await runOnce(ctx);
+      const here = bot.entity.position;
+      const key = areaKey(here);
+      // Attempts and steps on the same old bridge are diagnostics, not
+      // progress. Credit an actually reached new area after a successful leg.
+      if (result.ok && !ctx.signal?.aborted && end.inEnd(bot) && outer(bot) && bot.entity.onGround
+        && Math.hypot(here.x - from.x, here.z - from.z) >= 6 && !memory.visited.has(key)) {
+        memory.visited.add(key);
+        memory.explored += 1;
+        ctx.record('city_area_reached', { at: at(here), area: key, explored: memory.explored });
       }
-      enterMode();
-      await end.wearArmor(bot);
-      if (done()) return { ok: true };
-      const ground = bot.entity.onGround && bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
-      if (ground?.name === 'end_stone' && outer(bot) && onIsland(ground.position)) memory.lastStone = ground.position.offset(0, 1, 0);
-      // A pearl that hit the gateway's bedrock leaves the bot up on it.
-      if (!outer(bot) && end.stranded(bot)) {
-        const down = await end.descendSpiral(bot, ctx);
-        ctx.record('descent', { steps: down.steps ?? 0, reason: down.reason || null });
-        return down;
-      }
-      if (!outer(bot)) {
-        if (!end.exitPortalLit(bot) && !city.findGateway(bot, 160).length) return fail('dragon_alive');
-        return useGateway(ctx);
-      }
-      const frame = city.elytraFrames(bot).find((f) => !blacklist.has(`frame:${f.id}`));
-      if (frame) {
-        memory.seenFrames += 1;
-        return takeElytra(ctx, frame);
-      }
-      // A scan of the loaded chunks for purpur takes seconds: once per 32
-      // blocks travelled or 20 s, and chests are looked for only near a city.
-      const now = Date.now();
-      const pos = bot.entity.position;
-      if (!memory.scan || now - memory.scan.at > 20000 || pos.distanceTo(memory.scan.from) > 32) {
-        const seen = city.findCity(bot, 256, { skip: (p) => blacklist.has(cityKeyOf(p))
-          || memory.emptyCities.some((c) => Math.hypot(c.x - p.x, c.z - p.z) < 64) });
-        memory.scan = { at: now, from: pos.clone(), purpur: seen && city.cityBase(bot, seen) };
-        if (memory.scan.purpur) {
-          const all = bot.findBlocks({ matching: bot.registry.blocksByName.chest.id, maxDistance: 96, count: 32 });
-          ctx.record('city_scan', { purpur: at(memory.scan.purpur), chests: all.length, loot: city.cityChests(bot, 96).length,
-            looted: memory.looted.size, skipped: all.filter((p) => blacklist.has(posKey(p))).length });
-        }
-      }
-      const nearCity = memory.scan.purpur && pos.distanceTo(memory.scan.purpur) < 128;
-      const chestsLeft = !nearCity ? [] : city.cityChests(bot, 96).filter((p) => !memory.looted.has(posKey(p)) && !blacklist.has(posKey(p)));
-      if (chestsLeft.length) {
-        const here = bot.entity.position.clone();
-        chestsLeft.sort((a, b) => a.distanceTo(here) - b.distanceTo(here));
-        return lootChest(ctx, chestsLeft[0]);
-      }
-      const purpur = memory.scan.purpur;
-      const cityKey = purpur && cityKeyOf(purpur);
-      // At the door with no chest or ship in sight: a small city with no
-      // loot. One run went back and forth under such a tower for the whole
-      // hour, the nearest purpur pulling it back after every search leg.
-      if (purpur && bot.entity.position.distanceTo(purpur) <= 16 && !blacklist.has(cityKey)) {
-        ctx.record('city_empty', { at: at(purpur) });
-        blacklist.add(cityKey, 'city_empty', 3600000);
-        memory.emptyCities.push(purpur);
-        memory.scan = null;
-        return explore(ctx);
-      }
-      if (purpur && bot.entity.position.distanceTo(purpur) > 12 && !blacklist.has(cityKey)) {
-        if (!memory.cityAt) ctx.record('city_seen', { at: at(purpur) });
-        memory.cityAt = purpur;
-        const before = bot.entity.position.clone();
-        // Still on a bridge or a lip: the pathfinder walks off it. Bridge on.
-        if (atEdge()) {
-          const bridged = await end.bridgeToward(bot, ctx, new Vec3(purpur.x, before.y, purpur.z), { maxSteps: 48 });
-          memory.bridged += bridged.steps || 0;
-          if ((bridged.steps || 0) > 0) return { ok: true };
-          blacklist.add(cityKey, 'unreachable', 120000);
-          return fail(bridged.reason || 'city_blocked');
-        }
-        const moved = await actions.goNear(bot, ctx, purpur, 4, { timeoutMs: 90000 });
-        if (moved.ok || bot.entity.position.distanceTo(before) > 8) return moved.ok ? moved : { ok: true };
-        const bridged = await end.bridgeToward(bot, ctx, new Vec3(purpur.x, bot.entity.position.y, purpur.z), { maxSteps: 48 });
-        memory.bridged += bridged.steps || 0;
-        if ((bridged.steps || 0) === 0) blacklist.add(cityKey, 'unreachable', 120000);
-        return bridged;
-      }
-      // Bridging eats blocks: top up from an island's end stone before
-      // leaving it (out on a bridge there is nothing to mine).
-      const under = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0))?.name;
-      const underBlock = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
-      if (bridgeBlocks() < STONE_STOCK - 64 && under === 'end_stone' && onIsland(underBlock.position) && !memory.stoneTriedAt?.equals?.(bot.entity.position.floored())) {
-        memory.stoneTriedAt = bot.entity.position.floored();
-        const got = await gatherStone(ctx, STONE_STOCK);
-        if (got.ok) return got;
-      }
-      return explore(ctx);
+      return result;
     },
     dispose() { restore?.(); restore = null; },
   };

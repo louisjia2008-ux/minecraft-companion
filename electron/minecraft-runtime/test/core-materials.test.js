@@ -9,6 +9,8 @@ const { planNext } = require('../core/planner');
 const { materialsFor } = require('../core/materials');
 const { createBrain } = require('../core/brain');
 const { createGatherMaterialsGoal } = require('../core/goals/gatherMaterials');
+const { gatherOne } = require('../core/skills');
+const { posKey } = require('../core/blacklist');
 
 test('a water bucket needs a bucket, which needs three iron at the table', () => {
   const water = [{ key: 'water_bucket', count: 1 }];
@@ -205,6 +207,196 @@ async function runGoal(sim, goal, { limit = 5000, dieWhen = () => false } = {}) 
 const STATIONS = { crafting_table: { x: 1, y: 0, z: 0 }, furnace: { x: 2, y: 0, z: 0 } };
 const COBBLEGEN = [{ key: 'water_bucket', count: 1 }, { key: 'lava_bucket', count: 1 }, { key: 'cobblestone', count: 10 }];
 
+test('an outfit reuses only the iron needed from the home chest before mining', async () => {
+  const sim = simulate({ failRate: 0 });
+  Object.assign(sim.inventory, { raw_iron: 1, stone_pickaxe: 1, coal: 1 });
+  sim.chest.raw_iron = 7;
+  sim.world.set('2,0,0', 'furnace');
+  sim.skills.gatherOne = () => assert.fail('stored iron covers the current recipe');
+  sim.skills.takeItems = async (_bot, _ctx, { itemMatch, count }) => {
+    assert.equal(itemMatch('raw_iron'), true);
+    assert.equal(itemMatch('water_bucket'), false);
+    assert.equal(count, 4);
+    sim.chest.raw_iron -= count;
+    sim.inventory.raw_iron += count;
+    return { ok: true, taken: count };
+  };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'iron_helmet', count: 1 }], stations: STATIONS, skills: sim.skills,
+    actions: sim.actions, countWorn: true });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  for (let i = 0; i < 4; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.equal(sim.chest.raw_iron, 3);
+  assert.equal(sim.inventory.iron_ingot, 5);
+});
+
+test('surface resupply skips deep and buried stone and refuses a branch-mining requirement', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.inventory.stone_pickaxe = 1;
+  const exposed = new Vec3(1, -1, 2);
+  sim.bot.blockAt = (p) => {
+    const name = p.x === 0 && p.y === 0 && p.z === 0 ? 'chest'
+      : p.equals(exposed) || p.x >= 3 && p.y <= 0 || p.y < -1 ? 'stone' : 'air';
+    return { name, boundingBox: name === 'air' ? 'empty' : 'block', position: p,
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  let gathered = 0;
+  const skills = { ...sim.skills, gatherOne: async (_bot, _ctx, { targetFilter, acceptStand }) => {
+    gathered += 1;
+    assert.equal(targetFilter(exposed), true, 'a dry supported cell reaches the exposed face');
+    assert.equal(targetFilter(new Vec3(1, -9, 2)), false);
+    assert.equal(targetFilter(new Vec3(4, -1, 2)), false, 'no dry exposed face');
+    assert.equal(acceptStand(exposed.offset(0, 1, 0), exposed), false, 'the bot cannot mine its own support');
+    return { ok: true };
+  } };
+  const goal = (key) => createGatherMaterialsGoal({
+    bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key, count: 1 }],
+    stations: STATIONS, skills, actions: sim.actions, surfaceOnly: true,
+  });
+  const stone = goal('cobblestone');
+  await stone.run(ctx);
+  assert.equal((await stone.run(ctx)).ok, true);
+  const iron = goal('raw_iron');
+  await iron.run(ctx);
+  assert.equal((await iron.run(ctx)).reason, 'surface_supply_requires_mine');
+  assert.equal(gathered, 1);
+});
+
+test('surface resupply filters buried blocks before Mineflayer caps the stone search', async () => {
+  const sim = simulate({ failRate: 0 });
+  const exposed = new Vec3(8, 0, 2);
+  const buried = Array.from({ length: 64 }, (_, i) => new Vec3(1 + i % 8, -2 - Math.floor(i / 32), 1 + Math.floor(i / 8) % 4));
+  sim.inventory.stone_pickaxe = 1;
+  sim.bot.registry = { blocksByName: { stone: { name: 'stone', id: 1 } } };
+  sim.bot.entity.onGround = true;
+  sim.bot.world = { raycast: () => ({ position: exposed }) };
+  sim.bot.entities = {};
+  sim.bot.blockAt = (p) => {
+    const at = p.floored();
+    const name = at.x === 0 && at.y === 0 && at.z === 0 ? 'chest' : at.equals(exposed) || at.y < 0 ? 'stone' : 'air';
+    return { name, position: at, type: name === 'stone' ? 1 : 0, boundingBox: name === 'air' ? 'empty' : 'block',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  sim.bot.findBlocks = ({ matching, count, useExtraInfo }) => {
+    assert.deepEqual(matching, [1]);
+    assert.equal(count, 64);
+    assert.equal(typeof useExtraInfo, 'function');
+    const found = [...buried, exposed].filter((p) => useExtraInfo(sim.bot.blockAt(p))).slice(0, count);
+    assert.deepEqual(found, [exposed]);
+    return found;
+  };
+  sim.bot.pathfinder = { goto: async (goal) => {
+    const stance = new Vec3(7, 0, 2);
+    assert.ok(goal.isEnd(stance));
+    sim.bot.entity.position = stance.offset(.5, 0, .5);
+  } };
+  // Stop after the native selector and stance have run. Mining is covered by
+  // the action tests; the rejected dig must not be replaced with exploration.
+  sim.bot.canDigBlock = () => false;
+  const skills = { ...sim.skills, gatherOne, explore: async () => assert.fail('exposed stone survived the native count limit') };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'cobblestone', count: 1 }], surfaceOnly: true, skills });
+  const selected = [];
+  const ctx = { perceive: sim.perceive, record: (type, data) => { if (type === 'target_selected') selected.push(data.position); } };
+  await goal.run(ctx);
+  assert.equal((await goal.run(ctx)).reason, 'cannot_dig');
+  assert.deepEqual(selected, ['8,0,2']);
+});
+
+test('surface resupply replaces failed exposed stone pickup with a nearby quarry and exits before crafting', async () => {
+  const sim = simulate({ failRate: 0 });
+  const chest = new Vec3(0, 72, 0);
+  const table = chest.offset(1, 0, 0);
+  const origin = new Vec3(5, 72, -5);
+  const remote = new Vec3(27, 72, -5);
+  const position = (p) => `${p.x},${p.y},${p.z}`;
+  const placed = new Map([[position(chest), 'chest'], [position(table), 'crafting_table']]);
+  const pick = { name: 'wooden_pickaxe', type: 1 };
+  const columns = [];
+  const touched = [];
+  const events = [];
+  const cuts = [];
+  sim.bot.entity = { position: origin.offset(.5, 0, .5), onGround: true };
+  const inventoryItems = sim.bot.inventory.items;
+  sim.bot.inventory.items = () => inventoryItems().map((item) => item.name === pick.name ? { ...item, type: pick.type } : item);
+  Object.assign(sim.inventory, { wooden_pickaxe: 1, stick: 1 });
+  sim.bot.companionHomeSite = (p) => Math.abs(p.x) <= 2 && Math.abs(p.z) <= 2;
+  sim.bot.blockAt = (p) => {
+    const name = placed.get(position(p)) || (p.y >= 72 ? 'air' : p.y >= 70 ? 'dirt' : 'stone');
+    return { name, position: p, boundingBox: name === 'air' ? 'empty' : 'block', diggable: name !== 'air',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]], ...(name === 'stone' ? { harvestTools: { [pick.type]: true } } : {}) };
+  };
+  const neighbors = () => columns;
+  const movements = { canDig: true, getNeighbors: neighbors };
+  sim.bot.pathfinder = { movements };
+  const actions = {
+    goTo: async (_bot, _ctx, goal, options) => {
+      const at = new Vec3(goal.x, goal.y, goal.z);
+      columns.splice(0, columns.length, at, remote);
+      assert.ok(movements.getNeighbors(sim.bot.entity.position.floored()).includes(at));
+      assert.equal(movements.getNeighbors(sim.bot.entity.position.floored()).includes(remote), false);
+      assert.equal(options.retryNoProgress, false);
+      touched.push(at);
+      sim.bot.entity.position = at.offset(.5, 0, .5);
+      return { ok: true };
+    },
+    digBlock: async (_bot, _ctx, block) => {
+      assert.ok(movements.companionWalkOnly);
+      assert.ok(!block.position.equals(sim.bot.entity.position.floored().offset(0, -1, 0)));
+      assert.ok(!sim.bot.companionHomeSite(block.position));
+      assert.ok(Math.hypot(block.position.x, block.position.z) <= 24);
+      cuts.push(block.position);
+      placed.set(position(block.position), 'air');
+      return { ok: true };
+    },
+    collectDrops: async (_bot, _ctx, p, match) => {
+      assert.ok(match('cobblestone'));
+      assert.ok(sim.bot.entity.position.distanceTo(p) <= 2);
+      sim.inventory.cobblestone = (sim.inventory.cobblestone || 0) + 1;
+      return { ok: true, gained: 1 };
+    },
+    unstick: async () => assert.fail('recovery quarry must retain its own approach'),
+  };
+  let exposedAttempts = 0;
+  const skills = { ...sim.skills,
+    storeInChest: async (_bot, _ctx, { wants }) => {
+      assert.deepEqual(wants, []);
+      return { ok: true, contents: {} };
+    },
+    gatherOne: async (_bot, _ctx, options) => {
+      exposedAttempts += 1;
+      assert.ok(options.blocks('stone'));
+      assert.ok(movements.companionWalkOnly);
+      assert.equal(options.targetFilter(remote.offset(0, -1, 0)), false);
+      return { ok: false, reason: 'drops_not_collected' };
+    },
+    craft: async (_bot, _ctx, { item }) => {
+      assert.equal(item, 'stone_sword');
+      assert.equal(sim.bot.entity.position.y, 72, 'craft only after the quarry stairs were retraced');
+      assert.ok(sim.inventory.cobblestone >= 2);
+      sim.inventory.stone_sword = 1;
+      return { ok: true };
+    },
+    explore: async () => assert.fail('an unarmed resupply should not explore for cobblestone'),
+  };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, stations: { crafting_table: table },
+    requirements: [{ key: 'stone_sword', count: 1 }], surfaceOnly: true, skills, actions, carry: (key) => key === 'stone_sword' });
+  const ctx = { perceive: sim.perceive, record: (type, data) => events.push([type, data]), signal: new AbortController().signal };
+  for (let n = 0; n < 25 && !goal.isDone(ctx.perceive()); n++) {
+    const result = await goal.run(ctx);
+    assert.equal(result.ok, true, JSON.stringify({ result, last: events.slice(-2) }));
+  }
+  assert.equal(goal.isDone(ctx.perceive()), true);
+  assert.equal(exposedAttempts, 1);
+  assert.equal(events.filter(([type]) => type === 'quarry_start').length, 1);
+  assert.ok(events.some(([type]) => type === 'quarry_exit'));
+  assert.ok(touched.some((p) => p.y < origin.y));
+  assert.ok(cuts.every((p) => p.y >= chest.y - 8));
+  assert.equal(movements.canDig, true);
+  assert.equal(movements.getNeighbors, neighbors);
+});
+
 for (const seed of [1, 2, 3]) {
   test(`cobblestone generator materials end up in the chest from an empty inventory (seed ${seed})`, async () => {
     const sim = simulate({ seed });
@@ -274,6 +466,35 @@ test('obsidian is cast with a diamond pickaxe, a water bucket and a lava bucket'
   assert.deepEqual([cast.kind, cast.key, cast.count], ['cast', 'obsidian', 7]);
 });
 
+test('only casting lava keeps trying the local bank before resurfacing', async () => {
+  for (const key of ['obsidian', 'lava_bucket', 'water_bucket']) {
+    const sim = simulate({ failRate: 0 });
+    Object.assign(sim.inventory, { diamond_pickaxe: 1, bucket: 1 });
+    if (key === 'obsidian') sim.inventory.water_bucket = 1;
+    let surfaced = 0;
+    const fills = [];
+    sim.actions.surface = async () => { surfaced += 1; return { ok: true }; };
+    sim.skills.fillBucket = async (_bot, _ctx, options) => {
+      fills.push(options);
+      return { ok: false, reason: 'lava_bank_unreachable' };
+    };
+    const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+      requirements: [{ key, count: 1 }], skills: sim.skills, actions: sim.actions });
+    goal.memory.chest = {};
+    const step = await runOnceWith(sim, goal);
+    if (key === 'obsidian') {
+      assert.equal(surfaced, 0);
+      assert.equal(fills[0]?.guardLava, true);
+      assert.equal(step.result.reason, 'lava_bank_unreachable');
+      assert.equal(goal.ownsRouteRecovery(), true);
+    } else {
+      assert.equal(surfaced, 1);
+      assert.equal(fills.length, 0);
+      assert.equal(goal.ownsRouteRecovery(), false);
+    }
+  }
+});
+
 test('flint and steel takes an iron ingot and flint, which gravel only sometimes drops', () => {
   const step = planNext({ requirements: [{ key: 'flint_and_steel', count: 1 }], inventory: { iron_ingot: 1 } });
   assert.deepEqual([step.kind, step.key, step.rare], ['gather', 'flint', true]);
@@ -294,7 +515,9 @@ function quartzSim(inventory) {
   const sim = simulate({ failRate: 0 });
   Object.assign(sim.bot, { registry: { blocksByName: {} }, findBlocks: () => [] });
   sim.bot.inventory.slots = [];
-  Object.assign(sim.inventory, inventory);
+  // Quartz trip fixtures carry the new safe-food reserve; dedicated supply
+  // tests cover the real post-death empty-food state separately.
+  Object.assign(sim.inventory, { cooked_beef: 4 }, inventory);
   sim.world.set('1,0,0', 'crafting_table');
   const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'observer', count: 1 }],
     stations: STATIONS, skills: sim.skills, actions: sim.actions });
@@ -328,8 +551,600 @@ test('in the Nether the goal only runs the trip, never walks to the chest', asyn
   assert.equal(walked, false);
   // Badly hurt with nothing to eat: the trip heads home (here: no portal known to head for).
   sim.bot.health = 5;
+  delete sim.inventory.cooked_beef;
   sim.actions.pickFood = () => null;
   const hurt = await runOnceWith(sim, goal);
   assert.ok(hurt.records.some((r) => r.type === 'retreat'));
   assert.equal(hurt.result.reason, 'nether_portal_lost');
+});
+
+for (const trigger of ['recovery', 'pathFailures']) {
+  test(`material ${trigger} in the Nether delegates to its trip instead of overworld chest coordinates`, async () => {
+    const sim = simulate({ failRate: 0 });
+    sim.bot.game.dimension = 'the_nether';
+    sim.bot.entity.position = new Vec3(101627.5, 70, -35.5);
+    const chest = { x: 813000, y: 3, z: 0 };
+    const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'quartz', count: 8 }],
+      skills: sim.skills, actions: sim.actions });
+    sim.actions.unstick = async () => { throw new Error('generic unstick must not bypass the Nether trip'); };
+    sim.actions.goNear = async () => { throw new Error('overworld chest cannot be a Nether waypoint'); };
+    let calls = 0;
+    const expected = { ok: false, reason: 'nether_route_blocked' };
+    const trip = { target: 8, run: async () => { calls += 1; return expected; } };
+    goal.memory.trip = trip;
+    if (trigger === 'recovery') goal.recover();
+    else goal.memory.pathFailures = 2;
+    const { result, records } = await runOnceWith(sim, goal);
+    assert.equal(result, expected);
+    assert.equal(calls, 1);
+    assert.equal(goal.memory.trip, trip);
+    assert.equal(goal.memory.recovery, false);
+    assert.equal(goal.memory.pathFailures, 0);
+    assert.ok(records.some((r) => r.type === 'recovery' && r.dimension === 'the_nether' && r.delegate === 'nether_trip'));
+  });
+}
+
+test('material recovery in the overworld still unsticks and walks home', async () => {
+  const sim = simulate({ failRate: 0 });
+  const chest = { x: 120, y: 3, z: 40 };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'quartz', count: 8 }],
+    skills: sim.skills, actions: sim.actions });
+  const calls = [];
+  sim.actions.unstick = async () => { calls.push('unstick'); return { ok: true }; };
+  sim.actions.goNear = async (_bot, _ctx, p, range) => { calls.push([p.x, p.y, p.z, range]); return { ok: true }; };
+  goal.recover();
+  assert.equal((await runOnceWith(sim, goal)).result.ok, true);
+  assert.deepEqual(calls, ['unstick', [120, 3, 40, 3]]);
+});
+
+test('hunting spiders for string marks a night hunt; other steps clear it', async () => {
+  const sim = simulate({ failRate: 0 });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'string', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  await runGoal(sim, goal, { limit: 3 });
+  assert.equal(sim.bot.companionNightHunt?.key, 'string');
+  const other = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'cobblestone', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  await runGoal(sim, other, { limit: 3 });
+  assert.equal(sim.bot.companionNightHunt, null);
+});
+
+function bowFixture({ health = 20, food = 20 } = {}) {
+  const sim = simulate({ failRate: 0 });
+  const local = { id: 1, name: 'spider', position: new Vec3(8.5, 0, .5) };
+  const far = { id: 2, name: 'spider', position: new Vec3(55.5, 0, .5) };
+  const underground = { id: 3, name: 'spider', position: new Vec3(7.5, -9, .5) };
+  const caveSpider = { id: 4, name: 'cave_spider', position: new Vec3(6.5, 0, .5) };
+  const aboveCave = new Vec3(9, 2, 0);
+  sim.inventory.stick = 3;
+  const original = sim.bot.blockAt;
+  sim.bot.blockAt = (p) => {
+    const name = p.equals(aboveCave) ? 'stone' : original(p).name;
+    return { name, position: p, boundingBox: name === 'air' ? 'empty' : 'block',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const dry = new Vec3(8, 0, 0);
+  const tooFar = new Vec3(55, 0, 0);
+  const underRoof = new Vec3(9, 0, 0);
+  const breaking = { x: 6, y: 0, z: 0, toBreak: [new Vec3(6, 0, 0)] };
+  const neighbors = () => [dry, tooFar, underRoof, breaking];
+  const movements = { canDig: true, getNeighbors: neighbors };
+  const records = [];
+  Object.assign(sim.bot, { health, food, entities: { 1: local, 2: far, 3: underground, 4: caveSpider },
+    pathfinder: { movements } });
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: sim.bot.health, food: sim.bot.food }),
+    record: (name) => records.push(name), signal: new AbortController().signal };
+  const create = () => createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    stations: STATIONS, requirements: [{ key: 'bow', count: 1 }], countWorn: true, actions: sim.actions,
+    skills: { ...sim.skills, explore: () => assert.fail('bow hunt must not roam'), ...sim.bowSkills } });
+  return { sim, local, far, underground, caveSpider, dry, neighbors, movements, ctx, create, records };
+}
+
+test('outfit hunts only local surface spiders along a walk-only route and releases the profile', async () => {
+  const f = bowFixture();
+  f.sim.bowSkills = { huntOne: async (_bot, _ctx, options) => {
+    assert.deepEqual(options.mobs, ['spider']);
+    assert.ok(options.accept(f.local));
+    for (const blocked of [f.far, f.underground, f.caveSpider]) assert.equal(options.accept(blocked), false);
+    assert.equal(f.movements.canDig, false);
+    assert.deepEqual(f.movements.getNeighbors(f.sim.bot.entity.position.floored()), [f.dry]);
+    assert.equal(f.sim.bot.companionNightHunt?.key, 'string');
+    return { ok: true, gained: 1 };
+  } };
+  const goal = f.create();
+  await goal.run(f.ctx);
+  assert.equal((await goal.run(f.ctx)).gained, 1);
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal(f.sim.bot.companionNightHunt, null);
+  assert.equal(f.movements.getNeighbors, f.neighbors);
+  assert.equal(f.movements.canDig, true);
+});
+
+test('low health returns by a dry route and uses available food before bow hunts', async () => {
+  const f = bowFixture({ health: 3, food: 17 });
+  f.sim.bot.entity.position = new Vec3(9.5, 0, 1.5);
+  let took = 0;
+  f.sim.bowSkills = { huntOne: () => assert.fail('low health forbids a bow hunt'),
+    takeItems: async (_bot, _ctx, { itemMatch }) => {
+      assert.equal(itemMatch('bread'), true);
+      assert.equal(itemMatch('chicken'), false);
+      took += 1;
+      return { ok: true, taken: 1 };
+    } };
+  f.sim.actions.goNear = async (_bot, _ctx, target, _radius, options) => {
+    assert.deepEqual(target, new Vec3(.5, 0, .5));
+    assert.equal(options.retryNoProgress, false);
+    assert.equal(f.movements.canDig, false);
+    f.sim.bot.entity.position = target;
+    return { ok: true };
+  };
+  const goal = f.create();
+  await goal.run(f.ctx);
+  assert.equal((await goal.run(f.ctx)).progress, false);
+  assert.equal((await goal.run(f.ctx)).taken, 1);
+  assert.equal(took, 1);
+  assert.equal(f.sim.bot.companionNightHunt, null);
+  assert.equal(f.movements.getNeighbors, f.neighbors);
+});
+
+test('an ongoing outfit spider pursuit aborts on injury and lets recovery take over', async () => {
+  const f = bowFixture();
+  f.sim.bowSkills = { huntOne: async (_bot, ctx) => {
+    f.sim.bot.health = 9;
+    const { sleep } = require('../core/confirm');
+    await sleep(500, ctx.signal);
+    assert.fail('unsafe hunt should cancel its pursuit');
+  } };
+  const goal = f.create();
+  await goal.run(f.ctx);
+  assert.equal((await goal.run(f.ctx)).reason, 'bow_string_unsafe');
+  assert.equal(f.sim.bot.companionNightHunt, null);
+  assert.equal(f.movements.getNeighbors, f.neighbors);
+});
+
+test('a carried requirement stays in the bag and counts there, never stored', async () => {
+  const sim = simulate({ seed: 4, failRate: 0 });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'stone_pickaxe', count: 1 }, { key: 'cobblestone', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions, carry: (key) => key === 'stone_pickaxe' });
+  const { events } = await runGoal(sim, goal);
+  assert.ok(events.some((e) => e.type === 'goal_done'), JSON.stringify(events.filter((e) => e.type === 'goal_failed')));
+  assert.ok(!sim.chest.stone_pickaxe, JSON.stringify(sim.chest));
+  assert.ok(sim.inventory.stone_pickaxe >= 1);
+  assert.ok(sim.chest.cobblestone >= 3);
+});
+
+function modelMineRelocation(sim, move) {
+  const movements = { getNeighbors: () => [], allowSprinting: true };
+  sim.bot.pathfinder = { movements, enablePathShortcut: true };
+  sim.actions.goTo = async (_bot, _ctx, goal, options) => {
+    assert.equal(movements.canDig, false);
+    assert.deepEqual(movements.scafoldingBlocks, []);
+    assert.equal(movements.allowSprinting, false);
+    assert.equal(sim.bot.pathfinder.enablePathShortcut, false);
+    assert.equal(options.retryNoProgress, false);
+    return move(goal.goals.map(({ x, y, z }) => new Vec3(x, y, z)), options);
+  };
+}
+
+test('mine relocation exits through the verified home doorway before scouting for a new shaft', async () => {
+  const sim = simulate({ failRate: 0 });
+  Object.assign(sim.inventory, { stone_pickaxe: 5, stick: 9, torch: 4 });
+  const anchor = new Vec3(-105, 64, -182);
+  const door = anchor.offset(3, 0, 0);
+  const chest = anchor.offset(4, 0, 5);
+  const outside = door.offset(0, 0, -1);
+  const inside = door.offset(0, 0, 1);
+  const start = anchor.offset(5, 0, 3);
+  let open = false, blocked = false;
+  const air = { name: 'air', skyLight: 15, boundingBox: 'empty', shapes: [] };
+  const ground = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  sim.bot.entity.position = start.offset(.5, 0, .5);
+  sim.bot.entity.onGround = true;
+  sim.bot.blockAt = (p) => {
+    if (p.equals(door) || p.equals(door.offset(0, 1, 0))) return {
+      name: 'oak_door', type: 12, position: p, boundingBox: 'block',
+      shapes: open && !blocked ? [[0, 0, 0, 3 / 16, 1, 1]] : [[0, 0, 0, 1, 1, 3 / 16]],
+      getProperties: () => ({ open, half: p.y === anchor.y ? 'lower' : 'upper', facing: 'north', hinge: 'left', powered: false }),
+    };
+    if (p.equals(chest)) return { ...ground, name: 'chest' };
+    return p.y === anchor.y - 1 ? ground : air;
+  };
+  let activations = 0;
+  sim.bot.activateBlock = async ({ position }) => { assert.ok(position.equals(door)); open = true; activations += 1; };
+  const moves = [];
+  modelMineRelocation(sim, ([p], { arrived }) => {
+    const profile = sim.bot.pathfinder.movements;
+    const from = sim.bot.entity.position.floored();
+    const neighbors = profile.getNeighbors(from);
+    if (p.equals(outside)) assert.deepEqual(neighbors, [door], 'only the one registered two-block doorway is admissible');
+    sim.bot.entity.position = p.offset(.5, 0, .5);
+    assert.ok(arrived(sim.bot.entity.position));
+    moves.push(p);
+    return { ok: true };
+  });
+  sim.bot.pathfinder.movements.getNeighbors = () => [door, door.offset(1, 0, 0), new Vec3(-500, 64, 0)];
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, home: { anchor, door }, requirements: [{ key: 'raw_iron', count: 2 }],
+    skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  goal.memory.mineRestart = { barren: 1, attempt: 0, avoid: [start.offset(20, 0, 0)] };
+  const events = [];
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20, food: 17, isDay: true }), record: (name, data) => events.push([name, data]) };
+  assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(moves, [inside]);
+  assert.ok((await goal.run(ctx)).ok);
+  assert.equal(activations, 1);
+  blocked = true;
+  const unsafe = new AbortController();
+  await assert.rejects(goal.run({ ...ctx, signal: unsafe.signal, record(name, data) {
+    if (name === 'mine_relocate_home_wait') {
+      assert.equal(data.reason, 'mine_restart_home_door_unsafe');
+      unsafe.abort();
+    }
+  } }), { code: 'aborted' });
+  assert.deepEqual(moves, [inside]);
+  blocked = false;
+  assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(moves, [inside, outside]);
+  assert.equal(events.find(([name]) => name === 'mine_relocate_home_exit')[1].door, posKey(door));
+  assert.equal(goal.memory.mineRestart.attempt, 0, 'leave the home before using a sector attempt');
+  assert.ok((await goal.run(ctx)).ok);
+  assert.equal(events.at(-1)[0], 'mine_relocate_landed');
+  assert.ok(goal.memory.mineRestart.arrived.distanceTo(door) >= 8);
+});
+
+test('a mine that comes to nothing is started again on another side of the house, farther out', async () => {
+  const mining = require('../core/mining');
+  const sim = simulate({ seed: 2, failRate: 0 });
+  Object.assign(sim.inventory, { stone_pickaxe: 9, stick: 9, chest: 1, crafting_table: 1, torch: 4 });
+  sim.chest.cobblestone = 1;
+  sim.bot.entity.onGround = true;
+  const read = sim.bot.blockAt;
+  sim.bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, skyLight: 15, boundingBox: block.name === 'air' ? 'empty' : 'block',
+      shapes: block.name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  const targets = [];
+  sim.actions.goNear = async (_b, _c, p) => {
+    targets.push(p.clone());
+    sim.bot.entity.position = p.offset(.5, 0, .5);
+    return { ok: true };
+  };
+  modelMineRelocation(sim, ([p]) => sim.actions.goNear(null, null, p));
+  // No ore in the open: it has to be mined.
+  sim.skills.gatherOne = async () => ({ ok: false, reason: 'no_target_in_range' });
+  const mineStep = mining.mineStep;
+  // Sand everywhere: every staircase is blocked and the mine exhausted at once.
+  mining.mineStep = async (_bot, _ctx, memory) => { memory.mineDir = ((memory.mineDir ?? 0) + 1) % 4; return { ok: false, reason: 'mine_exhausted' }; };
+  try {
+    const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'raw_iron', count: 1 }],
+      stations: STATIONS, skills: sim.skills, actions: sim.actions });
+    const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+    for (let i = 0; i < 12 && targets.length < 3; i += 1) await goal.run(ctx);
+  } finally { mining.mineStep = mineStep; }
+  assert.ok(targets.length >= 3, JSON.stringify(targets));
+  const spots = targets.slice(0, 3).map((t) => `${t.x},${t.z}`);
+  assert.equal(new Set(spots).size, 3, spots.join(' '));
+  const reach = targets.slice(0, 3).map((t) => Math.hypot(t.x, t.z));
+  assert.ok(reach[2] > reach[0], reach.join(' '));
+});
+
+test('an exhausted mine beyond the home boundary surfaces and confirms a different shaft before mining', async () => {
+  const mining = require('../core/mining');
+  const sim = simulate({ failRate: 0 });
+  Object.assign(sim.inventory, { stone_pickaxe: 5 });
+  const old = new Vec3(-5, 62, -41);
+  const chest = new Vec3(-4, 72, -29);
+  sim.bot.entity.position = old.clone();
+  sim.bot.entity.onGround = true;
+  sim.bot.blockAt = (p) => {
+    const name = p.equals(chest) ? 'chest' : p.y < 72 ? 'stone' : 'air';
+    return { name, skyLight: 15, boundingBox: name === 'air' ? 'empty' : 'block',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  sim.skills.gatherOne = async () => ({ ok: false, reason: 'no_target_in_range' });
+  const events = [];
+  let health = 3;
+  let walks = 0;
+  sim.actions.underground = (bot) => bot.entity.position.y < 72;
+  sim.actions.surface = async () => {
+    events.push('surface');
+    sim.bot.entity.position = old.offset(0, 10, 0);
+    return { ok: true };
+  };
+  modelMineRelocation(sim, ([target]) => {
+    events.push(target);
+    walks += 1;
+    // The first simulated navigation reports success but the body stayed at
+    // the shaft; do not create a new mine at that position.
+    if (walks > 1) sim.bot.entity.position = target.offset(.5, 0, .5);
+    return { ok: true };
+  });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'raw_iron', count: 2 }],
+    skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  goal.memory.mine = { entrance: old, front: old };
+  const nativeMineStep = mining.mineStep;
+  const starts = [];
+  mining.mineStep = async (_bot, _ctx, memory, { start }) => {
+    if (memory.mine) { memory.mine = null; memory.mineDir = 1; return { ok: false, reason: 'mine_exhausted' }; }
+    starts.push(start);
+    return { ok: true, progress: true };
+  };
+  try {
+    const ctx = { perceive: () => ({ ...sim.perceive(), health }), record() {}, signal: new AbortController().signal };
+    assert.equal((await goal.run(ctx)).reason, 'mine_exhausted');
+    assert.equal((await goal.run(ctx)).reason, 'mine_restart_waiting_for_retreat');
+    assert.deepEqual(events, []);
+    health = 20;
+    await goal.run(ctx);
+    assert.deepEqual(events, ['surface']);
+    assert.equal((await goal.run(ctx)).reason, 'mine_restart_site_unconfirmed');
+    assert.deepEqual(starts, []);
+    await goal.run(ctx);
+    assert.deepEqual(starts, []);
+    await goal.run(ctx);
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0].y, 72);
+    assert.ok(Math.hypot(starts[0].x - old.x, starts[0].z - old.z) >= 8);
+    assert.ok(Math.hypot(starts[0].x - chest.x, starts[0].z - chest.z) >= 8);
+  } finally {
+    mining.mineStep = nativeMineStep;
+  }
+});
+
+test('a mine restart can walk out from an overhang where height-based surfacing has no route', async () => {
+  const sim = simulate({ failRate: 0 });
+  Object.assign(sim.inventory, { stone_pickaxe: 5 });
+  const chest = new Vec3(-4, 72, -29);
+  const old = new Vec3(-5, 71, -41);
+  sim.bot.entity.position = old;
+  sim.bot.entity.onGround = true;
+  sim.bot.blockAt = (p) => {
+    const name = p.equals(chest) ? 'chest' : p.y < 72 ? 'stone' : 'air';
+    return { name, skyLight: 15, boundingBox: name === 'air' ? 'empty' : 'block',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  sim.skills.gatherOne = async () => ({ ok: false, reason: 'no_target_in_range' });
+  sim.actions.underground = () => true;
+  sim.actions.surface = async () => null;
+  let walks = 0;
+  modelMineRelocation(sim, ([target]) => {
+    walks += 1;
+    sim.bot.entity.position = target.offset(.5, 0, .5);
+    return { ok: true };
+  });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'raw_iron', count: 2 }],
+    skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  goal.memory.mineRestart = { barren: 1, attempt: 0, avoid: [old] };
+  const ctx = { perceive: () => ({ ...sim.perceive(), health: 20 }), record() {}, signal: new AbortController().signal };
+  assert.deepEqual(await goal.run(ctx), { ok: true, progress: false });
+  assert.equal(walks, 1);
+  assert.equal(goal.memory.mineRestart.arrived.y, 72);
+  assert.equal(goal.memory.mine, null);
+});
+
+test('mine relocation finds a dry elevated bank off a blocked sector and confirms the exact stance', async (t) => {
+  const mining = require('../core/mining');
+  const sim = simulate({ failRate: 0 });
+  sim.inventory.stone_pickaxe = 5;
+  const chest = new Vec3(0, 64, 0);
+  const from = new Vec3(5, 64, 0);
+  const old = new Vec3(18, 64, -8);
+  const highBank = new Vec3(18, 79, 7);
+  const positions = new Map([[posKey(chest), 'chest'], [posKey(from.offset(0, -1, 0)), 'grass_block'],
+    [posKey(highBank.offset(0, -1, 0)), 'grass_block'], ['18,64,0', 'stone'], ['18,65,0', 'water'], ['18,64,1', 'water'],
+    ['18,64,-1', 'nether_portal'], ['18,63,-1', 'grass_block'], ['19,63,0', 'oak_leaves']]);
+  sim.bot.entity.position = from;
+  sim.bot.entity.onGround = true;
+  sim.bot.blockAt = (p) => {
+    const name = positions.get(posKey(p)) || 'air';
+    const empty = ['air', 'water', 'nether_portal'].includes(name);
+    return { name, skyLight: 15, boundingBox: empty ? 'empty' : 'block',
+      shapes: empty ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  modelMineRelocation(sim, (candidates, { arrived }) => {
+    assert.deepEqual(candidates, [highBank]);
+    sim.bot.entity.position = highBank.offset(.5, 0, .5);
+    assert.equal(arrived(from), false);
+    assert.equal(arrived(sim.bot.entity.position), true);
+    return { ok: true };
+  });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'raw_iron', count: 1 }],
+    skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  goal.memory.mineRestart = { barren: 1, attempt: 0, avoid: [old] };
+  const starts = [];
+  t.mock.method(mining, 'mineStep', async (_bot, _ctx, _memory, { start }) => { starts.push(start); return { ok: true }; });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.deepEqual(goal.memory.mineRestart.arrived, highBank);
+  assert.deepEqual(starts, []);
+  await goal.run(ctx);
+  assert.deepEqual(starts, [highBank]);
+});
+
+test('an unloaded mine sector gets two verified dry scout legs then rotates without a blind destination', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.inventory.stone_pickaxe = 6;
+  const chest = new Vec3(0, 64, 0);
+  sim.bot.entity.position = new Vec3(.5, 64, .5);
+  sim.bot.entity.onGround = true;
+  const seen = new Set(['0,64,0']);
+  sim.bot.blockAt = (p) => {
+    if (p.x < 0 || p.x > 29 || p.z < -2 || p.z > 2) return null;
+    const name = p.equals(chest) ? 'chest' : p.y < 64 ? 'stone' : 'air';
+    return { name, skyLight: 15, boundingBox: name === 'air' ? 'empty' : 'block',
+      shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  modelMineRelocation(sim, ([target], { arrived }) => {
+    assert.ok(target.distanceTo(sim.bot.entity.position.floored()) <= 12);
+    sim.bot.entity.position = target.offset(.5, 0, .5);
+    assert.equal(arrived(sim.bot.entity.position), true);
+    seen.add(posKey(target));
+    return { ok: true };
+  });
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest, requirements: [{ key: 'raw_iron', count: 1 }],
+    skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  goal.memory.mineRestart = { barren: 4, attempt: 0, avoid: [new Vec3(29, 64, 0)] };
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  for (let n = 0; n < 2; n += 1) {
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.equal(goal.memory.mineRestart.arrived, undefined);
+  }
+  assert.equal((await goal.run(ctx)).reason, 'mine_restart_no_dry_site');
+  assert.deepEqual([...seen], ['0,64,0', '8,64,0', '16,64,0']);
+  assert.equal(goal.memory.mineRestart.attempt, 1);
+  assert.equal(goal.ownsRouteRecovery(), true);
+  assert.equal(sim.bot.pathfinder.enablePathShortcut, true);
+  assert.equal(sim.bot.pathfinder.movements.allowSprinting, true);
+});
+
+test('far below the chest, the walk home starts by going up', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.bot.entity.position = new Vec3(-17, -40, -37);
+  const calls = [];
+  sim.actions.surface = async () => { calls.push('surface'); sim.bot.entity.position = new Vec3(-17, 2, -37); return { ok: true, surfaced: true }; };
+  const storeInChest = sim.skills.storeInChest;
+  sim.skills.storeInChest = async (...args) => { calls.push('store'); return storeInChest(...args); };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'cobblestone', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.deepEqual(calls, ['surface']);
+  await goal.run(ctx);
+  assert.deepEqual(calls, ['surface', 'store']);
+});
+
+test('a chest blown up is made again and put back where it stood', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.world.set('0,0,0', 'air');
+  Object.assign(sim.inventory, { oak_planks: 8 });
+  sim.world.set('1,0,0', 'crafting_table');
+  const placed = [];
+  const placeAt = sim.skills.placeAt;
+  sim.skills.placeAt = async (b, c, spot, match, opts) => { placed.push(`${spot.x},${spot.y},${spot.z}`); return placeAt(b, c, spot, match, opts); };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'cobblestone', count: 3 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  for (let i = 0; i < 4 && !placed.includes('0,0,0'); i += 1) await goal.run(ctx);
+  assert.ok(placed.includes('0,0,0'), placed.join(' '));
+  assert.equal(sim.world.get('0,0,0'), 'chest');
+});
+
+test('what the caller already counted in the bag is not stored as delivered', async () => {
+  const sim = simulate({ seed: 5, failRate: 0 });
+  sim.inventory.cobblestone = 57;
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'cobblestone', count: 7 }], reserved: { cobblestone: 57 },
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  const { events } = await runGoal(sim, goal);
+  assert.ok(events.some((e) => e.type === 'goal_done'), JSON.stringify(events.filter((e) => e.type === 'goal_failed')));
+  assert.ok(sim.chest.cobblestone >= 7);
+  assert.ok(sim.inventory.cobblestone + sim.chest.cobblestone >= 64, 'seven more were gathered, not seven moved');
+});
+
+test('outfit opted-in armour already worn counts as delivered, not as something to store', async () => {
+  const sim = simulate({ seed: 6, failRate: 0 });
+  // Crafted, then put on at once by wear_armor: perception still lists it.
+  sim.inventory.iron_helmet = 1;
+  sim.bot.inventory.slots = [];
+  sim.bot.inventory.slots[5] = { name: 'iron_helmet', count: 1 };
+  const stores = [];
+  const storeInChest = sim.skills.storeInChest;
+  sim.skills.storeInChest = async (b, c, opts) => { stores.push(opts.wants.length); return storeInChest(b, c, opts); };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 },
+    requirements: [{ key: 'iron_helmet', count: 1 }], stations: STATIONS, skills: sim.skills, actions: sim.actions, countWorn: true });
+  const { events } = await runGoal(sim, goal);
+  assert.ok(events.some((e) => e.type === 'goal_done'), JSON.stringify(events.filter((e) => e.type === 'goal_failed')));
+  assert.ok(stores.every((n) => n === 0), 'only the chest check, nothing stored');
+});
+
+test('ordinary chest-only armour collection gathers a separate helmet instead of delivering the worn one', async () => {
+  const sim = simulate({ failRate: 0 });
+  Object.assign(sim.inventory, { iron_helmet: 1, iron_ingot: 5 });
+  sim.bot.inventory.slots = [];
+  sim.bot.inventory.slots[5] = { name: 'iron_helmet', count: 1 };
+  sim.world.set('1,0,0', 'crafting_table');
+  let crafted = 0;
+  sim.skills.craft = async (_bot, _ctx, { item }) => {
+    assert.equal(item, 'iron_helmet');
+    assert.equal(sim.inventory.iron_ingot, 5);
+    sim.inventory.iron_ingot -= 5;
+    sim.inventory.iron_helmet += 1;
+    crafted += 1;
+    return { ok: true };
+  };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'iron_helmet', count: 1 }],
+    stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  assert.equal(goal.isDone(sim.perceive()), false, 'empty chest cannot be completed by a worn helmet');
+  const ctx = { perceive: sim.perceive, record() {}, signal: new AbortController().signal };
+  for (let i = 0; i < 3 && !goal.isDone(sim.perceive()); i += 1) await goal.run(ctx);
+  assert.equal(goal.isDone(sim.perceive()), true);
+  assert.equal(crafted, 1);
+  assert.equal(sim.chest.iron_helmet, 1);
+  assert.equal(sim.inventory.iron_helmet, 1, 'the equipped helmet stays owned');
+  assert.equal(sim.bot.inventory.slots[5].name, 'iron_helmet');
+});
+
+for (const { name, key, slot, count, reserved = {}, carry = () => false } of [
+  { name: 'reserved helmet already worn', key: 'iron_helmet', slot: 5, count: 1, reserved: { iron_helmet: 1 } },
+  { name: 'reserved shield in offhand', key: 'shield', slot: 45, count: 1, reserved: { shield: 1 }, carry: () => true },
+  { name: 'one offhand shield toward two', key: 'shield', slot: 45, count: 2, carry: () => true },
+  { name: 'reserved carried sword', key: 'iron_sword', count: 1, reserved: { iron_sword: 1 }, carry: () => true },
+]) {
+  test(`delivery credit does not count ${name} twice`, () => {
+    const sim = simulate({ failRate: 0 });
+    sim.inventory[key] = 1;
+    sim.bot.inventory.slots = [];
+    if (slot) sim.bot.inventory.slots[slot] = { name: key, count: 1 };
+    const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key, count }],
+      countWorn: true, reserved, carry, skills: sim.skills, actions: sim.actions });
+    goal.memory.chest = {};
+    assert.equal(goal.isDone(sim.perceive()), false);
+    assert.deepEqual(goal.owed(sim.perceive().inventory), [{ key, count: 1 }]);
+    sim.inventory[key] += 1;
+    if (carry(key)) assert.equal(goal.isDone(sim.perceive()), true, 'exactly one new unreserved item discharges the shortfall');
+  });
+}
+
+test('a carry request for two swords crafts the missing second one without reusing its delivery credit', async () => {
+  const sim = simulate({ failRate: 0 });
+  Object.assign(sim.inventory, { iron_sword: 1, iron_ingot: 2, stick: 1 });
+  sim.world.set('1,0,0', 'crafting_table');
+  let crafted = 0;
+  sim.skills.craft = async (_bot, _ctx, { item }) => {
+    assert.equal(item, 'iron_sword');
+    sim.inventory.iron_ingot -= 2;
+    sim.inventory.stick -= 1;
+    sim.inventory.iron_sword += 1;
+    crafted += 1;
+    return { ok: true };
+  };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'iron_sword', count: 2 }],
+    carry: (key) => key === 'iron_sword', stations: STATIONS, skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  await goal.run({ perceive: sim.perceive, record() {}, signal: new AbortController().signal });
+  assert.equal(crafted, 1);
+  assert.equal(goal.isDone(sim.perceive()), true);
+  assert.equal(sim.inventory.iron_sword, 2);
+  assert.equal(sim.chest.iron_sword, undefined, 'carry semantics remain enabled');
+});
+
+test('reserved equipment is removed once, leaving a newly gathered bag item available for the chest', async () => {
+  const sim = simulate({ failRate: 0 });
+  sim.inventory.iron_helmet = 2; // one reserved worn, one newly made in the bag
+  sim.bot.inventory.slots = [];
+  sim.bot.inventory.slots[5] = { name: 'iron_helmet', count: 1 };
+  const goal = createGatherMaterialsGoal({ bot: sim.bot, chest: { x: 0, y: 0, z: 0 }, requirements: [{ key: 'iron_helmet', count: 1 }],
+    reserved: { iron_helmet: 1 }, countWorn: true, skills: sim.skills, actions: sim.actions });
+  goal.memory.chest = {};
+  await goal.run({ perceive: sim.perceive, record() {}, signal: new AbortController().signal });
+  assert.equal(sim.chest.iron_helmet, 1);
+  assert.equal(sim.inventory.iron_helmet, 1);
+  assert.equal(goal.isDone(sim.perceive()), true);
 });

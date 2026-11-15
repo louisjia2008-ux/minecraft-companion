@@ -32,6 +32,7 @@ const api: DeskPetApi = {
     connect: (config) => invoke('minecraft:connect', config),
     disconnect: () => invoke('minecraft:disconnect', {}),
     submit: (command) => invoke('minecraft:submit', { command }),
+    gatherLogs: (count) => invoke('minecraft:gather-logs', { count }),
     control: (action) => invoke('minecraft:control', { action }),
     sendChat: (message) => invoke('minecraft:chat', { message }),
     onChanged: (listener) => on<MinecraftSnapshot>('minecraft:changed', listener),

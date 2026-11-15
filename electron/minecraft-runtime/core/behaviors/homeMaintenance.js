@@ -3,12 +3,16 @@
 // or device goal. Survival and night rest stay above this maintenance work.
 const { BAND } = require('../brain');
 
+// Goals that bring their own tools and gear.
+const OWN_GEAR = new Set(['homestead', 'outfit']);
+
 function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.now,
-  missingGearDelayMs = 5000, noChangeLimit = 3, retryMs = 60000 } = {}) {
+  missingGearDelayMs = 5000, noChangeLimit = 3, retryMs = 60000, stepLimitMs = 10 * 60000, watchMs = 1000 } = {}) {
   if (!bot || typeof home !== 'function') throw new TypeError('bot and home are required');
   let gearMissingSince = null;
   let noChange = 0;
   let retryAt = 0;
+  let pauses = 0;
   let lastHome = null;
 
   function current() {
@@ -18,31 +22,72 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
       gearMissingSince = null;
       noChange = 0;
       retryAt = 0;
+      pauses = 0;
     }
     return goal;
   }
 
-  function observed(goal, state) {
+  function observed(goal, state, { moved = true } = {}) {
     const status = goal.maintenance(state);
     // steps is an action counter, not evidence of changed inventory or world.
     return JSON.stringify({ ...status,
       inventory: Object.entries(state.inventory).filter(([, n]) => n > 0).sort(([a], [b]) => a.localeCompare(b)),
-      position: state.position && [state.position.x, state.position.y, state.position.z].map((n) => Math.floor(n)),
+      position: moved && state.position && [state.position.x, state.position.y, state.position.z].map((n) => Math.floor(n)),
       furnace: goal.memory.furnace });
   }
 
   function accountAttempt(ctx, goal, before, result) {
     // Waiting and survival preemption neither spend nor refill this budget.
     if (ctx.signal?.aborted || result?.waited || result?.reason === 'aborted') return;
-    const after = observed(goal, ctx.perceive());
     // A failed path can monopolize maintenance just as a no-op success can.
-    // Only observed inventory/world/body progress resets the streak.
-    if (before === after) noChange += 1;
-    else noChange = 0;
+    // Only observed inventory/world/body progress resets the streak. A failed
+    // walk always moves the body, so after a failure only the house and the
+    // bag count: a crafting table out of reach took the body from a Nether
+    // trip every thirty seconds, walking half way home and timing out.
+    const failed = result?.ok === false;
+    const after = observed(goal, ctx.perceive(), { moved: !failed });
+    if ((failed ? before.still : before.key) === after) noChange += 1;
+    else { noChange = 0; pauses = 0; }
     if (noChange >= noChangeLimit) {
       noChange = 0;
-      retryAt = now() + retryMs;
+      // Each pause in a row waits twice as long, up to sixteen times.
+      retryAt = now() + retryMs * 2 ** Math.min(pauses, 4);
+      pauses += 1;
       ctx.record('home_maintenance_paused', { reason: 'no_observed_change', retryAt });
+    }
+  }
+
+  const overworld = () => String(bot.game?.dimension || 'overworld').replace(/^minecraft:/, '') === 'overworld';
+  // House work belongs to the overworld and to a few minutes at a time.
+  // Carried through the portal beside the house, a repair walk hung in the
+  // Nether for four hours: stop it once the bot is out of the overworld or
+  // the step runs long, whether or not the step heeds its abort.
+  async function watched(ctx, step) {
+    const inner = new AbortController();
+    const onAbort = () => inner.abort(ctx.signal.reason);
+    ctx.signal?.addEventListener?.('abort', onAbort, { once: true });
+    const started = now();
+    let timer = null;
+    const watchdog = new Promise((resolve) => {
+      const check = () => {
+        if (ctx.signal?.aborted) return resolve({ ok: false, reason: 'aborted' });
+        if (!overworld()) return resolve({ ok: false, reason: 'left_overworld' });
+        if (now() - started > stepLimitMs) return resolve({ ok: false, reason: 'maintenance_timeout' });
+        timer = setTimeout(check, watchMs);
+      };
+      check();
+    });
+    try {
+      const run = Promise.resolve().then(() => step({ ...ctx, signal: inner.signal }));
+      const result = await Promise.race([run, watchdog]);
+      if (!inner.signal.aborted && result && (result.reason === 'left_overworld' || result.reason === 'maintenance_timeout')) {
+        inner.abort(result.reason);
+        run.catch(() => {});
+      }
+      return result;
+    } finally {
+      clearTimeout(timer);
+      ctx.signal?.removeEventListener?.('abort', onAbort);
     }
   }
 
@@ -53,8 +98,13 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
     band: BAND.MAINTENANCE - 1,
     want(state) {
       const goal = current();
-      if (!goal?.memory.established || typeof goal.maintenance !== 'function' || activeGoal() === 'homestead') return 0;
+      // The outfit gathers tools and gear itself: maintenance planning the same
+      // pickaxe took the body from it every few seconds and failed.
+      if (!goal?.memory.established || typeof goal.maintenance !== 'function') return 0;
       const status = goal.maintenance(state);
+      // Except the chest it stores into: blown up by a creeper, the outfit
+      // failed chest_missing forty times an ask with maintenance held off.
+      if (OWN_GEAR.has(activeGoal()) && !(activeGoal() === 'outfit' && status.missing.includes('chest'))) return 0;
       if (status.gear.length) gearMissingSince ??= now();
       else gearMissingSince = null;
       if (now() < retryAt || state.alive === false || state.health < 10 || state.food <= 12
@@ -67,10 +117,11 @@ function createHomeMaintenance({ bot, home, activeGoal = () => null, now = Date.
     async run(ctx) {
       const goal = current();
       if (!goal?.memory.established) return { ok: true };
-      const before = observed(goal, ctx.perceive());
+      const start = ctx.perceive();
+      const before = { key: observed(goal, start), still: observed(goal, start, { moved: false }) };
       let result;
       try {
-        result = await goal.run(ctx);
+        result = await watched(ctx, (inner) => goal.run(inner));
       } catch (error) {
         if (error?.code !== 'aborted' && error?.code !== 'ABORT_ERR' && error?.name !== 'AbortError') {
           try { accountAttempt(ctx, goal, before); } catch { /* Preserve the original repair exception. */ }

@@ -32,7 +32,9 @@ function fixture(facing='north', hinge='left', options={}) {
         if(options.wrongPlane) b.shapes=[[0,0,0,1,1,.1875]];
       }
     } else {
-      const wall=p.y<0 || p.y>=2 || Math.abs(u)>=3 || Math.abs(v)>=2 || (!options.crossRoom && u===0);
+      // lowStep: the far side's floor is one lower (a doorstep down).
+      const floor=options.lowStep&&u>0?-1:0;
+      const wall=p.y<floor || p.y>=2 || Math.abs(u)>=3 || Math.abs(v)>=2 || (!options.crossRoom && u===0);
       b=Block.fromProperties(registry.blocksByName[wall?'stone':'air'].id,{},0);
     }
     b.position=p; blocks.set(key,b); return b;
@@ -43,7 +45,8 @@ function fixture(facing='north', hinge='left', options={}) {
   const movements = configureMovements(bot);
   movements.exclusionAreasBreak.push((block)=>block?.name==='stone'?100:0);
   movements.allowEntityDetection=false;
-  const start=world(options.reverse?2:-2), end=world(options.reverse?-2:2);
+  const low=options.lowStep?-1:0;
+  const start=options.reverse?world(2,0,low):world(-2), end=options.reverse?world(-2):world(2,0,low);
   const plan=()=>{
     const astar=new AStar(new Move(start.x,start.y,start.z,0,0),movements,new GoalBlock(end.x,end.y,end.z),1000,1000,20);
     let r=astar.compute(); while(r.status==='partial')r=astar.compute();return r;

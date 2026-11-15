@@ -56,7 +56,7 @@ test('history limit reserves room for controls alongside a pinned active request
 });
 
 test('tools are bounded data schemas and cannot inject bot/actions or arbitrary goals', () => {
-  assert.equal(TOOLS.filter((entry) => entry.kind === 'goal').length, 18);
+  assert.equal(TOOLS.filter((entry) => entry.kind === 'goal').length, 21);
   for (const [name, args] of [['gatherLogs', { count: 0 }], ['gatherLogs', { count: '3' }],
     ['gatherLogs', { count: 1, bot: {} }], ['homestead', { actions: {} }], ['setGoal', {}],
     ['__proto__', {}], [['gatherLogs'], { count: 1 }], [['getStatus'], {}], ['pause', {}],
@@ -65,6 +65,28 @@ test('tools are bounded data schemas and cannot inject bot/actions or arbitrary 
   }
   validateTool('gatherLogs', { count: 3 });
   validateTool('fishing', { count: 5, anchor: { x: 1, y: 64, z: 2 }, facing: 'east' });
+});
+
+test('journey preparation tools accept bounded data and reject hidden overrides', () => {
+  for (const [name, args] of [
+    ['outfit', { items: [{ key: 'iron_helmet', count: 1 }, { key: 'food', count: 12 }] }],
+    ['huntPearls', {}], ['huntPearls', { count: 12, radius: 64, scoutSector: 'north' }],
+    ['netherExpedition', { blazeRods: 7, witherSkulls: 0, trades: 0, skullTries: 30, roam: 400 }],
+    ['endJourney', { withCity: false, home: true }],
+  ]) validateTool(name, args);
+  for (const [name, args] of [
+    ['outfit', {}], ['outfit', { items: [] }], ['outfit', { items: Array(65).fill({ key: 'food', count: 1 }) }],
+    ['outfit', { items: [{ key: 'unknown_material', count: 1 }] }],
+    ['outfit', { items: [{ key: 'iron_helmet', count: 0 }] }],
+    ['outfit', { items: [{ key: 'food', count: 4097 }] }],
+    ['outfit', { items: [{ key: 'food', count: 1, actions: {} }] }],
+    ['outfit', { items: [{ key: 'food', count: 1 }], home: {} }],
+    ['huntPearls', { count: 0 }], ['huntPearls', { radius: 513 }], ['huntPearls', { skills: {} }],
+    ['huntPearls', { scoutSector: 'up' }],
+    ['netherExpedition', { blazeRods: -1 }], ['netherExpedition', { trades: 1.5 }],
+    ['netherExpedition', { skullTries: 4097 }], ['netherExpedition', { roam: 0 }],
+    ['netherExpedition', { actions: {} }], ['endJourney', { home: 'true' }],
+  ]) assert.throws(() => validateTool(name, args), TypeError, `${name}: ${JSON.stringify(args)}`);
 });
 
 test('dispatch is not completion; correlated terminal event settles exactly once', async (t) => {
@@ -141,6 +163,67 @@ test('pause/resume retains safety, cancel ends only task, stopAll disposes and d
   await f.host.handle(tool('all', 'stopAll'));
   assert.equal(f.engines[0].disposed, true); assert.equal(f.host.status().safetyActive, false);
   assert.equal(f.host.status().connection.state, 'disconnected'); assert.equal(f.bots[0].quitCalls, 1);
+});
+
+test('cancelled is published after body retirement rather than goal-cleared notification', async (t) => {
+  const f = fixture(t); await f.ready();
+  const taskId = (await f.host.handle(tool('goal', 'gatherLogs', { count: 3 }))).result.task.taskId;
+  let release;
+  const retired = new Promise((resolve) => { release = resolve; });
+  f.engines[0].cancelTask = async () => {
+    f.engines[0].emit({ type: 'goal_cleared', taskId, reason: 'host_cancel' });
+    await retired;
+  };
+  const cancelling = f.host.handle(tool('cancel', 'cancel', { taskId }));
+  try {
+    await turn();
+    assert.equal(f.host.status().task.status, 'running');
+    assert.equal(f.output.some((row) => row.event?.task?.status === 'cancelled'), false);
+  } finally { release(); }
+  assert.equal((await cancelling).result.task.status, 'cancelled');
+});
+
+test('stopAll keeps cancellation pending until companion disposal completes', async (t) => {
+  const f = fixture(t); await f.ready();
+  const taskId = (await f.host.handle(tool('goal', 'gatherLogs', { count: 3 }))).result.task.taskId;
+  let release;
+  f.engines[0].dispose = () => new Promise((resolve) => { release = resolve; });
+  const stopping = f.host.handle(tool('stop', 'stopAll'));
+  try {
+    await turn();
+    assert.equal(f.host.status().task.taskId, taskId);
+    assert.equal(f.output.some((row) => row.event?.task?.status === 'cancelled'), false);
+  } finally { release(); }
+  assert.equal((await stopping).ok, true);
+  assert.equal((await f.host.handle(tool('query', 'getTask', { taskId }))).result.task.status, 'cancelled');
+});
+
+test('retirement timeouts fail tasks instead of claiming cancelled or active safety', async (t) => {
+  for (const operation of ['cancel', 'pause', 'replace', 'stopAll', 'disconnect']) await t.test(operation, async (t) => {
+    const f = fixture(t); await f.ready();
+    const taskId = (await f.host.handle(tool('goal', 'gatherLogs', { count: 3 }))).result.task.taskId;
+    const timeout = Object.assign(new Error('Old body has not settled'), { code: 'retirement_timeout', retryable: false });
+    f.engines[0].status = () => ({ blocked: true, disposed: false });
+    const failRetirement = async () => {
+      f.engines[0].emit({ type: 'goal_cleared', taskId, reason: operation });
+      throw timeout;
+    };
+    f.engines[0].cancelTask = failRetirement;
+    f.engines[0].pauseTask = failRetirement;
+    if (operation === 'stopAll' || operation === 'disconnect') f.engines[0].dispose = failRetirement;
+    const request = operation === 'replace' ? tool('control', 'gatherLogs', { count: 1 }, { replaceCurrent: true })
+      : operation === 'disconnect' ? message('control', 'disconnect')
+        : tool('control', operation, operation === 'stopAll' ? {} : { taskId });
+    const reply = await f.host.handle(request);
+    assert.equal(reply.ok, false);
+    assert.equal(reply.task.taskId, taskId);
+    assert.equal(reply.task.status, 'failed');
+    assert.equal(reply.task.error.code, 'retirement_timeout');
+    assert.equal(reply.task.error.retryable, false);
+    assert.equal(f.output.some((row) => row.event?.task?.taskId === taskId && row.event.task.status === 'cancelled'), false);
+    assert.equal(f.host.status().safetyActive, false);
+    assert.equal(f.calls.length, 1, 'A failed replacement must not dispatch another goal');
+  });
 });
 
 test('disconnect failure is structured; explicit reconnect never replays tasks or trusts old bot events', async (t) => {
@@ -275,6 +358,13 @@ test('core JSONL is opt-in, advertises schemas, rejects invalid inputs, and shut
   assert.equal(code, 0, stderr);
   const rows = stdout.trim().split('\n').map((line) => JSON.parse(line));
   assert.equal(rows[0].engine, 'core'); assert.equal(rows[0].capabilities.taskLifecycle, true);
+  const advertised = rows[0].capabilities.tools;
+  const listed = rows.find((row) => row.id === 'list').result.tools;
+  assert.deepEqual(listed, advertised);
+  for (const name of ['outfit', 'huntPearls', 'netherExpedition']) {
+    assert.equal(advertised.find((entry) => entry.name === name)?.kind, 'goal');
+  }
+  assert.equal(advertised.find((entry) => entry.name === 'endJourney').parameters.properties.home.type, 'boolean');
   assert.equal(rows.find((row) => row.id === 'bad').ok, false);
 });
 

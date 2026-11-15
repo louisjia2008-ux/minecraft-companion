@@ -23,6 +23,13 @@ for(const facing of ['north','east','south','west'])for(const hinge of ['left','
   assert.equal(JSON.stringify([lower,upper]),before,'native getPathTo also preserves actual blocks/shapes');
  });
 }
+for(const facing of ['north','east','south','west'])for(const reverse of [false,true]){
+ test(`doorstep one lower ${facing} ${reverse?'up into the door':'down out of the door'}`,()=>{
+  const f=fixture(facing,'left',{lowStep:true,reverse});const r=f.plan();assert.equal(r.status,'success');
+  assert.equal(r.path.some(p=>p.x===0&&p.y===0&&p.z===0),true,'goes through the door cell');
+  assert.equal(r.path.flatMap(p=>p.toBreak).length,0);assert.equal(r.path.flatMap(p=>p.toPlace).length,0);
+ });
+}
 for(const [name,options] of Object.entries({closed:{open:false},missingUpper:{missingUpper:true},unknownUpper:{unknownUpper:true},inconsistentUpper:{inconsistentUpper:true},centreCollision:{centreCollision:true},wrongPlane:{wrongPlane:true}})){
  test(`reject ${name}`,()=>{const f=fixture('north','left',options);const r=f.plan();assert.equal(r.status,'noPath');});
 }

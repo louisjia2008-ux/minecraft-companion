@@ -1,4 +1,6 @@
 /** Renderer-facing Minecraft data. No credentials, arbitrary commands, or process handles. */
+export const MINECRAFT_CORE_MAX_LOGS = 64;
+
 export interface MinecraftConnectionConfig {
   host: string;
   port: number;
@@ -6,7 +8,7 @@ export interface MinecraftConnectionConfig {
   auth: 'offline' | 'microsoft';
   version: string;
   ownerName: string;
-  executorMode: 'strict' | 'hybrid';
+  executorMode: 'strict' | 'hybrid' | 'core';
   providerId: string | null;
 }
 

@@ -59,7 +59,7 @@ const TOOL_STEPS = 60;
 
 function createEnterEndGoal({ bot, actions = defaultActions, skills = defaultSkills, kb = KNOWLEDGE, rethrowEvery = 96 } = {}) {
   const memory = { sightings: [], estimate: null, ring: null, thrown: 0, broken: 0, walked: 0, entered: false, closest: Infinity,
-    toolSteps: 0, toolsReady: false };
+    toolSteps: 0, toolsReady: false, toolUses: 0 };
   const toolMemory = { shortfall: {} };
   const planner = createPlannerRunner({ bot, skills, kb, memory: toolMemory, blacklist: createBlacklist({ ttlMs: 60000 }) });
   const pickaxeUses = () => bot.inventory.items().filter((i) => i.name.endsWith('_pickaxe')).reduce((n, i) => {
@@ -76,13 +76,18 @@ function createEnterEndGoal({ bot, actions = defaultActions, skills = defaultSki
    * there is nothing to do.
    */
   async function sparePickaxes(ctx, depth) {
-    if (memory.toolsReady) return null;
     const need = depth * STAIR_BLOCKS + 24;
     const have = pickaxeUses();
+    // Preparation from the outward journey cannot survive losing every pick
+    // on death. Recheck actual tools, and permit a fresh bounded preparation
+    // after that loss rather than keeping the previous life's ready flag.
+    if (memory.toolUses > 0 && have === 0) memory.toolSteps = 0;
+    memory.toolUses = have;
     if (have >= need || memory.toolSteps >= TOOL_STEPS) {
       memory.toolsReady = true;
       return null;
     }
+    memory.toolsReady = false;
     const state = ctx.perceive();
     const want = countKey('stone_pickaxe', state.inventory, kb) + Math.ceil((need - have) / STONE_PICK_USES);
     const planned = planNext({ requirements: [{ key: 'stone_pickaxe', count: want }], inventory: planner.inventoryFor(state),
@@ -157,6 +162,23 @@ function createEnterEndGoal({ bot, actions = defaultActions, skills = defaultSki
   }
 
   const here0 = () => bot.entity.position;
+  async function descendToRoom(ctx, target) {
+    const here = here0().clone();
+    if (here.y - target.y <= 8) return null;
+    const tools = await sparePickaxes(ctx, Math.ceil(here.y - target.y));
+    if (tools) return tools;
+    const down = await actions.digStairsDown(bot, ctx, target.offset(0, 1, 0), { maxSteps: 16 });
+    ctx.record('stairs_down', { steps: down, y: Math.floor(bot.entity.position.y), roomY: target.y });
+    if (down > 0) return { ok: true };
+    // A lit portal can be loaded ninety blocks below a respawned bot. Failed
+    // descent still means no approach: do not fall through to an entry attempt.
+    if (bot.entity.position.y > target.y + 30 || bot.entity.isInWater) {
+      const land = stronghold.landNear(bot, memory.ring.center);
+      ctx.record('stairs_start', { at: at(land) });
+      if (land && land.distanceTo(bot.entity.position) > 3) return actions.goNear(bot, ctx, land, 1, { timeoutMs: 90000 });
+    }
+    return fail('portal_room_unreachable', { roomY: target.y, y: Math.floor(bot.entity.position.y) });
+  }
   async function reachRing(ctx) {
     const ring = memory.ring;
     // Far from it (back from a death at the world spawn): its blocks are not
@@ -170,8 +192,12 @@ function createEnterEndGoal({ bot, actions = defaultActions, skills = defaultSki
       const moved = await dryWalk(bot, () => actions.goTo(bot, ctx, new goals.GoalNearXZ(to.x, to.z, 3), { timeoutMs: 90000, arrived: () => true }));
       return here0().distanceTo(from) >= 6 ? { ok: true } : fail(moved.reason || 'walk_blocked');
     }
-    // Lit already: hop in.
+    // Lit does not mean reachable: after a death its remembered room may be
+    // far below the overworld spawn. Reuse the same descent/tool preparation.
     if (stronghold.portalLit(bot, ring.center)) {
+      const frame = [...ring.frames].sort((a, b) => a.position.distanceTo(here0()) - b.position.distanceTo(here0()))[0];
+      const down = await descendToRoom(ctx, frame?.position || ring.center);
+      if (down) return down;
       ctx.record('portal_enter', { center: at(ring.center) });
       rememberPortal(bot, ring.center);
       const result = await stronghold.enterPortal(bot, ctx, ring);
@@ -208,19 +234,8 @@ function createEnterEndGoal({ bot, actions = defaultActions, skills = defaultSki
       ctx.record('portal_room_approach', { frame: at(frame.position), distance: Math.round(frame.position.distanceTo(here)) });
     }
     // Far above the room: the pathfinder will not plan that deep; dig a staircase down.
-    if (here.y - frame.position.y > 8) {
-      const tools = await sparePickaxes(ctx, Math.ceil(here.y - frame.position.y));
-      if (tools) return tools;
-      const down = await actions.digStairsDown(bot, ctx, frame.position.offset(0, 1, 0), { maxSteps: 16 });
-      ctx.record('stairs_down', { steps: down, y: Math.floor(bot.entity.position.y), roomY: frame.position.y });
-      if (down > 0) return { ok: true };
-      // No way down from here (open water, a lava pocket): start from dry land nearby.
-      if (bot.entity.position.y > frame.position.y + 30 || bot.entity.isInWater) {
-        const land = stronghold.landNear(bot, ring.center);
-        ctx.record('stairs_start', { at: at(land) });
-        if (land && land.distanceTo(bot.entity.position) > 3) return actions.goNear(bot, ctx, land, 1, { timeoutMs: 90000 });
-      }
-    }
+    const down = await descendToRoom(ctx, frame.position);
+    if (down) return down;
     const result = await stronghold.fillFrame(bot, ctx, frame, ring.center);
     if (result.ok) {
       ctx.record('frame_filled', { frame: at(frame.position), left: empty.length - 1 });

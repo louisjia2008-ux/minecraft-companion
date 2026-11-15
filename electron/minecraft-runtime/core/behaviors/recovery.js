@@ -14,14 +14,32 @@ const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
 const { sleep } = require('../confirm');
+const { upgrades } = require('../armor');
 
 const PATH_FAILURES = new Set(['NoPath', 'Timeout', 'path_timeout', 'not_arrived', 'no_progress', 'chase_stuck', 'leg_blocked']);
 // Never wanted by any goal; thrown away first when the bag is full.
-const JUNK = new Set(['gravel', 'flint', 'andesite', 'diorite', 'granite', 'tuff', 'calcite', 'dripstone_block',
-  'pointed_dripstone', 'rotten_flesh', 'poisonous_potato', 'spider_eye', 'cobweb', 'dead_bush']);
+const JUNK = new Set(['gravel', 'andesite', 'diorite', 'granite', 'tuff', 'calcite', 'dripstone_block',
+  'pointed_dripstone', 'rotten_flesh', 'poisonous_potato', 'spider_eye', 'cobweb', 'dead_bush',
+  // Ground cover broken on the way: a bag once held 37 wildflowers and 20 leaf litter.
+  'wildflowers', 'leaf_litter', 'pink_petals', 'short_grass', 'tall_grass', 'fern', 'big_dripleaf', 'small_dripleaf',
+  'moss_carpet', 'hanging_roots', 'glow_lichen', 'vine', 'seagrass',
+  // Mined on the way, wanted by no goal: a bag full of them failed every craft (no room for the output).
+  'raw_copper', 'copper_ingot', 'lapis_lazuli', 'mossy_cobblestone', 'moss_block', 'glow_ink_sac',
+  'smooth_basalt', 'amethyst_block', 'amethyst_shard', 'budding_amethyst']);
 // Useful in moderation: one stack is kept, the rest goes.
 // A stack of netherrack is the nether's building block: bridges, steps out of lava.
-const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64 };
+const SURPLUS = { dirt: 64, cobblestone: 64, cobbled_deepslate: 64, sand: 64, netherrack: 64, stick: 64, egg: 16,
+  coal: 64, feather: 32, bone: 16, string: 16, leather: 16, white_wool: 16, redstone: 64, clay_ball: 16,
+  flint: 16, // Four arrows per flint, so sixteen is enough for a stack.
+  // Nether scaffolding comes home by the stack; seeds pile up at every harvest.
+  basalt: 32, blackstone: 32, nether_bricks: 16, wheat_seeds: 32 };
+// A tool or weapon more than once is a slot each: one is kept.
+const SINGLE = new Set(['bow', 'crossbow', 'fishing_rod', 'flint_and_steel', 'shears']);
+// Sheared or dropped wool of any other colour: a bed takes three of one colour, so a few are kept.
+const WOOL_KEPT = 3;
+// Still full with none of those: ground blocks dug anywhere go, whole stacks
+// (a part stack frees no slot). A full bag fails every craft.
+const CHEAP = new Set(['dirt', 'sand', 'cobbled_deepslate', 'netherrack', 'coarse_dirt']);
 const SAPLINGS_KEPT = 8;
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
@@ -35,8 +53,12 @@ function discardable(inventory, keep = () => false) {
     if (JUNK.has(name)) junk.push({ name, count });
     else if (SURPLUS[name] && count > SURPLUS[name]) surplus.push({ name, count: count - SURPLUS[name] });
     else if (name.endsWith('_sapling') && count > SAPLINGS_KEPT) surplus.push({ name, count: count - SAPLINGS_KEPT });
+    else if (name.endsWith('_wool') && count > WOOL_KEPT) surplus.push({ name, count: count - WOOL_KEPT });
+    else if (SINGLE.has(name) && count > 1) surplus.push({ name, count: count - 1 });
   }
-  return [...junk, ...surplus];
+  if (junk.length || surplus.length) return [...junk, ...surplus];
+  return Object.entries(inventory || {}).filter(([name, count]) => count > 0 && CHEAP.has(name) && !keep(name))
+    .map(([name, count]) => ({ name, count }));
 }
 
 /** What boxes the bot in, for the log: every non-air block within one cell of its body. */
@@ -61,6 +83,8 @@ function createRecovery({
   skills = defaultSkills,
   now = Date.now,
   thresholds = {},
+  activeGoal = () => null,
+  ownsRouteRecovery = () => false,
 } = {}) {
   if (!bot) throw new TypeError('bot is required');
   const t = {
@@ -79,7 +103,7 @@ function createRecovery({
     ...thresholds,
   };
   let brain = null;
-  const goalTrack = { active: false, pathStreak: 0, failsSinceAnchor: 0, lastOkAt: -Infinity };
+  const goalTrack = { active: false, pathStreak: 0, failsSinceAnchor: 0, lastOkAt: -Infinity, since: -Infinity };
   let anchor = null; // { position, at }: where the bot last stood still since
   const deaths = []; // { position, at }
   let danger = null; // { center, until, left }
@@ -94,7 +118,7 @@ function createRecovery({
   function observe(event) {
     switch (event?.type) {
       case 'goal_set':
-        Object.assign(goalTrack, { active: true, pathStreak: 0, failsSinceAnchor: 0, lastOkAt: now() });
+        Object.assign(goalTrack, { active: true, pathStreak: 0, failsSinceAnchor: 0, lastOkAt: now(), since: now() });
         anchor = null;
         break;
       case 'goal_done':
@@ -133,15 +157,30 @@ function createRecovery({
   }
 
   const calm = (state, range) => !state.hostiles?.some((h) => h.distance <= range);
+  // Quartz owns an explicit safe route while this profile is active. A
+  // generic recovery may dig stairs or move toward an unrelated waypoint;
+  // path failure is not permission to bypass that route's safety checks.
+  const tripOwnsRecovery = () => dimensionOf(bot) === 'the_nether'
+    && bot.pathfinder?.movements?.companionWalkOnly === true;
 
   const unstick = {
     name: 'unstick',
     band: BAND.MAINTENANCE,
     want(state) {
       trackMotion(state);
+      if (tripOwnsRecovery() || ownsRouteRecovery()) return 0;
       return stuckReason(state) && calm(state, 6) ? 0.9 : 0;
     },
     async run(ctx) {
+      // The trip can acquire the profile after maintenance was selected.
+      if (tripOwnsRecovery()) {
+        ctx.record('unstick_deferred', { dimension: 'the_nether', delegate: 'nether_trip' });
+        return { ok: false, reason: 'trip_recovery_owned' };
+      }
+      if (ownsRouteRecovery()) {
+        ctx.record('unstick_deferred', { delegate: activeGoal() });
+        return { ok: false, reason: 'goal_route_recovery_owned' };
+      }
       const state = ctx.perceive();
       ctx.record('unstick', { why: stuckReason(state), at: state.position?.floored?.() || state.position });
       try {
@@ -212,7 +251,8 @@ function createRecovery({
       danger = { center, dimension, until: at + t.clusterMs, left: false, deaths: near.length };
       bot.companionDeathDanger = danger;
     }
-    if (deaths.length > t.maxDeaths && brain && goalTrack.active) {
+    // Only this goal's deaths count: one asked again after a death loop gets a fresh start.
+    if (deaths.filter((d) => d.at >= goalTrack.since).length > t.maxDeaths && brain && goalTrack.active) {
       brain.failGoal('death_loop').catch(() => {});
     }
   }
@@ -278,6 +318,9 @@ function createRecovery({
       if (bunker) return 1;
       // Nights only matter in the overworld.
       if (!dangerActive() || state.isDay !== false || state.sheltered || dimensionOf(bot) !== 'overworld') return 0;
+      // Pearls are hunted in the dark, and the deaths are the hunt's own:
+      // shut in, a bot sat out whole nights of the hunt it was set.
+      if (activeGoal() === 'hunt_pearls') return 0;
       // Already far from the deaths: the goal's own night handling is enough.
       return state.position && distance(state.position, danger.center) < t.leaveDistance * 2 ? 1 : 0;
     },
@@ -302,8 +345,32 @@ function createRecovery({
     },
   };
 
+  // Armour made and left in the bag (an outfit cut short by hunger): put it
+  // on. A world hunted pearls with a full iron set in its bag, and the bag
+  // so full that nothing it dug could be picked up.
+  const wear = {
+    name: 'wear_armor',
+    band: BAND.MAINTENANCE,
+    want(state) {
+      if (typeof bot.equip !== 'function' || !calm(state, 6)) return 0;
+      return upgrades(bot).length ? 0.75 : 0;
+    },
+    async run(ctx) {
+      for (const [item, slot] of upgrades(bot)) {
+        try {
+          await bot.equip(item, slot);
+          ctx.record('equip', { item: item.name, slot });
+        } catch (error) {
+          if (error?.code === 'aborted') throw error;
+          return { ok: false, reason: 'equip_failed', item: item.name };
+        }
+      }
+      return { ok: true };
+    },
+  };
+
   return {
-    behaviors: [unstick, tidy, leaveDanger, nightBunker],
+    behaviors: [unstick, tidy, wear, leaveDanger, nightBunker],
     observe,
     attach(target) { brain = target; },
     status: () => ({ goal: { ...goalTrack }, deaths: deaths.length, danger: dangerActive() ? { ...danger } : null,

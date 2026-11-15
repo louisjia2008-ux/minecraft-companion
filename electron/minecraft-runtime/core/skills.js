@@ -10,6 +10,8 @@ const { posKey } = require('./blacklist');
 const { FUELS, COLORS } = require('./knowledge');
 const { ownedItems } = require('./perception');
 const { withCursorConfirmation } = require('./inventory');
+const { RaycastIterator } = require('prismarine-world').iterators;
+const { standable, walkDry } = require('./caveRetreat');
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 const isAbort = (error) => error?.code === 'aborted';
@@ -23,15 +25,19 @@ function inventoryCounts(bot) {
 }
 
 /** Breaks one matching block (nearest, cheapest first) and collects its drop. */
-async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () => false, radius = 48 }) {
+async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () => false, radius = 48,
+  selectTarget, navigationTrace = false, targetFilter, acceptStand }) {
   const ids = Object.values(bot.registry.blocksByName).filter((b) => blocks(b.name)).map((b) => b.id);
   if (ids.length === 0) return fail('unknown_block');
   const here = bot.entity.position;
-  const candidates = bot.findBlocks({ matching: ids, maxDistance: radius, count: 64 })
-    .filter((p) => !blacklist.has(posKey(p)) && !exclude(p))
+  const useExtraInfo = targetFilter && ((block) => block?.position && !blacklist.has(posKey(block.position))
+    && !exclude(block.position) && targetFilter(block.position));
+  const candidates = bot.findBlocks({ matching: ids, maxDistance: radius, count: 64,
+    ...(useExtraInfo ? { useExtraInfo } : {}) })
+    .filter((p) => !blacklist.has(posKey(p)) && !exclude(p) && (!targetFilter || targetFilter(p)))
     .map((p) => bot.blockAt(p))
     // Digging next to water or lava floods the pit the bot is standing in.
-    .filter((b) => b && !bot.companionProtectBlock?.(b) && !touchesLiquid(bot, b.position))
+    .filter((b) => b && !bot.companionProtectBlock?.(b) && !bot.companionPlacedRecently?.(b.position) && !touchesLiquid(bot, b.position))
     // Exposed blocks first: keeps mining inside one open pit instead of
     // digging a fresh hole through the soil for every single stone.
     // Logs left hanging in a tall canopy need climbing: try anything else first.
@@ -39,22 +45,45 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     .sort((a, b) => a.score - b.score)
     .map(({ b }) => b);
   if (candidates.length === 0) return fail('no_target_in_range');
-  const block = candidates[0];
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const selection = selectTarget ? await selectTarget(candidates) : { ok: true, block: candidates[0] };
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  if (!selection?.ok) return selection || fail('no_target_selected');
+  const block = selection.block;
+  if (!candidates.includes(block)) return fail('invalid_target_selection');
   const key = posKey(block.position);
   ctx.record('target_selected', { block: block.name, position: key, options: candidates.length });
+  const trace = (stage, result, from, phase = 'result') => {
+    const far = stage === 'far_approach';
+    if (navigationTrace) ctx.record('gather_navigation', { stage, phase, target: key, from,
+      actual: { ...bot.entity.position }, goalFailure: result?.reason || null, ok: result?.ok,
+      pathSource: 'native_replan', preflightPathReused: false,
+      requiredRange: far ? 7.5 : 4.5, distanceKind: far ? 'feet_to_target' : 'eye_to_block_center',
+      measuredDistance: far ? bot.entity.position.distanceTo(block.position.offset(.5, 0, .5))
+        : bot.entity.position.offset(0, 1.62, 0).distanceTo(block.position.offset(.5, .5, .5)),
+      walkOnly: Boolean(bot.pathfinder?.movements?.companionWalkOnly) });
+  };
   if (block.harvestTools && !bot.inventory.items().some((item) => block.harvestTools[item.type])) {
     blacklist.add(key, 'no_tool', 30000);
     return fail('no_tool');
   }
   // Far targets: walk most of the way in legs first, then the precise approach.
   if (block.position.distanceTo(here) > 32) {
+    const from = { ...bot.entity.position };
+    trace('far_approach', null, from, 'start');
     const near = await actions.goNear(bot, ctx, block.position.offset(0.5, 0, 0.5), 6, { timeoutMs: 90000 });
+    trace('far_approach', near, from);
     if (!near.ok && block.position.distanceTo(bot.entity.position) > 24) {
       blacklist.add(key, near.reason);
       return near;
     }
   }
-  const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 45000 });
+  const from = { ...bot.entity.position };
+  trace('mining_stance', null, from, 'start');
+  const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 45000,
+    ...(selectTarget ? { retryNoProgress: false } : {}),
+    ...(acceptStand ? { acceptStand: (p) => acceptStand(p, block.position), retryNoProgress: false } : {}) });
+  trace('mining_stance', reach, from);
   if (!reach.ok) {
     // The rest of the same tree or vein is almost always just as unreachable.
     for (const other of candidates) {
@@ -64,6 +93,7 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     return reach;
   }
   const dig = await actions.digBlock(bot, ctx, bot.blockAt(block.position) || block);
+  trace('dig', dig, { ...bot.entity.position });
   if (!dig.ok) {
     blacklist.add(key, dig.reason);
     return dig;
@@ -230,12 +260,18 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sn
   const target = v(position);
   const current = bot.blockAt(target);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
-  if (current && !AIR.has(current.name)) {
-    if (current.boundingBox !== 'empty' || current.name === 'water' || current.name === 'lava') return fail('occupied');
-    // Grass or flowers: break them first.
-    const reach = await actions.goToDig(bot, ctx, current, { timeoutMs: 20000 });
+  // Grass or flowers: break them first, also where a bed's head or a door's
+  // top half goes (a flower bed there makes the server refuse the bed).
+  for (const cell of [target, ...alsoClear.map(v)]) {
+    const block = bot.blockAt(cell);
+    if (!block || AIR.has(block.name) || (cell !== target && itemMatch(block.name))) continue;
+    if (block.boundingBox !== 'empty' || block.name === 'water' || block.name === 'lava') {
+      if (cell === target) return fail('occupied');
+      continue;
+    }
+    const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 20000 });
     if (!reach.ok) return reach;
-    const dug = await actions.digBlock(bot, ctx, current);
+    const dug = await actions.digBlock(bot, ctx, block);
     if (!dug.ok) return dug;
   }
   const item = bot.inventory.items().find((i) => itemMatch(i.name));
@@ -592,20 +628,22 @@ async function huntOne(bot, ctx, { mobs, dropMatch, radius = 48, blacklist, acce
 }
 
 /** Picks a ripe sweet berry bush (taiga food when no animals are around). */
-async function pickBerries(bot, ctx, { radius = 32, blacklist } = {}) {
+async function pickBerries(bot, ctx, { radius = 32, blacklist, position } = {}) {
   const bush = bot.registry.blocksByName.sweet_berry_bush;
   if (!bush) return fail('no_berries');
-  const ripe = bot.findBlocks({ matching: bush.id, maxDistance: radius, count: 16,
-    useExtraInfo: (b) => Number(b.getProperties?.().age) >= 2 })
-    .filter((p) => !blacklist?.has(`berry:${posKey(p)}`))
-    .map((p) => bot.blockAt(p)).filter(Boolean);
+  const isRipe = (block) => block?.type === bush.id && Number(block.getProperties?.().age) >= 2;
+  const positions = position ? [position] : bot.findBlocks({ matching: bush.id, maxDistance: radius, count: 16, useExtraInfo: isRipe });
+  const ripe = positions.filter((p) => !blacklist?.has(`berry:${posKey(p)}`))
+    .map((p) => bot.blockAt(p)).filter(isRipe);
   if (!ripe.length) return fail('no_berries');
   const block = ripe[0];
   const before = actions.countItems(bot, (n) => n === 'sweet_berries');
   const moved = await actions.goToDig(bot, ctx, block, { timeoutMs: 30000 });
   if (!moved.ok) { blacklist?.add(`berry:${posKey(block.position)}`, moved.reason); return moved; }
+  const current = bot.blockAt(block.position);
+  if (!isRipe(current)) return fail('no_berries');
   try {
-    await bot.activateBlock(bot.blockAt(block.position));
+    await bot.activateBlock(current);
   } catch (error) {
     if (isAbort(error)) throw error;
   }
@@ -622,7 +660,14 @@ async function explore(bot, ctx, memory) {
   const directions = Array.from({ length: 8 }, (_, i) => (i * Math.PI) / 4);
   // Keep one heading while it works: random legs wander in circles around the
   // same treeless hilltop. Turn only after a blocked leg.
-  if (memory.heading === undefined || memory.blocked) {
+  // `memory.around` ({ x, z, radius }): past the radius, head back towards
+  // the centre (the house) instead of on outwards.
+  const around = memory.around;
+  const off = around ? Math.hypot(here.x - around.x, here.z - around.z) : 0;
+  if (around && off > around.radius) {
+    memory.heading = Math.atan2(around.z - here.z, around.x - here.x);
+    memory.blocked = false;
+  } else if (memory.heading === undefined || memory.blocked) {
     const fresh = directions.filter((a) => !memory.tried.slice(-4).includes(a));
     memory.heading = (fresh.length ? fresh : directions)[Math.floor(Math.random() * (fresh.length || directions.length))];
     memory.blocked = false;
@@ -679,12 +724,17 @@ async function storeItems(bot, ctx, { position, items }) {
   return freed ? { ok: true, stored } : fail('chest_full');
 }
 
-/** Takes every matching stack out of a chest; ok once the inventory holds more of it. */
-async function takeItems(bot, ctx, { position, itemMatch }) {
-  const moved = await goToBlock(bot, ctx, position);
-  if (!moved.ok) return moved;
+/** Takes matching items from a chest; ok once the inventory holds more of them. */
+async function takeItems(bot, ctx, { position, itemMatch, count: limit = Infinity, stationary = false }) {
+  if (stationary) {
+    if (!bot.entity.onGround || !actions.withinReach(bot, v(position))) return fail('station_out_of_reach');
+  } else {
+    const moved = await goToBlock(bot, ctx, position);
+    if (!moved.ok) return moved;
+  }
   const block = bot.blockAt(v(position));
   if (block?.name !== 'chest') return fail('chest_missing');
+  if (stationary && bot.canSeeBlock?.(block) !== true) return fail('station_obstructed');
   const count = () => ownedItems(bot).filter((i) => itemMatch(i.name)).reduce((sum, i) => sum + i.count, 0);
   const before = count();
   let chest;
@@ -692,9 +742,13 @@ async function takeItems(bot, ctx, { position, itemMatch }) {
     chest = await runCancellable(() => bot.openContainer(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'open_timeout' });
     const stacks = chest.containerItems().filter((i) => itemMatch(i.name));
     if (stacks.length === 0) return fail('chest_empty');
+    let remaining = limit;
     for (const stack of stacks) {
+      if (remaining <= 0) break;
+      const quantity = Math.min(stack.count, remaining);
       try {
-        await chest.withdraw(stack.type, null, stack.count);
+        await chest.withdraw(stack.type, null, quantity);
+        remaining -= quantity;
       } catch (error) {
         if (isAbort(error)) throw error;
         break; // inventory full: keep what earlier stacks already moved
@@ -787,11 +841,174 @@ async function storeInChest(bot, ctx, { position, wants = [] }) {
 
 const sourceLevel = (block) => Number(block?.getProperties?.().level);
 
+const BUCKET_REACH = 4.5;
+const LAVA_APPROACH_MS = 20000;
+const LAVA_ROUTE_RETRY_MS = 30000;
+const LAVA_STANCES_PER_ROUTE = 40;
+const LAVA_BANK_MIN_ADVANCE = 2;
+const LAVA_BANK_MIN_VERTICAL_GAP = 2;
+const LAVA_HAZARD = /^(lava|water|bubble_column|fire|soul_fire|magma_block|campfire|soul_campfire)$/;
+const LAVA_ROUTE_FACES = [new Vec3(0, 0, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+  new Vec3(0, 0, 1), new Vec3(0, 0, -1), new Vec3(0, -1, 0), new Vec3(0, 1, 0)];
+
+/** A bucket hits the first solid shape or source fluid along the eye ray. */
+function lavaAim(read, eye, source) {
+  for (const y of [.85, .5]) {
+    const aim = source.offset(.5, y, .5);
+    const delta = aim.minus(eye);
+    const distance = delta.norm();
+    if (!distance || distance > BUCKET_REACH) continue;
+    const ray = new RaycastIterator(eye, delta.scaled(1 / distance), distance + .001);
+    for (let cell = eye; cell; cell = ray.next()) {
+      const block = read(new Vec3(cell.x, cell.y, cell.z).floored());
+      if (!block) break;
+      if (isFluidSource(block, 'lava') || isFluidSource(block, 'water')) {
+        if (isFluidSource(block, 'lava') && block.position.equals(source)) return aim;
+        break;
+      }
+      if (block.shapes?.length && ray.intersect(block.shapes, block.position)) break;
+    }
+  }
+  return null;
+}
+
+function lavaStances(bot, sources, blacklist) {
+  const read = (p) => bot.blockAt(p);
+  const eyeY = bot.entity.eyeHeight || 1.62;
+  const stances = new Map();
+  const checked = new Map();
+  for (const { position } of sources) {
+    for (let dx = -4; dx <= 4; dx += 1) for (let dz = -4; dz <= 4; dz += 1) {
+      for (const dy of [1, 0, 2, -1]) {
+        const feet = position.offset(dx, dy, dz);
+        const key = posKey(feet);
+        const eye = feet.offset(.5, eyeY, .5);
+        if (stances.has(key) || blacklist.has(`lava_stance:${key}`)) continue;
+        if (!checked.has(key)) checked.set(key, standable(read, feet));
+        if (!checked.get(key) || !lavaAim(read, eye, position)) continue;
+        stances.set(key, { feet, source: position });
+      }
+    }
+  }
+  return stances;
+}
+
+async function walkTowardLavaBank(bot, ctx, goal, timeoutMs) {
+  const movement = bot.pathfinder?.movements;
+  const neighbors = movement?.getNeighbors;
+  if (typeof neighbors !== 'function') return fail('lava_bank_no_pathfinder');
+  const owned = Object.hasOwn(movement, 'getNeighbors');
+  const hazard = (p) => {
+    const block = bot.blockAt(p);
+    return !block || LAVA_HAZARD.test(block.name) || block.getProperties?.().waterlogged === true;
+  };
+  const wet = (p) => LAVA_ROUTE_FACES.some((face) => hazard(p.plus(face)));
+  const guarded = function (node, ...args) {
+    return neighbors.call(this, node, ...args).filter((move) => {
+      const feet = new Vec3(move.x, move.y, move.z);
+      return !move.toPlace?.length && !move.parkour && move.y >= node.y - 2 && !wet(feet)
+        && !move.toBreak?.some((point) => wet(new Vec3(point.x, point.y, point.z)));
+    });
+  };
+  movement.getNeighbors = guarded;
+  try {
+    return await actions.goTo(bot, ctx, goal, { timeoutMs, retryNoProgress: false });
+  } finally {
+    if (movement.getNeighbors === guarded) {
+      if (owned) movement.getNeighbors = neighbors;
+      else delete movement.getNeighbors;
+    }
+  }
+}
+
+async function fillCastingLava(bot, ctx, sources, blacklist) {
+  const read = (p) => bot.blockAt(p);
+  const stanceMap = lavaStances(bot, sources, blacklist);
+  if (!stanceMap.size) return fail('no_target_in_range');
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const deadline = Date.now() + LAVA_APPROACH_MS;
+  const current = () => {
+    const body = bot.entity;
+    const feet = body.position.floored();
+    const pair = stanceMap.get(posKey(feet));
+    if (!pair || !body.onGround || body.isInWater || body.isInLava || bot.health < 14 || !standable(read, feet)) return null;
+    const aim = lavaAim(read, body.position.offset(0, body.eyeHeight || 1.62, 0), pair.source);
+    return aim && { ...pair, aim };
+  };
+  if (!current()) {
+    const stances = [...stanceMap.values()].sort((a, b) => a.feet.distanceTo(bot.entity.position) - b.feet.distanceTo(bot.entity.position));
+    const nearby = stances.slice(0, LAVA_STANCES_PER_ROUTE);
+    const exact = new goals.GoalCompositeAny(nearby.map(({ feet }) => new goals.GoalBlock(feet.x, feet.y, feet.z)));
+    const arrived = () => Boolean(current());
+    const distanceToBank = (at) => Math.min(...nearby.map(({ feet }) => at.distanceTo(feet.offset(.5, 0, .5))));
+    const continued = (from) => {
+      const body = bot.entity;
+      const at = body.position;
+      if (!body.onGround || body.isInWater || body.isInLava || !standable(read, at.floored())
+        || distanceToBank(from) - distanceToBank(at) < LAVA_BANK_MIN_ADVANCE) return null;
+      ctx.record('lava_bank_approach', { from, to: at.clone(), remaining: Math.round(distanceToBank(at)) });
+      return { ok: true, progress: false };
+    };
+    const blocked = () => {
+      for (const { feet } of nearby) blacklist.add(`lava_stance:${posKey(feet)}`, 'lava_bank_unreachable', LAVA_ROUTE_RETRY_MS);
+      return fail('lava_bank_unreachable');
+    };
+    const start = bot.entity.position.clone();
+    const moved = await walkDry(bot, ctx, actions, exact, { timeoutMs: 8000, arrived });
+    if (!moved.ok && !current()) {
+      const advanced = continued(start);
+      if (advanced) return advanced;
+      // Reach a distant bank via ordinary terrain routing, while keeping the
+      // final lava-edge walk on verified dry ground. Never use the bucket on
+      // a loose GoalNear arrival.
+      const { feet, source } = stances[0];
+      const close = bot.entity.position.distanceTo(feet) <= 10;
+      if (close && Math.abs(bot.entity.position.y - feet.y) < LAVA_BANK_MIN_VERTICAL_GAP) return blocked();
+      const coarse = new goals.GoalNear(feet.x, feet.y, feet.z, close ? 3 : 5);
+      const accept = coarse.isEnd.bind(coarse);
+      coarse.isEnd = (p) => accept(p) && p.distanceTo(source) >= 4
+        && standable(read, new Vec3(p.x, p.y, p.z));
+      const beforeCoarse = bot.entity.position.clone();
+      const near = await walkTowardLavaBank(bot, ctx, coarse, Math.max(1, deadline - Date.now()));
+      if (!current()) {
+        if (!near.ok || Date.now() >= deadline) return continued(beforeCoarse) || blocked();
+        const beforeBank = bot.entity.position.clone();
+        const bank = await walkDry(bot, ctx, actions, exact, { timeoutMs: Math.max(1, deadline - Date.now()), arrived });
+        if (!bank.ok && !current()) return continued(beforeBank) || blocked();
+      }
+    }
+  }
+  const selected = current();
+  if (!selected) return fail('lava_bank_unreachable');
+  const { feet, source, aim } = selected;
+  ctx.record('target_selected', { block: 'lava', position: posKey(source), stance: posKey(feet), options: stanceMap.size });
+  const before = actions.countItems(bot, (name) => name === 'lava_bucket');
+  const bucket = bot.inventory.items().find((item) => item.name === 'bucket');
+  if (!bucket) return fail('no_bucket');
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  try { await bot.equip(bucket, 'hand'); }
+  catch (error) { if (isAbort(error)) throw error; return fail('equip_failed'); }
+  await bot.lookAt(aim, true);
+  await sleep(100, ctx.signal);
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const fresh = current();
+  if (!fresh || !fresh.feet.equals(feet) || !fresh.source.equals(source) || !fresh.aim.equals(aim)
+    || bot.heldItem?.name !== 'bucket') {
+    blacklist.add(`lava_stance:${posKey(feet)}`, 'lava_bank_changed', LAVA_ROUTE_RETRY_MS);
+    return fail('lava_bank_changed');
+  }
+  try { bot.activateItem(); } catch { /* checked by inventory confirmation */ }
+  if (await waitUntil(() => actions.countItems(bot, (name) => name === 'lava_bucket') > before,
+    { timeoutMs: 1500, signal: ctx.signal })) return { ok: true, filled: 'lava_bucket' };
+  blacklist.add(posKey(source), 'bucket_unfilled');
+  return fail('bucket_unfilled');
+}
+
 /**
  * Fills one empty bucket from a still source of water or lava, seen from dry
  * ground. Confirmed only by the full bucket appearing in the inventory.
  */
-async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48 }) {
+async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48, guardLava = false }) {
   const full = `${liquid}_bucket`;
   if (!bot.inventory.items().some((i) => i.name === 'bucket')) return fail('no_bucket');
   // Lava is only approached in good health: a slip costs a lot more than water.
@@ -799,13 +1016,17 @@ async function fillBucket(bot, ctx, { liquid, blacklist, radius = 48 }) {
   const id = bot.registry.blocksByName[liquid]?.id;
   if (id === undefined) return fail('unknown_block');
   const here = bot.entity.position;
-  const sources = bot.findBlocks({ matching: id, maxDistance: radius, count: 128 })
+  const protectedLava = guardLava && liquid === 'lava';
+  const sourceOpen = (b) => b && !blacklist.has(posKey(b.position)) && isFluidSource(b, liquid)
+    && AIR.has(bot.blockAt(b.position.offset(0, 1, 0))?.name || '');
+  const sources = bot.findBlocks({ matching: id, maxDistance: radius, count: 128, ...(protectedLava ? { useExtraInfo: sourceOpen } : {}) })
     .filter((p) => !blacklist.has(posKey(p)))
     .map((p) => bot.blockAt(p))
     // A still source with open air above it, so the bucket can be aimed from the side or above.
     .filter((b) => b && sourceLevel(b) === 0 && AIR.has(bot.blockAt(b.position.offset(0, 1, 0))?.name || ''))
     .sort((a, b) => a.position.distanceTo(here) - b.position.distanceTo(here));
   if (sources.length === 0) return fail('no_target_in_range');
+  if (protectedLava) return fillCastingLava(bot, ctx, sources, blacklist);
   const target = sources[0];
   const key = posKey(target.position);
   ctx.record('target_selected', { block: liquid, position: key, options: sources.length });
@@ -900,7 +1121,7 @@ async function digIn(bot, ctx, { sealMatch, avoid = () => false }) {
   const sealed = await placeAt(bot, ctx, seal, sealMatch,
     { faces: [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)] });
   if (!sealed.ok) return sealed;
-  return { ok: true, bunker: { top: { x: top.x, y: top.y, z: top.z } } };
+  return { ok: true, bunker: { top: { x: top.x, y: top.y, z: top.z }, seal: bot.blockAt(seal)?.name } };
 }
 
 /**
@@ -925,25 +1146,57 @@ async function tossStacks(bot, ctx, items) {
 }
 
 /** Opens the seal and climbs back up, filling the shaft behind the bot. */
-async function digOut(bot, ctx, bunker) {
+async function digOut(bot, ctx, bunker, { confirmExit = false } = {}) {
   const top = new Vec3(bunker.top.x, bunker.top.y, bunker.top.z);
-  const seal = bot.blockAt(top.offset(0, -1, 0));
-  if (seal && seal.boundingBox === 'block' && bot.entity.position.y < top.y - 1) {
+  const atSeal = top.offset(0, -1, 0);
+  const read = (p) => bot.blockAt(p);
+  const sideOfOpenShaft = (p) => read(atSeal)?.boundingBox === 'empty'
+    && p.y >= top.y - 3 && Math.abs(p.x - top.x) + Math.abs(p.z - top.z) <= 4
+    && (p.x !== top.x || p.z !== top.z) && !actions.underground(bot, p);
+  const lowerBank = (p) => sideOfOpenShaft(p) && standable(read, p);
+  const outside = () => bot.entity.onGround && (bot.entity.position.y >= top.y - .1
+    || !bot.entity.isInWater && !bot.entity.isInLava && lowerBank(bot.entity.position.floored()));
+  if (confirmExit && outside()) return { ok: true };
+  const seal = bot.blockAt(atSeal);
+  if (confirmExit && !seal) return fail('bunker_seal_unloaded');
+  if (seal.boundingBox === 'block' && bot.entity.position.y < top.y - 1) {
+    const feet = bot.entity.position.floored();
+    if (confirmExit && (seal.name !== bunker.seal || feet.x !== top.x || feet.z !== top.z
+      || bot.companionProtectBlock?.(seal))) return fail('bunker_seal_changed');
     const dug = await actions.digBlock(bot, ctx, seal);
     if (!dug.ok) return dug;
+    if (confirmExit && bot.blockAt(atSeal)?.boundingBox !== 'empty') return fail('bunker_open_unconfirmed');
+  }
+  // An exit may meet lower ground beside the shaft. A body can stop with its
+  // centre over the lip even though it is grounded. Confirm the nearby full
+  // footing with one dry step before releasing the bunker to regular work.
+  const from = bot.entity.position.floored();
+  if (confirmExit && bot.entity.onGround && !bot.entity.isInWater && !bot.entity.isInLava && sideOfOpenShaft(from)) {
+    const bank = SIDES4.map(([dx, dz]) => from.offset(dx, 0, dz)).find(lowerBank);
+    if (bank) {
+      const arrived = () => outside() && bot.entity.position.floored().equals(bank);
+      await walkDry(bot, ctx, actions, new goals.GoalBlock(bank.x, bank.y, bank.z),
+        { timeoutMs: 4000, maxDrop: 0, adjacent: bank, arrived });
+      if (arrived() || await waitUntil(arrived, { timeoutMs: 500, signal: ctx.signal })) {
+        ctx.record('night_bunker_exit_lower_bank', { top, from, to: bank });
+        return { ok: true };
+      }
+    }
   }
   const saved = bot.companionSurfaceY;
   bot.companionSurfaceY = top.y;
   try {
     const up = await actions.surface(bot, ctx);
-    return up || { ok: true };
+    if (!confirmExit) return up || { ok: true };
+    if (outside() || await waitUntil(outside, { timeoutMs: 650, signal: ctx.signal })) return { ok: true };
+    return { ...fail(up?.reason || 'bunker_exit_unconfirmed'), opened: bot.blockAt(atSeal)?.boundingBox === 'empty' };
   } finally {
     bot.companionSurfaceY = saved;
   }
 }
 
 /** Uses the bed: sleeps at night, otherwise sets the respawn point by interacting. */
-const BED_REPLY = /set_spawn|no_sleep|not_safe|too_far|obstructed|occupied/;
+const BED_REPLY = /^block\.minecraft\.(?:set_spawn|bed\.(?:no_sleep|not_safe|too_far_away|obstructed|occupied))$/;
 
 async function useBed(bot, ctx, { position }) {
   // Outside the overworld a bed explodes when used.
@@ -953,33 +1206,41 @@ async function useBed(bot, ctx, { position }) {
   const block = bot.blockAt(v(position));
   if (!block?.name.endsWith('_bed')) return fail('bed_missing');
   const messages = [];
-  const onMessage = (message) => { messages.push(message?.translate || String(message)); };
+  let slept = bot.isSleeping === true;
+  const onSleep = () => { slept = true; };
+  const onMessage = (message, channel) => {
+    if (channel === 'chat') return;
+    const text = message?.translate || message?.json?.translate || String(message);
+    if (BED_REPLY.test(text)) messages.push(text);
+  };
+  bot.on('sleep', onSleep);
   bot.on('message', onMessage);
   let refused = null;
   try {
-    try {
-      await runCancellable(() => bot.sleep(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'sleep_timeout' });
-    } catch (error) {
-      if (isAbort(error)) throw error;
-      refused = error.message || String(error);
-      // Mineflayer refuses by day without asking the server. Using the bed by
-      // hand still sets the respawn point there, as for a player.
-      if (/night|thunder/i.test(refused)) await bot.activateBlock(block).catch(() => {});
+    if (!slept) {
+      try {
+        // Mineflayer's sleep() leaves its once('sleep') callback behind
+        // whenever the server rejects the request. Use the same native click
+        // and own the witness for both accepted and refused interactions.
+        await runCancellable(() => bot.activateBlock(block), { signal: ctx.signal, timeoutMs: 5000, timeoutCode: 'sleep_timeout' });
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        refused = error.message || String(error);
+      }
+      await waitUntil(() => slept || bot.isSleeping || messages.length > 0, { timeoutMs: 2500, signal: ctx.signal });
     }
-    await waitUntil(() => bot.isSleeping || messages.some((m) => BED_REPLY.test(m)), { timeoutMs: 2500, signal: ctx.signal });
-    if (bot.isSleeping) {
-      // Sleep through the night; the server wakes us at dawn.
+    if (slept || bot.isSleeping) {
+      // The server may have already woken us when the last player slept.
       await waitUntil(() => !bot.isSleeping, { timeoutMs: 20000, signal: ctx.signal });
       return { ok: true, slept: true, spawnSet: true, messages };
     }
-    // Vanilla sets the respawn point before checking daylight and monsters,
-    // and only announces it when it changes: "only at night" or "not safe"
-    // also mean the respawn point is this bed.
+    // Vanilla sets the respawn point before checking daylight and monsters.
     const spawnSet = messages.some((m) => /set_spawn|no_sleep|not_safe/.test(m));
-    if (spawnSet && !messages.some((m) => /not_safe/.test(m))) return { ok: true, spawnSet, messages };
-    const reason = messages.some((m) => /not_safe|too_far|obstructed/.test(m)) ? 'bed_blocked' : 'bed_not_used';
-    return fail(reason, { spawnSet, messages, refused });
+    const blocked = messages.some((m) => /not_safe|too_far|obstructed|occupied/.test(m));
+    if (spawnSet && !blocked) return { ok: true, spawnSet, messages };
+    return fail(blocked ? 'bed_blocked' : 'bed_not_used', { spawnSet, messages, refused });
   } finally {
+    bot.removeListener('sleep', onSleep);
     bot.removeListener('message', onMessage);
     if (bot.isSleeping) bot.wake().catch(() => {});
   }

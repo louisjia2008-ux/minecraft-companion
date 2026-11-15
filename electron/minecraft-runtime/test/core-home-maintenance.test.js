@@ -117,6 +117,30 @@ test('completed homes repair loaded shell/furniture damage and consumed gear whi
   } finally { await brain.dispose(); }
 });
 
+test('a pit dug under the doorstep is filled again so the bot is not shut in', async () => {
+  const s = fixture();
+  const step = s.house.foundation.find((p) => p.x === s.house.entrance.x && p.z === s.house.entrance.z && p.y === s.house.entrance.y - 1);
+  assert.ok(step, 'the doorstep is part of the foundation');
+  assert.equal(s.home.isDone(s.perceive()), true);
+  s.world.set(s.key(step), 'air');
+  assert.equal(s.home.isDone(s.perceive()), false);
+  let brain;
+  const events = [];
+  const maintenance = createHomeMaintenance({ bot: s.bot, home: () => s.home,
+    activeGoal: () => brain?.status().goal?.name, missingGearDelayMs: 0 });
+  brain = createBrain({ perceive: s.perceive, behaviors: [maintenance], goalRetryDelayMs: 0,
+    onEvent: (e) => events.push(e) });
+  let deviceSteps = 0;
+  brain.setGoal({ name: 'build_auto_smelter', isDone: () => deviceSteps >= 1,
+    progress: () => deviceSteps, async run() { deviceSteps += 1; return { ok: true }; } });
+  try {
+    await brain.tick();
+    for (let i = 0; i < 500 && !events.some((e) => e.type === 'goal_done'); i += 1) await sleep(1);
+    assert.equal(s.home.isDone(s.perceive()), true);
+    assert.equal(s.bot.blockAt(step).boundingBox, 'block');
+  } finally { await brain.dispose(); }
+});
+
 test('new damage interrupts an already running device step, and the same goal resumes after repair', async () => {
   const s = fixture();
   assert.equal(s.home.isDone(s.perceive()), true);
@@ -228,6 +252,14 @@ test('maintenance waits out transient missing gear and gives survival/night/curr
   assert.equal(maintenance.want({ ...s.perceive(), food: 12 }), 0);
   assert.equal(maintenance.want({ ...s.perceive(), isDay: false }), 0);
   assert.equal(maintenance.want({ ...s.perceive(), hostiles: [{ distance: 7 }] }), 0);
+  goal = 'homestead';
+  assert.equal(maintenance.want(s.perceive()), 0);
+  goal = 'outfit';
+  assert.equal(maintenance.want(s.perceive()), 0);
+  // The chest blown up: the outfit cannot store a thing, so the chest is put back.
+  const chest = s.house.furniture.chest;
+  s.world.set(s.key(chest.position || chest), 'air');
+  assert.ok(maintenance.want(s.perceive()) > 0);
   goal = 'homestead';
   assert.equal(maintenance.want(s.perceive()), 0);
 });
@@ -431,4 +463,29 @@ test('bounded failed home maintenance yields the body to the existing mining goa
     assert.ok(events.some((event) => event.type === 'home_maintenance_paused'));
     assert.equal(events.filter((event) => event.type === 'goal_set').length, 1);
   } finally { await brain.dispose(); }
+});
+
+test('failed walks home pause maintenance though the body moved, longer each time', async () => {
+  const s = stalledMaintenance();
+  let x = 40;
+  const walkPart = { ok: false, reason: 'path_timeout' };
+  s.home.run = async () => { x -= 7; s.bot.entity.position = new Vec3(x + 0.5, 64, 3.5); return walkPart; };
+  for (let i = 0; i < 3; i += 1) await s.maintenance.run(s.ctx);
+  assert.equal(s.maintenance.want(s.perceive()), 0, 'paused after three path timeouts');
+  assert.equal(s.records.at(-1).retryAt, 60000);
+  s.setTime(60000);
+  for (let i = 0; i < 3; i += 1) await s.maintenance.run(s.ctx);
+  assert.equal(s.records.at(-1).retryAt, 60000 + 120000, 'the second pause in a row is twice as long');
+});
+
+test('a repair carried out of the overworld is stopped even when it ignores its abort', async () => {
+  const s = stalledMaintenance();
+  s.bot.game = { dimension: 'overworld' };
+  let inner = null;
+  s.home.run = (ctx) => { inner = ctx.signal; return new Promise(() => {}); };
+  const maintenance = createHomeMaintenance({ bot: s.bot, home: () => s.home, watchMs: 5 });
+  setTimeout(() => { s.bot.game.dimension = 'minecraft:the_nether'; }, 20);
+  const result = await maintenance.run(s.ctx);
+  assert.equal(result.reason, 'left_overworld');
+  assert.equal(inner.aborted, true);
 });

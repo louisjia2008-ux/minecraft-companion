@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
 const { createGatherLogsGoal, isLog } = require('../core/goals/gatherBlocks');
+const { createGatherMaterialsGoal } = require('../core/goals/gatherMaterials');
 const { createBrain } = require('../core/brain');
 
 // Logs exist at fixed positions; some cannot be reached. The fake actions move
@@ -35,6 +36,42 @@ async function drive(brain, done, limit = 200) {
     await brain.idle();
   }
 }
+
+test('replaces a missing home chest against the surviving wall if its floor is gone', async (t) => {
+  for (const floor of ['air', 'cobblestone']) await t.test(floor, async () => {
+    const chest = new Vec3(34, 72, -29);
+    const below = chest.offset(0, -1, 0);
+    const wall = chest.offset(0, 0, 1);
+    let placed = false;
+    const bot = {
+      game: { dimension: 'overworld' },
+      entity: { position: new Vec3(33.5, 72, -28.5) },
+      blockAt: (p) => ({ name: p.equals(chest) && placed ? 'chest'
+        : p.equals(below) ? floor : p.equals(wall) ? 'cobblestone' : 'air' }),
+    };
+    const skills = {
+      async placeAt(_bot, _ctx, target, matches, { faces }) {
+        assert.deepEqual(target, chest);
+        assert.equal(matches('chest'), true);
+        assert.equal(matches('trapped_chest'), false);
+        const expected = floor === 'air' ? wall : below;
+        assert.ok(faces.some((face) => chest.plus(face).equals(expected)));
+        assert.equal(faces.some((face) => chest.plus(face).equals(below)), floor !== 'air');
+        placed = true;
+        return { ok: true };
+      },
+      async storeInChest() { return { ok: true, contents: {} }; },
+    };
+    const goal = createGatherMaterialsGoal({ bot, chest, surfaceOnly: true,
+      requirements: [{ key: 'stone_sword', count: 1 }], carry: () => true, skills });
+    const ctx = { perceive: () => ({ inventory: { chest: 1 } }), record() {} };
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.equal(placed, true);
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.deepEqual(goal.memory.chest, {});
+    await goal.dispose();
+  });
+});
 
 test('isLog accepts natural logs only', () => {
   assert.ok(isLog('oak_log'));

@@ -32,6 +32,130 @@ test('without water, dry plots around the centre are used', () => {
   assert.ok(plots.every((p) => !p.hydrated && p.y === 0));
 });
 
+test('a farm asked for again picks its own sown farmland, not new ground', () => {
+  const first = choosePlots(voxels(), { x: 0, y: 1, z: 0 }, { count: 6, findWater: () => [] });
+  const extra = {};
+  for (const p of first) { extra[`${p.x},${p.y},${p.z}`] = 'farmland'; extra[`${p.x},${p.y + 1},${p.z}`] = 'short_grass'; }
+  const again = choosePlots(voxels(extra), { x: 0, y: 1, z: 0 }, { count: 6, findWater: () => [] });
+  assert.deepEqual(again.map((p) => `${p.x},${p.y},${p.z}`).sort(), first.map((p) => `${p.x},${p.y},${p.z}`).sort());
+});
+
+test('a hungry farm return surfaces, follows a walk-only route and uses only the established plots and table', async () => {
+  const center = new Vec3(-117, 64, -179);
+  const table = new Vec3(-104, 64, -179);
+  const plot = new Vec3(-113, 62, -180);
+  const movements = { canDig: true };
+  const bot = { entity: { position: new Vec3(-187.5, 64, -260.5), onGround: true }, pathfinder: { movements },
+    blockAt: (p) => ({ name: p.y <= 63 ? 'stone' : 'air', boundingBox: p.y <= 63 ? 'block' : 'empty',
+      shapes: p.y <= 63 ? [[0, 0, 0, 1, 1, 1]] : [] }) };
+  const inventory = { chicken: 5, wheat: 2 };
+  const calls = [];
+  const state = { food: 11, health: 16, inventory, hostiles: [] };
+  let stage = 'unknown';
+  const actions = {
+    underground: () => false,
+    goTo: async (_bot, _ctx, goal) => {
+      calls.push('return');
+      assert.equal(movements.canDig, false);
+      const actualFeet = new Vec3(-112, 64, -177);
+      assert.ok(actualFeet.distanceTo(center) > 5);
+      assert.equal(goal.isEnd(actualFeet), true);
+      bot.entity.position = actualFeet.offset(.5, 0, .5);
+      stage = 'ripe';
+      return { ok: true };
+    },
+    eat: async () => {
+      assert.ok(inventory.bread > 0);
+      calls.push('eat');
+      inventory.bread -= 1;
+      state.food += 5;
+      return { ok: true };
+    },
+  };
+  const farming = {
+    plotState: (_bot, where) => { assert.ok(where.equals(plot)); return stage; },
+    choosePlots: () => assert.fail('snack must not create a new farm'),
+    gatherSeeds: () => assert.fail('snack must not explore for seed'),
+    harvest: async (_bot, _ctx, where) => {
+      assert.ok(where.equals(plot));
+      assert.equal(stage, 'ripe');
+      assert.equal(movements.canDig, false);
+      calls.push('harvest'); stage = 'empty'; inventory.wheat += 1; inventory.wheat_seeds = 1;
+      return { ok: true, gained: 1 };
+    },
+    plant: async () => { calls.push('replant'); stage = 'growing'; inventory.wheat_seeds = 0; return { ok: true }; },
+  };
+  const skills = {
+    explore: () => assert.fail('snack must not roam'),
+    craft: async (_bot, _ctx, { item, tablePosition }) => {
+      assert.equal(item, 'bread');
+      assert.ok(tablePosition.equals(table));
+      assert.equal(movements.canDig, false);
+      calls.push('bread'); inventory.wheat -= 3; inventory.bread = 1;
+      return { ok: true, gained: 1 };
+    },
+  };
+  const goal = createFarmGoal({ bot, center, home: { table }, snackPlots: [plot], bread: 2, actions, skills, farming });
+  const ctx = { perceive: () => state, record() {}, signal: new AbortController().signal };
+  assert.equal(goal.farmSnack, true);
+  for (let i = 0; i < 5; i += 1) assert.equal((await goal.run(ctx)).ok, true);
+  assert.deepEqual(calls, ['return', 'harvest', 'replant', 'bread', 'eat']);
+  assert.equal(goal.isDone(state), false);
+  assert.equal((await goal.run(ctx)).reason, 'farm_snack_no_ripe_wheat');
+  assert.equal(movements.canDig, true);
+});
+
+test('farm snack eats carried bread first and ascends a verified local cave after remote NoPath', async () => {
+  const center = new Vec3(-117, 64, -179);
+  const table = new Vec3(-104, 64, -177);
+  const plot = new Vec3(-113, 62, -180);
+  const start = new Vec3(-191, 61, -262);
+  const open = new Set([start.toString(), start.offset(0, 1, 0).toString(), start.offset(0, 2, 0).toString()]);
+  const inventory = { bread: 1 };
+  const movements = { canDig: true, getNeighbors: () => [] };
+  const bot = {
+    entity: { position: start.offset(.5, 0, .5), onGround: true },
+    pathfinder: { movements },
+    canDigBlock: () => true,
+    blockAt(p) {
+      const empty = open.has(p.toString());
+      return { name: empty ? 'air' : 'stone', position: p, diggable: !empty, boundingBox: empty ? 'empty' : 'block',
+        shapes: empty ? [] : [[0, 0, 0, 1, 1, 1]] };
+    },
+  };
+  const calls = [];
+  let atHome = false;
+  const actions = {
+    underground: () => true,
+    eat: async () => { calls.push('eat'); delete inventory.bread; return { ok: true, ate: 'bread' }; },
+    goTo: async () => { calls.push('return'); assert.equal(movements.canDig, false); return { ok: false, reason: 'NoPath' }; },
+    surface: () => assert.fail('generic surfacing can dig or pillar through unsafe terrain'),
+    digBlock: async (_bot, _ctx, block) => {
+      assert.equal(block.name, 'stone');
+      assert.ok(block.position.distanceTo(start) <= 3);
+      calls.push('guarded_cut');
+      open.add(block.position.toString());
+      return { ok: true };
+    },
+  };
+  const goal = createFarmGoal({ bot, center, home: { table }, snackPlots: [plot], bread: 2, actions,
+    farming: { plotState: () => atHome ? 'ripe' : 'unknown', harvest: async () => { calls.push('harvest'); return { ok: true, gained: 1 }; } } });
+  const events = [];
+  const ctx = { perceive: () => ({ food: 8, health: 14, inventory, hostiles: [] }),
+    record: (_type, data) => events.push(data), signal: new AbortController().signal };
+  assert.ok((await goal.run(ctx)).ok);
+  assert.ok((await goal.run(ctx)).waited);
+  assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(calls, ['eat', 'return', 'guarded_cut']);
+  assert.ok(events.some((event) => event.action === 'snack_return_cave_blocked'));
+  assert.ok(events.some((event) => event.action === 'snack_ascent'));
+  atHome = true;
+  bot.entity.position = table.offset(.5, 0, .5);
+  assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(calls, ['eat', 'return', 'guarded_cut', 'harvest']);
+  assert.equal(movements.canDig, true);
+});
+
 test('farm goal goes from an empty inventory to bread and leaves the plots sown', async () => {
   const blocks = new Map();
   const ages = new Map();
@@ -110,7 +234,7 @@ test('farm goal walks back when its plots are out of sight instead of waiting', 
     choosePlots: () => plots,
     findWater: () => [],
     plotState: () => (away ? 'unknown' : 'growing'),
-    returnTo: async (_b, _c, p) => { returns.push(p); away = false; return { ok: true }; },
+    returnTo: async (_b, _c, p) => { returns.push(p); away = false; bot.entity.position = new Vec3(p.x + 0.5, 1, p.z + 0.5); return { ok: true }; },
   };
   const bot = { entity: { position: new Vec3(190.5, 1, 190.5) }, blockAt: () => null };
   const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills: {}, waitMs: 0 });
@@ -122,4 +246,114 @@ test('farm goal walks back when its plots are out of sight instead of waiting', 
   const second = await goal.run(ctx);
   assert.equal(returns.length, 1);
   assert.ok(second.waited);
+});
+
+test('farm goal asked for from far off walks back before choosing plots', async () => {
+  const plots = Array.from({ length: 4 }, (_, i) => ({ x: i, y: 0, z: 3, hydrated: true }));
+  const bot = { entity: { position: new Vec3(900.5, 64, -700.5) }, blockAt: () => null };
+  const returns = [];
+  let explored = 0;
+  const farming = {
+    // Out of view, no ground reads as a plot.
+    choosePlots: () => (bot.entity.position.x > 100 ? [] : plots),
+    findWater: () => [],
+    plotState: () => 'growing',
+    returnTo: async (_b, _c, p) => { returns.push(p); bot.entity.position = new Vec3(p.x + 0.5, 64, p.z + 0.5); return { ok: true }; },
+  };
+  const skills = { explore: async () => { explored += 1; return { ok: true }; } };
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 64, 0), farming, skills, waitMs: 0 });
+  const ctx = { perceive: () => ({ inventory: {} }), record: () => {}, signal: new AbortController().signal };
+  assert.ok((await goal.run(ctx)).ok);
+  assert.equal(returns.length, 1);
+  // Back home the plots are seen, all growing: it waits, never explores.
+  assert.ok((await goal.run(ctx)).waited);
+  assert.equal(explored, 0);
+});
+
+test('no soil around the centre (desert sand): the farm moves to the nearest soil, away from raiders', async () => {
+  const { findGround } = require('../core/farming');
+  // Sand everywhere but a patch of grass at x 20..30, a second one by a pillager outpost at x -42,
+  // and a lone block of grass at x 8 that holds no farm.
+  const world = (p) => {
+    const ground = p.y === 0 && ((p.x >= 20 && p.x <= 30) || (p.x <= -40 && p.x >= -44) || (p.x === 8 && p.z === 0)) ? 'grass_block' : p.y <= 0 ? 'sand' : 'air';
+    return { name: ground, boundingBox: ground === 'air' ? 'empty' : 'block' };
+  };
+  const bot = {
+    entity: { position: new Vec3(0.5, 1, 0.5) },
+    registry: { blocksByName: { grass_block: { id: 1 }, dirt: { id: 2 } } },
+    blockAt: world,
+    companionDanger: [{ x: -42, z: 0 }],
+    findBlocks: ({ point, maxDistance }) => {
+      const out = [];
+      for (let x = -maxDistance; x <= maxDistance; x += 1) for (let z = -8; z <= 8; z += 1) {
+        if (world({ x, y: 0, z }).name === 'grass_block' && Math.hypot(x - point.x, z - point.z) <= maxDistance) out.push(new Vec3(x, 0, z));
+      }
+      return out;
+    },
+  };
+  assert.deepEqual(findGround(bot, { x: 0, y: 1, z: 0 }, 48), { x: 8, y: 1, z: 0 }, 'without a fit test, the nearest soil');
+  const returns = [];
+  const real = require('../core/farming');
+  const farming = { ...real, returnTo: async (_b, _c, p) => { returns.push(p); return { ok: true }; } };
+  let explored = 0;
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills: { explore: async () => { explored += 1; return { ok: true }; } }, waitMs: 0 });
+  await goal.run({ perceive: () => ({ inventory: {} }), record: () => {}, signal: new AbortController().signal });
+  assert.equal(explored, 0);
+  assert.deepEqual(returns, [{ x: 20, y: 1, z: 0 }]);
+  assert.deepEqual(goal.memory.center, { x: 20, y: 1, z: 0 });
+});
+
+test('no soil within reach of the centre: it explores on, and farms the first soil it finds out there', async () => {
+  const real = require('../core/farming');
+  let soilAt = null; // nothing anywhere until the bot has wandered
+  const bot = {
+    entity: { position: new Vec3(0.5, 1, 0.5) },
+    registry: { blocksByName: { grass_block: { id: 1 } } },
+    blockAt: (p) => {
+      const grass = soilAt && p.y === 0 && Math.abs(p.x - soilAt.x) <= 6 && Math.abs(p.z - soilAt.z) <= 6;
+      const name = p.y <= 0 ? (grass ? 'grass_block' : 'sand') : 'air';
+      return { name, boundingBox: name === 'air' ? 'empty' : 'block' };
+    },
+    findBlocks: ({ point, maxDistance }) => {
+      if (!soilAt) return [];
+      const out = [];
+      for (let dx = -6; dx <= 6; dx += 1) for (let dz = -6; dz <= 6; dz += 1) {
+        const p = new Vec3(soilAt.x + dx, 0, soilAt.z + dz);
+        if (p.distanceTo(point) <= maxDistance) out.push(p);
+      }
+      return out;
+    },
+  };
+  const returns = [];
+  let explored = 0;
+  const farming = { ...real, returnTo: async (_b, _c, p) => { returns.push(p); return { ok: true }; } };
+  const skills = { explore: async () => { explored += 1; bot.entity.position = new Vec3(80.5, 1, 0.5); return { ok: true }; } };
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills, waitMs: 0 });
+  const ctx = { perceive: () => ({ inventory: {} }), record: () => {}, signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.equal(explored, 1);
+  // Now 80 blocks out, with no soil yet: on, not back.
+  await goal.run(ctx);
+  assert.equal(explored, 2);
+  assert.equal(returns.length, 0);
+  soilAt = { x: 90, z: 0 };
+  await goal.run(ctx);
+  assert.equal(returns.length, 1);
+  assert.ok(Math.abs(returns[0].x - 90) <= 6, JSON.stringify(returns[0]));
+});
+
+test('with no seeds in the bag, ground is not tilled to dry out: seeds are fetched first', async () => {
+  const plots = [{ x: 1, y: 0, z: 1, hydrated: false }];
+  const calls = [];
+  const farming = {
+    choosePlots: () => plots, findWater: () => [], plotState: () => 'untilled',
+    till: async () => { calls.push('till'); return { ok: true }; },
+    gatherSeeds: async () => { calls.push('seeds'); return { ok: true }; },
+    returnTo: async () => ({ ok: true }),
+  };
+  const bot = { entity: { position: new Vec3(0.5, 1, 0.5) }, blockAt: () => null, inventory: { items: () => [] } };
+  const goal = createFarmGoal({ bot, center: new Vec3(0, 1, 0), farming, skills: {}, waitMs: 0 });
+  const ctx = { perceive: () => ({ inventory: { wooden_hoe: 1 } }), record: () => {}, signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.deepEqual(calls, ['seeds']);
 });

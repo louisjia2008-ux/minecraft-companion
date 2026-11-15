@@ -222,3 +222,57 @@ for (const asynchronous of [false, true]) test(`${asynchronous ? 'rejected' : 't
   assert.equal(safetyRuns, 1);
   await brain.dispose();
 });
+
+test('a run that ignores abort blocks competing body ownership until it really settles', async () => {
+  let hungry = false;
+  let stuckWanted = true;
+  let ate = 0;
+  const events = [];
+  const pending = deferred();
+  const stuck = { name: 'stuck', band: BAND.MAINTENANCE - 1, want: () => stuckWanted ? 0.2 : 0, run: () => pending.promise };
+  const eat = { name: 'eat', band: BAND.MAINTENANCE, want: () => (hungry ? 1 : 0), run: async () => { ate += 1; hungry = false; return { ok: true }; } };
+  const brain = createBrain({ perceive: () => ({ alive: true }), behaviors: [stuck, eat], abandonMs: 30,
+    onEvent: (e) => events.push(e) });
+  try {
+    await brain.tick();
+    assert.equal(brain.status().running, 'stuck');
+    hungry = true;
+    await brain.tick();
+    assert.equal(ate, 0, 'the old continuation still has access to the bot');
+    assert.equal(brain.status().blocked, true);
+    assert.equal(brain.status().running, 'stuck');
+    assert.equal(brain.status().inFlight.length, 1);
+    assert.ok(events.some((e) => e.type === 'behavior_abandoned' && e.behavior === 'stuck'));
+    stuckWanted = false;
+    const joining = brain.idle();
+    pending.resolve({ ok: false, reason: 'aborted' });
+    await joining;
+    await brain.tick();
+    await brain.idle();
+    assert.equal(brain.status().blocked, false);
+    assert.equal(ate, 1);
+  } finally { pending.resolve({ ok: false }); await brain.dispose(); }
+});
+
+for (const method of ['clearGoal', 'stop', 'dispose']) test(`${method} rejects retirement timeout and retains the old generation until settlement`, async () => {
+  const pending = deferred();
+  const brain = createBrain({ perceive: () => ({ alive: true }), abandonMs: 5 });
+  brain.setGoal(waitingGoal(() => pending.promise), { taskId: 'held-generation' });
+  await brain.tick();
+  const generation = brain.status().goal.generation;
+  let joined = false;
+  const join = brain.idleGoal(generation).then(() => { joined = true; });
+  try {
+    await assert.rejects(brain[method](), { code: 'retirement_timeout', retryable: false });
+    assert.equal(joined, false);
+    assert.equal(brain.status().blocked, true);
+    assert.equal(brain.status().inFlight[0].generation, generation);
+    assert.equal(brain.status().inFlight[0].taskId, 'held-generation');
+    if (method !== 'dispose') assert.throws(() => brain.setGoal(waitingGoal(() => {})), { code: 'retirement_timeout' });
+    pending.resolve({ ok: true });
+    await join;
+    assert.equal(brain.status().blocked, false);
+    assert.deepEqual(brain.status().inFlight, []);
+    await brain.dispose();
+  } finally { pending.resolve({ ok: false }); await brain.dispose(); }
+});

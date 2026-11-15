@@ -257,7 +257,16 @@ test('a hoglin is fought when it comes close, not run from, while the bot is arm
 
 test('a skull left lying after a fight is fetched before anything else', async () => {
   const items = [{ name: 'diamond_sword', count: 1 }];
-  const bot = { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items }, equip: async () => {} };
+  const bot = { ...world(row('nether_bricks', 0, 4)), game: { dimension: 'the_nether' },
+    inventory: { slots: [], items: () => items }, equip: async () => {} };
+  const read = bot.blockAt;
+  bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.entity.position = new Vec3(.5, 65, .5);
+  bot.entity.onGround = true;
+  bot.pathfinder = { movements: { companionNether: true, getNeighbors: () => [] } };
   bot.entities = { 7: { id: 7, name: 'item', position: new Vec3(3, 65, 0), getDroppedItem: () => ({ name: 'wither_skeleton_skull' }) } };
   const actions = {
     haltBody() {},
@@ -294,6 +303,111 @@ test('a blaze volley is taken on a raised shield', async () => {
   bot.registry.effects = { 12: { id: 12, name: 'FireResistance' } };
   bot.entity.effects = { 12: { id: 12 } };
   assert.equal(block.want({}), 0, 'fire resistance takes the fireball');
+});
+
+test('fortress patrol stays on nearby verified brick footing without building across a drop', async () => {
+  const bot = { ...world({ ...row('nether_bricks', 0, 12, 73), ...row('nether_bricks', -20, 17, 73),
+    '0,73,6': 'spawner', '0,45,1': 'netherrack' }), game: { dimension: 'the_nether' } };
+  const read = bot.blockAt;
+  bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.entity = { position: new Vec3(.5, 74, .5), onGround: true };
+  bot.inventory = { slots: [], items: () => [] };
+  bot.pathfinder = { movements: { companionNether: true, getNeighbors: () => [] } };
+  const walked = [];
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 7, witherSkulls: 0, trades: 0,
+    actions: {
+      goNear: () => assert.fail('patrol must not use an unrestricted long goal'),
+      goTo: async (_bot, _ctx, next) => {
+        const p = new Vec3(next.x, next.y, next.z);
+        assert.equal(p.y, 74);
+        assert.equal(p.z, 0);
+        assert.equal(p.x, walked.length + 1);
+        assert.equal(bot.pathfinder.movements.canDig, false);
+        assert.equal(bot.pathfinder.movements.allowParkour, false);
+        assert.deepEqual(bot.pathfinder.movements.scafoldingBlocks, []);
+        bot.entity.position = p.offset(.5, 0, .5);
+        walked.push(p);
+        return { ok: true };
+      },
+    } });
+  goal.memory.fortress = new Vec3(0, 73, 0);
+  goal.memory.spawner = new Vec3(0, 73, 6);
+  goal.memory.waitSince = Date.now() - 46000;
+  const result = await goal.run({ perceive: () => ({ health: 20, inventory: { blaze_rod: 4, iron_sword: 1 }, hostiles: [] }),
+    record() {}, signal: new AbortController().signal });
+  assert.deepEqual(result, { ok: true, moved: true });
+  assert.ok(walked.length >= 3 && walked.length <= 8);
+});
+
+test('an expedition leaving its spawner takes the connected trail away before heading toward its portal', async () => {
+  const bot = { ...world({ ...row('nether_bricks', 0, 4, 73),
+    ...Object.fromEntries(Array.from({ length: 35 }, (_, i) => [`0,73,${-i}`, 'nether_bricks'])),
+    '0,74,3': 'spawner' }), game: { dimension: 'the_nether' } };
+  const read = bot.blockAt;
+  bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.entity = { position: new Vec3(.5, 74, .5), onGround: true };
+  bot.inventory = { slots: [], items: () => [{ name: 'netherrack', count: 256 }] };
+  bot.pathfinder = { movements: { companionNether: true, getNeighbors: () => [] } };
+  const events = [];
+  const walked = [];
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 7, witherSkulls: 0, trades: 0, actions: {
+    goNear: () => assert.fail('the spawner must be left by guarded one-block steps'),
+    goTo: async (_bot, _ctx, next) => {
+      assert.equal(next.x, 0);
+      assert.equal(next.y, 74);
+      assert.equal(next.z, -walked.length - 1);
+      walked.push(next.z);
+      bot.entity.position = new Vec3(.5, 74, next.z + .5);
+      return { ok: true };
+    },
+  } });
+  goal.memory.netherPortal = new Vec3(80, 72, 8);
+  goal.memory.spawner = new Vec3(0, 74, 3);
+  goal.memory.crumbs = [new Vec3(0, 74, -31), new Vec3(0, 74, 0)];
+  goal.memory.returnForFood = true;
+  const ctx = { record: (type, details) => events.push({ type, ...details }), signal: new AbortController().signal,
+    perceive: () => ({ health: 15, food: 17, inventory: { blaze_rod: 4, iron_sword: 1, bread: 2 }, hostiles: [] }) };
+  for (let i = 0; i < 4; i += 1) assert.equal((await goal.run(ctx)).moved, true);
+  assert.equal(goal.memory.leftSpawner, true);
+  assert.equal(goal.memory.crumbAt, 0);
+  assert.equal(events.filter(({ type }) => type === 'fortress_exit_route').length, 4);
+  assert.equal(walked.at(-1), -29);
+});
+
+test('an injured Nether player eats under verified cover before a task is assigned', async () => {
+  const terrain = row('nether_bricks', -2, 10, 63);
+  terrain['2,64,0'] = terrain['2,65,0'] = 'nether_bricks';
+  const bot = { ...world(terrain), game: { dimension: 'the_nether' } };
+  const read = bot.blockAt;
+  bot.blockAt = (p) => {
+    const block = read(p);
+    return { ...block, shapes: block.boundingBox === 'block' ? [[0, 0, 0, 1, 1, 1]] : [] };
+  };
+  bot.entity.position = new Vec3(.5, 64, .5);
+  bot.entity.onGround = true;
+  bot.entities[1] = { id: 1, name: 'blaze', isValid: true, position: new Vec3(4.5, 64, .5), width: .6, height: 1.8 };
+  const state = { alive: true, health: 14, food: 17, inventory: { iron_sword: 1, cooked_porkchop: 1 },
+    position: bot.entity.position, hostiles: [{ ...bot.entities[1], distance: 4 }] };
+  bot.registry = { ...bot.registry, foodsByName: { cooked_porkchop: {} } };
+  let ate = 0;
+  const behaviors = createSurvivalBehaviors({ bot,
+    actions: { eat: async () => { ate += 1; state.food = 20; return { ok: true }; } } });
+  const recovery = behaviors.find((behavior) => behavior.name === 'nether_combat_recovery');
+  assert.equal(behaviors.find((behavior) => behavior.name === 'defend').want(state), 0);
+  bot.entities[2] = { id: 2, name: 'small_fireball', position: new Vec3(3, 65, .5), velocity: new Vec3(-1, 0, 0) };
+  assert.equal(recovery.want(state), 0);
+  delete bot.entities[2];
+  const events = [];
+  assert.ok(recovery.want(state) > 0);
+  assert.equal((await recovery.run({ perceive: () => state, record: (type) => events.push(type) })).ok, true);
+  assert.equal(ate, 1);
+  assert.ok(events.includes('nether_combat_cover_ate'));
 });
 
 test('respawned at home without a weapon, the expedition stops instead of going back to die', async () => {
@@ -567,11 +681,11 @@ test('with everything in hand, the bot fills up on blocks once before the walk h
   const wanted = [];
   const ctx = { record: (t, d) => { if (t === 'stock_scaffolding') wanted.push(d.want); }, perceive: () => ({ inventory: { blaze_rod: 1, wither_skeleton_skull: 1, cobblestone: 27 } }) };
   await goal.run(ctx);
-  assert.equal(gathers, 12, 'the low-stock top-up, then the fill-up for the walk home (three misses end each search, near then far)');
+  assert.equal(gathers, 6, 'one return reserve search, with three misses ending each of the near and far searches');
   assert.ok(wanted.at(-1) > 64 && wanted.at(-1) <= 192, 'enough for the whole way home, up to three stacks');
   assert.ok(builtWith[0].includes(1), 'cobblestone allowed for the walk home');
   await goal.run(ctx);
-  assert.equal(gathers, 12, 'not again within a minute');
+  assert.equal(gathers, 6, 'not again within a minute');
 });
 
 test('leaving for a bastion across the lava sea, the bot stocks a stack of blocks first', async () => {
@@ -750,17 +864,310 @@ test('under the edge of a slab over the lava, the bot swims out for the slab top
 
 test('a wither skeleton beside a zombified piglin is hit mid-jump, never with a sweep from the ground', async () => {
   const actions = require('../core/actions');
-  const target = { id: 1, name: 'wither_skeleton', position: new Vec3(2, 64, 0), height: 2.4, isValid: true };
+  const target = { id: 1, name: 'wither_skeleton', position: new Vec3(2, 64, 0), width: 0.7, height: 2.4, isValid: true };
   const piglin = { id: 2, name: 'zombified_piglin', position: new Vec3(3, 64, 1), isValid: true };
   const bot = Object.assign(new EventEmitter(), world({}), { entities: { 1: target, 2: piglin } });
   bot.entity.onGround = true;
   bot.entity.velocity = new Vec3(0, 0, 0);
   const events = [];
-  Object.assign(bot, { inventory: { slots: [], items: () => [] }, heldItem: null,
+  Object.assign(bot, { inventory: { slots: [], items: () => [] }, heldItem: null, world: { raycast: () => null },
     pathfinder: { goal: null, setGoal() {} }, lookAt: async () => {}, clearControlStates() {},
     setControlState: (c, on) => { events.push(`${c}:${on}`); if (c === 'jump' && on) { bot.entity.onGround = false; bot.entity.velocity = new Vec3(0, -0.1, 0); } },
     attack: () => { events.push(`attack:${bot.entity.onGround ? 'ground' : 'air'}`); target.isValid = false; bot.emit('entityDead', target); } });
   const result = await actions.attack(bot, { record() {} }, 1, { timeoutMs: 3000 });
   assert.equal(result.ok, true);
   assert.ok(events.includes('attack:air'), events.join(' '));
+});
+
+test('afloat under a low ceiling, the bot opens the headroom over and beside its head', async () => {
+  const { openHeadroom } = require('../core/actions');
+  // Feet at y=79: stone over the head (y=81) and beside it, except one wall that holds back water.
+  const cells = { '0,81,0': 'stone', '-1,80,0': 'stone', '0,80,-1': 'stone', '0,80,1': 'stone', '0,81,1': 'water' };
+  const bot = world(cells);
+  bot.entity.position = new Vec3(0.5, 79.2, 0.5);
+  bot.entity.isInWater = true;
+  const dug = [];
+  Object.assign(bot, { canDigBlock: () => true, equip: async () => {},
+    dig: async (b) => { dug.push(b.position.toString()); delete cells[`${b.position.x},${b.position.y},${b.position.z}`]; bot.blockAt = world(cells).blockAt; } });
+  bot.blockAt = world(cells).blockAt;
+  assert.equal(await openHeadroom(bot, { record() {}, signal: new AbortController().signal }), true);
+  assert.deepEqual(dug.sort(), ['(-1, 80, 0)', '(0, 80, -1)', '(0, 81, 0)']);
+});
+
+test('shut in the house, the bot opens the closed wooden door near it', async () => {
+  const { openNearDoor } = require('../core/actions');
+  const door = { name: 'oak_door', position: new Vec3(0, 65, 3), props: { half: 'lower', open: false } };
+  door.getProperties = () => door.props;
+  const iron = { name: 'iron_door', position: new Vec3(1, 65, 1), getProperties: () => ({ half: 'lower', open: false }) };
+  const blocks = [iron, door];
+  const opened = [];
+  const bot = {
+    entity: { position: new Vec3(0.5, 65, 0.5) },
+    findBlock: ({ matching }) => blocks.find((b) => matching(b)) || null,
+    blockAt: (p) => blocks.find((b) => b.position.equals(p)) || null,
+    activateBlock: async (b) => { opened.push(b.name); b.props = { ...b.props, open: true }; },
+  };
+  assert.equal(await openNearDoor(bot, { record() {}, signal: new AbortController().signal }), true);
+  assert.deepEqual(opened, ['oak_door']);
+  // Nothing closed is left: nothing to do.
+  assert.equal(await openNearDoor(bot, { record() {}, signal: new AbortController().signal }), false);
+});
+
+test('afloat out at sea, the bot swims for the nearest shore', async () => {
+  const { swimAshore } = require('../core/actions');
+  // Sea at y<=62 everywhere west of x=20; land (stone, top at y=62) from x=20 on.
+  const name = (p) => (p.x >= 20 ? (p.y <= 62 ? 'stone' : 'air') : (p.y <= 62 ? 'water' : 'air'));
+  const block = (p) => { const n = name(p); return { name: n, position: p.floored(), boundingBox: n === 'stone' ? 'block' : 'empty' }; };
+  const controls = {};
+  const bot = {
+    entity: { position: new Vec3(5.5, 62.4, 0.5), onGround: false },
+    blockAt: (p) => block(new Vec3(p.x, p.y, p.z)),
+    findBlock: ({ matching, useExtraInfo }) => {
+      for (let x = 6; x < 40; x += 1) { const b = block(new Vec3(x, 62, 0)); if (matching(b) && useExtraInfo(b)) return b; }
+      return null;
+    },
+    lookAt: async () => {},
+    setControlState: (c, on) => { controls[c] = on; if (c === 'jump' && on) {
+      const p = bot.entity.position; bot.entity.position = new Vec3(p.x + 0.5, p.x + 0.5 >= 20 ? 63 : 62.4, p.z);
+      bot.entity.onGround = bot.entity.position.x >= 20; } },
+  };
+  assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }), true);
+  // Beside the shore, a step left for the planner.
+  assert.ok(bot.entity.position.x >= 19, String(bot.entity.position));
+  assert.equal(controls.forward, false);
+  // On land: nothing to do.
+  bot.entity.position = new Vec3(25.5, 63, 0.5);
+  assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }), false);
+});
+
+test('out at sea with no land in sight, the bot swims a stretch towards home', async () => {
+  const { swimAshore } = require('../core/actions');
+  const block = (p) => ({ name: p.y <= 62 ? 'water' : 'air', position: p.floored(), boundingBox: 'empty' });
+  const bot = {
+    entity: { position: new Vec3(500.5, 62.4, 0.5), onGround: false },
+    blockAt: (p) => block(new Vec3(p.x, p.y, p.z)),
+    findBlock: () => null,
+    companionHomeAt: () => new Vec3(0, 64, 0),
+    lookAt: async () => {},
+    setControlState: (c, on) => { if (c === 'jump' && on) bot.entity.position = bot.entity.position.offset(-1, 0, 0); },
+  };
+  assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }, { maxTicks: 40 }), true);
+  assert.ok(bot.entity.position.x < 470, String(bot.entity.position));
+  delete bot.companionHomeAt;
+  assert.equal(await swimAshore(bot, { record() {}, signal: new AbortController().signal }), false);
+});
+
+test('a lookout the bot died walking to is skipped, by this goal and the next one asked', async () => {
+  const items = [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }];
+  const make = () => {
+    const bot = Object.assign(new EventEmitter(), { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items },
+      entities: {}, registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} }, equip: async () => {} });
+    bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+    bot.entity.onGround = true;
+    bot.entity.isInLava = false;
+    return bot;
+  };
+  const bot = make();
+  const targets = [];
+  const ctx = { record: (type, e) => { if (type === 'explore') targets.push(`${e.x},${e.z}`); },
+    perceive: () => ({ inventory: { iron_sword: 1, netherrack: 64 } }), signal: new AbortController().signal };
+  // The walk ends in the lava sea: the bot dies on the way.
+  const actions = { goTo: async () => { bot.emit('death'); return { ok: false, reason: 'aborted' }; }, goNear: async () => ({ ok: false, reason: 'NoPath' }) };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) }, actions });
+  goal.memory.netherPortal = new Vec3(0, 64, 0);
+  await goal.run(ctx);
+  await goal.run(ctx);
+  assert.equal(targets.length, 2, targets.join(' '));
+  assert.notEqual(targets[0], targets[1]);
+  goal.dispose();
+  // Asked again: a new goal starts its lookouts over, past both deadly ones.
+  const again = createNetherExpeditionGoal({ bot, blazeRods: 1, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) },
+    actions: { goTo: async () => ({ ok: true }), goNear: async () => ({ ok: true }) } });
+  again.memory.netherPortal = new Vec3(0, 64, 0);
+  await again.run(ctx);
+  assert.ok(!targets.slice(0, 2).includes(targets[2]), targets.join(' '));
+  again.dispose();
+  assert.equal(bot.listenerCount('death'), 0);
+});
+
+test('asked again, the nether search goes on from the lookouts and structures the last ask reached', async () => {
+  const bot = { ...world({}), game: { dimension: 'overworld' }, inventory: { slots: [], items: () => [] }, equip: async () => {} };
+  const first = createNetherExpeditionGoal({ bot, blazeRods: 2, witherSkulls: 0, trades: 0 });
+  first.memory.explore.index = 17;
+  first.memory.bastion = new Vec3(235, 34, 64);
+  const ctx = { record() {}, perceive: () => ({ inventory: {} }), signal: new AbortController().signal };
+  await first.run(ctx);
+  const again = createNetherExpeditionGoal({ bot, blazeRods: 2, witherSkulls: 0, trades: 0 });
+  assert.equal(again.memory.explore.index, 17);
+  assert.deepEqual(again.memory.bastion, new Vec3(235, 34, 64));
+  assert.equal(again.memory.fortress, null);
+});
+
+test('in a flooded pit with its rim two above the water, the bot cuts a step and climbs out', async () => {
+  const { stepOutOfPool } = require('../core/actions');
+  // A 4x4 pit of water from y 57 to 62 in stone; the ground is at y 63 (air from 64).
+  const dug = new Set();
+  const name = (p) => {
+    if (dug.has(`${p.x},${p.y},${p.z}`)) return 'air';
+    if (p.y >= 64) return 'air';
+    if (p.x >= 0 && p.x <= 3 && p.z >= 0 && p.z <= 3 && p.y >= 57) return p.y <= 62 ? 'water' : 'air';
+    return 'stone';
+  };
+  // As in the game, air is not diggable.
+  const block = (p) => { const n = name(p); return { name: n, position: p.floored(), boundingBox: n === 'stone' ? 'block' : 'empty', diggable: n === 'stone' }; };
+  const bot = {
+    entity: { position: new Vec3(1.5, 62.2, 1.5), onGround: false, isInWater: true },
+    blockAt: (p) => block(new Vec3(p.x, p.y, p.z).floored()),
+    canDigBlock: () => true, dig: async (b) => { dug.add(`${b.position.x},${b.position.y},${b.position.z}`); }, stopDigging() {},
+    lookAt: async (t) => { bot.target = t; },
+    setControlState: (c, on) => {
+      if (c !== 'forward' || !on || !bot.target) return;
+      // Swims straight at the target; onto a ledge only where the cell over it is open.
+      const p = bot.entity.position;
+      const step = (d) => Math.max(-0.5, Math.min(0.5, d));
+      const dx = step(bot.target.x - p.x);
+      const dz = step(bot.target.z - p.z);
+      const next = new Vec3(p.x + dx, p.y, p.z + dz);
+      const feet = new Vec3(Math.floor(next.x), 63, Math.floor(next.z));
+      if (name(feet.offset(0, -1, 0)) === 'stone' && name(feet) === 'air' && name(feet.offset(0, 1, 0)) === 'air') {
+        bot.entity.position = new Vec3(next.x, 63, next.z); bot.entity.onGround = true;
+      } else if (name(new Vec3(Math.floor(next.x), 62, Math.floor(next.z))) === 'water') bot.entity.position = next;
+    },
+  };
+  const ctx = { record() {}, signal: new AbortController().signal };
+  assert.equal(await stepOutOfPool(bot, ctx, { maxTicks: 40 }), true);
+  assert.equal(bot.entity.position.y, 63);
+  assert.ok(dug.size >= 1 && dug.size <= 2, [...dug].join(' '));
+  // On dry ground: nothing to do.
+  assert.equal(await stepOutOfPool(bot, ctx), false);
+});
+
+test('hurt in the nether with nothing to eat, the bot heads home instead of waiting to heal', async () => {
+  const items = [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }];
+  const bot = Object.assign(new EventEmitter(), { ...world({}), game: { dimension: 'the_nether' }, inventory: { slots: [], items: () => items },
+    entities: {}, registry: { itemsByName: { cobblestone: { id: 1 }, netherrack: { id: 2 } }, blocksByName: {} }, equip: async () => {} });
+  bot.pathfinder = { movements: { allow1by1towers: false, scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() }, setGoal() {} };
+  bot.entity.onGround = true;
+  bot.entity.isInLava = false;
+  const walks = [];
+  const actions = { pickFood: () => null, goNear: async (b, c, p) => { walks.push(p.toString()); bot.entity.position = p.offset(0.5, 0, 0.5); return { ok: true }; } };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 6, witherSkulls: 0, trades: 0, skills: { gatherOne: async () => ({ ok: false }) }, actions });
+  goal.memory.netherPortal = new Vec3(0, 64, 0);
+  goal.memory.fortress = new Vec3(60, 64, 0);
+  for (const x of [0, 8, 16, 24, 32, 40, 48, 56, 60]) { bot.entity.position = new Vec3(x + 0.5, 64, 0.5); bot.emit('move'); }
+  const records = [];
+  const ctx = { record: (type) => records.push(type), perceive: () => ({ health: 8, food: 17, hostiles: [], inventory: { iron_sword: 1, netherrack: 64 } }),
+    signal: new AbortController().signal };
+  await goal.run(ctx);
+  assert.ok(records.includes('retreat'), records.join(' '));
+  assert.ok(walks.length >= 1 && bot.entity.position.x < 60, walks.join(' '));
+  goal.dispose();
+});
+
+for (const { ends, targets } of [
+  { ends: [[-83.497, 91, -46.5]], targets: [[-70, -84], [-13, -107]] },
+  { ends: [[-83.497, 91, -48.357], [-83.497, 91, -52.5]], targets: [[-70, -84], [-70, -84], [-13, -107]] },
+]) test(`an ordinary lookout rotates after a short timeout and keeps productive timeout legs guarded (${ends.length})`, async () => {
+  const start = new Vec3(-87.5, 91, -38.5);
+  const nativeNeighbors = () => [];
+  const movements = { getNeighbors: nativeNeighbors, allowParkour: true, allow1by1towers: false,
+    scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() };
+  const bot = { ...world({}), game: { dimension: 'the_nether' },
+    entity: { position: start, onGround: true }, pathfinder: { movements },
+    inventory: { slots: [], items: () => [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }] },
+    registry: { itemsByName: { netherrack: { id: 2 } }, blocksByName: {} } };
+  const calls = [];
+  const actions = { async goTo(_bot, _ctx, target, options) {
+    calls.push({ target: [target.x, target.z], guarded: movements.getNeighbors !== nativeNeighbors,
+      towers: movements.allow1by1towers, retry: options.retryNoProgress });
+    if (ends[calls.length - 1]) bot.entity.position = new Vec3(...ends[calls.length - 1]);
+    return { ok: false, reason: 'Timeout' };
+  } };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 7, witherSkulls: 0, trades: 0, actions });
+  goal.memory.netherPortal = new Vec3(-13, 71, -27);
+  goal.memory.explore.index = 5;
+  const ctx = { record() {}, perceive: () => ({ inventory: { iron_sword: 1 }, health: 20, food: 20 }) };
+  try {
+    for (let attempt = 0; attempt < targets.length; attempt += 1) await goal.run(ctx);
+    assert.deepEqual(calls.map(({ target }) => target), targets);
+    assert.ok(calls.every(({ guarded, towers, retry }) => guarded && !towers && !retry));
+  } finally { goal.dispose(); }
+});
+
+for (const deckKnown of [false, true]) test(`a remote fortress approach and its alternate stay guarded (deck visible: ${deckKnown})`, async () => {
+  const start = new Vec3(0, 65, 0);
+  const nativeNeighbors = () => [];
+  const movements = { getNeighbors: nativeNeighbors, allowParkour: true, allow1by1towers: false,
+    scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() };
+  const bot = { ...world(deckKnown ? row('nether_bricks', 70, 5) : {}), game: { dimension: 'the_nether' },
+    entity: { position: start, onGround: true }, pathfinder: { movements },
+    inventory: { slots: [], items: () => [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }] },
+    registry: { ...registry, itemsByName: { netherrack: { id: 2 } } } };
+  const calls = [];
+  const walk = (target, options) => {
+    calls.push({ target, guarded: movements.getNeighbors !== nativeNeighbors,
+      towers: movements.allow1by1towers, retry: options.retryNoProgress, timeoutMs: options.timeoutMs });
+    return { ok: false, reason: 'NoPath' };
+  };
+  const actions = { goTo: async (_bot, _ctx, target, options) => walk(target, options),
+    goNear: async (_bot, _ctx, target, _range, options) => walk(target, options) };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 6, witherSkulls: 0, trades: 0, actions });
+  goal.memory.fortress = new Vec3(70, 64, 0);
+  goal.memory.netherPortal = new Vec3(-14, 65, 0);
+  const ctx = { record() {}, perceive: () => ({ inventory: { iron_sword: 1 }, health: 20, food: 20 }) };
+  try {
+    await goal.run(ctx);
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every(({ guarded, towers, retry, timeoutMs }) => guarded && !towers && retry === false && timeoutMs <= 60000), JSON.stringify(calls));
+    assert.equal(movements.getNeighbors, nativeNeighbors);
+  } finally { goal.dispose(); }
+});
+
+test('a blocked approach keeps its guarded detour across a leg away from the fortress', async () => {
+  const start = new Vec3(0, 65, 0);
+  const nativeNeighbors = () => [];
+  const movements = { getNeighbors: nativeNeighbors, allowParkour: false, allow1by1towers: false,
+    scafoldingBlocks: [], placeCost: 1, exclusionAreasStep: [], blocksCantBreak: new Set() };
+  const calls = [];
+  const path = [new Vec3(-1, 65, 0), new Vec3(-2, 65, 0), new Vec3(-3, 65, 0),
+    new Vec3(-4, 66, 0), new Vec3(-4, 67, 1), new Vec3(-4, 67, 2),
+    new Vec3(-4, 67, 3), new Vec3(-4, 67, 4), new Vec3(-3, 67, 4), new Vec3(-2, 67, 4)];
+  const bot = { ...world(row('nether_bricks', 30, 5)), game: { dimension: 'the_nether' },
+    entity: { position: start, onGround: true },
+    pathfinder: { movements, *getPathFromTo(_profile, position, goal, options) {
+      calls.push('plan');
+      assert.equal(movements.getNeighbors === nativeNeighbors, false);
+      assert.equal(options.optimizePath, false);
+      assert.ok(goal.heuristic(position) > 0);
+      yield { result: { status: 'success', path } };
+    } },
+    inventory: { slots: [], items: () => [{ name: 'iron_sword', count: 1 }, { name: 'netherrack', count: 64 }] },
+    registry: { ...registry, itemsByName: { netherrack: { id: 2 } } } };
+  const actions = {
+    goNear: async () => { calls.push('direct'); return { ok: false, reason: 'NoPath' }; },
+    goTo: async (_bot, _ctx, destination, options) => {
+      calls.push([destination.x, destination.y, destination.z]);
+      assert.equal(movements.getNeighbors === nativeNeighbors, false);
+      bot.entity.position = new Vec3(destination.x + .5, destination.y + .25, destination.z + .5);
+      bot.entity.onGround = false;
+      assert.equal(options.arrived(), false);
+      setTimeout(() => {
+        bot.entity.position.y = destination.y;
+        bot.entity.onGround = true;
+      }, 20);
+      return { ok: false, reason: 'not_arrived' };
+    },
+  };
+  const goal = createNetherExpeditionGoal({ bot, blazeRods: 6, witherSkulls: 0, trades: 0, actions });
+  goal.memory.fortress = new Vec3(30, 64, 0);
+  goal.memory.netherPortal = new Vec3(-14, 65, 0);
+  const ctx = { record() {}, perceive: () => ({ inventory: { iron_sword: 1 }, health: 20, food: 20 }) };
+  try {
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.ok(bot.entity.onGround);
+    assert.equal((await goal.run(ctx)).ok, true);
+    assert.ok(bot.entity.onGround);
+    assert.deepEqual(calls, ['direct', 'plan', [-4, 67, 4], [-2, 67, 4]]);
+    assert.equal(movements.getNeighbors, nativeNeighbors);
+  } finally { goal.dispose(); }
 });
