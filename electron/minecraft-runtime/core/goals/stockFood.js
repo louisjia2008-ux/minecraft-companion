@@ -351,11 +351,28 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     return null;
   }
 
-  function selectExpansion(state) {
+  function preservesFarmAccess(plot, bank, route) {
+    const planner = bot.pathfinder;
+    if (!door || typeof planner?.getPathFromTo !== 'function') return true;
+    const entrance = door.offset(0, 0, -1);
+    if (!exposed(entrance)) return false;
+    const path = (from, to) => from.equals(to) || planner.getPathFromTo(planner.movements, from,
+      new goals.GoalBlock(to.x, to.y, to.z), { timeout: 80, tickTimeout: 35, optimizePath: false, searchRadius: 32 })
+      .next().value?.result?.status === 'success';
+    const connected = (p) => path(entrance, p) && path(p, entrance);
+    route.expansionPlot = plot;
+    try {
+      return connected(bank) && plots.every((p) => harvestBanks(p)
+        .some((existing) => !existing.offset(0, -1, 0).equals(plot) && connected(existing)));
+    } finally {
+      route.expansionPlot = null;
+    }
+  }
+
+  function selectExpansion(state, route) {
     const short = target - expeditionFoodCount(bot, state.inventory, kb);
     const limit = Math.min(MAX_RESERVE_PLOTS, short * 3 - (state.inventory.wheat || 0));
-    if (plots.length >= limit || !state.inventory.wheat_seeds || !countKey('hoe', state.inventory, kb)
-      || !bot.registry?.blocksByName?.water || !bot.findBlocks) return null;
+    if (plots.length >= limit || !state.inventory.wheat_seeds || !bot.registry?.blocksByName?.water || !bot.findBlocks) return null;
     const planted = new Set(plots.map(posKey));
     const excluded = (point) => {
       const p = asVec(point);
@@ -367,15 +384,18 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
           && Math.abs(original.y - p.y) <= 1)
         || !harvestBanks(p).some((bank) => !planted.has(posKey(bank.offset(0, -1, 0))));
     };
-    const candidate = farming.choosePlots((point) => read(asVec(point)), centre, {
+    const candidates = farming.choosePlots((point) => read(asVec(point)), centre, {
       count: MAX_RESERVE_PLOTS,
       exclude: excluded,
       findWater: (position, radius) => farming.findWater(bot, position, radius),
-    }).find((p) => p.hydrated && farming.plotState(bot, p) === 'untilled');
-    if (!candidate) return null;
-    const plot = asVec(candidate);
-    const bank = harvestBanks(plot).find((p) => !planted.has(posKey(p.offset(0, -1, 0))));
-    return { plot, bank: bank.offset(0, -1, 0) };
+    });
+    for (const candidate of candidates) {
+      if (!candidate.hydrated || farming.plotState(bot, candidate) !== 'untilled') continue;
+      const plot = asVec(candidate);
+      const bank = harvestBanks(plot).find((p) => !planted.has(posKey(p.offset(0, -1, 0))) && preservesFarmAccess(plot, p, route));
+      if (bank) return { plot, bank: bank.offset(0, -1, 0) };
+    }
+    return null;
   }
 
   async function dryWalk(run, accept, route) {
@@ -391,6 +411,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       if (Date.now() - checkedAt >= 250) { checked.clear(); checkedAt = Date.now(); }
       return neighbors.call(this, node, ...args).filter((move) => {
         const p = new Vec3(move.x, move.y, move.z);
+        if (route.expansionPlot?.equals(p.offset(0, -1, 0))) return false;
         if (route.fieldStep) {
           const from = new Vec3(node.x, node.y, node.z);
           return route.fieldStep.from.equals(from) && route.fieldStep.to.equals(p)
@@ -974,8 +995,18 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
           if (!result.ok || !empty && result.gained < 1) blacklist.add(posKey(plot), result.reason || 'wheat_not_collected');
           return result;
         }
-        const extension = growing && selectExpansion(state);
+        const hasHoe = countKey('hoe', state.inventory, kb) > 0;
+        const canCraftHoe = (state.inventory.cobblestone || 0) >= 2 && (state.inventory.stick || 0) >= 2
+          && !blacklist.has('farm_hoe');
+        const extension = growing && (hasHoe || canCraftHoe) && selectExpansion(state, route);
         if (extension) {
+          if (!hasHoe) {
+            if (!inHouse(feet)) return returnHome(ctx, here);
+            const crafted = await skills.craft(bot, ctx, { item: 'stone_hoe', tablePosition: crafting });
+            ctx.record('expedition_food_hoe', { ok: crafted.ok, reason: crafted.reason });
+            if (!crafted.ok) blacklist.add('farm_hoe', crafted.reason, SEARCH_REST_MS);
+            return crafted;
+          }
           const result = await farming.till(bot, ctx, extension.plot);
           ctx.record('expedition_food_farm', { action: 'till', plot: posKey(extension.plot), ok: result.ok });
           if (result.ok) {

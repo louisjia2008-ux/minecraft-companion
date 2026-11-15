@@ -1459,7 +1459,7 @@ test('expedition reserve uses real ripe plots and replants before seeking new gr
   assert.equal(goal.isDone(ctx.perceive()), false);
 });
 
-test('expedition reserve extends the growing field on nearby hydrated soil and preserves a dry bank', async (t) => {
+test('expedition reserve replaces a lost hoe and extends the growing field while preserving a dry bank', async (t) => {
   const { createStockFoodGoal } = require('../core/goals/stockFood');
   const farm = require('../core/farming');
   const original = new Vec3(13, 63, 2);
@@ -1470,7 +1470,7 @@ test('expedition reserve extends the growing field on nearby hydrated soil and p
   const field = new Map([[original.toString(), 'growing']]);
   const air = { name: 'air', boundingBox: 'empty', shapes: [] };
   const grass = { name: 'grass_block', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
-  const bag = { cooked_chicken: 3, wheat_seeds: 1, stone_hoe: 1 };
+  const bag = { cooked_chicken: 3, wheat_seeds: 1, cobblestone: 2, stick: 2 };
   const bot = Object.assign(fakeBot(), { game: { dimension: 'overworld' },
     entity: { position: new Vec3(2.5, 64, 2.5), onGround: true },
     registry: { blocksByName: { water: { id: 7 } } }, findBlocks: () => [source],
@@ -1480,6 +1480,7 @@ test('expedition reserve extends the growing field on nearby hydrated soil and p
       return p.y === 63 ? grass : air;
     } });
   const edits = [];
+  const crafts = [];
   t.mock.method(farm, 'plotState', (_bot, p) => field.get(p.toString()) || 'untilled');
   t.mock.method(farm, 'till', async (_bot, _ctx, p) => {
     edits.push(p);
@@ -1496,9 +1497,17 @@ test('expedition reserve extends the growing field on nearby hydrated soil and p
     expeditionHome: { ...home, stations: { crafting_table: home.centre } }, farmPlots: [original], skills: {
       takeItems: async () => ({ ok: false, reason: 'chest_empty' }),
       huntOne: async () => ({ ok: false, reason: 'no_mob_in_range' }),
+      craft: async (_bot, _ctx, args) => {
+        crafts.push(args);
+        bag.stone_hoe = 1;
+        delete bag.cobblestone;
+        delete bag.stick;
+        return { ok: true };
+      },
     } });
   const ctx = { perceive: () => ({ inventory: bag, health: 20, food: 20, isDay: true }), record() {} };
-  for (let i = 0; i < 3; i += 1) assert.ok((await goal.run(ctx)).ok);
+  for (let i = 0; i < 4; i += 1) assert.ok((await goal.run(ctx)).ok);
+  assert.deepEqual(crafts, [{ item: 'stone_hoe', tablePosition: home.centre }]);
   assert.deepEqual(edits, [newPlot]);
   bag.wheat_seeds = 1;
   const result = await goal.run(ctx);
