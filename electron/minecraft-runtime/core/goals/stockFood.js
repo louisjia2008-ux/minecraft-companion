@@ -67,6 +67,7 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   let scoutAgainAt = 0;
   let scoutHeading = 0;
   let fieldExit = null;
+  let screenedHomeTrail = null;
   const distance = (p) => Math.hypot(p.x - centre.x, p.z - centre.z);
   const read = (p) => bot.blockAt(p);
   const watery = (block) => block && (WATER_BLOCK.test(block.name) || block.isWaterlogged
@@ -188,9 +189,8 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     }));
   };
 
-  async function screenedHomeExit(ctx, state, here) {
-    if (!door || !field.length || !homeExitReady(state) || !onDryGround() || !bot.world?.raycast
-      || typeof bot.pathfinder?.movements?.getNeighbors !== 'function') return null;
+  async function screenedHomeExit(ctx, here) {
+    if (!onDryGround() || !bot.world?.raycast || typeof bot.pathfinder?.movements?.getNeighbors !== 'function') return null;
     const from = here.floored();
     if (!homeExitStance(from)) return null;
     const snapshot = homeExitThreats();
@@ -205,24 +205,37 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       const mid = swept(a, b);
       return bodyClear(mid) && clears(a, hostiles) && clears(mid, hostiles) && clears(b, hostiles);
     };
-    const checked = new Set([posKey(from)]);
-    const queue = [{ at: from, first: null, steps: 0 }];
     const position = (p) => p.equals(from) ? here : centreFeet(p);
-    let next;
-    for (let i = 0; i < queue.length && i < 360; i++) {
-      const { at, first, steps } = queue[i];
-      if (first && snapshot.every((h) => centreFeet(at).distanceTo(h.position) > 17)) { next = first; break; }
-      if (steps >= HOME_EXIT_STEPS) continue;
-      for (const [x, z] of CARDINAL) for (const dy of [0, 1, -1]) {
-        const p = at.offset(x, dy, z);
-        const key = posKey(p);
-        if (checked.has(key) || !homeExitStance(p) || !safeLeg(position(at), centreFeet(p), snapshot)
-          || !first && blacklist.has(`screened-home:${posKey(from)}>${key}`)) continue;
-        checked.add(key);
-        queue.push({ at: p, first: first || p, steps: steps + 1 });
+    const usable = (at, p) => homeExitStance(p) && safeLeg(position(at), centreFeet(p), snapshot)
+      && (!at.equals(from) || !blacklist.has(`screened-home:${posKey(from)}>${posKey(p)}`));
+    const route = () => {
+      const seen = new Set([posKey(from)]);
+      const queue = [{ at: from, path: [from] }];
+      for (let i = 0; i < queue.length && i < 360; i++) {
+        const { at, path } = queue[i];
+        if (path.length > 1 && snapshot.every((h) => centreFeet(at).distanceTo(h.position) > 17)) return path;
+        if (path.length > HOME_EXIT_STEPS) continue;
+        for (const [x, z] of CARDINAL) for (const dy of [0, 1, -1]) {
+          const p = at.offset(x, dy, z);
+          const key = posKey(p);
+          if (seen.has(key) || !usable(at, p)) continue;
+          seen.add(key);
+          queue.push({ at: p, path: [...path, p] });
+        }
       }
+      return null;
+    };
+    const previous = screenedHomeTrail?.findIndex((p) => p.equals(from)) ?? -1;
+    if (previous < 0) screenedHomeTrail = null;
+    else screenedHomeTrail = screenedHomeTrail.slice(previous);
+    if (!screenedHomeTrail?.[1] || !usable(from, screenedHomeTrail[1])) {
+      // Keep a proven corridor while its next edge still holds. A creeper
+      // wandering beneath a later edge must be checked again on approach.
+      const alternate = route();
+      if (alternate) screenedHomeTrail = alternate;
     }
-    if (!next) return null;
+    const next = screenedHomeTrail?.[1];
+    if (!next || !usable(from, next)) return null;
     const stillSafe = () => {
       const at = bot.entity.position;
       const cell = at.floored();
@@ -784,8 +797,9 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       return outcome;
     }
     const hostile = threatsNear(state);
-    if (hostile && !scout) {
-      const left = await screenedHomeExit(ctx, state, here);
+    if (hostile && !scout && door && field.length && homeExitReady(state)
+      && retreatThreats(state).some((h) => h.name === 'creeper')) {
+      const left = await screenedHomeExit(ctx, here);
       if (left) return left;
     }
     const fromOutside = !scout && state.isDay === true && distance(feet) > HOME_RADIUS && distance(feet) <= SCOUT_RINGS.at(-1)
