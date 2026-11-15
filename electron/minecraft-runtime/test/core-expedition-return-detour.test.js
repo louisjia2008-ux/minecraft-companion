@@ -23,8 +23,17 @@ function fixture(drop = 3) {
     setMovements(movement) { this.movements = movement; },
     *getPathFromTo(movement, position, goal, { timeout, tickTimeout, searchRadius }) {
       const p = position.floored();
-      const result = new AStar(new Move(p.x, p.y, p.z, 0, 0), movement, goal, timeout, tickTimeout, searchRadius).compute();
+      // Exercise a partial first slice regardless of host load. The native
+      // iterator resumes the same search on every subsequent partial result.
+      const search = new AStar(new Move(p.x, p.y, p.z, 0, 0), movement, goal, timeout, -1, searchRadius);
+      let result = search.compute();
+      assert.equal(result.status, 'partial');
       yield { result };
+      search.tickTimeout = tickTimeout;
+      while (result.status === 'partial') {
+        result = search.compute();
+        yield { result };
+      }
     },
   };
   const bot = {
