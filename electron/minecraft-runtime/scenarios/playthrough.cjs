@@ -463,7 +463,11 @@ async function runDeathRecovery(context, index, entry) {
     }
     return true;
   }
-  const args = base || pearlRearm
+  const mineForKit = pearlRearm && recovery.surfaceKitExhausted
+    && !expeditionKitDone(bot, PEARL_REARM.filter(({ key }) => key !== 'food'))
+    && kitDone(bot, RECOVERY_BASE_KIT) && homeResupplyReady(state.lastPerceive, home)
+    && bot.health >= 16 && bot.food >= 16;
+  const args = base || pearlRearm && !mineForKit
     ? { items: recoveryItems, recoverAtHome: true, farmPlots: farmPlotPositions(state) }
     : expeditionKitArgs(recoveryItems, state);
   recovery.attempts += 1;
@@ -473,7 +477,7 @@ async function runDeathRecovery(context, index, entry) {
   const running = companion.status().goal;
   // A concurrent death may pause this new invocation before dispatch returns.
   // Its successor will use the newer death receipt and recheck the whole kit.
-  if (state.audit?.deaths.at(-1)?.id === death.id) recovery.goal = running ? { generation: running.generation } : null;
+  if (state.audit?.deaths.at(-1)?.id === death.id) recovery.goal = running ? { generation: running.generation, mineForKit } : null;
   else await companion.pauseTask('playthrough_death_resupply');
   return true;
 }
@@ -577,6 +581,10 @@ const playthroughNatural = {
     }
     if (event.type === 'expedition_resupply_required' && event.behavior === 'goal:nether_expedition'
       && activeStage(state) === 'nether') state.netherFoodRestock ||= { asks: 0 };
+    const recovery = state.deathRecovery;
+    if (event.type === 'goal_failed' && event.goal === 'outfit' && recovery?.phase === 'iron'
+      && recovery.goal?.generation != null && recovery.goal.generation === event.generation && !recovery.goal.mineForKit
+      && event.reasons?.includes('surface_supply_requires_mine')) recovery.surfaceKitExhausted = true;
     if (event.type !== 'goal_failed' || event.goal !== 'nether_expedition' || !state.steps) return;
     const reasons = event.reasons || [];
     const short = reasons.filter((r) => r === 'missing_obsidian' || r === 'missing_flint_and_steel').length;

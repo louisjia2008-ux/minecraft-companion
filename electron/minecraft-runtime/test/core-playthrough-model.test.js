@@ -422,6 +422,30 @@ test('pearl rearm verifies a full iron kit and local rations back at the house',
   assert.equal(asked[1].task, 'huntPearls');
 });
 
+test('pearl rearm can mine missing iron after a failed local kit and a verified base resupply', async () => {
+  const { context, asked, state } = modelContext({ step: 'pearls' });
+  const { bot, companion } = context;
+  const house = createStarterHouse({ x: 0, y: 64, z: 0 });
+  companion.director = { memory: { homestead: { memory: { house } } } };
+  bot.inventory.items = () => [{ name: 'stone_pickaxe', count: 1 }, { name: 'stone_sword', count: 1 },
+    { name: 'bread', count: 3 }];
+  state.audit = { deaths: [{ id: 1, at: 1, respawn: { alive: true } }], taskEvents: [] };
+  state.deathRecovery = { death: 1, phase: 'iron', attempts: 1, goal: { generation: 4 } };
+  const failure = { type: 'goal_failed', goal: 'outfit', generation: 4, reasons: ['surface_supply_requires_mine'] };
+  playthroughNatural.onEvent({ ...failure, generation: 3 }, state);
+  assert.equal(state.deathRecovery.surfaceKitExhausted, undefined);
+  playthroughNatural.onEvent(failure, state);
+  bot.entity.position = new Vec3(25, 64, 0);
+  await playthroughNatural.onTick(context);
+  assert.equal(asked[0].args.recoverAtHome, true);
+  bot.entity.position = new Vec3(3.5, 64, 3.5);
+  await playthroughNatural.onTick(context);
+  assert.equal(asked[1].args.expeditionFood, true);
+  assert.equal(asked[1].args.recoverAtHome, undefined);
+  assert.deepEqual(asked[1].args.items.find(({ key }) => key === 'food'), { key: 'food', count: 3 });
+  assert.equal(state.deathRecovery.phase, 'iron');
+});
+
 test('unexpected Nether entry during rearm returns through the portal before taking another outfit', async () => {
   const { context, asked, state } = modelContext({ step: 'nether' });
   const { bot, companion } = context;
