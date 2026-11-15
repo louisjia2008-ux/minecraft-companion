@@ -27,10 +27,12 @@ const SCOUT_RINGS = [HOME_RADIUS, 96, 144, 192];
 const SCOUT_LIMIT_MS = 180000;
 const SCOUT_STEPS = 12;
 const SCOUT_HUNT_MARGIN_MS = 30000;
+const SCOUT_RETURN_MARGIN = 4;
 const DIRECT_HOME_RADIUS = 28;
 const RETREAT_CLEARANCE = 8;
 const ZOMBIE_RETREAT_CLEARANCE = 10;
 const RETREAT_SPIDERS = new Set(['spider', 'cave_spider']);
+const SPIDER_COVER = /^(stone|deepslate|tuff|andesite|granite|diorite|dirt|grass_block|coarse_dirt|rooted_dirt)$/;
 const DUSK = 12542;
 const FIELD_MARGIN = 5;
 const MAX_RESERVE_PLOTS = 24;
@@ -112,7 +114,13 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     const synced = Object.keys(entity.attributes || {}).length > 0;
     return !values.every((value) => value === false || value === 0 || value === undefined && synced);
   };
-  const retreatThreats = (state) => (state.hostiles || []).filter((h) => h.distance <= 16 && isThreat(h));
+  const nearbyThreats = (state) => (state.hostiles || []).filter((h) => h.distance <= 16 && isThreat(h));
+  const retreatThreats = (state) => {
+    const threats = nearbyThreats(state);
+    return safeFarReturn(state) && (returning || !scout || !scoutFit(state))
+      && onDryGround() && exposed(bot.entity.position.floored())
+      ? threats.filter((h) => !spiderBelowCover(h)) : threats;
+  };
   const threatsNear = (state) => retreatThreats(state).length > 0;
   const detour = createExpeditionReturnDetour({ bot, centre, floor, exposed, actions,
     safe: (state, starting) => state.health >= 12 && state.food >= 12 && (!starting || state.isDay === true)
@@ -310,6 +318,27 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       movement.allowSprinting = sprint;
     }
     return wait(ctx, 'expedition_food_unsafe');
+  }
+  function spiderBelowCover(threat) {
+    const here = bot.entity.position;
+    const live = bot.entities?.[threat.id];
+    if (!RETREAT_SPIDERS.has(threat.name) || !live?.position || live.name !== threat.name || live.isValid === false
+      || threat.selfAggressor || isObservedSelfAggressor(live) || here.y - live.position.y < 5) return false;
+    const from = live.position.offset(0, .45, 0);
+    // Require loaded full terrain at two different heights on both sight
+    // lines. An open gallery, thin barrier or missing chunk stays a threat.
+    return [.5, 1.62].every((height) => {
+      const ray = here.offset(0, height, 0).minus(from);
+      const limit = Math.ceil(ray.norm() * 4);
+      const covered = new Set();
+      for (let step = 1; step < limit; step += 1) {
+        const p = from.plus(ray.scaled(step / limit)).floored();
+        const block = read(p);
+        if (!block) return false;
+        if (fullCube(block) && dry(block) && SPIDER_COVER.test(block.name)) covered.add(p.y);
+      }
+      return covered.size >= 2;
+    });
   }
   const backedSand = (p) => {
     const soil = read(p.offset(0, -1, 0));
@@ -566,8 +595,14 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
 
   const daylightMs = (state) => Number.isFinite(state.timeOfDay) && state.isDay === true
     ? ((DUSK - state.timeOfDay + 24000) % 24000) * 50 : 0;
-  const scoutFit = (state) => state.health >= 12 && state.food >= 14
-    && expeditionFoodCount(bot, state.inventory, kb) >= 2;
+  const travelFit = (state, reserve) => state.health >= 12 && state.food >= 14
+    && expeditionFoodCount(bot, state.inventory, kb) >= reserve;
+  const scoutFit = (state) => travelFit(state, 2);
+  function safeFarReturn(state) {
+    const range = distance(bot.entity.position.floored());
+    return state.isDay === true && range > HOME_RADIUS && range <= SCOUT_RINGS.at(-1) + SCOUT_RETURN_MARGIN
+      && travelFit(state, 1) && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe'));
+  }
   const waterReturn = createStockWaterReturn({ bot, centre, exposed, actions,
     safe: (state) => state.health >= 16 && scoutFit(state) && !threatsNear(state)
       && Object.keys(state.inventory).some((name) => name.endsWith('_sword') || name.endsWith('_axe')) });
@@ -829,6 +864,28 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     return go(ctx, centre, 1, timeoutMs);
   }
 
+  async function returnBehindCover(ctx, here) {
+    const guard = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, guard.signal]) : guard.signal;
+    const monitor = setInterval(() => {
+      const live = ctx.perceive();
+      if (live.inWater || bot.entity.isInLava || !travelFit(live, 1) || live.isDay !== true
+        || !bodyClear(bot.entity.position) || nearbyThreats(live).some((threat) => !spiderBelowCover(threat))) {
+        guard.abort('expedition_food_unsafe');
+      }
+    }, 100);
+    try {
+      const result = await (scout ? scoutHome({ ...ctx, signal }, here) : returnHome({ ...ctx, signal }, here));
+      ctx.record('expedition_food_covered_return', { from: here.floored(), to: bot.entity.position.floored(), ok: result.ok });
+      return result;
+    } catch (error) {
+      if (!guard.signal.aborted || ctx.signal?.aborted) throw error;
+      return wait(ctx, 'expedition_food_unsafe');
+    } finally {
+      clearInterval(monitor);
+    }
+  }
+
   async function search(ctx, here) {
     if (Date.now() < searchAgainAt) return wait(ctx, 'expedition_food_local_search_cooldown');
     for (let ring = 16; ring < HOME_RADIUS; ring += 14) {
@@ -860,14 +917,15 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       if (!waterReturn.pending()) returnLeg = 0;
       return outcome;
     }
-    const hostile = threatsNear(state);
+    const threats = retreatThreats(state);
+    const hostile = threats.length > 0;
     const crafting = home.stations?.crafting_table;
     const oven = home.stations?.furnace;
     const bake = crafting && state.inventory.wheat >= 3 && !blacklist.has('bake');
     const bakeCount = Math.floor((state.inventory.wheat || 0) / 3);
     const checkChest = !checkedChest || fuelNeeded;
     if (hostile && !scout && door && field.length && homeExitReady(state)
-      && retreatThreats(state).some((h) => h.name === 'creeper')) {
+      && threats.some((h) => h.name === 'creeper')) {
       const activity = bake ? { position: crafting, block: 'crafting_table', run: (scoped) => bakeReserve(scoped, bakeCount, crafting) }
         : checkChest && { position: home.chest, block: 'chest', run: (scoped) => checkReserveChest(scoped, true) };
       const supplied = await screenedHomeStation(ctx, here.clone(), activity);
@@ -875,8 +933,8 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       const left = await screenedHomeExit(ctx, here);
       if (left) return left;
     }
-    const fromOutside = !scout && state.isDay === true && distance(feet) > HOME_RADIUS && distance(feet) <= SCOUT_RINGS.at(-1)
-      && scoutFit(state) && Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'));
+    const fromOutside = !scout && safeFarReturn(state);
+    const behindCover = !hostile && nearbyThreats(state).length > 0;
     if (state.health <= 6 || bot.entity.isInLava
       || hostile && ((!scout && !fromOutside) || !onDryGround() || !exposed(feet) || !canWithdraw(state))) return wait(ctx, 'expedition_food_unsafe');
     if (state.inWater || bot.entity.isInWater) {
@@ -905,10 +963,9 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
     returning ||= scout ? hostile || homeTask || !scoutFit(state) || !scoutTimeLeft(state) : distance(feet) > HOME_RADIUS;
     const huntEdge = scout ? SCOUT_RINGS[scout.ring] : HOME_RADIUS;
     const edge = Math.max(huntEdge, returning ? distance(feet) + 4 : 0);
-    const route = { pickup: null, scouting: Boolean(scout || hostile) };
+    const route = { pickup: null, scouting: Boolean(scout || hostile || behindCover) };
     return dryWalk(async () => {
       if (hostile) {
-        const threats = retreatThreats(state);
         // A distant zombie is still hostile. Allow only the short connected
         // withdrawal, never a scout hunt or an approach toward the mob.
         route.zombieWithdrawal = threats.some((h) => h.name === 'zombie');
@@ -921,7 +978,10 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       if (homeTask || returning) {
         const inside = Math.abs(here.x - centre.x - .5) < 2.6 && Math.abs(here.z - centre.z - .5) < 2.6
           && Math.abs(here.y - centre.y) < .8;
-        if (!inside) return scout ? scoutHome(ctx, here) : returnHome(ctx, here);
+        if (!inside) {
+          if (behindCover) return returnBehindCover(ctx, here);
+          return scout ? scoutHome(ctx, here) : returnHome(ctx, here);
+        }
         if (scout) {
           scout = null;
           scoutAgainAt = Date.now() + SEARCH_REST_MS;
