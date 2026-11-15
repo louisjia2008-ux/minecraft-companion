@@ -10,8 +10,9 @@
 //      (obsidian                       -> one step of casting it from buckets, see obsidian.js)
 //      (ore of the Nether              -> one step of a Nether trip, see netherQuartz.js:
 //                                         the portal's obsidian and flint and steel come first)
-// Only the chest counts as done: carried items die with the bot, stored ones
-// do not. Items in the chest are never taken back out for crafting, so the
+// By default only the chest counts as done: carried items die with the bot,
+// stored ones do not. Outfit explicitly opts into carried/worn delivery.
+// Items in the chest are never taken back out for crafting, so the
 // planner only ever sees the inventory, asked for what the chest still lacks.
 //
 // The only memory kept across runs is the chest contents last seen there,
@@ -27,13 +28,20 @@ const { createBlacklist, posKey } = require('../blacklist');
 const mining = require('../mining');
 const obsidian = require('../obsidian');
 const nether = require('../nether');
-const { createNetherQuartzGoal } = require('./netherQuartz');
+const { quartzToolReserve } = require('../quartzTools');
+const { createNetherQuartzGoal, QUARTZ_MIN_FOOD, quartzFoodMatch, quartzFoodCount, quartzProtection } = require('./netherQuartz');
 
 const DOWN = [new Vec3(0, -1, 0)];
+// Out on the surface only after dark: string waits for night, not for a cave.
+const NIGHT_MOBS = new Set(['spider', 'enderman']);
+// Armour and off-hand slots of the player window.
+const WORN_SLOTS = [5, 6, 7, 8, 45];
 // Main inventory slots (36): store what is owed before the bag overflows.
 const FREE_SLOTS_TO_STORE = 3;
 const NEAR_CHEST = 6;
 const MINE_FROM_HOME = 8;
+// Further below the chest than this, home is reached by going up first.
+const HOME_BELOW = 8;
 // Stone pickaxes taken down a mine: they wear out on the rock instead of the
 // iron one (a deep staircase digs a few hundred blocks; one lasts 131).
 const SPARE_PICKS = 5;
@@ -55,7 +63,7 @@ const FRAME_OBSIDIAN = 10;
 const FRAME_CORNERS = 4;
 
 function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint = null, stations = {},
-  skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20 } = {}) {
+  skills = defaultSkills, actions = defaultActions, kb = KNOWLEDGE, maxExploreStreak = 20, carry = () => false, reserved = {}, countWorn = false } = {}) {
   if (!chest || ![chest.x, chest.y, chest.z].every(Number.isInteger)) throw new TypeError('chest must have integer x, y, z');
   if (!requirements === !blueprint) throw new TypeError('give either requirements or a blueprint');
   for (const r of requirements || []) {
@@ -79,11 +87,49 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   const wanted = () => requirements || materialsFor(blueprint.blocks, nameAt, kb);
   const stored = (key) => countKey(key, memory.chest || {}, kb);
+  // `carry(key)`: kept in the bag, never stored (a sword is no use in the
+  // chest while the bot fights its way through hours of mining); what the
+  // bag holds of it counts as delivered.
+  const bagged = (key, inventory) => (inventory && carry(key) ? countKey(key, unreserved(inventory), kb) : 0);
+  const equippedInventory = () => {
+    const slots = bot.inventory?.slots || [];
+    const on = {};
+    for (const i of WORN_SLOTS) if (slots[i]?.name) on[slots[i].name] = (on[slots[i].name] || 0) + slots[i].count;
+    return on;
+  };
+  // Only outfit opts in: newly made armour may already have been equipped
+  // by wear_armor. Ordinary collection still requires delivery to the chest.
+  // Perception includes equipment, so carry already credits it once. The
+  // caller's reserved equipment was counted before asking for this shortfall.
+  const worn = (key) => (countWorn && !carry(key) ? countKey(key, unreserved(equippedInventory()), kb) : 0);
   // What the chest still lacks, in the caller's order.
-  const owed = () => wanted().map((r) => ({ key: r.key, count: r.count - stored(r.key) })).filter((r) => r.count > 0);
+  const owed = (inventory) => wanted().map((r) => ({ key: r.key, count: r.count - stored(r.key) - bagged(r.key, inventory) - worn(r.key) }))
+    .filter((r) => r.count > 0);
+
+  // `reserved`: { item: count } already in the bag and counted by the caller,
+  // who asks only for the rest. Left out of what the bag offers: stored as
+  // delivered, it was taken back out and the caller was short again, 150000
+  // times over for seven cobblestones.
+  function unreserved(inventory) {
+    const out = { ...inventory };
+    for (const [name, n] of Object.entries(reserved)) if (out[name]) out[name] = Math.max(0, out[name] - n);
+    return out;
+  }
+
+  function spareInventory(inventory) {
+    const out = { ...inventory };
+    const equipped = equippedInventory();
+    // Reserved and worn overlap: remove their union, not both amounts.
+    // What is on the body is unavailable for depositing or crafting even
+    // when it does not count toward this goal's completion.
+    for (const name of new Set([...Object.keys(reserved), ...Object.keys(equipped)])) {
+      if (out[name]) out[name] = Math.max(0, out[name] - Math.max(reserved[name] || 0, equipped[name] || 0));
+    }
+    return out;
+  }
 
   function plannerInventory(state) {
-    const inventory = { ...state.inventory };
+    const inventory = spareInventory(state.inventory);
     // Items left in the furnace still count; otherwise they would be gathered twice.
     if (memory.furnace.item === 'raw_iron') {
       inventory.raw_iron = (inventory.raw_iron || 0) + memory.furnace.input;
@@ -121,7 +167,12 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     if (!memory.mine) {
       const at = bot.entity.position.floored();
       if (Math.hypot(at.x - chest.x, at.z - chest.z) < MINE_FROM_HOME) {
-        const away = new Vec3(chest.x + MINE_FROM_HOME + 2, chest.y, chest.z);
+        // Each new mine on another side of the house, and farther out after
+        // one that came to nothing: always the same spot, on sand, every
+        // staircase was blocked by gravel and sand and the goal failed.
+        const [sx, sz] = SIDES[(memory.mineDir ?? 0) % 4];
+        const reach = MINE_FROM_HOME + 2 + 8 * (memory.barrenMines || 0);
+        const away = new Vec3(chest.x + sx * reach, chest.y, chest.z + sz * reach);
         const moved = await actions.goNear(bot, ctx, away, 1, { timeoutMs: 30000 });
         if (!moved.ok) return moved;
       }
@@ -135,7 +186,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     }
     const m = memory.mine;
     if (m?.junction && !m.depot && m.y === step.mineY && step.mineY <= DEPOT_BELOW) return buildDepot(ctx);
-    return mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions, skills });
+    const result = await mining.mineStep(bot, ctx, memory, { blocks: step.blocks, dropMatch, y: step.mineY, blacklist, start, actions, skills });
+    if (result.reason === 'mine_exhausted') memory.barrenMines = (memory.barrenMines || 0) + 1;
+    return result;
   }
 
   const carrying = (name) => bot.inventory.items().filter((i) => i.name === name).reduce((n, i) => n + i.count, 0);
@@ -244,6 +297,9 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
 
   async function runStep(ctx, step) {
     ctx.record('plan_step', { kind: step.kind, key: step.key, for: step.for, item: step.item, count: step.count ?? step.times });
+    // Night rest stays out of the way while a night mob is hunted (companion.js).
+    bot.companionNightHunt = step.kind === 'hunt' && (step.mobs || []).some((m) => NIGHT_MOBS.has(m))
+      ? { key: step.key, at: Date.now() } : null;
     // Ore that needs a mine is the only thing done down there; anything else
     // (a tree for sticks, a station, a craft) walks out along the tunnel first
     // rather than letting the pathfinder dig straight up to it.
@@ -306,8 +362,21 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
         return result;
       }
       case 'hunt': {
-        const result = await skills.huntOne(bot, ctx, { mobs: step.mobs, dropMatch: kb[step.key].match, blacklist, radius: 96 });
-        if (result.reason === 'no_mob_in_range') return explore(ctx, step.key);
+        const supplyFood = step.quartzSupply && step.key === 'food';
+        const result = await skills.huntOne(bot, ctx, { mobs: supplyFood ? step.mobs.filter((m) => m !== 'chicken') : step.mobs,
+          dropMatch: supplyFood ? (n) => quartzFoodMatch(bot, n) : kb[step.key].match, blacklist, radius: 96 });
+        if (result.reason === 'no_mob_in_range') {
+          if (supplyFood) {
+            ctx.record('needs_supplies', { missing: ['food'], food: quartzFoodCount(bot), requiredFood: QUARTZ_MIN_FOOD,
+              dimension: 'overworld', source: 'no_mob_in_range', ...quartzProtection(bot) });
+            if (typeof skills.pickBerries === 'function') {
+              const berries = await skills.pickBerries(bot, ctx, { blacklist });
+              if (berries.ok || berries.reason !== 'no_berries') return berries;
+            }
+          }
+          const moved = await explore(ctx, step.key);
+          return supplyFood && !moved.ok ? { ...moved, reason: 'needs_supplies', missing: ['food'], cause: moved.reason } : moved;
+        }
         return result;
       }
       default:
@@ -343,7 +412,20 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
   function portalKit(inventory) {
     // A sword for the Nether's monsters, on every trip (a death there loses it).
     const sword = [{ key: 'stone_sword', count: 1 }];
-    if (portalKnown()) return sword;
+    // Recheck actual edible inventory on every departure, including after a
+    // death. This is carried for survival, never a request to store food.
+    // Include food the planner recognizes but cannot safely eat in the
+    // target count, so e.g. raw chicken cannot discharge the safe reserve.
+    const shortFood = Math.max(0, QUARTZ_MIN_FOOD - quartzFoodCount(bot));
+    const food = shortFood ? [{ key: 'food', count: countKey('food', inventory, kb) + shortFood }] : [];
+    // Building the protected bridge may exhaust the first trip's cheap
+    // tools. A worn stone still counts as an item to the planner, so add
+    // the observed shortfall to that actual count instead of asking for
+    // three items that might already all be nearly broken.
+    const reserve = quartzToolReserve(bot);
+    const tools = memory.trip?.memory.ledgeSeen && reserve.short
+      ? [{ key: 'stone_pickaxe', count: countKey('stone_pickaxe', inventory, kb) + reserve.short }] : [];
+    if (portalKnown()) return [...sword, ...food, ...tools];
     const site = memory.trip?.memory.site;
     const cells = site ? nether.portalFrame(site.base, site.axis).cells : [];
     const placed = (corner) => cells.filter((c) => Boolean(c.corner) === corner
@@ -355,6 +437,8 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       { key: countKey('cobblestone', inventory, kb) >= corners ? 'cobblestone' : 'dirt', count: corners },
       { key: 'flint_and_steel', count: 1 },
       ...sword,
+      ...food,
+      ...tools,
     ].filter((r) => r.count > 0);
   }
 
@@ -364,11 +448,30 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
       const quartz = owed().find((r) => r.key === 'quartz')?.count || 0;
       return netherTrip(ctx, quartz - countKey('quartz', ctx.perceive().inventory, kb));
     }
+    // Out of picks deep in a mine, a walk home dug by hand through deepslate
+    // timed out every 20 seconds for two hours: out of the mine first.
+    const homeward = nameAt(chest) === null || memory.chest === null;
+    if (homeward && bot.entity.position.y < chest.y - HOME_BELOW) {
+      const up = await climbOut(ctx);
+      if (up) return up;
+    }
     if (nameAt(chest) === null) {
       ctx.record('return_home', {});
       return actions.goNear(bot, ctx, new Vec3(chest.x, chest.y, chest.z), 3, { timeoutMs: 90000 });
     }
-    if (nameAt(chest) !== 'chest') return { ok: false, reason: 'chest_missing' };
+    // Blown up (a creeper by the house): make another and put it back where it stood.
+    if (nameAt(chest) !== 'chest') {
+      if (!['air', 'cave_air'].includes(nameAt(chest))) return { ok: false, reason: 'chest_missing' };
+      const state = ctx.perceive();
+      if (countKey('chest', state.inventory, kb) < 1) {
+        const step = planNext({ requirements: [{ key: 'chest', count: 1 }], inventory: plannerInventory(state), stations: placedStations(), kb });
+        return step ? runStep(ctx, step) : { ok: false, reason: 'chest_missing' };
+      }
+      ctx.record('chest_replaced', { position: posKey(chest) });
+      const placed = await skills.placeAt(bot, ctx, chest, (n) => n === 'chest', { faces: DOWN });
+      if (placed.ok) memory.chest = null;
+      return placed;
+    }
     if (memory.chest === null) {
       ctx.record('check_chest', {});
       return store(ctx, []);
@@ -376,12 +479,17 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     // Lava in the mold, or the water still out: finish the cast before anything else.
     if (obsidian.pending(bot, memory.cast)) return obsidian.castStep(bot, ctx, memory, { skills, actions, avoid: nearHome });
     const state = ctx.perceive();
-    const debts = owed();
+    const debts = owed(state.inventory);
     // Everything owed that is already carried, up to what the chest lacks.
-    const carried = debts.map((r) => ({ key: r.key, count: Math.min(r.count, countKey(r.key, state.inventory, kb)) }))
+    const spare = spareInventory(state.inventory);
+    const carried = debts.filter((r) => !carry(r.key)).map((r) => ({ key: r.key, count: Math.min(r.count, countKey(r.key, spare, kb)) }))
       .filter((w) => w.count > 0);
     const inventory = plannerInventory(state);
-    const reqs = [...debts];
+    // A carry target has already credited its unreserved possessions in
+    // owed(). Ask the planner for that same bag amount plus the remaining
+    // debt, so one sword cannot satisfy both credits when two are requested.
+    // Keep it visible as a tool for planning other materials.
+    const reqs = debts.map((r) => ({ ...r, count: r.count + (carry(r.key) ? countKey(r.key, inventory, kb) : 0) }));
     for (const [key, entry] of Object.entries(memory.shortfall)) {
       if (entry.until < Date.now()) { delete memory.shortfall[key]; continue; }
       reqs.unshift({ key, count: countKey(key, inventory, kb) + entry.extra });
@@ -405,7 +513,10 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     }
     if (step?.kind === 'gather' && step.dimension === 'the_nether') {
       const kit = portalKit(inventory);
-      if (kit.length) step = planNext({ requirements: [...kit, ...reqs], inventory, stations: placedStations(), kb }) || step;
+      if (kit.length) {
+        const prepared = planNext({ requirements: [...kit, ...reqs], inventory, stations: placedStations(), kb });
+        if (prepared) step = { ...prepared, quartzSupply: prepared.for === 'food' };
+      }
     }
     const freeSlots = typeof bot.inventory.emptySlotCount === 'function' ? bot.inventory.emptySlotCount() : Infinity;
     // Passing by the chest (crafting and smelting happen next to it) with a
@@ -435,9 +546,19 @@ function createGatherMaterialsGoal({ bot, chest, requirements = null, blueprint 
     },
     memory,
     owed,
-    isDone: () => memory.chest !== null && owed().length === 0,
+    isDone: (state) => memory.chest !== null && owed(state?.inventory).length === 0,
     progress: () => memory.steps,
     async run(ctx) {
+      // Home coordinates belong to the overworld. A failed Nether approach
+      // must stay with the trip's remembered portal and protected routes;
+      // generic unstick/home recovery can neither interpret that position
+      // nor safely bypass the trip's movement constraints.
+      if (nether.inNether(bot) && (memory.recovery || memory.pathFailures >= 2)) {
+        memory.recovery = false;
+        memory.pathFailures = 0;
+        ctx.record('recovery', { at: bot.entity.position.floored(), dimension: 'the_nether', delegate: 'nether_trip' });
+        return runOnce(ctx);
+      }
       if (memory.pathFailures >= 2) {
         memory.pathFailures = 0;
         ctx.record('unstick', { at: bot.entity.position.floored() });

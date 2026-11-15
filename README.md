@@ -1,8 +1,12 @@
 # Minecraft Companion
 
+> **2026-11-05 接手状态：发布继续阻断。** 当前整合候选基于 main `d53883b` 与 PR #31 `2eb307c`，尚未完成本轮真实服务器全部验收。下文 v0.1.0-alpha.1 的通过数字属于历史冻结，不能作为当前提交或候选的结果。最新证据、接口边界与剩余门槛见 [本轮接手与验证](docs/validation/2026-11-05/HANDOFF.md)。本轮没有打包、tag、Release 或 PR 合并。
+
+项目目标是可嵌入 DeskPet 等宿主的 Minecraft 执行引擎：宿主 LLM 负责理解请求和选择结构化任务，引擎负责动作执行、进度与终态、取消和可观察的失败恢复；Electron 主要保留配置与调试用途。开发者入口及当前未接入部分见 [嵌入合同](docs/EMBEDDING.md)。
+
 面向 Minecraft Java Edition 的陪玩代理源码，包含一个独立开发中的决策 core、真实 vanilla 服务端场景工具，以及保留的 Electron 桌面宿主与旧任务引擎。
 
-**v0.1.0-alpha.1 源码开发预览。** 已完成 **24场景32/32轮** 正式游戏验收；各冻结版本的完整离线检查与后续失败分别记录，最终发行版本的完整重验结果见随包 `RELEASE_ATTESTATION.json`。新 core 尚未接入 Electron 的命令与生命周期，现有 CLI 用于开发和场景验证，没有独立的普通玩家自由游玩启动入口。当前范围与已知局限见 [STATUS.md](STATUS.md)；完整命令、结果与修复记录见 [VALIDATION.md](VALIDATION.md) 和 [正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
+**历史记录：v0.1.0-alpha.1 源码开发预览。** 该历史冻结曾完成 **24场景32/32轮** 正式游戏验收，当前整合候选仍发布阻断；各冻结版本的完整离线检查与后续失败分别记录，最终发行版本的完整重验结果见随包 `RELEASE_ATTESTATION.json`。新 core 尚未接入 Electron 的命令与生命周期，现有 CLI 用于开发和场景验证，没有独立的普通玩家自由游玩启动入口。当前范围与已知局限见 [STATUS.md](STATUS.md)；完整命令、结果与修复记录见 [VALIDATION.md](VALIDATION.md) 和 [正式脱敏验证摘要](docs/validation/2026-10-24/VALIDATION_SUMMARY.md)。
 
 项目自有源码采用 **AGPL-3.0-only**。许可证、继承来源和第三方声明分别见 [LICENSE](LICENSE)、[LICENSING.md](LICENSING.md)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 

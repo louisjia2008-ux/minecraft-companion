@@ -46,11 +46,12 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
   };
   // A skull is luck (5.5% a kill with Looting III). With skullTries set, that
   // many wither skeletons killed without one ends the hunt for it.
-  bot.on?.('entityDead', (e) => {
+  const onEntityDead = (e) => {
     if (e?.name === 'wither_skeleton' && e.position && bot.entity?.position && e.position.distanceTo(bot.entity.position) <= 6) {
       memory.witherKills += 1;
     }
-  });
+  };
+  bot.on?.('entityDead', onEntityDead);
   // Where the bot has stood in the nether, every six blocks: the way home.
   // A straight walk to the portal bridged the lava sea it had walked round
   // on the way out, and ran out of blocks half way across.
@@ -64,6 +65,22 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     if (memory.crumbs.length > 4000) memory.crumbs.shift();
   };
   bot.on?.('move', dropCrumb);
+  // Asked again, the task starts where the last ask left off: the lookouts
+  // already walked, the structures already seen and the trail home. Each
+  // new goal started the rings over and walked the first 300 blocks again.
+  const KEPT = ['explore', 'fortress', 'bastion', 'spawner', 'visited', 'crumbs', 'netherPortal', 'overworldPortal'];
+  const saved = bot.companionNetherSearch;
+  if (saved) for (const key of KEPT) if (saved[key] != null) memory[key] = saved[key];
+  const keepSearch = () => { bot.companionNetherSearch = Object.fromEntries(KEPT.map((key) => [key, memory[key]])); };
+  // A lookout the bot died on the way to (the lava sea at y 31, a ghast's
+  // knock-back into it) is not tried again, by this ask or the next: the walk
+  // there is the same, and a bot died five times running heading for one.
+  const deadly = (bot.companionDeadlyLookouts = bot.companionDeadlyLookouts || new Set());
+  const markDeadly = () => {
+    if (memory.heading) deadly.add(memory.heading);
+    memory.heading = null;
+  };
+  bot.on?.('death', markDeadly);
   const trip = createPortalTrip({ bot, memory, actions });
 
   const rods = (state) => state.inventory.blaze_rod || 0;
@@ -182,7 +199,13 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       const away = Math.atan2(home.z - memory.bastion.z, home.x - memory.bastion.x);
       m.index = Math.round(((away % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 4)) % 8;
     }
-    const target = centre ? around(m.index, centre) : lookout(m.index, home);
+    const pick = () => (centre ? around(m.index, centre) : lookout(m.index, home));
+    let target = pick();
+    for (let skipped = 0; skipped < 32 && deadly.has(`${target.x},${target.z}`); skipped += 1) {
+      m.index += 1;
+      target = pick();
+    }
+    memory.heading = `${target.x},${target.z}`;
     ctx.record('explore', { lookout: m.index, x: target.x, z: target.z, ...(centre ? { around: posKey(centre) } : {}),
       want: [!memory.fortress && 'fortress', !memory.bastion && 'bastion'].filter(Boolean) });
     const walk = () => actions.goTo(bot, ctx, new goals.GoalNearXZ(target.x, target.z, 8), { timeoutMs: 60000, arrived: () => true });
@@ -897,6 +920,35 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
     return null;
   }
 
+  /** Back through the portal, stocked to bridge and climb the whole way. */
+  async function headHome(ctx) {
+    // The walk home can cross a lava sea: a run with every rod, skull and
+    // trade bridged its 100 netherrack away and spent the last 20 minutes on
+    // its own bridge 40 blocks short; another bridged a stack and a half
+    // across 110 blocks of sea under a portal 40 blocks up. Fill up once,
+    // while there is something to dig, with enough to bridge and climb the
+    // whole way, and build with the cobblestone too. Again after a fall:
+    // one bot lost its footing digging the deck it stood on and landed in
+    // the lava sea 40 blocks under the portal with nothing to climb with.
+    const portal = memory.netherPortal;
+    const here = bot.entity.position;
+    const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
+    if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
+      && Date.now() - (memory.homeStockedAt || 0) > 60000) {
+      memory.homeStockedAt = Date.now();
+      await stockScaffolding(ctx, need, HOME_STOCK);
+    }
+    if (portal && here.distanceTo(portal) > 24) {
+      if (marooned()) {
+        const crossed = await causeway(ctx, { home: true });
+        if (crossed.ok) return crossed;
+      }
+      const leg = await retraceHome(ctx);
+      if (leg) return leg;
+    }
+    return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
+  }
+
   async function netherStep(ctx, state) {
     trip.enterNetherMode();
     trip.netherPortal();
@@ -913,32 +965,14 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.restockedAt = Date.now();
       await stockScaffolding(ctx, 16);
     }
-    if (allDone(state)) {
-      // The walk home can cross a lava sea: a run with every rod, skull and
-      // trade bridged its 100 netherrack away and spent the last 20 minutes on
-      // its own bridge 40 blocks short; another bridged a stack and a half
-      // across 110 blocks of sea under a portal 40 blocks up. Fill up once,
-      // while there is something to dig, with enough to bridge and climb the
-      // whole way, and build with the cobblestone too. Again after a fall:
-      // one bot lost its footing digging the deck it stood on and landed in
-      // the lava sea 40 blocks under the portal with nothing to climb with.
-      const portal = memory.netherPortal;
-      const here = bot.entity.position;
-      const need = portal ? Math.hypot(portal.x - here.x, portal.z - here.z) + Math.max(0, portal.y - here.y) + 16 : 0;
-      if (portal && here.distanceTo(portal) > 24 && nether.scaffoldCount(bot) < Math.min(need, HOME_STOCK)
-        && Date.now() - (memory.homeStockedAt || 0) > 60000) {
-        memory.homeStockedAt = Date.now();
-        await stockScaffolding(ctx, need, HOME_STOCK);
-      }
-      if (portal && here.distanceTo(portal) > 24) {
-        if (marooned()) {
-          const crossed = await causeway(ctx, { home: true });
-          if (crossed.ok) return crossed;
-        }
-        const leg = await retraceHome(ctx);
-        if (leg) return leg;
-      }
-      return withScaffolding(() => trip.toOverworld(ctx), { cobble: true });
+    if (allDone(state)) return headHome(ctx);
+    // Hurt with nothing to eat: health does not come back short of 18 food,
+    // and a bot at 8 health stood 40 minutes by a fortress waiting for it.
+    // Home to eat (provision hunts there), then back.
+    if (state.health < HUNT_HEALTH && state.food < 18 && typeof actions.pickFood === 'function' && !actions.pickFood(bot)) {
+      if (Date.now() - (memory.hungryAt || 0) > 60000) ctx.record('retreat', { health: Math.round(state.health), food: state.food });
+      memory.hungryAt = Date.now();
+      return headHome(ctx);
     }
     const lost = lostKit(state);
     if (lost) return fail(lost);
@@ -994,6 +1028,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       memory.waitSince = 0;
     },
     async run(ctx) {
+      keepSearch();
+      // Set again by explore below; a death outside a lookout walk marks none.
+      memory.heading = null;
       await wearArmour(ctx);
       const state = ctx.perceive();
       if (nether.inNether(bot)) {
@@ -1009,7 +1046,9 @@ function createNetherExpeditionGoal({ bot, blazeRods = 6, witherSkulls = 1, trad
       return trip.toNether(ctx, state);
     },
     dispose() {
+      bot.removeListener?.('entityDead', onEntityDead);
       bot.removeListener?.('move', dropCrumb);
+      bot.removeListener?.('death', markDeadly);
       trip.leaveNetherMode();
     },
   };

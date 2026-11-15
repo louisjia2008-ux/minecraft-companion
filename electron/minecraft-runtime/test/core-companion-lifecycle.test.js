@@ -6,7 +6,7 @@ const { Vec3 } = require('vec3');
 const { createCompanion } = require('../core/companion');
 const { sleep } = require('../core/confirm');
 
-function fixture(t) {
+function fixture(t, options = {}) {
   const intervals = [], cleared = [];
   t.mock.method(global, 'setInterval', (callback) => {
     const handle = { callback, unref() {} };
@@ -27,13 +27,41 @@ function fixture(t) {
     clearControlStates: () => { for (const key of Object.keys(controls)) controls[key] = false; },
   });
   const events = [];
-  const companion = createCompanion({ bot, onEvent: (event) => events.push(event) });
+  const companion = createCompanion({ bot, onEvent: (event) => events.push(event), ...options });
   t.after(() => companion.dispose());
   return { companion, bot, events, controls, intervals, cleared };
 }
 const waitingGoal = (onRun = () => {}) => ({
   name: 'waiting', isDone: () => false, progress: () => 0,
   run(ctx) { onRun(ctx); return sleep(10000, ctx.signal); },
+});
+
+for (const method of ['cancelTask', 'stop', 'dispose']) test(`${method} reports a blocked continuation and can finish cleanup after it settles`, async (t) => {
+  const f = fixture(t, { retirementTimeoutMs: 5 });
+  let release;
+  let cleanups = 0;
+  let quits = 0;
+  f.bot.quit = () => { quits++; };
+  const held = new Promise((resolve) => { release = resolve; });
+  const goal = { name: 'non_cooperative', isDone: () => false, progress: () => 0,
+    run: () => { f.bot.setControlState('forward', true); return held; }, dispose: () => { cleanups++; } };
+  await f.companion.setGoal(goal, { taskId: 'held-task' });
+  const generation = f.companion.status().goal.generation;
+  try {
+    await assert.rejects(f.companion.brain.interrupt('test_interruption'), { code: 'retirement_timeout' });
+    assert.equal(f.controls.forward, false, 'a timeout makes a best-effort stop of native movement');
+    await assert.rejects(f.companion[method](), { code: 'retirement_timeout' });
+    assert.equal(f.companion.status().blocked, true);
+    assert.equal(f.companion.status().inFlight[0].taskId, 'held-task');
+    assert.equal(cleanups, 0, 'goal resources remain owned by the unsettled continuation');
+    assert.equal(quits, 0, 'a caller-owned bot is never implicitly disconnected');
+    assert.throws(() => f.companion.setGoal(waitingGoal()), { code: method === 'dispose' ? 'disposed' : 'retirement_timeout' });
+    release({ ok: false, reason: 'aborted' });
+    await f.companion.brain.idleGoal(generation);
+    await f.companion[method]();
+    assert.equal(f.companion.status().blocked, false);
+    assert.equal(cleanups, 1);
+  } finally { release({ ok: false, reason: 'aborted' }); }
 });
 
 async function exerciseSafety(f) {
@@ -198,10 +226,11 @@ test('repeated real endDragon completion retires listeners without all-stop', as
 
 test('replacement waits for old body and resource restoration before installing new goal listeners', async (t) => {
   const f = fixture(t);
+  const baseline = dragonListeners(f.bot);
   let release, signal, retired = false;
   const old = { name: 'old', progress: () => 0, isDone: () => false,
     run(ctx) { signal = ctx.signal; return new Promise((resolve) => { release = resolve; }); },
-    dispose() { retired = true; assert.deepEqual(dragonListeners(f.bot), [0, 0, 0]); },
+    dispose() { retired = true; assert.deepEqual(dragonListeners(f.bot), baseline); },
   };
   await f.companion.setGoal(old);
   f.bot.health = 0;
@@ -209,13 +238,13 @@ test('replacement waits for old body and resource restoration before installing 
   await turn();
   assert.equal(signal.aborted, true);
   assert.equal(retired, false);
-  assert.deepEqual(dragonListeners(f.bot), [0, 0, 0]);
+  assert.deepEqual(dragonListeners(f.bot), baseline);
   release({ ok: true });
   await replacement;
   assert.equal(retired, true);
-  assert.deepEqual(dragonListeners(f.bot), [1, 1, 1]);
+  assert.deepEqual(dragonListeners(f.bot), baseline.map((n) => n + 1));
   await f.companion.cancelTask();
-  assert.deepEqual(dragonListeners(f.bot), [0, 0, 0]);
+  assert.deepEqual(dragonListeners(f.bot), baseline);
 });
 
 test('retired goals are not retained and disposed again during final shutdown', async (t) => {
@@ -233,23 +262,25 @@ test('retired goals are not retained and disposed again during final shutdown', 
 
 test('cancel invalidates a pending direct dispatch before its factory installs listeners', async (t) => {
   const f = fixture(t);
+  const baseline = dragonListeners(f.bot);
   f.bot.health = 0;
   const pending = f.companion.endDragon();
   await f.companion.cancelTask();
   await assert.rejects(pending, { code: 'aborted' });
-  assert.deepEqual(dragonListeners(f.bot), [0, 0, 0]);
+  assert.deepEqual(dragonListeners(f.bot), baseline);
   assert.equal(f.companion.status().goal, null);
 });
 
 test('retirement failure is observable and blocks new goal construction', async (t) => {
   const f = fixture(t);
+  const baseline = dragonListeners(f.bot);
   f.bot.health = 0;
   const old = waitingGoal();
   old.dispose = () => { throw new Error('cannot release old resources'); };
   await f.companion.setGoal(old, { taskId: 'cannot-retire' });
   await assert.rejects(f.companion.cancelTask(), /cannot release old resources/);
   await assert.rejects(f.companion.endDragon(), /cannot release old resources/);
-  assert.deepEqual(dragonListeners(f.bot), [0, 0, 0]);
+  assert.deepEqual(dragonListeners(f.bot), baseline);
   assert.equal(f.events.find((event) => event.type === 'goal_cleanup_error').taskId, 'cannot-retire');
   let directorTicks = 0;
   t.mock.method(f.companion.director, 'tick', () => { directorTicks++; });
@@ -293,6 +324,16 @@ for (const terminal of ['cancel', 'replace', 'failure', 'completion', 'dispose']
     f.bot.game.dimension = 'the_nether';
     f.bot.findBlocks = () => [];
     const movements = f.bot.pathfinder.movements;
+    // Capture the two existing ownership layers without guessing their
+    // implementation identity: disposal removes the door wrapper too.
+    const { uninstallOpenDoorPassage, installOpenDoorPassage } = require('../core/openDoorPassage');
+    uninstallOpenDoorPassage(f.bot, movements);
+    const afterDoorRetirement = movements.getNeighbors;
+    installOpenDoorPassage(f.bot, movements);
+    // The lifecycle fixture does not execute paths; expose the native
+    // neighbor API so it can still verify ownership of the physical guard.
+    if (typeof movements.getNeighbors !== 'function') movements.getNeighbors = () => [];
+    const originalNeighbors = movements.getNeighbors;
     // Restore caller policy, not hard-coded global defaults.
     movements.maxDropDown = 7;
     const extraHook = () => 17;
@@ -304,7 +345,14 @@ for (const terminal of ['cancel', 'replace', 'failure', 'completion', 'dispose']
     const ctx = { perceive: () => ({ inventory: {} }), record() {}, signal: new AbortController().signal };
     await goal.run(ctx);
     assert.equal(movements.companionNether, true);
-    assert.equal(movements.maxDropDown, 3);
+    assert.equal(movements.maxDropDown, 2);
+    assert.equal(movements.companionPhysicalDropLimit, 1);
+    assert.equal(movements.getNeighbors, movements.companionPhysicalDropGuard);
+    assert.equal(movements.infiniteLiquidDropdownDistance, false);
+    assert.equal(movements.canDig, false);
+    assert.equal(movements.allowParkour, false);
+    assert.equal(movements.allow1by1towers, false);
+    assert.deepEqual(movements.scafoldingBlocks, []);
     assert.equal(movements.exclusionAreasStep.length, hooks.length + 1);
     if (terminal === 'cancel') await f.companion.cancelTask();
     if (terminal === 'replace') await f.companion.gatherLogs(1);
@@ -318,6 +366,11 @@ for (const terminal of ['cancel', 'replace', 'failure', 'completion', 'dispose']
     if (terminal === 'dispose') await f.companion.dispose();
     assert.equal(movements.companionNether, false);
     assert.equal(movements.maxDropDown, 7);
+    // Full companion disposal also retires its pre-existing door wrapper;
+    // the other transitions keep that live companion wrapper available.
+    assert.equal(movements.getNeighbors, terminal === 'dispose' ? afterDoorRetirement : originalNeighbors);
+    assert.equal(Object.hasOwn(movements, 'companionPhysicalDropGuard'), false);
+    assert.equal(Object.hasOwn(movements, 'companionPhysicalDropLimit'), false);
     assert.deepEqual(movements.exclusionAreasStep, hooks);
     assert.deepEqual(movements.blocksCantBreak, cantBreak);
     // Idempotence must not erase policy installed after retirement.
@@ -363,4 +416,80 @@ test('cached device project cascades through its real gather and Nether trip, th
   await f.companion.cancelTask();
   assert.equal(movements.companionNether, false);
   assert.deepEqual(movements.exclusionAreasStep, beforeHooks);
+});
+
+test('companion installs observed cube dimensions and removes its geometry listeners on final dispose', async (t) => {
+  const f = fixture(t);
+  const definition = f.bot.registry.entitiesByName.magma_cube;
+  const sizeIndex = definition.metadataKeys.indexOf('size');
+  const target = { id: 91, name: 'magma_cube', width: .52, height: .52, position: new Vec3(4, 64, 0), metadata: [] };
+  target.metadata[sizeIndex] = 4;
+  f.bot.entities[91] = target;
+  f.bot.emit('entitySpawn', target);
+  assert.equal(target.width, definition.width * 4);
+  assert.equal(target.height, definition.height * 4);
+  const position = target.position;
+  assert.equal(f.bot.listenerCount('entityUpdate'), 1);
+  assert.equal(f.bot.listenerCount('entityAttributes'), 1);
+  await f.companion.dispose();
+  assert.deepEqual(dragonListeners(f.bot), [0, 0, 0]);
+  assert.equal(f.bot.listenerCount('entityUpdate'), 0);
+  assert.equal(f.bot.listenerCount('entityAttributes'), 0);
+  target.metadata[sizeIndex] = 2;
+  f.bot.emit('entityUpdate', target);
+  assert.equal(target.width, definition.width * 4, 'disposed geometry owner cannot keep mutating native entities');
+  assert.equal(target.position, position);
+});
+
+test('session body life owner records every death while a cached goal listener is inactive', async t => {
+  const f=fixture(t), read=f.bot.companionBodyLife;
+  assert.equal(typeof read,'function'); const first=read();
+  assert.equal(first.epoch,0); assert.ok(first.owner);
+  f.bot.emit('death'); const next=read();
+  assert.equal(next.owner,first.owner); assert.equal(next.epoch,1);
+  await f.companion.dispose(); assert.equal(read(),null,'disposed authority is invalid immediately and after cleanup');
+  assert.equal(Object.hasOwn(f.bot,'companionBodyLife'),false);
+});
+
+test('session body life cleanup never overwrites a newer hook owner', async t => {
+  const f=fixture(t), old=f.bot.companionBodyLife, newer=()=>({owner:{},epoch:0});
+  f.bot.companionBodyLife=newer;
+  if(typeof old==='function')assert.equal(old(),null,'a superseded authority cannot grant same-life proof');
+  await f.companion.dispose();assert.equal(f.bot.companionBodyLife,newer);
+});
+
+test('cached quartz observes a session death during disposal and revokes stale phase proofs without refund', async t => {
+  const f=fixture(t), {createNetherQuartzGoal}=require('../core/goals/netherQuartz');
+  const goal=createNetherQuartzGoal({bot:f.bot}); const ledger={used:{feet:1,digs:1,nativeDigAttempts:1}};
+  Object.assign(goal.memory,{quartzExcavation:ledger,quartzExcavationAtShore:true,quartzExcavationAtShoreEpoch:0,
+    quartzBridgeRecovery:{owner:f.bot.companionBodyLife().owner,epoch:0,routeKey:'old'},
+    quartzExcavationPickup:{position:new Vec3(1,63,0),before:7,epoch:0,attempts:0}});
+  goal.dispose();f.bot.emit('death');
+  assert.equal(f.bot.companionBodyLife().epoch,1,'only the session onDeath increments authority once');
+  try {
+    const r=await goal.run({signal:new AbortController().signal,record(){},perceive:()=>({inventory:{},hostiles:[]})});
+    assert.equal(r.reason,'no_pickaxe');assert.equal(goal.memory.quartzExcavationAtShore,false);
+    assert.equal(goal.memory.quartzBridgeRecovery,null);assert.equal(goal.memory.quartzExcavationPickup,null);
+    assert.equal(goal.memory.quartzExcavation,ledger);assert.deepEqual(ledger.used,{feet:1,digs:1,nativeDigAttempts:1});
+    assert.equal(f.bot.companionBodyLife().epoch,1,'local continuation markers do not increment session death authority');
+  } finally {goal.dispose();}
+});
+
+test('body life authority becomes invalid immediately while dispose still awaits an unsettled body', async t => {
+  const f=fixture(t,{retirementTimeoutMs:5});let release;
+  const held=new Promise(resolve=>{release=resolve;});
+  await f.companion.setGoal({name:'held_life',isDone:()=>false,progress:()=>0,run:()=>held});
+  const read=f.bot.companionBodyLife,disposing=f.companion.dispose();
+  assert.equal(read(),null,'disposed flag revokes authority before asynchronous cleanup');
+  try { await assert.rejects(disposing,{code:'retirement_timeout'}); }
+  finally {release({ok:false,reason:'aborted'});await f.companion.brain.idle();await f.companion.dispose();}
+});
+
+test('body life hook restores the exact prior own descriptor only while still its owner', async t => {
+  const f=fixture(t);await f.companion.dispose();
+  const prior=()=>null,descriptor={value:prior,writable:true,enumerable:true,configurable:true};
+  Object.defineProperty(f.bot,'companionBodyLife',descriptor);
+  const next=createCompanion({bot:f.bot});const read=f.bot.companionBodyLife;
+  assert.notEqual(read,prior);await next.dispose();assert.equal(read(),null);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(f.bot,'companionBodyLife'),descriptor);
 });

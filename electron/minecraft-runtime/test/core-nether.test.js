@@ -45,6 +45,10 @@ test('a flat open site is accepted, lava in front or blocks in the frame are not
   assert.ok(nether.portalSiteOk(makeWorld(), base, 'x'));
   assert.ok(!nether.portalSiteOk(makeWorld({ '1,63,1': 'lava' }), base, 'x'));
   assert.ok(!nether.portalSiteOk(makeWorld({ '2,66,0': 'netherrack' }), base, 'x'));
+  // Never on the house's site: home maintenance digs whatever stands there.
+  const homed = Object.assign(makeWorld(), { companionHomeSite: (p) => p.x === 3 && p.y === 66 });
+  assert.ok(!nether.portalSiteOk(homed, base, 'x'));
+  assert.ok(nether.portalSiteOk(Object.assign(makeWorld(), { companionHomeSite: () => false }), base, 'x'));
 });
 
 test('cells by lava cost more, standing in or over lava is effectively banned', () => {
@@ -174,7 +178,7 @@ test('quartz next to a fortress is left alone: blazes spawn there', async () => 
   const bricks = Array.from({ length: 30 }, (_, i) => new Vec3(10 + i, 64, 0));
   const bot = { ...makeWorld(), pathfinder: { movements: { maxDropDown: 4, blocksCantBreak: new Set(), exclusionAreasStep: [] } },
     registry: { blocksByName: { nether_portal: { id: 1 }, nether_bricks: { id: 2 } } },
-    inventory: { slots: [], items: () => [{ name: 'iron_pickaxe' }] },
+    inventory: { slots: [], items: () => [{ name: 'iron_pickaxe', count: 1 }, { name: 'cooked_beef', count: 4 }] },
     findBlocks: ({ matching }) => ([].concat(matching).includes(2) ? bricks : []) };
   let exclude = null;
   const skills = { gatherOne: async (_b, _c, options) => { exclude = options.exclude; return { ok: true }; } };
@@ -255,4 +259,33 @@ test('a forced portal ledge over a lava sea is found, and the bridge aims at lev
   open.entity.onGround = true;
   open.inventory = { items: () => [] };
   assert.equal(createPortalTrip({ bot: open, memory: {} }).ledge(), null);
+});
+
+test('a portal that does not send the bot on is left and walked into again', async () => {
+  const actions = require('../core/actions');
+  const saved = { goTo: actions.goTo, haltBody: actions.haltBody };
+  const bot = makeWorld({ '0,64,0': 'nether_portal' });
+  bot.entity.position = new Vec3(0.5, 64, 0.5);
+  bot.waitForChunksToLoad = async () => {};
+  const moves = [];
+  actions.haltBody = () => {};
+  // Stepping out lands beside the portal; walking back in finds its cooldown gone.
+  actions.goTo = async (_b, _c, goal) => {
+    const out = goal.constructor.name === 'GoalInvert';
+    moves.push(out ? 'out' : 'in');
+    bot.entity.position = out ? new Vec3(2.5, 64, 0.5) : new Vec3(0.5, 64, 0.5);
+    if (!out) setTimeout(() => { bot.game.dimension = 'overworld'; }, 20);
+    return { ok: true };
+  };
+  const records = [];
+  const ctx = { signal: new AbortController().signal, record: (k) => records.push(k) };
+  try {
+    const result = await nether.travel(bot, ctx, new Vec3(0, 64, 0), { settleMs: 30, cooldownMs: 10, timeoutMs: 500 });
+    assert.equal(result.ok, true);
+    assert.equal(result.dimension, 'overworld');
+    assert.deepEqual(moves, ['out', 'in']);
+    assert.ok(records.includes('portal_reenter'));
+  } finally {
+    Object.assign(actions, saved);
+  }
 });

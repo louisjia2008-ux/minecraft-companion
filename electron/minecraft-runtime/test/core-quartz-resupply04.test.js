@@ -1,0 +1,21 @@
+'use strict';
+const test = require('node:test'); const assert = require('node:assert/strict'); const { Vec3 } = require('vec3');
+const path = require('node:path'); const runtime = process.env.QUARTZ04_RUNTIME || path.resolve(__dirname, '..');
+const nether = require(path.join(runtime, 'core/nether')); const { createNetherQuartzGoal } = require(path.join(runtime, 'core/goals/netherQuartz'));
+const { model } = require('./core-quartz-bridge04-fixture');
+test('construction resupply intent stays homebound across runs and is cleared only after actual overworld stock', async (t) => {
+  const f = model(); f.bot.entity.position = new Vec3(3.5, 70, -5.5); let returns = 0; let gathered = 0;
+  t.mock.method(nether, 'travel', async () => { returns++; return { ok: false, reason: 'MODELED_stop_before_portal' }; });
+  f.bot.health = 20; f.bot.food = 20; f.bot.inventory.slots = [];
+  f.bot.inventory.items = () => [{ name: 'cobblestone', count: f.bag.count }, { name: 'cooked_beef', count: 4 }, { name: 'diamond_pickaxe', count: 1 }];
+  const goal = createNetherQuartzGoal({ bot: f.bot, skills: { gatherOne: async () => { gathered++; return { ok: true }; } } });
+  Object.assign(goal.memory, { netherPortal: new Vec3(0, 70, 0), overworldPortal: new Vec3(0, 70, 0), ledgeSeen: true, ledgeResupply: true });
+  const ctx = { ...f.ctx, perceive: () => ({ inventory: {} }) };
+  for (let i = 0; i < 3; i++) await goal.run(ctx);
+  assert.equal(returns, 3); assert.equal(gathered, 0); assert.equal(goal.memory.ledgeResupply, true);
+  assert.equal(f.events.some((e) => e.type === 'bridge_outbound'), false);
+  f.bot.game.dimension = 'overworld'; f.bag.count = 449; await goal.run(ctx);
+  assert.equal(goal.memory.ledgeResupply, true); assert.equal(gathered, 1);
+  f.bag.count = 450; await goal.run(ctx); assert.equal(goal.memory.ledgeResupply, false);
+  goal.dispose();
+});

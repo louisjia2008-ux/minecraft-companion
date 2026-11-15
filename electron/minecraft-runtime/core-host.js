@@ -7,6 +7,7 @@ const { validateConfig, MAX_LINE_BYTES } = require('./protocol');
 const { withMinecraftProtocolCompatibility, installMinecraftBedWakeCompatibility } = require('./protocolCompatibility');
 const { acknowledgePlayerLoaded, flattenReason } = require('./runtime');
 const { GOAL_SCHEMAS, TOOLS, validateTool } = require('./core-tools');
+const { perceive } = require('./core/perception');
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const problem = (code, message, retryable = false) => Object.assign(new Error(message), { code, retryable });
@@ -89,7 +90,8 @@ function createCoreHost({ dataDir, emit = () => {}, createBot = require('minefla
       else if (payload.type === 'goal_failed') updateTask(task, 'failed', {
         error: { code: 'goal_failed', message: (payload.reasons || []).join('; ').slice(0, 2000), retryable: false },
       });
-      else if (payload.type === 'goal_cleared') updateTask(task, 'cancelled', { reason: payload.reason || 'cleared' });
+      // goal_cleared only revokes the goal definition. Its body may still be
+      // retiring, so the controlling operation publishes cancelled after join.
     }
     event({ type: 'core', taskId: payload.taskId || null, connectionGeneration: epoch, payload });
   }
@@ -97,14 +99,17 @@ function createCoreHost({ dataDir, emit = () => {}, createBot = require('minefla
     generation += 1; // invalidate old transport and core callbacks BEFORE cleanup
     clearTimeout(timer); timer = null;
     const oldBot = bot; const oldCompanion = companion;
+    const detachedTask = active;
     bot = null; companion = null;
-    if (active) updateTask(active, failed ? 'failed' : 'cancelled', failed
-      ? { error: reason } : { reason: reason.message });
+    if (detachedTask && failed) updateTask(detachedTask, 'failed', { error: reason });
     setConnection(dispose ? 'disposed' : failed ? 'error' : 'disconnected', failed ? reason : undefined);
     // Queue cleanup so reconnect cannot attach a new engine before the old one
     // has released its body/listeners. Tasks are never automatically replayed.
     cleanup = cleanup.then(async () => {
-      try { await oldCompanion?.dispose(); } finally {
+      try {
+        await oldCompanion?.dispose();
+        if (detachedTask && !failed) updateTask(detachedTask, 'cancelled', { reason: reason.message });
+      } finally {
         try { oldBot?.clearControlStates?.(); } catch { /* disconnected */ }
         try { oldBot?.quit?.(reason.code); } catch { /* disconnected */ }
         try { oldBot?._client?.end?.(reason.code); } catch { /* disconnected */ }
@@ -115,8 +120,9 @@ function createCoreHost({ dataDir, emit = () => {}, createBot = require('minefla
       // Remain fail-closed, but do not advertise a reconnect we cannot perform.
       const failure = error.code === 'cleanup_failed' ? error
         : problem('cleanup_failed', 'Companion cleanup failed; restart the host before reconnecting');
+      if (detachedTask) updateTask(detachedTask, 'failed', { error: errorData(error) });
       setConnection(closed ? 'disposed' : 'error', errorData(failure));
-      throw failure;
+      throw Object.assign(failure, detachedTask ? { task: detachedTask } : {});
     });
     // Keep the rejection observable to the caller without an unhandled event.
     cleanup.catch((error) => event({ type: 'cleanup_error', error: errorData(error) }));
@@ -176,11 +182,23 @@ function createCoreHost({ dataDir, emit = () => {}, createBot = require('minefla
     timer.unref?.();
     return { connection: clone(connection) };
   }
+  function observation() {
+    if (connection.state !== 'ready' || !bot) return null;
+    try {
+      const state = perceive(bot, { now });
+      if (!state.position) return null;
+      return clone({ at: state.at, alive: state.alive, health: state.health, food: state.food,
+        position: state.position, dimension: bot.game?.dimension ?? null,
+        inventory: state.inventory, freeSlots: state.freeSlots, isDay: state.isDay, timeOfDay: state.timeOfDay });
+    } catch { return null; } // World transitions can temporarily invalidate a client snapshot.
+  }
   function status() {
     prune();
+    const engine = companion ? companion.status() : null;
     return { connection: clone(connection), task: active ? clone(active) : null,
-      engine: companion ? companion.status() : null,
-      safetyActive: connection.state === 'ready' && Boolean(companion),
+      engine,
+      observation: observation(),
+      safetyActive: connection.state === 'ready' && Boolean(companion) && !engine?.blocked && !engine?.disposed,
       recovery: 'explicit_reconnect_then_new_request',
       idempotency: { limit: historyLimit, ttlMs: historyTtlMs, persistent: false } };
   }
@@ -206,7 +224,10 @@ function createCoreHost({ dataDir, emit = () => {}, createBot = require('minefla
       if (active && !message.replaceCurrent) throw problem('busy', 'A task already owns the body; cancel it or explicitly replaceCurrent', true);
       if (active) {
         const previous = active;
-        await companion.cancelTask('replaced');
+        try { await companion.cancelTask('replaced'); } catch (error) {
+          updateTask(previous, 'failed', { error: errorData(error) });
+          throw Object.assign(error, { task: previous });
+        }
         updateTask(previous, 'cancelled', { reason: 'replaced' });
       }
       // Cancellation may await I/O. A kick or external close during that wait
@@ -228,15 +249,20 @@ function createCoreHost({ dataDir, emit = () => {}, createBot = require('minefla
     const task = currentTask(args.taskId);
     if (TERMINAL.has(task.status)) return { task: clone(task) };
     if (!companion) throw problem('not_ready', 'No live companion is attached', true);
-    if (name === 'cancel') {
-      await companion.cancelTask('host_cancel');
-      updateTask(task, 'cancelled', { reason: 'host_cancel' });
-    } else if (name === 'pause') {
-      await companion.pauseTask('host_pause');
-      updateTask(task, task.status, { paused: true });
-    } else if (name === 'resume') {
-      await companion.resumeTask();
-      updateTask(task, task.status, { paused: false });
+    try {
+      if (name === 'cancel') {
+        await companion.cancelTask('host_cancel');
+        updateTask(task, 'cancelled', { reason: 'host_cancel' });
+      } else if (name === 'pause') {
+        await companion.pauseTask('host_pause');
+        updateTask(task, task.status, { paused: true });
+      } else if (name === 'resume') {
+        await companion.resumeTask();
+        updateTask(task, task.status, { paused: false });
+      }
+    } catch (error) {
+      updateTask(task, 'failed', { error: errorData(error) });
+      throw Object.assign(error, { task });
     }
     return { task: clone(task) };
   }

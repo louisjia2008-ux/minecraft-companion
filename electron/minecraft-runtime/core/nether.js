@@ -61,6 +61,8 @@ const ground = (b) => b && b.boundingBox === 'block' && !/lava|water|magma|_leav
 /** A site needing no digging: solid ground under the frame and in front, open air above. */
 function portalSiteOk(bot, base, axis) {
   const frame = portalFrame(base, axis);
+  const home = bot.companionHomeSite;
+  if (home && [...frame.cells.map((c) => c.pos), ...frame.interior].some((p) => home(p))) return false;
   for (let u = 0; u <= 3; u += 1) {
     const foot = axis === 'x' ? base.offset(u, 0, 0) : base.offset(0, 0, u);
     if (!ground(bot.blockAt(foot.offset(0, -1, 0)))) return false;
@@ -188,26 +190,13 @@ async function ignite(bot, ctx, frame) {
  * Walks into the portal at `portal` (a bottom portal cell) and waits for the
  * server to move the bot to the other dimension. Confirmed by the dimension.
  */
-async function travel(bot, ctx, portal, { timeoutMs = 20000 } = {}) {
+async function travel(bot, ctx, portal, { timeoutMs = 20000, settleMs = 6000, cooldownMs = 2500, tries = 3 } = {}) {
   const from = dimension(bot);
   const p = new Vec3(portal.x, portal.y, portal.z);
   const inPortal = () => bot.blockAt(bot.entity.position.floored())?.name === 'nether_portal';
-  const already = bot.entity.position.floored().equals(p);
-  const walkIn = async () => {
-    await cooled();
-    const near = await actions.goNear(bot, ctx, p, 3, { timeoutMs: 60000 });
-    if (!near.ok && bot.entity.position.distanceTo(p) > 6) return near;
-    const inside = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), {
-      timeoutMs: 15000, arrived: () => inPortal() || dimension(bot) !== from,
-    });
-    if (!inside.ok && dimension(bot) === from) return inside;
-    await centre();
-    return { ok: true };
-  };
   // A portal sheet is a quarter block thick: a body at the edge of its cell
-  // never touches it. Onto the middle, in short presses (the frame stands
-  // either side, and a forced portal's ledge is only a block wider). Not
-  // sneaking: a crouched bot in the middle of a portal was never sent across.
+  // never touches it. Use short, unsneaked centring presses on the forced
+  // portal's narrow ledge, on the initial entry and every re-entry.
   const centre = async () => {
     const mid = p.offset(0.5, 0, 0.5);
     try {
@@ -224,26 +213,38 @@ async function travel(bot, ctx, portal, { timeoutMs = 20000 } = {}) {
       bot.setControlState?.('forward', false);
     }
   };
-  // Back in too soon after stepping out, the portal's cooldown starts over.
   const cooled = async () => {
-    const wait = (bot.companionLeftPortalAt || 0) + 1500 - Date.now();
+    const wait = (bot.companionLeftPortalAt || 0) + cooldownMs - Date.now();
     if (wait > 0) await sleep(wait, ctx.signal);
   };
-  if (!already) {
-    const walked = await walkIn();
-    if (!walked.ok) return walked;
+  const enter = async () => {
+    await cooled();
+    const inside = await actions.goTo(bot, ctx, new goals.GoalBlock(p.x, p.y, p.z), {
+      timeoutMs: 15000, arrived: () => inPortal() || dimension(bot) !== from,
+    });
+    if (!inside.ok && dimension(bot) === from) return inside;
+    await centre();
+    return { ok: true };
+  };
+  if (!bot.entity.position.floored().equals(p)) {
+    const near = await actions.goNear(bot, ctx, p, 3, { timeoutMs: 60000 });
+    if (!near.ok && bot.entity.position.distanceTo(p) > 6) return near;
+    const inside = await enter();
+    if (!inside.ok) return inside;
   } else {
     await centre();
   }
   actions.haltBody(bot);
-  let moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs: already ? Math.min(timeoutMs, 8000) : timeoutMs, signal: ctx.signal });
-  // Still in the portal it came out of (a forced portal's ledge left no room
-  // to step off): no crossing until the body has left it once. Out and back in.
-  if (!moved && inPortal()) {
+  let moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs: Math.min(settleMs, timeoutMs), signal: ctx.signal });
+  // Standing in the arrival portal keeps its cooldown alive. Leave it,
+  // wait off the sheet, then retry a bounded number of times.
+  for (let i = 1; !moved && i < tries; i += 1) {
     await leavePortal(bot, ctx);
-    ctx.record?.('portal_reenter', { out: !inPortal() });
-    const walked = await walkIn();
-    if (!walked.ok) return walked;
+    ctx.record?.('portal_reenter', { attempt: i, out: !inPortal() });
+    await sleep(cooldownMs, ctx.signal);
+    if (dimension(bot) !== from) { moved = true; break; }
+    const inside = await enter();
+    if (!inside.ok) return inside;
     actions.haltBody(bot);
     moved = await waitUntil(() => dimension(bot) !== from, { timeoutMs, signal: ctx.signal });
   }
@@ -316,7 +317,7 @@ function applyNetherMovements(bot) {
   const m = bot.pathfinder?.movements;
   if (!m || m.companionNether) return () => {};
   const saved = { maxDropDown: m.maxDropDown, digCost: m.digCost, cantBreak: new Set(m.blocksCantBreak), steps: m.exclusionAreasStep.length,
-    scaffold: m.scafoldingBlocks, sprint: m.allowSprinting };
+    scaffold: m.scafoldingBlocks, sprint: m.sprintSetting ?? m.allowSprinting };
   m.companionNether = true;
   m.maxDropDown = 3;
   // Netherrack breaks in an instant, so plain paths tunnel straight through
@@ -340,6 +341,42 @@ function applyNetherMovements(bot) {
     m.blocksCantBreak = saved.cantBreak;
     m.exclusionAreasStep.length = saved.steps;
     m.companionNether = false;
+  };
+}
+
+/** Quartz walks own their excavation: native paths may only use existing ground. */
+function applyWalkOnlyMovements(bot) {
+  const m = bot.pathfinder?.movements;
+  if (!m || m.companionWalkOnly) return () => {};
+  const keys = ['canDig', 'allowParkour', 'allow1by1towers', 'scafoldingBlocks', 'maxDropDown', 'companionWalkOnly',
+    'infiniteLiquidDropdownDistance', 'getNeighbors', 'companionPhysicalDropLimit', 'companionPhysicalDropGuard'];
+  const saved = keys.map((key) => [key, Object.hasOwn(m, key), m[key]]);
+  m.companionWalkOnly = true;
+  m.canDig = false;
+  m.allowParkour = false;
+  m.allow1by1towers = false;
+  m.scafoldingBlocks = [];
+  // The native limit compares feet to the supporting block, one below the
+  // landing feet. A one-block physical descent therefore needs depth two.
+  // Enforce the physical delta separately, including any upstream moves
+  // that did not consult the native dropdown limit.
+  m.maxDropDown = Math.min(m.maxDropDown ?? 2, 2);
+  m.infiniteLiquidDropdownDistance = false;
+  const neighbors = m.getNeighbors;
+  if (typeof neighbors === 'function') {
+    const guarded = function (node, ...args) {
+      return neighbors.call(this, node, ...args).filter((move) => Number.isFinite(node.y) && Number.isFinite(move.y)
+        && move.y >= node.y - 1 && move.y <= node.y + 1 && !move.toBreak?.length && !move.toPlace?.length);
+    };
+    m.getNeighbors = guarded;
+    m.companionPhysicalDropLimit = 1;
+    m.companionPhysicalDropGuard = guarded;
+  }
+  return () => {
+    for (const [key, owned, value] of saved) {
+      if (owned) m[key] = value;
+      else delete m[key];
+    }
   };
 }
 
@@ -394,5 +431,5 @@ module.exports = {
   SCAFFOLD,
   netherScaffolding, scaffoldCount, withLavaMarginsLifted,
   dimension, inNether, findPortal, portalFrame, portalSiteOk, findPortalSite, buildPortalStep, ignite, travel, leavePortal,
-  applyNetherMovements, lavaRisk, lavaNear, NEVER_BREAK,
+  applyNetherMovements, applyWalkOnlyMovements, lavaRisk, lavaNear, NEVER_BREAK,
 };

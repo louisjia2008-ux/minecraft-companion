@@ -23,7 +23,8 @@ function inventoryCounts(bot) {
 }
 
 /** Breaks one matching block (nearest, cheapest first) and collects its drop. */
-async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () => false, radius = 48 }) {
+async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () => false, radius = 48,
+  selectTarget, navigationTrace = false }) {
   const ids = Object.values(bot.registry.blocksByName).filter((b) => blocks(b.name)).map((b) => b.id);
   if (ids.length === 0) return fail('unknown_block');
   const here = bot.entity.position;
@@ -31,7 +32,7 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     .filter((p) => !blacklist.has(posKey(p)) && !exclude(p))
     .map((p) => bot.blockAt(p))
     // Digging next to water or lava floods the pit the bot is standing in.
-    .filter((b) => b && !bot.companionProtectBlock?.(b) && !touchesLiquid(bot, b.position))
+    .filter((b) => b && !bot.companionProtectBlock?.(b) && !bot.companionPlacedRecently?.(b.position) && !touchesLiquid(bot, b.position))
     // Exposed blocks first: keeps mining inside one open pit instead of
     // digging a fresh hole through the soil for every single stone.
     // Logs left hanging in a tall canopy need climbing: try anything else first.
@@ -39,22 +40,43 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     .sort((a, b) => a.score - b.score)
     .map(({ b }) => b);
   if (candidates.length === 0) return fail('no_target_in_range');
-  const block = candidates[0];
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  const selection = selectTarget ? await selectTarget(candidates) : { ok: true, block: candidates[0] };
+  if (ctx.signal?.aborted) throw abortError(ctx.signal);
+  if (!selection?.ok) return selection || fail('no_target_selected');
+  const block = selection.block;
+  if (!candidates.includes(block)) return fail('invalid_target_selection');
   const key = posKey(block.position);
   ctx.record('target_selected', { block: block.name, position: key, options: candidates.length });
+  const trace = (stage, result, from, phase = 'result') => {
+    const far = stage === 'far_approach';
+    if (navigationTrace) ctx.record('gather_navigation', { stage, phase, target: key, from,
+      actual: { ...bot.entity.position }, goalFailure: result?.reason || null, ok: result?.ok,
+      pathSource: 'native_replan', preflightPathReused: false,
+      requiredRange: far ? 7.5 : 4.5, distanceKind: far ? 'feet_to_target' : 'eye_to_block_center',
+      measuredDistance: far ? bot.entity.position.distanceTo(block.position.offset(.5, 0, .5))
+        : bot.entity.position.offset(0, 1.62, 0).distanceTo(block.position.offset(.5, .5, .5)),
+      walkOnly: Boolean(bot.pathfinder?.movements?.companionWalkOnly) });
+  };
   if (block.harvestTools && !bot.inventory.items().some((item) => block.harvestTools[item.type])) {
     blacklist.add(key, 'no_tool', 30000);
     return fail('no_tool');
   }
   // Far targets: walk most of the way in legs first, then the precise approach.
   if (block.position.distanceTo(here) > 32) {
+    const from = { ...bot.entity.position };
+    trace('far_approach', null, from, 'start');
     const near = await actions.goNear(bot, ctx, block.position.offset(0.5, 0, 0.5), 6, { timeoutMs: 90000 });
+    trace('far_approach', near, from);
     if (!near.ok && block.position.distanceTo(bot.entity.position) > 24) {
       blacklist.add(key, near.reason);
       return near;
     }
   }
-  const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 45000 });
+  const from = { ...bot.entity.position };
+  trace('mining_stance', null, from, 'start');
+  const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 45000, ...(selectTarget ? { retryNoProgress: false } : {}) });
+  trace('mining_stance', reach, from);
   if (!reach.ok) {
     // The rest of the same tree or vein is almost always just as unreachable.
     for (const other of candidates) {
@@ -64,6 +86,7 @@ async function gatherOne(bot, ctx, { blocks, dropMatch, blacklist, exclude = () 
     return reach;
   }
   const dig = await actions.digBlock(bot, ctx, bot.blockAt(block.position) || block);
+  trace('dig', dig, { ...bot.entity.position });
   if (!dig.ok) {
     blacklist.add(key, dig.reason);
     return dig;
@@ -230,12 +253,18 @@ async function placeAt(bot, ctx, position, itemMatch, { faces, stand, verify, sn
   const target = v(position);
   const current = bot.blockAt(target);
   if (current && itemMatch(current.name)) return { ok: true, already: true };
-  if (current && !AIR.has(current.name)) {
-    if (current.boundingBox !== 'empty' || current.name === 'water' || current.name === 'lava') return fail('occupied');
-    // Grass or flowers: break them first.
-    const reach = await actions.goToDig(bot, ctx, current, { timeoutMs: 20000 });
+  // Grass or flowers: break them first, also where a bed's head or a door's
+  // top half goes (a flower bed there makes the server refuse the bed).
+  for (const cell of [target, ...alsoClear.map(v)]) {
+    const block = bot.blockAt(cell);
+    if (!block || AIR.has(block.name) || (cell !== target && itemMatch(block.name))) continue;
+    if (block.boundingBox !== 'empty' || block.name === 'water' || block.name === 'lava') {
+      if (cell === target) return fail('occupied');
+      continue;
+    }
+    const reach = await actions.goToDig(bot, ctx, block, { timeoutMs: 20000 });
     if (!reach.ok) return reach;
-    const dug = await actions.digBlock(bot, ctx, current);
+    const dug = await actions.digBlock(bot, ctx, block);
     if (!dug.ok) return dug;
   }
   const item = bot.inventory.items().find((i) => itemMatch(i.name));
@@ -622,7 +651,14 @@ async function explore(bot, ctx, memory) {
   const directions = Array.from({ length: 8 }, (_, i) => (i * Math.PI) / 4);
   // Keep one heading while it works: random legs wander in circles around the
   // same treeless hilltop. Turn only after a blocked leg.
-  if (memory.heading === undefined || memory.blocked) {
+  // `memory.around` ({ x, z, radius }): past the radius, head back towards
+  // the centre (the house) instead of on outwards.
+  const around = memory.around;
+  const off = around ? Math.hypot(here.x - around.x, here.z - around.z) : 0;
+  if (around && off > around.radius) {
+    memory.heading = Math.atan2(around.z - here.z, around.x - here.x);
+    memory.blocked = false;
+  } else if (memory.heading === undefined || memory.blocked) {
     const fresh = directions.filter((a) => !memory.tried.slice(-4).includes(a));
     memory.heading = (fresh.length ? fresh : directions)[Math.floor(Math.random() * (fresh.length || directions.length))];
     memory.blocked = false;

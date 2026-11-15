@@ -394,3 +394,17 @@ test('execute internal barrier timeout also poisons the query channel', async (t
   await assert.rejects(f.server.query('later read', /anything/), /desynchronized/);
   assert.deepEqual(f.commands, ['setup command', 'list']);
 });
+
+test('a bot kicked off the server ends the run with the reason instead of running on', async (t) => {
+  const { input, dir, bot } = runtimeFixture(t);
+  setTimeout(() => { bot.emit('kicked', 'Flying is not enabled on this server'); bot.emit('end', 'socketClosed'); }, 30);
+  const started = Date.now();
+  const result = await runOnce({ ...input, companionFactory: () => ({ dispose: async () => {} }),
+    scenario: { setup: () => ({ commands: [] }), timeoutMs: 60000, start: async () => ({}),
+      async onTick() {}, async verify() { return { pass: true }; } } });
+  assert.ok(Date.now() - started < 10000, 'did not wait out the timeout');
+  assert.equal(result.pass, false);
+  const types = eventsAt(dir).map((e) => e.type);
+  assert.ok(types.includes('bot_kicked') && types.includes('bot_disconnected'), types.join());
+  assert.equal(bot.listenerCount('end'), 0);
+});

@@ -191,10 +191,11 @@ async function lootOnPlayer(server, username) {
   return [...new Set(ids.filter((id) => !NOT_LOOT.has(id)))];
 }
 
-// The city world is fixed, not drawn from the setup seed: the only city
-// near the gateway of seed 101's world (202) has no chest or ship, and the
-// next is some 1300 blocks out, more than an hour of bridging. This world
-// (setup seed 33) has a city with loot in reach of its gateway.
+// Preserve the production run-index formula independently of the setup seed.
+// CLI --start-run 1 means internal run 0, so the default world below is 33.
+// The original formal failure's actual world was 101 (verified from its
+// properties and saved level.dat); it is replayed separately. A pass in a
+// different world cannot replace that original failure's acceptance result.
 const CITY_WORLD_SEED = 134;
 
 const endCityGiven = {

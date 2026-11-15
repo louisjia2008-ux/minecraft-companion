@@ -214,6 +214,30 @@ const KNOWLEDGE = {
     match: exact('dispenser'),
     sources: [{ kind: 'craft', yields: 1, needs: { cobblestone: 7, bow: 1, redstone: 1 }, table: true, pick: () => 'dispenser' }],
   },
+  // Armour, worn rather than used up: a better piece satisfies a lower one.
+  ...Object.fromEntries([['helmet', 5], ['chestplate', 8], ['leggings', 7], ['boots', 4]].map(([piece, ingots]) => [`iron_${piece}`, {
+    match: exact(`iron_${piece}`, `diamond_${piece}`, `netherite_${piece}`),
+    tool: true,
+    sources: [{ kind: 'craft', yields: 1, needs: { iron_ingot: ingots }, table: true, pick: () => `iron_${piece}` }],
+  }])),
+  // Arrows for the end crystals and the dragon.
+  feather: { match: exact('feather'), sources: [{ kind: 'hunt', mobs: ['chicken'] }] },
+  arrow: {
+    match: exact('arrow'),
+    sources: [{ kind: 'craft', yields: 4, needs: { flint: 1, stick: 1, feather: 1 }, table: true, pick: () => 'arrow' }],
+  },
+  // The way to the End: blaze rods come from a nether fortress (netherExpedition.js),
+  // ender pearls from endermen at night (huntPearls.js); the eyes are crafted from both.
+  blaze_rod: { match: exact('blaze_rod'), sources: [] },
+  blaze_powder: {
+    match: exact('blaze_powder'),
+    sources: [{ kind: 'craft', yields: 2, needs: { blaze_rod: 1 }, table: false, pick: () => 'blaze_powder' }],
+  },
+  ender_pearl: { match: exact('ender_pearl'), sources: [{ kind: 'hunt', mobs: ['enderman'] }] },
+  ender_eye: {
+    match: exact('ender_eye'),
+    sources: [{ kind: 'craft', yields: 1, needs: { ender_pearl: 1, blaze_powder: 1 }, table: false, pick: () => 'ender_eye' }],
+  },
   food: { match: exact(...MEATS), sources: [{ kind: 'hunt', mobs: ['cow', 'pig', 'sheep', 'chicken', 'rabbit'] }] },
   // Ranching: a fenced pen with a gate.
   fence: {

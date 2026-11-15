@@ -7,7 +7,7 @@ const { Vec3 } = require('vec3');
 const defaultActions = require('../actions');
 const defaultSkills = require('../skills');
 const { BAND } = require('../brain');
-const { sleep, waitUntil } = require('../confirm');
+const { sleep, waitUntil, abortError } = require('../confirm');
 const { isFireResistancePotion, hasEffect } = require('../netherStructures');
 const { createBlacklist } = require('../blacklist');
 const { goals } = require('mineflayer-pathfinder');
@@ -15,6 +15,52 @@ const { goals } = require('mineflayer-pathfinder');
 // Entity flag bit 0 is "on fire".
 const burning = (bot) => (Number(bot.entity?.metadata?.[0]) & 1) === 1 || bot.entity?.isInLava === true;
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
+const FIRE = new Set(['fire', 'soul_fire']);
+const FIRE_UNSAFE = /^(lava|water|bubble_column|magma_block|campfire|soul_campfire|cactus|powder_snow)$/;
+const fireKey = (p) => `${p.x},${p.y},${p.z}`;
+const fullFireFloor = (b) => b?.boundingBox === 'block' && !FIRE_UNSAFE.test(b.name)
+  && Array.isArray(b.shapes) && b.shapes.length === 1 && b.shapes[0].length === 6
+  && b.shapes[0].every((v, i) => v === [0, 0, 0, 1, 1, 1][i]);
+
+// A standing body can touch the fire beside its dry feet cell. A burning
+// metadata flag alone is deliberately insufficient: moving again after the
+// contact ended would interrupt eating without removing the residual burn.
+function fireBodyCells(bot, at = bot.entity?.position) {
+  if (!at || ![at.x, at.y, at.z].every(Number.isFinite) || typeof bot.blockAt !== 'function') return [];
+  const width = bot.entity.width > 0 && bot.entity.width <= 2 ? bot.entity.width : 0.6;
+  const height = bot.entity.height > 0 && bot.entity.height <= 3 ? bot.entity.height : 1.8;
+  const cells = [];
+  for (let x = Math.floor(at.x - width / 2 + 1e-7); x <= Math.floor(at.x + width / 2 - 1e-7); x++) {
+    for (let z = Math.floor(at.z - width / 2 + 1e-7); z <= Math.floor(at.z + width / 2 - 1e-7); z++) {
+      for (let y = Math.floor(at.y + 1e-7); y <= Math.floor(at.y + height - 1e-7); y++) cells.push(new Vec3(x, y, z));
+    }
+  }
+  return cells;
+}
+const fireContacts = (bot, at) => fireBodyCells(bot, at).filter((p) => FIRE.has(bot.blockAt(p)?.name));
+
+// Only one same-height, straight neighbour edge (or the current cell centre).
+// Every swept body voxel is loaded and open; only the fire already touching
+// the starting body may be crossed while leaving it. No planner can detour.
+function fireEdgeSafe(bot, from, to, allowedFire) {
+  const start = from.floored(), target = to.floored();
+  if (!bot.entity.onGround || Math.abs(from.y - start.y) > 0.05 || start.y !== target.y
+    || Math.abs(start.x - target.x) + Math.abs(start.z - target.z) > 1
+    || !fullFireFloor(bot.blockAt(start.offset(0, -1, 0))) || !fullFireFloor(bot.blockAt(target.offset(0, -1, 0)))) return false;
+  const first = fireBodyCells(bot, from), last = fireBodyCells(bot, to);
+  if (!first.length || !last.length) return false;
+  const points = [...first, ...last];
+  for (let x = Math.min(...points.map((p) => p.x)); x <= Math.max(...points.map((p) => p.x)); x++) {
+    for (let z = Math.min(...points.map((p) => p.z)); z <= Math.max(...points.map((p) => p.z)); z++) {
+      for (let y = start.y; y <= Math.max(...points.map((p) => p.y)); y++) {
+        const p = new Vec3(x, y, z), b = bot.blockAt(p);
+        if (!b || b.boundingBox !== 'empty' || FIRE_UNSAFE.test(b.name)
+          || (FIRE.has(b.name) && !allowedFire.has(fireKey(p)))) return false;
+      }
+    }
+  }
+  return true;
+}
 
 function nearbyGhast(bot, range) {
   const here = bot.entity?.position;
@@ -191,7 +237,9 @@ const STEP_BLOCKS = new Set(['cobblestone', 'netherrack', 'blackstone', 'cobbled
   'nether_bricks', 'polished_basalt', 'smooth_basalt', 'soul_sand', 'stone', 'end_stone']);
 const GOLDEN_APPLES = new Set(['golden_apple', 'enchanted_golden_apple']);
 const SHOOTERS = new Set(['blaze', 'ghast']);
-const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull']);
+// Air (of 20) below which a hurt bot in water goes up before anything else.
+const HURT_AIR = 16;
+const KEPT_DROPS = new Set(['string', 'blaze_rod', 'wither_skeleton_skull', 'ender_pearl']);
 const SKULL_DROPPERS = new Set(['wither_skeleton', 'blaze']);
 // Hoglins too: their charge tosses the bot, into lava as often as not.
 const CHARGERS = new Set(['piglin_brute', 'hoglin']);
@@ -205,13 +253,17 @@ const OTHER_ATTACKERS = new Set(['wither_skeleton', 'skeleton', 'blaze', 'ghast'
 const PROJECTILES = new Set(['arrow', 'small_fireball', 'fireball', 'spectral_arrow']);
 const wearsGold = (bot) => /^golden_/.test(bot.inventory?.slots?.[5]?.name || '');
 const FOOD_ANIMALS = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom'];
+// While a goal brings food itself, only animals this close are hunted.
+const FEEDING_RANGE = 32;
 
-function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false, thresholds = {} } = {}) {
+function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defaultSkills, isFood, spare = () => false,
+  feeding = () => false, home = () => null, activeGoal = () => null, thresholds = {} } = {}) {
   // At night an archer is not chased far: out there more of them spawn, and
   // the way home to bed is the better defence.
   const t = { ghastRange: 48, escapeHealth: 6, healHealth: 10, escapeRange: 6, defendRange: 5, rangedRange: 14, nightRangedRange: 6, rangedHealth: 14, eatFood: 14,
-    eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, recoverFood: 18, oxygen: 8, dropsTtlMs: 270000,
-    walkSpeed: 4, dropsMaxDistance: 600, swimScale: 1,
+    eatQuietRange: 4, provisionFood: 12, provisionHealth: 10, recoverHealth: 10, provisionInjured: 16, recoverFood: 18, oxygen: 8, dropsTtlMs: 270000,
+    walkSpeed: 4, dropsMaxDistance: 600, swimScale: 1, provisionRange: 160,
+    stockFood: 6, stockRange: 24, stockWindowMs: 60000,
     ...thresholds };
   const huntBlacklist = createBlacklist({ ttlMs: 60000 });
   const exploreMemory = {};
@@ -687,6 +739,71 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
   };
 
+  const leaveFire = {
+    name: 'leave_fire',
+    band: BAND.ESCAPE,
+    want: () => (!bot.entity?.isInLava && fireContacts(bot).length > 0 ? 1.8 : 0),
+    async run(ctx) {
+      const m = bot.pathfinder?.movements;
+      const keys = ['canDig', 'allowParkour', 'allow1by1towers', 'scafoldingBlocks', 'maxDropDown', 'allowSprinting', 'companionWalkOnly'];
+      const saved = m && keys.map((key) => [key, Object.hasOwn(m, key),
+        key === 'allowSprinting' ? (m.sprintSetting ?? m.allowSprinting) : m[key]]);
+      const ownedSneaking = Object.hasOwn(bot, 'companionSneaking'), savedSneaking = bot.companionSneaking;
+      const halt = () => {
+        try { actions.haltBody?.(bot); } catch { /* still clear each native control */ }
+        try { bot.pathfinder?.setGoal(null); } catch { /* cleanup remains best effort */ }
+        for (const key of ['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak']) {
+          try { bot.setControlState?.(key, false); } catch { /* restore the movement profile below */ }
+        }
+      };
+      const finish = (ok, reason) => {
+        ctx.record?.('fire_escape_result', { ok, reason: reason || null, at: fireKey(bot.entity.position), contacts: fireContacts(bot).map(fireKey) });
+        return ok ? { ok: true } : { ok: false, reason };
+      };
+      try {
+        halt();
+        if (ctx.signal?.aborted) throw abortError(ctx.signal);
+        if (bot.entity.isInLava) return finish(false, 'in_lava');
+        const from = bot.entity.position.clone(), feet = from.floored();
+        const contacts = fireContacts(bot), allowedFire = new Set(contacts.map(fireKey));
+        if (!contacts.length) return finish(false, 'fire_contact_changed');
+        const candidates = [feet, ...SIDES.map((side) => feet.plus(side))].map((p) => p.offset(0.5, 0, 0.5));
+        const target = candidates.find((p) => !fireContacts(bot, p).length && fireEdgeSafe(bot, from, p, allowedFire));
+        if (!target) return finish(false, 'no_safe_fire_exit');
+        const targetCell = target.floored();
+        if (m) Object.assign(m, { canDig: false, allowParkour: false, allow1by1towers: false,
+          scafoldingBlocks: [], maxDropDown: 0, allowSprinting: false, companionWalkOnly: true });
+        ctx.record?.('fire_escape_start', { from: fireKey(from), target: fireKey(target),
+          mode: targetCell.equals(feet) ? 'recentre' : 'neighbour', contacts: contacts.map(fireKey) });
+        bot.companionSneaking = true;
+        for (let i = 0; i < 40; i++) {
+          if (ctx.signal?.aborted) throw abortError(ctx.signal);
+          const here = bot.entity.position, cell = here.floored();
+          if ((!cell.equals(feet) && !cell.equals(targetCell)) || !fireEdgeSafe(bot, here, target, allowedFire)) {
+            return finish(false, 'fire_escape_changed');
+          }
+          if (!fireContacts(bot).length) return finish(true);
+          await bot.lookAt(target.offset(0, 1.6, 0), true);
+          if (ctx.signal?.aborted) throw abortError(ctx.signal);
+          if (!fireEdgeSafe(bot, bot.entity.position, target, allowedFire)) return finish(false, 'fire_escape_changed');
+          bot.setControlState('sneak', true);
+          bot.setControlState('forward', true);
+          await sleep(50, ctx.signal);
+          bot.setControlState('forward', false);
+        }
+        return finish(false, 'fire_escape_stuck');
+      } finally {
+        halt();
+        if (ownedSneaking) bot.companionSneaking = savedSneaking;
+        else delete bot.companionSneaking;
+        if (m) for (const [key, owned, value] of saved) {
+          if (owned) m[key] = value;
+          else delete m[key];
+        }
+      }
+    },
+  };
+
   /** The nearest column (within three) whose water ends in open air, reachable at body height. */
   const WET = /^(water|bubble_column|seagrass|tall_seagrass|kelp|kelp_plant)$/;
   function airColumn() {
@@ -711,11 +828,18 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   const breathe = {
     name: 'breathe',
     band: BAND.ESCAPE,
-    want: (state) => (state.inWater && Number.isFinite(state.oxygen) && state.oxygen < t.oxygen ? 1 : 0),
+    // Hurt and short of air: up now, before the air runs out. Not at the
+    // first bubble lost, though: eating in water costs a little air, and
+    // breathe cutting every meal short kept a hurt bot from ever eating
+    // (340 times over, half an hour in a flooded cave).
+    want: (state) => (state.inWater && Number.isFinite(state.oxygen)
+      && (state.oxygen < t.oxygen || (state.oxygen < HURT_AIR && state.health < t.recoverHealth)) ? 1 : 0),
     async run(ctx) {
       bot.pathfinder?.setGoal(null);
       bot.setControlState('jump', true);
       try {
+        // Under a ceiling no swim reaches air: take the water away instead.
+        if (!airColumn() && typeof actions.drainPocket === 'function' && await actions.drainPocket(bot, ctx)) return { ok: true, drained: true };
         for (let i = 0; i < 40 && bot.oxygenLevel < 20 && bot.entity.isInWater; i += 1) {
           // Under a ledge (the shore's rock reaching out over the water): swim
           // sideways to open air. Rising alone pinned the head under the lip
@@ -732,7 +856,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
           // long as on the ground: give it the time.
           const above = bot.blockAt(bot.entity.position.offset(0, 2, 0).floored());
           if (!air && above && above.boundingBox === 'block' && bot.canDigBlock(above)) {
-            await actions.digBlock(bot, ctx, above, { timeoutMs: 15000 });
+            // Bare-handed (every pickaxe worn out) cobblestone takes ten
+            // seconds: a four-second limit never broke the lid of a flooded
+            // hole, and the bot surfaced under it for hours.
+            const digMs = typeof bot.digTime === 'function' ? bot.digTime(above) : 0;
+            await actions.digBlock(bot, ctx, above, { timeoutMs: Math.max(15000, digMs + 1500) });
             bot.setControlState('jump', true);
           }
           await sleep(100, ctx.signal);
@@ -746,6 +874,14 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
 
   // Hungry with nothing to eat: hunt the nearest food animal.
+  const animalNear = (state, range) => Object.values(bot.entities || {}).some((e) => FOOD_ANIMALS.includes(e?.name)
+    && e.position && !spare(e) && e.position.distanceTo(state.position) <= range);
+  let lastHuntAt = 0;
+  const safeFoodCount = (state) => Object.entries(state.inventory)
+    .reduce((n, [name, count]) => n + (count > 0 && foodCheck(name) && !RISKY_FOODS.has(name) ? count : 0), 0);
+  const stockingUp = (state) => Date.now() - lastHuntAt < t.stockWindowMs && safeFoodCount(state) < t.stockFood
+    && dimensionOf(bot) === 'overworld' && state.isDay !== false && !threats(state).some((h) => h.distance <= 16)
+    && animalNear(state, t.stockRange);
   const provision = {
     name: 'provision',
     band: BAND.MAINTENANCE,
@@ -754,9 +890,20 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // injured bot cannot regenerate, even at food 16. Stop supplying at the
       // same threshold at which recovery can take over, and eat carried food
       // first using exactly the eat behavior's risky-food policy.
+      // Hurt to where eat would eat (below 16) and nothing to eat: food it is.
+      // Short of 14 health a bucket of lava is not fetched, and a bot at 11
+      // health and 16 food failed its obsidian forty times without ever healing.
       const needsFood = state.food <= t.provisionFood
-        || (state.health < t.recoverHealth && state.food < t.recoverFood);
-      if (state.sheltered || !needsFood || hasSafeFood(state, desperateForFood(state))) return 0;
+        || (state.health < t.provisionInjured && state.food < t.recoverFood);
+      if (state.sheltered) return 0;
+      // Out hunting with animals still close by: a few more for the bag. One
+      // kill at a time, the bot was back out hunting every few minutes of
+      // mining, and spent a third of its hours on it.
+      if (stockingUp(state)) return 0.5;
+      if (!needsFood || hasSafeFood(state, desperateForFood(state))) return 0;
+      // The goal itself is getting food (bread from the farm): an animal close by is
+      // still worth it, but no wandering off after ones long since hunted out.
+      if (feeding() && !animalNear(state, FEEDING_RANGE)) return 0;
       // Nothing to hunt in the nether but hoglins; wandering off there to look for food kills.
       if (dimensionOf(bot) !== 'overworld') return 0;
       if (threats(state).some((h) => h.distance <= 8)) return 0;
@@ -768,8 +915,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     },
     async run(ctx) {
       // Animals are visible out to about 100 blocks; go for the nearest one seen.
-      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck, radius: 96, blacklist: huntBlacklist,
-        accept: (e) => !spare(e) });
+      const near = feeding();
+      const stocking = stockingUp(ctx.perceive());
+      const result = await skills.huntOne(bot, ctx, { mobs: FOOD_ANIMALS, dropMatch: foodCheck,
+        radius: stocking ? t.stockRange : near ? FEEDING_RANGE : 96, blacklist: huntBlacklist, accept: (e) => !spare(e) });
+      if (result.ok) lastHuntAt = Date.now();
       // Nothing to hunt in sight: berries, else look further afield instead of waiting to starve.
       // Could not reach anything: the bot itself is probably stuck (tree top, ledge).
       if (['NoPath', 'Timeout', 'path_timeout', 'no_progress', 'not_arrived', 'chase_stuck'].includes(result.reason)) {
@@ -778,9 +928,13 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
         return result;
       }
       stuckStreak = 0;
-      if (result.reason === 'no_mob_in_range') {
+      if (result.reason === 'no_mob_in_range' && !near) {
         const berries = await skills.pickBerries(bot, ctx, { blacklist: huntBlacklist });
         if (berries.ok || berries.reason !== 'no_berries') return berries;
+        // Not out of reach of home: a search for food once ran 1000 blocks
+        // off, and the farm and the house were then out of reach.
+        const centre = home();
+        exploreMemory.around = centre ? { x: centre.x, z: centre.z, radius: t.provisionRange } : null;
         return skills.explore(bot, ctx, exploreMemory);
       }
       return result;
@@ -793,7 +947,9 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
     band: BAND.MAINTENANCE,
     // Not in the sight of something that shoots: a blaze or ghast out of
     // melee reach still hits a bot standing still to heal.
-    want: (state) => (state.health < t.recoverHealth && state.food >= t.recoverFood
+    // Nor in water: standing still there sinks, and a bot hurt by drowning
+    // stood still on the sea floor to heal until it drowned.
+    want: (state) => (state.health < t.recoverHealth && state.food >= t.recoverFood && !state.inWater
       && !threats(state).some((h) => h.distance <= 8 || (SHOOTERS.has(h.name) && h.distance <= 24)) ? 0.3 : 0),
     async run(ctx) {
       actions.haltBody(bot);
@@ -805,13 +961,25 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   // Items dropped on death stay for five minutes: go back for them once it is safe.
   let lastDeath = null;
   const onDeathDrops = () => {
-    lastDeath = { position: bot.entity.position.clone(), dimension: dimensionOf(bot), at: Date.now(), tries: 0 };
+    // Died in lava: whatever dropped burnt up, and going back is the same swim.
+    const feet = bot.blockAt?.(bot.entity.position.floored());
+    const burnt = /lava/.test(feet?.name || '');
+    lastDeath = burnt ? null : { position: bot.entity.position.clone(), dimension: dimensionOf(bot), at: Date.now(), tries: 0 };
+  };
+  // Back alive with the bag still full (keepInventory): nothing was dropped.
+  // A bot went back for its "drops" into the lava that killed it, five deaths running.
+  const onSpawnDrops = () => {
+    if (lastDeath && !lastDeath.respawned) {
+      lastDeath.respawned = true;
+      if ((bot.inventory?.items?.() || []).length > 0) lastDeath = null;
+    }
   };
   bot.on?.('death', onDeathDrops);
+  bot.on?.('spawn', onSpawnDrops);
   const recoverDrops = {
     name: 'recover_drops',
     band: BAND.MAINTENANCE,
-    dispose: () => bot.removeListener?.('death', onDeathDrops),
+    dispose: () => { bot.removeListener?.('death', onDeathDrops); bot.removeListener?.('spawn', onSpawnDrops); },
     want(state) {
       if (state.sheltered || !lastDeath || Date.now() - lastDeath.at > t.dropsTtlMs || lastDeath.tries >= 3) return 0;
       if (state.health < 10 || threats(state).some((h) => h.distance <= 8)) return 0;
@@ -876,6 +1044,11 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
       // The End is full of them and the fight cannot wait: there an angry one
       // is fought (defend). A bunker dug mid-fight left the bot to the dragon.
       if (dimensionOf(bot) === 'the_end') return 0;
+      // Hunting pearls, the angry one is the quarry: struck in melee it stays
+      // and fights (defend), where hiding from every enderman the hunt turned
+      // let six nights pass without a pearl. Hurt, too: a hole dug mid-fight
+      // took five seconds of free hits and the bot died in it every time.
+      if (activeGoal() === 'hunt_pearls') return 0;
       return !state.sheltered && angryEnderman(state, 12) ? 1 : 0;
     },
     async run(ctx) {
@@ -997,7 +1170,7 @@ function createSurvivalBehaviors({ bot, actions = defaultActions, skills = defau
   };
   deflect.dispose = disposeNether;
 
-  return [quench, leaveLava, heal, escape, breathe, deflect, block, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
+  return [quench, leaveLava, leaveFire, heal, escape, breathe, deflect, block, hide, defend, cover, avoid, eat, provision, recover, recoverDrops];
 }
 
 module.exports = { createSurvivalBehaviors };

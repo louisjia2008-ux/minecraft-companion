@@ -15,6 +15,9 @@ const { sleep } = require('../confirm');
 const SEALS = new Set(['dirt', 'cobblestone', 'cobbled_deepslate', 'coarse_dirt']);
 const dimensionOf = (bot) => String(bot?.game?.dimension || 'overworld').replace(/^minecraft:/, '');
 
+// Within this the bed is used straight away (useBed walks to it).
+const NEAR_BED = 16;
+
 /** `home()` returns { bed, centre } once the house is finished (bed null if it is gone), otherwise null. */
 function createNightRest({ bot, home, actions = defaultActions, skills = defaultSkills, now = Date.now,
   farDistance = 64, retryBedMs = 20000 } = {}) {
@@ -64,7 +67,10 @@ function createNightRest({ bot, home, actions = defaultActions, skills = default
         return { ok: true };
       }
       if (spot.bed && now() >= bedRefusedUntil) {
-        if (distance > 3) {
+        // Close by, the bed is walked to by using it: a walk to "near the bed"
+        // could end outside the wall beside it, and the next night_rest found
+        // it still too far and walked again, all night long.
+        if (distance > NEAR_BED) {
           ctx.record('night_rest', { action: 'go_home', distance: Math.round(distance) });
           return actions.goNear(bot, ctx, bed, 2, { timeoutMs: 90000 });
         }

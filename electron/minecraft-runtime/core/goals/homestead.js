@@ -275,6 +275,13 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     bot.companionSurfaceY = memory.house.anchor.y;
     if (!memory.protectBlock) memory.protectBlock = (block) => Boolean(block?.position && protects(block.position));
     bot.companionProtectBlock = memory.protectBlock;
+    // The house and the ground site work keeps clear: nothing else is built
+    // there (a nether portal in it was dug out again by home maintenance).
+    if (!memory.homeSite) {
+      const clear = new Set((memory.house.clearance || []).map(posKey));
+      memory.homeSite = (p) => insideHouse(p) || clear.has(posKey(p));
+    }
+    bot.companionHomeSite = memory.homeSite;
     if (!movements) return;
     if (!memory.protect) memory.protect = (block) => protects(block.position) ? 100 : insideHouse(block.position) ? 90 : 0;
     if (!movements.exclusionAreasBreak.includes(memory.protect)) movements.exclusionAreasBreak.push(memory.protect);
@@ -284,6 +291,12 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
     const work = siteWork((x, y, z) => bot.blockAt(new Vec3(x, y, z)), memory.house, (p, block) => expectedAt(p)(block.name));
     work.digs = work.digs.filter((d) => !blacklist.has(`site:${posKey(d.position)}`));
     work.fills = work.fills.filter((d) => !blacklist.has(`site:${posKey(d.position)}`));
+    // Down a cave (fallen in, or after its drops): every dig and fill on the
+    // site was a path up through the rock, and each one timed out. Climb first.
+    if (work.digs.length || work.fills.length) {
+      const up = await surfaceFirst(ctx);
+      if (up) return up;
+    }
     // A site that keeps needing digging was misjudged; pick another while nothing stands on it yet.
     if (!memory.established && work.digs.length && memory.siteDigs > 40 && nameAt(memory.house.furniture.crafting_table.position) !== 'crafting_table') {
       ctx.record('site_abandoned', { anchor: memory.house.anchor, digs: memory.siteDigs });
@@ -582,6 +595,10 @@ function createHomesteadGoal({ bot, anchor = null, gear = DEFAULT_GEAR, skills =
       blacklist.clear();
       skipped.clear();
       memory.recovery = true;
+      // A fresh round of exploring for a site: the count is kept across asks
+      // (one house per run), and once past its limit every later ask of the
+      // house failed at once with exhausted:site.
+      memory.exploreStreak = 0;
     },
     memory,
     maintenance,
