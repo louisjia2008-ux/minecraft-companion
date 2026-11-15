@@ -438,6 +438,7 @@ test('pearl rearm can mine missing iron after a failed local kit and a verified 
   bot.entity.position = new Vec3(25, 64, 0);
   await playthroughNatural.onTick(context);
   assert.equal(asked[0].args.recoverAtHome, true);
+  assert.deepEqual(asked[0].args.items, RECOVERY_BASE_KIT);
   bot.entity.position = new Vec3(3.5, 64, 3.5);
   await playthroughNatural.onTick(context);
   assert.equal(asked[1].args.expeditionFood, true);

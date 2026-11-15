@@ -463,16 +463,18 @@ async function runDeathRecovery(context, index, entry) {
     }
     return true;
   }
-  const mineForKit = pearlRearm && recovery.surfaceKitExhausted
-    && !expeditionKitDone(bot, PEARL_REARM.filter(({ key }) => key !== 'food'))
-    && kitDone(bot, RECOVERY_BASE_KIT) && homeResupplyReady(state.lastPerceive, home)
+  const needsIronMine = pearlRearm && recovery.surfaceKitExhausted
+    && !expeditionKitDone(bot, PEARL_REARM.filter(({ key }) => key !== 'food'));
+  const mineForKit = needsIronMine && kitDone(bot, RECOVERY_BASE_KIT)
+    && homeResupplyReady(state.lastPerceive, home)
     && bot.health >= 16 && bot.food >= 16;
   const args = base || pearlRearm && !mineForKit
-    ? { items: recoveryItems, recoverAtHome: true, farmPlots: farmPlotPositions(state) }
+    ? { items: needsIronMine ? RECOVERY_BASE_KIT : recoveryItems, recoverAtHome: true, farmPlots: farmPlotPositions(state) }
     : expeditionKitArgs(recoveryItems, state);
   recovery.attempts += 1;
   state.activeStage = 'rearm';
-  write('model_ask', { step: 'rearm', phase: recovery.phase, death: death.id, task: 'outfit', args, ask: recovery.attempts });
+  write('model_ask', { step: 'rearm', phase: recovery.phase, death: death.id, task: 'outfit', args, ask: recovery.attempts,
+    ...(needsIronMine && !mineForKit && { purpose: 'prepare_iron_mining' }) });
   await companion.submitTask('outfit', args);
   const running = companion.status().goal;
   // A concurrent death may pause this new invocation before dispatch returns.
