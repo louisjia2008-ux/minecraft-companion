@@ -1919,6 +1919,55 @@ test('expedition stock counts angry and unsynced Endermen as threats, while conf
   assert.equal(chestReads, 1);
 });
 
+test('expedition stock leaves home on dry footing only while the low creeper stays screened', async () => {
+  const { createStockFoodGoal } = require('../core/goals/stockFood');
+  const { perceive } = require('../core/perception');
+  const inside = new Vec3(3, 64, 1);
+  const door = new Vec3(3, 64, 0);
+  const air = { name: 'air', boundingBox: 'empty', shapes: [] };
+  const stone = { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+  const creeper = { id: 8, name: 'creeper', position: new Vec3(3.5, 60, 12.5), height: 1.7, width: .6 };
+  const events = [];
+  let screened = true;
+  let rise = false;
+  const movements = { allowSprinting: true, getNeighbors: (p) => [p.offset(0, 0, -1), p.offset(1, 0, 0)] };
+  const bot = Object.assign(fakeBot([{ name: 'iron_sword', count: 1 }]), { health: 20, food: 19, time: { timeOfDay: 3000 },
+    game: { dimension: 'overworld' }, entity: { position: inside.offset(.5, 0, .5), onGround: true },
+    entities: { 8: creeper }, world: { raycast: () => screened ? stone : null }, pathfinder: { movements } });
+  bot.blockAt = (p) => {
+    if (p.x === door.x && p.z === door.z && (p.y === 64 || p.y === 65)) return { name: 'birch_door',
+      getProperties: () => ({ half: p.y === 64 ? 'lower' : 'upper', open: true, facing: 'north', hinge: 'left' }) };
+    return p.y === 63 && p.x === 3 || p.y === 66 && p.z >= 0 ? stone : air;
+  };
+  const goal = createStockFoodGoal({ bot, target: 12, expeditionHome: { ...home, door, centre: { x: 3, y: 64, z: 3 } },
+    farmPlots: [{ x: -12, y: 63, z: 3 }], actions: { async goTo(_bot, ctx, target) {
+      assert.deepEqual([target.x, target.y, target.z], [3, 64, 0]);
+      assert.deepEqual(movements.getNeighbors(inside), [door]);
+      assert.equal(movements.allowSprinting, false);
+      if (rise) {
+        creeper.position.y = 64;
+        await sleep(200, ctx.signal);
+        assert.fail('the live sight and elevation guard must cancel the move');
+      }
+      bot.entity.position = door.offset(.5, 0, .5);
+      return { ok: true };
+    } } });
+  const ctx = { perceive: () => perceive(bot), record: (type, detail) => events.push({ type, ...detail }) };
+  screened = false;
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  assert.ok(bot.entity.position.floored().equals(inside));
+  screened = true;
+  rise = true;
+  assert.equal((await goal.run(ctx)).reason, 'expedition_food_unsafe');
+  assert.ok(bot.entity.position.floored().equals(inside));
+  rise = false;
+  creeper.position.y = 60;
+  assert.equal((await goal.run(ctx)).ok, true);
+  assert.ok(bot.entity.position.floored().equals(door));
+  assert.equal(events.at(-1).type, 'expedition_food_screened_home_step');
+  assert.equal(movements.allowSprinting, true);
+});
+
 test('healthy home recovery waits for its growing food reserve instead of exploring and harvests when ripe', async () => {
   const house = createStarterHouse({ x: 0, y: 64, z: 0 });
   const crop = new Vec3(-10, 64, 3);

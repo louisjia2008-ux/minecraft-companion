@@ -8,10 +8,12 @@ const defaultSkills = require('../skills');
 const defaultActions = require('../actions');
 const farming = require('../farming');
 const { isObservedSelfAggressor, isThreateningMobEntity } = require('../../vendor/server/minecraft/entitySemantics');
+const { entityDimensions } = require('../entityGeometry');
+const { perceive } = require('../perception');
 const { KNOWLEDGE, countKey } = require('../knowledge');
 const { createBlacklist, posKey } = require('../blacklist');
 const { applyWalkOnlyMovements, dimension } = require('../nether');
-const { advanceCaveRetreat, farmlandFooting, standable } = require('../caveRetreat');
+const { advanceCaveRetreat, farmlandFooting, standable, walkDry } = require('../caveRetreat');
 const { abortError, sleep, waitUntil } = require('../confirm');
 const { createExpeditionReturnDetour } = require('./expeditionReturnDetour');
 const { NEAR_HUNT, planScoutFoodApproach } = require('./scoutFoodApproach');
@@ -33,6 +35,8 @@ const DUSK = 12542;
 const FIELD_MARGIN = 5;
 const MAX_RESERVE_PLOTS = 24;
 const MAX_FIELD_WALK = 5;
+const HOME_EXIT_RADIUS = 15;
+const HOME_EXIT_STEPS = 15;
 const CARDINAL = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const WATER_BLOCK = /^(water|flowing_water|bubble_column|kelp|kelp_plant|seagrass|tall_seagrass)$/;
 const SURFACE_HAZARD = /^(lava|fire|soul_fire|magma_block|campfire|soul_campfire|cactus|powder_snow)$/;
@@ -153,6 +157,104 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
   const fieldClear = (p) => [-1, 0, 1].every((dy) => farmDry(p.offset(0, dy, 0)));
   const fullCube = (block) => block?.boundingBox === 'block' && block.shapes?.length === 1
     && block.shapes[0].every((value, i) => value === (i < 3 ? 0 : 1));
+  const centreFeet = (p) => p.offset(.5, 0, .5);
+  const openDoorStance = (p) => {
+    const [lower, upper] = [read(p), read(p.offset(0, 1, 0))];
+    if (!lower || !/^(?!iron_).*_door$/.test(lower.name) || upper?.name !== lower.name) return false;
+    const lo = lower.getProperties?.(), hi = upper.getProperties?.();
+    return lo?.half === 'lower' && hi?.half === 'upper' && lo.open === true && hi.open === true
+      && ['north', 'south'].includes(lo.facing) && lo.facing === hi.facing && lo.hinge === hi.hinge
+      && standable((cell) => cell.equals(p) || cell.equals(p.offset(0, 1, 0))
+        ? { name: 'air', boundingBox: 'empty', shapes: [] } : read(cell), p);
+  };
+  const homeExitStance = (p) => p.y >= centre.y - 1 && p.y <= centre.y + 1 && distance(p) <= HOME_EXIT_RADIUS
+    && (p.equals(door) ? openDoorStance(p) : fieldClear(p) && (inHouse(p) ? supported(p) : exposed(p)));
+  const homeExitReady = (state) => state.isDay === true && state.health >= 16 && state.food >= 16 && !state.inWater
+    && !bot.entity.isInLava && Object.keys(state.inventory).some((name) => name.endsWith('_sword'));
+  const homeExitThreats = () => perceive(bot, { hostileRange: 2 * HOME_EXIT_RADIUS + 17 }).hostiles.filter(isThreat);
+  const screenedFrom = (hostile, at) => {
+    if (at.distanceTo(hostile.position) > 17) return true;
+    const mob = bot.entities?.[hostile.id];
+    const size = entityDimensions(mob, bot.registry);
+    if (hostile.name !== 'creeper' || hostile.selfAggressor || mob?.isValid === false || !size
+      || at.y - hostile.position.y < Math.max(2.6, size.height + .85)
+      || Math.hypot(at.x - hostile.position.x, at.z - hostile.position.z) < 8) return false;
+    const eye = hostile.position.offset(0, size.height * .85, 0);
+    const beside = new Vec3(eye.z - at.z, 0, at.x - eye.x).normalize().scaled(.28);
+    return [.35, 1.05, 1.65].every((y) => [-1, 1].every((side) => {
+      const ray = at.offset(0, y, 0).plus(beside.scaled(side)).minus(eye);
+      const hit = bot.world.raycast(eye, ray.normalize(), ray.norm());
+      return dry(hit) && fullCube(hit);
+    }));
+  };
+
+  async function screenedHomeExit(ctx, state, here) {
+    if (!door || !field.length || !homeExitReady(state) || !onDryGround() || !bot.world?.raycast
+      || typeof bot.pathfinder?.movements?.getNeighbors !== 'function') return null;
+    const from = here.floored();
+    if (!homeExitStance(from)) return null;
+    const snapshot = homeExitThreats();
+    const clears = (p, hostiles) => hostiles.every((h) => screenedFrom(h, p));
+    if (!snapshot.some((h) => h.name === 'creeper' && h.distance <= 16) || !clears(here, snapshot)) return null;
+    const swept = (a, b) => {
+      const middle = a.plus(b).scale(.5);
+      middle.y = Math.min(a.y, b.y);
+      return middle;
+    };
+    const safeLeg = (a, b, hostiles) => {
+      const mid = swept(a, b);
+      return bodyClear(mid) && clears(a, hostiles) && clears(mid, hostiles) && clears(b, hostiles);
+    };
+    const checked = new Set([posKey(from)]);
+    const queue = [{ at: from, first: null, steps: 0 }];
+    const position = (p) => p.equals(from) ? here : centreFeet(p);
+    let next;
+    for (let i = 0; i < queue.length && i < 360; i++) {
+      const { at, first, steps } = queue[i];
+      if (first && snapshot.every((h) => centreFeet(at).distanceTo(h.position) > 17)) { next = first; break; }
+      if (steps >= HOME_EXIT_STEPS) continue;
+      for (const [x, z] of CARDINAL) for (const dy of [0, 1, -1]) {
+        const p = at.offset(x, dy, z);
+        const key = posKey(p);
+        if (checked.has(key) || !homeExitStance(p) || !safeLeg(position(at), centreFeet(p), snapshot)
+          || !first && blacklist.has(`screened-home:${posKey(from)}>${key}`)) continue;
+        checked.add(key);
+        queue.push({ at: p, first: first || p, steps: steps + 1 });
+      }
+    }
+    if (!next) return null;
+    const stillSafe = () => {
+      const at = bot.entity.position;
+      const cell = at.floored();
+      return homeExitReady(ctx.perceive()) && homeExitStance(from) && homeExitStance(next)
+        && [from, next].some((p) => p.x === cell.x && p.z === cell.z) && at.y >= Math.min(from.y, next.y) - .05
+        && bodyClear(at) && safeLeg(at, centreFeet(next), homeExitThreats());
+    };
+    if (!stillSafe()) return null;
+    const guard = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, guard.signal]) : guard.signal;
+    const monitor = setInterval(() => { if (!stillSafe()) guard.abort('expedition_food_unsafe'); }, 100);
+    const movement = bot.pathfinder.movements;
+    const sprint = movement.sprintSetting ?? movement.allowSprinting;
+    movement.allowSprinting = false;
+    const arrived = () => onDryGround() && bot.entity.position.floored().equals(next) && stillSafe();
+    try {
+      const result = await walkDry(bot, { ...ctx, signal }, actions, new goals.GoalBlock(next.x, next.y, next.z),
+        { adjacent: next, avoid: () => !stillSafe(), supports: (_read, p) => homeExitStance(p), arrived, timeoutMs: 3500 });
+      if ((result.ok || result.reason === 'not_arrived') && await waitUntil(arrived, { timeoutMs: 450, signal })) {
+        ctx.record('expedition_food_screened_home_step', { from, to: next, creepers: snapshot.filter((h) => h.name === 'creeper')
+          .map(({ id, position }) => ({ id, position })) });
+        return { ok: true };
+      }
+      if (bot.entity.position.floored().equals(from)) blacklist.add(`screened-home:${posKey(from)}>${posKey(next)}`, result.reason, 10000);
+    } catch (error) {
+      if (ctx.signal?.aborted || !guard.signal.aborted) throw error;
+    } finally {
+      clearInterval(monitor);
+      movement.allowSprinting = sprint;
+    }
+    return wait(ctx, 'expedition_food_unsafe');
+  }
   const backedSand = (p) => {
     const soil = read(p.offset(0, -1, 0));
     const backing = read(p.offset(0, -2, 0));
@@ -682,6 +784,10 @@ function createExpeditionFood({ bot, home, farmPlots, target, actions, skills, k
       return outcome;
     }
     const hostile = threatsNear(state);
+    if (hostile && !scout) {
+      const left = await screenedHomeExit(ctx, state, here);
+      if (left) return left;
+    }
     const fromOutside = !scout && state.isDay === true && distance(feet) > HOME_RADIUS && distance(feet) <= SCOUT_RINGS.at(-1)
       && scoutFit(state) && Object.keys(state.inventory).some((n) => n.endsWith('_sword') || n.endsWith('_axe'));
     if (state.health <= 6 || bot.entity.isInLava
